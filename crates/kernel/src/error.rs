@@ -126,6 +126,12 @@ pub enum DocumentError {
     BadName,
     #[error("a batch needs at least one op")]
     EmptyBatch,
+    #[error("a guide or dimension needs finite points (and a direction or two distinct points)")]
+    BadAnnotation,
+    #[error("no guide or dimension #{0}")]
+    NoSuchAnnotation(u64),
+    #[error("there are no guides to delete")]
+    NoGuides,
     #[error("undo, redo and batches cannot be nested inside a batch")]
     NotInBatch,
 }

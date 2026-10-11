@@ -92,6 +92,8 @@ pub struct Scene {
     pub segs: Vec<Seg>,
     pub arcs: Vec<Arc>,
     pub guides: Vec<GuideLine>,
+    /// Dimension lines (id, the two ends of the drawn line): pickable, never snapped to.
+    pub dims: Vec<(u64, DVec3, DVec3)>,
     pub tri_bvh: Bvh,
     pub seg_bvh: Bvh,
     pub bounds: Option<Aabb>,
@@ -236,6 +238,16 @@ impl Scene {
                     .collect();
                 s.find_arcs(&pts, cur == v, owner);
             }
+        }
+        for (id, g) in model.guides() {
+            s.guides.push(GuideLine {
+                id,
+                point: g.point,
+                dir: g.dir,
+            });
+        }
+        for (id, d) in model.dimensions() {
+            s.dims.push((id, d.a + d.offset, d.b + d.offset));
         }
         s.dedup_arcs();
         s.index();

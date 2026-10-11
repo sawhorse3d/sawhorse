@@ -200,6 +200,30 @@ pub fn model_hash(m: &Model) -> u64 {
         }
         h.u64(u64::from(o.is_watertight()));
     }
+    // Annotations are hashed only when there are any, so documents without guides keep
+    // their hashes.
+    let (guides, dims) = (m.guides(), m.dimensions());
+    if !guides.is_empty() || !dims.is_empty() {
+        h.tag("annotations");
+        h.usize(guides.len());
+        for (id, g) in guides {
+            h.u64(id);
+            for v in [g.point, g.dir] {
+                h.len(v.x);
+                h.len(v.y);
+                h.len(v.z);
+            }
+        }
+        h.usize(dims.len());
+        for (id, d) in dims {
+            h.u64(id);
+            for v in [d.a, d.b, d.offset] {
+                h.len(v.x);
+                h.len(v.y);
+                h.len(v.z);
+            }
+        }
+    }
     let groups = m.groups();
     h.usize(groups.len());
     for (id, g) in groups {

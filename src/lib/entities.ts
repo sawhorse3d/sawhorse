@@ -22,6 +22,8 @@ export function entityKey(e: Entity): string {
       return `r:${e.sketch}:${e.region}`;
     case "guide":
       return `g:${e.guide}`;
+    case "dimension":
+      return `d:${e.dimension}`;
     case "object":
       return `o:${e.object}`;
   }
@@ -156,7 +158,9 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
     case "vertex":
       return "A point goes with its edges: erase an edge instead.";
     case "guide":
-      return "Guides are not in the model yet.";
+      return { op: "erase_guide", guide: e.guide };
+    case "dimension":
+      return { op: "erase_dimension", dimension: e.dimension };
   }
 }
 
@@ -168,7 +172,7 @@ export function eraseOps(sel: Entity[], state: DocState | null): { ops: KernelOp
   const deleted = new Set(sel.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object));
   const ops: KernelOp[] = [];
   const skipped: string[] = [];
-  const order = (e: Entity) => ({ object: 0, face: 1, region: 2, edge: 3, guide: 4, vertex: 5 })[e.kind];
+  const order = (e: Entity) => ({ object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, vertex: 5 })[e.kind];
   for (const e of [...sel].sort((a, b) => order(a) - order(b))) {
     const o = objectOf(e);
     if (e.kind !== "object" && o !== null && deleted.has(o)) continue;

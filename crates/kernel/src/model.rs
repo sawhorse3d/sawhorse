@@ -19,7 +19,9 @@ use slotmap::SlotMap;
 use std::collections::BTreeMap;
 
 use crate::error::{DocumentError, FaceEditError, KernelError, PushError, SketchError};
-use crate::ids::{GroupId, ObjectId, RegionId, SketchId, from_public, to_public};
+use crate::ids::{
+    DimensionId, GroupId, GuideId, ObjectId, RegionId, SketchId, from_public, to_public,
+};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::plane::Plane;
 use crate::sketch::Sketch;
@@ -119,6 +121,25 @@ pub enum Op {
     EraseRegion { sketch: u64, region: u64 },
     /// Several ops as one transaction and one undo step (no undo, redo or batch inside).
     Batch { ops: Vec<Op> },
+    /// Add a guide: an infinite line through `point` along `dir`, or a guide point when
+    /// `dir` is absent (the Tape measure). Guides are construction help: inferable, never
+    /// part of a solid.
+    AddGuide {
+        point: [f64; 3],
+        dir: Option<[f64; 3]>,
+    },
+    /// Remove one guide.
+    EraseGuide { guide: u64 },
+    /// Remove every guide.
+    DeleteGuides,
+    /// Add a linear dimension between `a` and `b`, its line drawn `offset` away from them.
+    AddDimension {
+        a: [f64; 3],
+        b: [f64; 3],
+        offset: [f64; 3],
+    },
+    /// Remove one dimension.
+    EraseDimension { dimension: u64 },
     /// Delete an object (it also leaves any group).
     DeleteObject { object: u64 },
     /// Group objects under a name.
@@ -172,6 +193,13 @@ pub enum OpOutcome {
         face: u64,
     },
     ObjectDeleted,
+    GuideAdded {
+        guide: u64,
+    },
+    DimensionAdded {
+        dimension: u64,
+    },
+    AnnotationErased,
     /// A stroke was drawn: into `sketch` (the regions it bounds), or on a solid (the
     /// persistent ids of the faces it cut or made).
     Drawn {
@@ -212,6 +240,35 @@ pub struct Model {
     groups: SlotMap<GroupId, Group>,
     /// Tag name -> visible. Every tag an object uses is listed here.
     tags: BTreeMap<String, bool>,
+    guides: SlotMap<GuideId, Guide>,
+    dimensions: SlotMap<DimensionId, Dimension>,
+}
+
+/// A guide line (unit `dir`) or a guide point (`dir` zero).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Guide {
+    pub point: DVec3,
+    pub dir: DVec3,
+}
+
+/// A linear dimension: the measured points and where its line is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dimension {
+    pub a: DVec3,
+    pub b: DVec3,
+    pub offset: DVec3,
+}
+
+impl Dimension {
+    /// The measured length, metres.
+    pub fn length(&self) -> f64 {
+        self.a.distance(self.b)
+    }
+}
+
+fn finite3(p: &[f64; 3]) -> Option<DVec3> {
+    let v = DVec3::from_array(*p);
+    (v.is_finite() && v.abs().max_element() <= crate::tolerance::MAX_COORD).then_some(v)
 }
 
 /// A named set of objects (by public id).
@@ -291,6 +348,19 @@ impl Model {
     /// Public ids of the objects, in creation order.
     pub fn object_ids(&self) -> Vec<u64> {
         self.object_order.iter().map(|&k| to_public(k)).collect()
+    }
+
+    /// Guides with their public ids, in id order.
+    pub fn guides(&self) -> Vec<(u64, &Guide)> {
+        self.guides.iter().map(|(k, g)| (to_public(k), g)).collect()
+    }
+
+    /// Dimensions with their public ids, in id order.
+    pub fn dimensions(&self) -> Vec<(u64, &Dimension)> {
+        self.dimensions
+            .iter()
+            .map(|(k, d)| (to_public(k), d))
+            .collect()
     }
 
     /// Groups with their public ids, in id order.
@@ -543,6 +613,56 @@ impl Model {
                     outcomes.push(self.apply_in_place(op)?);
                 }
                 Ok(OpOutcome::Batch { outcomes })
+            }
+            Op::AddGuide { point, dir } => {
+                let p = finite3(point).ok_or(DocumentError::BadAnnotation)?;
+                let d = match dir {
+                    Some(d) => {
+                        let v = finite3(d).ok_or(DocumentError::BadAnnotation)?;
+                        if v.length() < 1e-12 {
+                            return Err(DocumentError::BadAnnotation.into());
+                        }
+                        v.normalize()
+                    }
+                    None => DVec3::ZERO,
+                };
+                let id = self.guides.insert(Guide { point: p, dir: d });
+                Ok(OpOutcome::GuideAdded {
+                    guide: to_public(id),
+                })
+            }
+            Op::EraseGuide { guide } => {
+                self.guides
+                    .remove(from_public::<GuideId>(*guide))
+                    .ok_or(DocumentError::NoSuchAnnotation(*guide))?;
+                Ok(OpOutcome::AnnotationErased)
+            }
+            Op::DeleteGuides => {
+                if self.guides.is_empty() {
+                    return Err(DocumentError::NoGuides.into());
+                }
+                self.guides.clear();
+                Ok(OpOutcome::AnnotationErased)
+            }
+            Op::AddDimension { a, b, offset } => {
+                let (a, b, o) = (
+                    finite3(a).ok_or(DocumentError::BadAnnotation)?,
+                    finite3(b).ok_or(DocumentError::BadAnnotation)?,
+                    finite3(offset).ok_or(DocumentError::BadAnnotation)?,
+                );
+                if a.distance(b) <= crate::tolerance::POINT_MERGE {
+                    return Err(DocumentError::BadAnnotation.into());
+                }
+                let id = self.dimensions.insert(Dimension { a, b, offset: o });
+                Ok(OpOutcome::DimensionAdded {
+                    dimension: to_public(id),
+                })
+            }
+            Op::EraseDimension { dimension } => {
+                self.dimensions
+                    .remove(from_public::<DimensionId>(*dimension))
+                    .ok_or(DocumentError::NoSuchAnnotation(*dimension))?;
+                Ok(OpOutcome::AnnotationErased)
             }
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);

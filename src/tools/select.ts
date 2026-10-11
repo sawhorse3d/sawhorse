@@ -111,6 +111,8 @@ export function describe(e: Entity): string {
     case "object":
       return `Selected solid ${e.object}.`;
     case "guide":
-      return "Selected a guide.";
+      return "Selected a guide. Delete erases it.";
+    case "dimension":
+      return "Selected a dimension. Delete erases it.";
   }
 }

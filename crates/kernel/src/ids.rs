@@ -32,6 +32,10 @@ slotmap::new_key_type! {
     pub struct RegionId;
     /// A named group of objects.
     pub struct GroupId;
+    /// A guide line or guide point (Tape measure).
+    pub struct GuideId;
+    /// A linear dimension annotation.
+    pub struct DimensionId;
 }
 
 /// Public (serialisable) form of a key. Null keys map to 0.

@@ -33,6 +33,9 @@ pub enum Entity {
     Guide {
         guide: u64,
     },
+    Dimension {
+        dimension: u64,
+    },
 }
 
 /// A plane frame, as the UI uses it to draw on a surface.
@@ -226,6 +229,42 @@ pub fn pick(scene: &Scene, q: &PickQuery) -> Option<Picked> {
         return Some(Picked {
             entity,
             point: s.a.lerp(s.b, u).to_array(),
+            surface: hit,
+        });
+    }
+    // Guide lines and points, and dimension lines.
+    let mut best_a: Option<(f64, Entity, DVec3)> = None;
+    for g in &scene.guides {
+        let (p, d) = if g.dir == DVec3::ZERO {
+            (g.point, px.ray_px(&ray, g.point))
+        } else {
+            match crate::geom::line_line(g.point, g.dir, ray.origin, ray.dir) {
+                Some((s, t)) if t >= 0.0 => {
+                    let p = g.point + g.dir * s;
+                    (p, px.ray_px(&ray, p))
+                }
+                _ => continue,
+            }
+        };
+        if d <= q.edge_px
+            && visible(px, hit.as_ref(), p, ray.param(p))
+            && best_a.as_ref().is_none_or(|b| d < b.0)
+        {
+            best_a = Some((d, Entity::Guide { guide: g.id }, p));
+        }
+    }
+    for &(id, a, b) in &scene.dims {
+        let (t, u) = ray_segment(&ray, a, b);
+        let p = a.lerp(b, u);
+        let d = px.ray_px(&ray, p);
+        if d <= q.edge_px && t >= 0.0 && best_a.as_ref().is_none_or(|bb| d < bb.0) {
+            best_a = Some((d, Entity::Dimension { dimension: id }, p));
+        }
+    }
+    if let Some((_, entity, p)) = best_a {
+        return Some(Picked {
+            entity,
+            point: p.to_array(),
             surface: hit,
         });
     }

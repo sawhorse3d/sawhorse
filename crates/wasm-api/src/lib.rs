@@ -72,7 +72,26 @@ struct DocState<'a> {
     objects: Vec<u64>,
     sketches: Vec<SketchInfo>,
     groups: Vec<GroupInfo<'a>>,
+    guides: Vec<GuideInfo>,
+    dimensions: Vec<DimensionInfo>,
     tags: &'a std::collections::BTreeMap<String, bool>,
+}
+
+/// A guide: a line through `point` along `dir`, or a point (`dir` null).
+#[derive(Debug, serde::Serialize)]
+struct GuideInfo {
+    id: u64,
+    point: [f64; 3],
+    dir: Option<[f64; 3]>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DimensionInfo {
+    id: u64,
+    a: [f64; 3],
+    b: [f64; 3],
+    offset: [f64; 3],
+    length: f64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -179,6 +198,26 @@ impl DocCore {
                     id,
                     name: &g.name,
                     objects: &g.objects,
+                })
+                .collect(),
+            guides: m
+                .guides()
+                .into_iter()
+                .map(|(id, g)| GuideInfo {
+                    id,
+                    point: g.point.to_array(),
+                    dir: (g.dir != glam::DVec3::ZERO).then(|| g.dir.to_array()),
+                })
+                .collect(),
+            dimensions: m
+                .dimensions()
+                .into_iter()
+                .map(|(id, d)| DimensionInfo {
+                    id,
+                    a: d.a.to_array(),
+                    b: d.b.to_array(),
+                    offset: d.offset.to_array(),
+                    length: d.length(),
                 })
                 .collect(),
             tags: m.tags(),

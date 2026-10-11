@@ -24,6 +24,11 @@ export type KernelOp =
   | { op: "erase_face"; object: number; face: number }
   | { op: "erase_region"; sketch: number; region: number }
   | { op: "batch"; ops: KernelOp[] }
+  | { op: "add_guide"; point: [number, number, number]; dir: [number, number, number] | null }
+  | { op: "erase_guide"; guide: number }
+  | { op: "delete_guides" }
+  | { op: "add_dimension"; a: [number, number, number]; b: [number, number, number]; offset: [number, number, number] }
+  | { op: "erase_dimension"; dimension: number }
   | { op: "delete_object"; object: number }
   | { op: "create_group"; name: string; objects: number[] }
   | { op: "delete_group"; group: number }
@@ -43,6 +48,9 @@ export type OpOutcome =
   | { kind: "imprinted"; face: number }
   | { kind: "object_deleted" }
   | { kind: "faces_merged"; face: number }
+  | { kind: "guide_added"; guide: number }
+  | { kind: "dimension_added"; dimension: number }
+  | { kind: "annotation_erased" }
   | { kind: "drawn"; sketch: number | null; regions: number[]; faces: number[]; inside: number | null }
   | { kind: "batch"; outcomes: OpOutcome[] }
   | { kind: "group_created"; group: number }
@@ -82,6 +90,9 @@ export interface DocState {
   /** Every sketch with its plane frame (world <-> sketch coordinates). */
   sketches: SketchInfo[];
   groups: { id: number; name: string; objects: number[] }[];
+  /** Guide lines (dir set) and guide points (dir null). */
+  guides: { id: number; point: V3; dir: V3 | null }[];
+  dimensions: { id: number; a: V3; b: V3; offset: V3; length: number }[];
   tags: Record<string, boolean>;
 }
 
@@ -108,6 +119,7 @@ export type Entity =
   | { kind: "face"; object: number; face: number }
   | { kind: "region"; sketch: number; region: number }
   | { kind: "guide"; guide: number }
+  | { kind: "dimension"; dimension: number }
   | { kind: "object"; object: number };
 
 /** A plane frame (u x v = normal). */

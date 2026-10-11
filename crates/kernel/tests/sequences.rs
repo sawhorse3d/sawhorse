@@ -74,6 +74,11 @@ enum Fuzz {
     Push(u8, u8, f64),
     /// Push/pull leaving a seam (Ctrl).
     PushNew(u8, u8, f64),
+    /// Guides and dimensions (annotations): add, erase by pick, delete all.
+    Guide([f64; 3], Option<[f64; 3]>),
+    Dimension([f64; 3], [f64; 3]),
+    EraseGuide(u8),
+    EraseDimension(u8),
     Split {
         object: u8,
         face: u8,
@@ -156,6 +161,10 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => (0u64..4, 0u64..6, distance()).prop_map(|(sketch, region, distance)| Fuzz::Raw(Op::Extrude { sketch, region, distance })),
         1 => (0u64..4, 0u64..14, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Op::PushPull { object, face, distance })),
         2 => (any::<u8>(), any::<u8>(), distance()).prop_map(|(o, f, d)| Fuzz::PushNew(o, f, d)),
+        1 => ((grid(), grid(), grid()), prop::option::of(normal())).prop_map(|((x, y, z), d)| Fuzz::Guide([x, y, z], d)),
+        1 => ((grid(), grid(), grid()), (grid(), grid(), grid())).prop_map(|(a, b)| Fuzz::Dimension([a.0, a.1, a.2], [b.0, b.1, b.2])),
+        1 => any::<u8>().prop_map(Fuzz::EraseGuide),
+        1 => any::<u8>().prop_map(Fuzz::EraseDimension),
     ]
 }
 
@@ -240,6 +249,25 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 object: oid,
                 face,
                 distance: *distance,
+            }
+        }
+        Fuzz::Guide(p, d) => Op::AddGuide { point: *p, dir: *d },
+        Fuzz::Dimension(a, b) => Op::AddDimension {
+            a: *a,
+            b: *b,
+            offset: [0.0, 0.0, 0.1],
+        },
+        Fuzz::EraseGuide(k) => {
+            let ids: Vec<u64> = m.guides().iter().map(|(id, _)| *id).collect();
+            match pick(&ids, *k) {
+                Some(guide) => Op::EraseGuide { guide },
+                None => Op::DeleteGuides,
+            }
+        }
+        Fuzz::EraseDimension(k) => {
+            let ids: Vec<u64> = m.dimensions().iter().map(|(id, _)| *id).collect();
+            Op::EraseDimension {
+                dimension: pick(&ids, *k).unwrap_or(1),
             }
         }
         Fuzz::PushNew(o, k, distance) => {

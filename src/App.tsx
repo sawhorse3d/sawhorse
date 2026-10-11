@@ -20,6 +20,8 @@ import { PushTool } from "./tools/push";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
+import { DimensionTool, TapeTool } from "./tools/tape";
+import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
@@ -242,6 +244,8 @@ export function App() {
       ["rect", new RectTool(host)],
       ["circle", new CircleTool(host)],
       ["arc", new ArcTool(host)],
+      ["tape", new TapeTool(host)],
+      ["dim", new DimensionTool(host)],
       ["pushpull", new PushTool(host)],
     ]);
   }
@@ -517,6 +521,11 @@ export function App() {
   }, [selection, toolId, target]);
   const highlight = useMemo(() => highlightFor(highlightEntities, hover, scene?.mesh ?? null), [highlightEntities, hover, scene]);
 
+  // Guides and dimensions draw under the tool's own overlay.
+  const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);
+  const overlay = useMemo(() => [...annotations.overlay, ...toolView.overlay], [annotations, toolView.overlay]);
+  const labels = useMemo(() => [...annotations.labels, ...toolView.labels], [annotations, toolView.labels]);
+
   const menus = useMemo<Record<string, MenuItem[]>>(
     () => ({
       Edit: [
@@ -526,6 +535,7 @@ export function App() {
         { label: "Select All", keys: "Ctrl+A", onSelect: selectAll },
         { label: "Select None", keys: "Esc", onSelect: () => setSelection([]) },
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
+        { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
       ],
       View: [
         { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
@@ -535,7 +545,7 @@ export function App() {
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
       ],
     }),
-    [st?.can_undo, st?.can_redo, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -555,9 +565,9 @@ export function App() {
         kernel={kernelState}
         info={st ? { hash: st.stats.hash, watertight: st.stats.watertight, objects: st.stats.objects, canUndo: st.can_undo, canRedo: st.can_redo, volume: st.stats.volume_m3 } : undefined}
         highlight={highlight}
-        overlay={toolView.overlay}
+        overlay={overlay}
         marker={toolView.marker}
-        labels={toolView.labels}
+        labels={labels}
         box={toolView.box}
         cursor={toolView.cursor}
         selectionCount={selection.length}

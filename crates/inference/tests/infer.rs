@@ -493,3 +493,62 @@ fn an_edge_snap_names_the_face_beside_it_that_faces_the_eye() {
     // On the ground away from everything: none.
     assert!(run(&m, &down(3.0, 3.0, 0.001)).adjacent.is_none());
 }
+
+#[test]
+fn guides_snap_and_cross_edges() {
+    // A bookshelf side's inner face (x = 3/4 in) with a guide 21 1/2 in up across it:
+    // the guide meets the face's front edge (x = 3/4, y = 0) at an exact intersection.
+    let mut m = boxes(&[(0.0, 0.0, 0.75 * IN, 11.25 * IN, 72.0 * IN)]);
+    let z = 21.5 * IN;
+    m.apply(&Op::AddGuide {
+        point: [0.75 * IN, 0.0, z],
+        dir: Some([0.0, 1.0, 0.0]),
+    })
+    .unwrap();
+    m.apply(&Op::AddGuide {
+        point: [3.0, 3.0, 0.0],
+        dir: None,
+    })
+    .unwrap();
+    // Looking at the inner face from +x (Right view direction).
+    let side = |y: f64, zz: f64| InferQuery {
+        origin: [10.0, y, zz],
+        dir: [-1.0, 0.0, 0.0],
+        px: PixelModel {
+            ortho: true,
+            scale: 0.0005,
+            eye: [10.0, y, zz],
+            forward: [-1.0, 0.0, 0.0],
+        },
+        ..down(0.0, 0.0, 0.001)
+    };
+    let r = run(&m, &side(0.001, z + 0.001));
+    assert_eq!(r.kind, K::Intersection, "{r:?}");
+    assert!(close(r.point, [0.75 * IN, 0.0, z]), "{:?}", r.point);
+    let r = run(&m, &side(5.0 * IN, z + 0.002));
+    assert_eq!(r.kind, K::OnGuide);
+    assert!(close(r.point, [0.75 * IN, 5.0 * IN, z]));
+    // The guide point.
+    let r = run(&m, &down(3.003, 3.002, 0.001));
+    assert_eq!(r.kind, K::GuidePoint);
+    assert_eq!(r.point, [3.0, 3.0, 0.0]);
+    // Picking a guide gives the guide entity.
+    let p = sawhorse_inference::pick::pick(
+        &Scene::build(&m),
+        &sawhorse_inference::pick::PickQuery {
+            origin: [10.0, 5.0 * IN, z + 0.001],
+            dir: [-1.0, 0.0, 0.0],
+            px: side(0.0, 0.0).px,
+            point_px: 8.0,
+            edge_px: 5.0,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            p.entity,
+            sawhorse_inference::pick::Entity::Guide { guide: 1 }
+        ),
+        "{p:?}"
+    );
+}
