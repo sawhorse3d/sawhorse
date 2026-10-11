@@ -135,10 +135,18 @@ pub fn surface_hit(scene: &Scene, ray: &Ray) -> Option<SurfaceHit> {
 
 /// A candidate at ray parameter `t` is visible when no surface hit lies clearly in front of
 /// it (a couple of pixels of depth slack, so points on the hit surface itself count).
+///
+/// A candidate lying on the plane of the surface the ray hits is never hidden by it: seen
+/// obliquely, an edge of that very face can sit well behind the hit point along the ray
+/// (lane 3, found by hand: the inner bottom edge of a bookshelf side in the iso view).
 pub fn visible(px: &PixelModel, hit: Option<&SurfaceHit>, p: DVec3, t: f64) -> bool {
     match hit {
         None => true,
-        Some(h) => t <= h.t + 2.0 * px.at(p) + 1e-9,
+        Some(h) => {
+            let n = DVec3::from_array(h.frame.normal);
+            let o = DVec3::from_array(h.frame.origin);
+            (p - o).dot(n).abs() <= 1e-7 || t <= h.t + 2.0 * px.at(p) + 1e-9
+        }
     }
 }
 

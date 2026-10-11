@@ -552,3 +552,28 @@ fn guides_snap_and_cross_edges() {
         "{p:?}"
     );
 }
+
+#[test]
+fn an_edge_of_the_face_under_the_cursor_is_not_hidden_by_it_when_seen_obliquely() {
+    // A tall box seen from a steep angle: the cursor 4 px above the face's bottom edge hits
+    // the face at a point well in front of the edge along the ray. The edge still snaps.
+    let m = boxes(&[(0.0, 0.0, 1.0, 1.0, 2.0)]);
+    let dir = DVec3::new(0.3, 1.0, -1.0).normalize();
+    // Aim at the front face (y = 0) 6 mm above its bottom edge, steeply from above.
+    let target = DVec3::new(0.3, 0.0, 0.006);
+    let origin = target - dir * 10.0;
+    let q = InferQuery {
+        origin: origin.to_array(),
+        dir: dir.to_array(),
+        px: PixelModel {
+            ortho: true,
+            scale: 0.001,
+            eye: origin.to_array(),
+            forward: dir.to_array(),
+        },
+        ..down(0.0, 0.0, 0.001)
+    };
+    let r = run(&m, &q);
+    assert_eq!(r.kind, K::OnEdge, "{r:?}");
+    assert!(r.point[2].abs() < 1e-12);
+}

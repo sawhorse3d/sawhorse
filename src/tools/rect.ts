@@ -11,7 +11,7 @@ import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
 import { GROUND } from "../lib/edit";
-import { add, dist, horizontalAt, local, mul, rectangle, rotatedRectangle, rotatedWidth, sub, unit } from "./draw";
+import { add, dist, dot, horizontalAt, local, mul, onPlane, planeAt, planeFromSnap, rectangle, rotatedRectangle, rotatedWidth, sub, unit, type DrawPlane } from "./draw";
 import { StrokeTool, faceNote } from "./stroke";
 import { finalTarget } from "./target";
 import type { Snap, ToolEvent, ToolView } from "./tool";
@@ -25,6 +25,12 @@ export class RectTool extends StrokeTool {
   /** Rotated: the far end of the first edge, once clicked. */
   private edgeEnd: V3 | null = null;
   private snaps: Snap[] = [];
+  /**
+   * Started on a corner, an edge or the grid rather than inside a face: the plane follows
+   * the cursor (the face the cursor is on, if the corner is on it too; else the level or
+   * upright plane through the corner that the cursor's point lies on; else level).
+   */
+  private undecided = false;
 
   start(): V3 | null {
     return this.edgeEnd ?? this.anchor;
@@ -35,6 +41,40 @@ export class RectTool extends StrokeTool {
     this.anchor = null;
     this.edgeEnd = null;
     this.snaps = [];
+    this.undecided = false;
+  }
+
+  inferContext() {
+    const ctx = super.inferContext();
+    // While the plane is open, snap in 3D (the cursor may be choosing an upright plane).
+    if (this.undecided && !this.edgeEnd) ctx.plane = null;
+    return ctx;
+  }
+
+  /** The plane a rectangle started at the anchor takes for the cursor at `snap`. */
+  private resolvePlane(snap: Snap | null, ray: { origin: V3; dir: V3 }): { plane: DrawPlane; point: V3 | null } {
+    const a = this.anchor!;
+    const start = this.snaps[0];
+    if (snap) {
+      const p = snap.point;
+      // The face or region the cursor is on, when the corner lies on its plane too.
+      for (const s of [snap.surface, snap.adjacent]) {
+        if (s && onPlane(s.frame, a) && onPlane(s.frame, p)) return { plane: planeFromSnap({ ...snap, surface: s, kind: "on-face" }), point: p };
+      }
+      // The start's own face, when the cursor's point lies on it.
+      for (const s of [start?.surface, start?.adjacent]) {
+        if (s && onPlane(s.frame, p) && onPlane(s.frame, a)) return { plane: planeFromSnap({ ...start, surface: s, kind: "on-face" }), point: p };
+      }
+      // A level or upright plane through the corner that holds the cursor's point.
+      for (const n of [[0, 0, 1], [1, 0, 0], [0, 1, 0]] as V3[]) {
+        if (Math.abs(dot(sub(p, a), n)) <= 1e-7 && dist(p, a) > 1e-9) return { plane: n[2] ? horizontalAt(a) : planeAt(a, n), point: p };
+      }
+    }
+    // Otherwise level, where the eye ray meets it.
+    const plane = horizontalAt(a);
+    const den = ray.dir[2];
+    const t = Math.abs(den) > 1e-12 ? (a[2] - ray.origin[2]) / den : -1;
+    return { plane, point: t > 0 ? add(ray.origin, mul(ray.dir, t)) : null };
   }
 
   valueLabel(): string {
@@ -58,11 +98,27 @@ export class RectTool extends StrokeTool {
   onEvent(e: ToolEvent): void {
     if (e.type === "move" || e.type === "drag") {
       this.track(e);
+      if (this.anchor && this.undecided && !this.edgeEnd) {
+        const r = this.resolvePlane(e.snap, e.ray);
+        this.plane = r.plane;
+        this.cursor = r.point;
+      }
       this.liveValue();
       this.host.changed();
       return;
     }
-    if (e.type === "click" && e.snap) void this.click(e.snap);
+    if (e.type === "click" && e.snap) {
+      if (this.anchor && this.undecided && !this.edgeEnd) {
+        const r = this.resolvePlane(e.snap, e.ray);
+        this.plane = r.plane;
+        this.undecided = false;
+        if (r.point && !onPlane(r.plane.frame, e.snap.point)) {
+          void this.click({ ...e.snap, point: r.point, kind: "free", entity: null, surface: null, adjacent: null });
+          return;
+        }
+      }
+      void this.click(e.snap);
+    }
   }
 
   private liveValue(): void {
@@ -84,6 +140,9 @@ export class RectTool extends StrokeTool {
       this.plane = this.planeFor(snap);
       this.anchor = snap.point;
       this.snaps = [snap];
+      // Inside a face (or with an arrow-key plane) the plane is set; otherwise the cursor
+      // chooses it.
+      this.undecided = snap.kind !== "on-face" && this.prefer === "auto";
       h.status(
         `First corner set ${this.plane.where(h.fmt)}. ${this.variant === "rect" ? "Click the opposite corner, or type width, depth." : "Click the other end of the edge, or type its length."}`,
       );
