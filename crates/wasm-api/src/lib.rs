@@ -13,7 +13,7 @@
 //! const mesh = scene.get_mesh();                   // Float32Array / Uint32Array views
 //! ```
 
-use sawhorse_kernel::mesh::{RenderMesh, render_mesh};
+use sawhorse_kernel::mesh::{ViewMesh, view_mesh};
 use sawhorse_kernel::model::{Model, Op, OpOutcome};
 use wasm_bindgen::prelude::*;
 
@@ -96,8 +96,8 @@ impl SceneCore {
         serde_json::to_string(&out).map_err(|e| e.to_string())
     }
 
-    pub fn mesh(&self) -> Result<RenderMesh, String> {
-        render_mesh(&self.model).map_err(|e| e.to_string())
+    pub fn mesh(&self) -> Result<ViewMesh, String> {
+        view_mesh(&self.model).map_err(|e| e.to_string())
     }
 
     pub fn stats_json(&self) -> String {
@@ -206,7 +206,7 @@ impl Scene {
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct Mesh {
-    inner: RenderMesh,
+    inner: ViewMesh,
 }
 
 #[wasm_bindgen]

@@ -12,9 +12,9 @@
 use glam::{DVec2, DVec3};
 use slotmap::SlotMap;
 
-use crate::error::{KernelError, PushPullError, StickyError};
+use crate::error::{KernelError, PushError, SketchError};
 use crate::ids::{ObjectId, SketchId};
-use crate::object::{Object, Provenance, PushPullOutcome};
+use crate::object::{Object, Provenance, PushOutcome};
 use crate::plane::Plane;
 use crate::sketch::Sketch;
 use crate::validate::{TopologyError, Violation};
@@ -148,7 +148,7 @@ impl Model {
         match *op {
             Op::NewSketch { origin, normal } => {
                 let plane = Plane::new(DVec3::from_array(origin), DVec3::from_array(normal))
-                    .map_err(StickyError::from)?;
+                    .map_err(SketchError::from)?;
                 let id = self.sketches.insert(Sketch::new(plane));
                 self.sketch_order.push(id);
                 Ok(OpOutcome::SketchCreated(
@@ -159,7 +159,7 @@ impl Model {
                 let sid = *self
                     .sketch_order
                     .get(sketch as usize)
-                    .ok_or(StickyError::NoSuchSketch(sketch))?;
+                    .ok_or(SketchError::NoSuchSketch(sketch))?;
                 let r = self.sketches[sid].add_rectangle(DVec2::new(x, y), DVec2::new(w, h))?;
                 Ok(OpOutcome::RegionAdded(r as u32))
             }
@@ -171,15 +171,15 @@ impl Model {
                 let sid = *self
                     .sketch_order
                     .get(sketch as usize)
-                    .ok_or(StickyError::NoSuchSketch(sketch))?;
+                    .ok_or(SketchError::NoSuchSketch(sketch))?;
                 let s = &self.sketches[sid];
                 let r = s
                     .regions()
                     .get(region as usize)
-                    .ok_or(StickyError::NoSuchRegion(region))?
+                    .ok_or(SketchError::NoSuchRegion(region))?
                     .clone();
                 if s.is_consumed(&r) {
-                    return Err(StickyError::RegionConsumed(region).into());
+                    return Err(SketchError::RegionConsumed(region).into());
                 }
                 let (outer, holes) = s.region_rings(&r);
                 let mut obj = Object::extrude(s.plane(), &outer, &holes, distance)?;
@@ -202,15 +202,15 @@ impl Model {
                 let oid = *self
                     .object_order
                     .get(object as usize)
-                    .ok_or(PushPullError::NoSuchObject(object))?;
+                    .ok_or(PushError::NoSuchObject(object))?;
                 let o = &mut self.objects[oid];
                 let fid = *o
                     .face_ids()
                     .get(face as usize)
-                    .ok_or(PushPullError::NoSuchFace(face))?;
+                    .ok_or(PushError::NoSuchFace(face))?;
                 match o.push_pull(fid, distance)? {
-                    PushPullOutcome::Moved => Ok(OpOutcome::FaceMoved),
-                    PushPullOutcome::Collapsed => {
+                    PushOutcome::Moved => Ok(OpOutcome::FaceMoved),
+                    PushOutcome::Collapsed => {
                         let removed = self.objects.remove(oid).expect("object exists");
                         self.object_order.retain(|&k| k != oid);
                         if let Some(src) = removed.source

@@ -29,7 +29,7 @@ pub mod testing;
 pub mod tolerance;
 pub mod validate;
 
-pub use error::{BuildError, KernelError, PushPullError, StickyError};
+pub use error::{BuildError, KernelError, PushError, SketchError};
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};
 

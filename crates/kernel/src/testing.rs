@@ -14,7 +14,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::mesh::render_mesh;
+use crate::mesh::view_mesh;
 use crate::model::{Model, Op};
 
 /// What a clean run looked like (for fuzzer statistics).
@@ -47,7 +47,7 @@ pub fn check_model(m: &Model) -> Result<(), String> {
             return Err(format!("object {i} has non-positive volume {v}"));
         }
     }
-    let mesh = render_mesh(m).map_err(|e| format!("render mesh: {e}"))?;
+    let mesh = view_mesh(m).map_err(|e| format!("view mesh: {e}"))?;
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {
         return Err("render mesh index/face-id mismatch".into());
     }

@@ -8,7 +8,7 @@
 //! Lane 1 implements only `add_rectangle` (needed for the extrude spike): corners merge
 //! with existing vertices within POINT_MERGE and an edge that already exists is reused,
 //! but an edit whose edges would touch or cross existing edges anywhere else is refused
-//! with [`StickyError::IntersectionUnsupported`]. Splitting at T-junctions and crossings,
+//! with [`SketchError::IntersectionUnsupported`]. Splitting at T-junctions and crossings,
 //! and collinear-overlap normalisation, arrive with the draw-tools lane.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::DVec2;
 use slotmap::SlotMap;
 
-use crate::error::StickyError;
+use crate::error::SketchError;
 use crate::ids::{SEdgeId, SVertexId};
 use crate::plane::Plane;
 use crate::tolerance::{AREA_EPS, POINT_MERGE, in_bounds};
@@ -131,7 +131,7 @@ impl Sketch {
 
     /// Add an axis-aligned rectangle (in the plane's u/v frame) with one corner at
     /// `corner` and signed `size`. Returns the index of the rectangle's region.
-    pub fn add_rectangle(&mut self, corner: DVec2, size: DVec2) -> Result<usize, StickyError> {
+    pub fn add_rectangle(&mut self, corner: DVec2, size: DVec2) -> Result<usize, SketchError> {
         if ![
             corner.x,
             corner.y,
@@ -143,10 +143,10 @@ impl Sketch {
         .iter()
         .all(|&c| in_bounds(c))
         {
-            return Err(StickyError::OutOfBounds);
+            return Err(SketchError::OutOfBounds);
         }
         if size.x.abs() <= POINT_MERGE || size.y.abs() <= POINT_MERGE {
-            return Err(StickyError::Degenerate);
+            return Err(SketchError::Degenerate);
         }
         let (x0, x1) = (
             corner.x.min(corner.x + size.x),
@@ -177,7 +177,7 @@ impl Sketch {
                     point_segment_distance(*c, self.vertices[*a], self.vertices[*b]) <= POINT_MERGE
                 })
             {
-                return Err(StickyError::IntersectionUnsupported);
+                return Err(SketchError::IntersectionUnsupported);
             }
         }
         let pos = |i: usize| plan[i].map_or(corners[i], |v| self.vertices[v]);
@@ -195,7 +195,7 @@ impl Sketch {
             for [a, b] in self.edges.values() {
                 let (pa, pb) = (self.vertices[*a], self.vertices[*b]);
                 if proper_cross(p, q, pa, pb) {
-                    return Err(StickyError::IntersectionUnsupported);
+                    return Err(SketchError::IntersectionUnsupported);
                 }
                 let new_ids = [plan[i], plan[j]];
                 // An existing vertex on the new edge (T-junction or collinear overlap)...
@@ -203,14 +203,14 @@ impl Sketch {
                     if !new_ids.contains(&Some(x))
                         && point_segment_distance(px, p, q) <= POINT_MERGE
                     {
-                        return Err(StickyError::IntersectionUnsupported);
+                        return Err(SketchError::IntersectionUnsupported);
                     }
                 }
                 // ...or a new endpoint on the existing edge.
                 for (id, pt) in [(plan[i], p), (plan[j], q)] {
                     let shared = id.is_some_and(|v| v == *a || v == *b);
                     if !shared && point_segment_distance(pt, pa, pb) <= POINT_MERGE {
-                        return Err(StickyError::IntersectionUnsupported);
+                        return Err(SketchError::IntersectionUnsupported);
                     }
                 }
             }
@@ -235,7 +235,7 @@ impl Sketch {
         // Consumed regions must survive unchanged (the solid was made from them).
         for (key, before) in &next.consumed {
             if !next.regions.iter().any(|r| &r.key() == key && r == before) {
-                return Err(StickyError::EditsConsumedRegion);
+                return Err(SketchError::EditsConsumedRegion);
             }
         }
         let key = canonical(&ids);
@@ -243,7 +243,7 @@ impl Sketch {
             .regions
             .iter()
             .position(|r| r.key() == key)
-            .ok_or(StickyError::IntersectionUnsupported)?;
+            .ok_or(SketchError::IntersectionUnsupported)?;
         #[cfg(debug_assertions)]
         if let Err(e) = next.check() {
             panic!("sketch invalid after add_rectangle: {e}");
@@ -475,29 +475,29 @@ mod tests {
         // Crossing.
         assert_eq!(
             s.add_rectangle(DVec2::ONE, DVec2::splat(2.0)),
-            Err(StickyError::IntersectionUnsupported)
+            Err(SketchError::IntersectionUnsupported)
         );
         // T-junction: corner on an existing edge.
         assert_eq!(
             s.add_rectangle(DVec2::new(2.0, 0.5), DVec2::ONE),
-            Err(StickyError::IntersectionUnsupported)
+            Err(SketchError::IntersectionUnsupported)
         );
         // Collinear overlap along a shared vertex.
         assert_eq!(
             s.add_rectangle(DVec2::ZERO, DVec2::new(1.0, -1.0)),
-            Err(StickyError::IntersectionUnsupported)
+            Err(SketchError::IntersectionUnsupported)
         );
         assert_eq!(
             s.add_rectangle(DVec2::ZERO, DVec2::new(0.0, 1.0)),
-            Err(StickyError::Degenerate)
+            Err(SketchError::Degenerate)
         );
         assert_eq!(
             s.add_rectangle(DVec2::ZERO, DVec2::new(f64::NAN, 1.0)),
-            Err(StickyError::OutOfBounds)
+            Err(SketchError::OutOfBounds)
         );
         assert_eq!(
             s.add_rectangle(DVec2::ZERO, DVec2::new(1e5, 1.0)),
-            Err(StickyError::OutOfBounds)
+            Err(SketchError::OutOfBounds)
         );
         assert_eq!(s.regions().len(), 1, "refusals do not touch the sketch");
     }

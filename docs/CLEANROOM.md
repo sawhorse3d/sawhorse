@@ -34,3 +34,8 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Evidence:** lane-1 verifier (2026-10-11) ran an overlap check without reading the Hew text: 8 of 1,221 long lines identical, all generic idioms (SlotMap field declarations, a clamp-projection formula, union-find setup); best sequence-similarity cluster 0.12; max 10.5% of any file's lines also present in some Hew file. `git grep -i 'hew3d\|hew\|openskp'` hits only these docs.
 - **Naming proximity:** `PushPullError`, `StickyError`, `RenderMesh`, `loop_half_edges` exist in both codebases. Not protectable, but lane 2 renames them to Sawhorse-specific names to remove any doubt.
 - **Remediation:** the scratchpad clone and the extracted architecture note were deleted on 2026-10-11 before lane 2. Rule from here: no agent clones or reads Hew source; Hew's published docs may be cited by URL only, and every citation is logged here in the same commit as the code it influenced.
+
+### 2026-10-11 — lane 2: naming-proximity renames done
+- **Who:** the lane-2 builder (Claude, Opus), kernel-core lane.
+- **What changed:** `PushPullError` -> `PushError`, `StickyError` -> `SketchError`, `RenderMesh` -> `ViewMesh`, `loop_half_edges` -> `half_edges_of_loop`; for consistency also `PushPullOutcome` -> `PushOutcome`, `render_mesh` -> `view_mesh`, and the `KernelError` variants `Sticky`/`PushPull` -> `Sketch`/`Push`. `git grep -E 'PushPullError|StickyError|RenderMesh|loop_half_edges'` now matches only this log.
+- **Read:** nothing from hew3d/hew or hew3d/openskp (source, docs or issues) was opened for the rename or for any lane-2 work.

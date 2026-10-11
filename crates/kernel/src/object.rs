@@ -18,7 +18,7 @@ use sawhorse_tessellate::{TessellateError, signed_area, triangulate};
 
 use crate::boolean::TriSolid;
 use crate::brep::{Brep, PolyFace};
-use crate::error::PushPullError;
+use crate::error::PushError;
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
 use crate::sketch::RegionKey;
@@ -42,7 +42,7 @@ pub struct Object {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PushPullOutcome {
+pub enum PushOutcome {
     /// The face moved; topology unchanged.
     Moved,
     /// The face met the opposite face: the solid has zero volume and should be removed.
@@ -60,12 +60,12 @@ impl Object {
         outer: &[DVec2],
         holes: &[Vec<DVec2>],
         distance: f64,
-    ) -> Result<Object, PushPullError> {
+    ) -> Result<Object, PushError> {
         if !in_bounds(distance) {
-            return Err(PushPullError::OutOfBounds);
+            return Err(PushError::OutOfBounds);
         }
         if distance.abs() < MIN_EXTRUDE {
-            return Err(PushPullError::ZeroDistance);
+            return Err(PushError::ZeroDistance);
         }
         // Normalise winding: outer counter-clockwise, holes clockwise.
         let mut rings: Vec<Vec<DVec2>> = Vec::with_capacity(1 + holes.len());
@@ -100,7 +100,7 @@ impl Object {
             .iter()
             .any(|p| !in_bounds(p.x) || !in_bounds(p.y) || !in_bounds(p.z))
         {
-            return Err(PushPullError::OutOfBounds);
+            return Err(PushError::OutOfBounds);
         }
 
         let rev = |r: &Vec<usize>| r.iter().rev().copied().collect::<Vec<_>>();
@@ -180,19 +180,15 @@ impl Object {
     }
 
     /// Push/pull an existing face by `distance` along its outward normal ("extend" branch).
-    pub fn push_pull(
-        &mut self,
-        face: FaceId,
-        distance: f64,
-    ) -> Result<PushPullOutcome, PushPullError> {
+    pub fn push_pull(&mut self, face: FaceId, distance: f64) -> Result<PushOutcome, PushError> {
         if !in_bounds(distance) {
-            return Err(PushPullError::OutOfBounds);
+            return Err(PushError::OutOfBounds);
         }
         if distance.abs() < MIN_EXTRUDE {
-            return Err(PushPullError::ZeroDistance);
+            return Err(PushError::ZeroDistance);
         }
         let b = &self.brep;
-        let f = b.face(face).ok_or(PushPullError::NoSuchFace(u32::MAX))?;
+        let f = b.face(face).ok_or(PushError::NoSuchFace(u32::MAX))?;
         let n = f.plane.normal;
         let moved: BTreeSet<VertexId> = b.face_vertices(face);
 
@@ -200,7 +196,7 @@ impl Object {
         for &v in &moved {
             for g in b.faces_around_vertex(v) {
                 if g != face && b.faces[g].plane.normal.dot(n).abs() > PARALLEL_EPS.sqrt() {
-                    return Err(PushPullError::Unsupported(
+                    return Err(PushError::Unsupported(
                         "a neighbouring face is not parallel to the push",
                     ));
                 }
@@ -226,27 +222,27 @@ impl Object {
             } else if along >= 1.0 - PARALLEL_EPS.sqrt() {
                 -1.0
             } else {
-                return Err(PushPullError::Unsupported(
+                return Err(PushError::Unsupported(
                     "an edge leaving the face is not parallel to the push",
                 ));
             };
             rails.push((len, sign));
         }
         if rails.is_empty() {
-            return Err(PushPullError::Unsupported(
+            return Err(PushError::Unsupported(
                 "the face has no edges running back from it",
             ));
         }
         let new_lengths: Vec<f64> = rails.iter().map(|(l, s)| l + s * distance).collect();
         if new_lengths.iter().any(|&l| l < -POINT_MERGE) {
-            return Err(PushPullError::ThroughOppositeFace);
+            return Err(PushError::ThroughOppositeFace);
         }
         let collapsing = new_lengths.iter().filter(|&&l| l <= POINT_MERGE).count();
         if collapsing == new_lengths.len() && rails.iter().all(|(_, s)| *s > 0.0) {
-            return Ok(PushPullOutcome::Collapsed);
+            return Ok(PushOutcome::Collapsed);
         }
         if collapsing > 0 {
-            return Err(PushPullError::WouldCollapseEdge);
+            return Err(PushError::WouldCollapseEdge);
         }
         // The moved face must not pass through another part of this solid: every face that
         // changes shape keeps simple, properly nested rings (enough for prisms; general solids
@@ -268,7 +264,7 @@ impl Object {
             let fg = &b.faces[g];
             let pts: Vec<DVec3> = b.loop_vertices(fg.outer).into_iter().map(pos).collect();
             let Ok(plane) = Plane::fit(&pts) else {
-                return Err(PushPullError::WouldCollapseEdge);
+                return Err(PushError::WouldCollapseEdge);
             };
             let rings: Vec<Vec<DVec2>> = fg
                 .loops()
@@ -280,13 +276,13 @@ impl Object {
                 })
                 .collect();
             if rings_cross(&rings) || holes_contained(&rings).is_err() {
-                return Err(PushPullError::Unsupported(
+                return Err(PushError::Unsupported(
                     "the face would pass through another part of the solid",
                 ));
             }
         }
         self.brep.translate_vertices(&moved, n * distance);
-        Ok(PushPullOutcome::Moved)
+        Ok(PushOutcome::Moved)
     }
 
     /// Indexed triangle solid (shared vertices in slotmap order, face ordinal per triangle),
@@ -415,23 +411,20 @@ mod tests {
         let mut o = Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1.0).unwrap();
         let before = o.clone();
         let cap = o.face_ids()[1];
-        assert_eq!(o.push_pull(cap, 0.25).unwrap(), PushPullOutcome::Moved);
+        assert_eq!(o.push_pull(cap, 0.25).unwrap(), PushOutcome::Moved);
         assert!((o.volume() - 1.25).abs() < 1e-9);
-        assert_eq!(o.push_pull(cap, -0.25).unwrap(), PushPullOutcome::Moved);
+        assert_eq!(o.push_pull(cap, -0.25).unwrap(), PushOutcome::Moved);
         assert!(o.same_shape(&before, 1e-12));
-        assert_eq!(o.push_pull(cap, -1.0).unwrap(), PushPullOutcome::Collapsed);
-        assert_eq!(
-            o.push_pull(cap, -1.5),
-            Err(PushPullError::ThroughOppositeFace)
-        );
-        assert_eq!(o.push_pull(cap, 0.0), Err(PushPullError::ZeroDistance));
+        assert_eq!(o.push_pull(cap, -1.0).unwrap(), PushOutcome::Collapsed);
+        assert_eq!(o.push_pull(cap, -1.5), Err(PushError::ThroughOppositeFace));
+        assert_eq!(o.push_pull(cap, 0.0), Err(PushError::ZeroDistance));
     }
 
     #[test]
     fn push_pull_side_wall_also_extends() {
         let mut o = Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1.0).unwrap();
         let side = o.face_ids()[2];
-        assert_eq!(o.push_pull(side, 0.5).unwrap(), PushPullOutcome::Moved);
+        assert_eq!(o.push_pull(side, 0.5).unwrap(), PushOutcome::Moved);
         assert!((o.volume() - 1.5).abs() < 1e-9);
         o.validate().unwrap();
     }
@@ -455,20 +448,14 @@ mod tests {
                 p.normal.x > 0.5 && (p.origin.x - 1.0).abs() < 1e-9
             })
             .unwrap();
-        assert_eq!(o.push_pull(wall, 0.5).unwrap(), PushPullOutcome::Moved);
+        assert_eq!(o.push_pull(wall, 0.5).unwrap(), PushOutcome::Moved);
         assert!((o.volume() - 13.0).abs() < 1e-9);
-        assert_eq!(
-            o.push_pull(wall, 1.5),
-            Err(PushPullError::WouldCollapseEdge)
-        );
-        assert_eq!(
-            o.push_pull(wall, 3.0),
-            Err(PushPullError::ThroughOppositeFace)
-        );
+        assert_eq!(o.push_pull(wall, 1.5), Err(PushError::WouldCollapseEdge));
+        assert_eq!(o.push_pull(wall, 3.0), Err(PushError::ThroughOppositeFace));
         // Pushing the hole wall back through the outer wall would leave the hole outside.
         assert!(matches!(
             o.push_pull(wall, -2.0),
-            Err(PushPullError::Unsupported(_))
+            Err(PushError::Unsupported(_))
         ));
         // Pushing the outer wall in through the hole, likewise.
         let outer_wall = o
@@ -478,7 +465,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             o.push_pull(outer_wall, -2.0),
-            Err(PushPullError::Unsupported(_))
+            Err(PushError::Unsupported(_))
         ));
         o.validate().unwrap();
     }
@@ -487,11 +474,11 @@ mod tests {
     fn typed_refusals() {
         assert_eq!(
             Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1e-7).unwrap_err(),
-            PushPullError::ZeroDistance
+            PushError::ZeroDistance
         );
         assert_eq!(
             Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], f64::INFINITY).unwrap_err(),
-            PushPullError::OutOfBounds
+            PushError::OutOfBounds
         );
     }
 }

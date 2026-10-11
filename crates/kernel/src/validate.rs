@@ -353,7 +353,7 @@ pub fn validate(b: &Brep) -> Result<TopologyReport, TopologyError> {
         }
     }
     // Every half-edge must be reachable from its loop's `first` (no orphan cycles).
-    let reachable: usize = b.loops.keys().map(|l| b.loop_half_edges(l).len()).sum();
+    let reachable: usize = b.loops.keys().map(|l| b.half_edges_of_loop(l).len()).sum();
     if reachable != b.half_edges.len() {
         v.push(Violation::DanglingKey(
             "half-edge not reachable from its loop",
@@ -444,7 +444,7 @@ pub fn validate(b: &Brep) -> Result<TopologyReport, TopologyError> {
         let f = &b.faces[fid];
         entry.3 += f.holes.len();
         for l in f.loops() {
-            for he in b.loop_half_edges(l) {
+            for he in b.half_edges_of_loop(l) {
                 let h = &b.half_edges[he];
                 entry.1.insert(h.edge);
                 entry.2.insert(h.origin);

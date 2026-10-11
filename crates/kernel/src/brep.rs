@@ -239,7 +239,7 @@ impl Brep {
 
     /// Half-edges of a loop in order. Stops after `half_edge_count` steps, so a corrupt
     /// (non-closing) loop cannot hang; the validator reports it.
-    pub fn loop_half_edges(&self, lp: LoopId) -> Vec<HalfEdgeId> {
+    pub fn half_edges_of_loop(&self, lp: LoopId) -> Vec<HalfEdgeId> {
         let mut out = Vec::new();
         let Some(l) = self.loops.get(lp) else {
             return out;
@@ -259,7 +259,7 @@ impl Brep {
     }
 
     pub fn loop_vertices(&self, lp: LoopId) -> Vec<VertexId> {
-        self.loop_half_edges(lp)
+        self.half_edges_of_loop(lp)
             .into_iter()
             .map(|h| self.half_edges[h].origin)
             .collect()

@@ -26,7 +26,7 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 - Picking/inference: own BVH over faces-with-holes, edges and vertices with pixel-to-world tolerance (or `parry3d-f64` partitioning::Bvh); `rstar` for snap candidates. three.js raycasting is only for coarse hover.
 - Export: STL hand-written (binary, Z-up, mm, gated on watertight); 3MF via `threemf`; GLB hand-written (Y-up, metres); DXF hand-written ASCII (3DFACE + LINE); SVG line drawings. Import: skp (OpenSKP TS in the webview), dxf, stl, obj, gltf/glb, 3mf, svg.
 - Do NOT use: truck/shapeops, csgrs, opencascade-rs, baby_shark, earcutr, lyon, the `bvh` crate (nalgebra + rayon defaults).
-- Robustness machinery FIRST: topology validator after every mutation (debug) and validate-on-clone before commit (release); transactional apply (clone -> mutate -> validate -> commit); typed errors (StickyError, PushPullError, BooleanError); proptest invariants (extrude => watertight; push/pull then inverse restores topology; split then merge is identity); op-sequence fuzzer writing `tests/repro/*.json` on failure; deterministic replay with golden hashes.
+- Robustness machinery FIRST: topology validator after every mutation (debug) and validate-on-clone before commit (release); transactional apply (clone -> mutate -> validate -> commit); typed errors (SketchError, PushError, BooleanError); proptest invariants (extrude => watertight; push/pull then inverse restores topology; split then merge is identity); op-sequence fuzzer writing `tests/repro/*.json` on failure; deterministic replay with golden hashes.
 - Run the kernel in a Web Worker; Manifold WASM is single-threaded.
 - Day-1 spike: compile the candidate crate set to wasm32-unknown-unknown before any tool work.
 
@@ -52,7 +52,7 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 
 ### Deliberate gaps (owned by later lanes)
 
-- Sketch insertion refuses (typed `StickyError::IntersectionUnsupported`) instead of splitting at T-junctions and crossings and normalising collinear overlaps: draw-tools lane.
+- Sketch insertion refuses (typed `SketchError::IntersectionUnsupported`) instead of splitting at T-junctions and crossings and normalising collinear overlaps: draw-tools lane.
 - Push/pull refuses (typed) when a neighbouring face is not parallel to the push, when edges would collapse, or when the face would pass through the opposite face or another part of the solid: push/pull lane (side-wall creation and the boolean path).
 - `split_face`, `imprint`, coplanar merge, re-polygonising boolean output, differential tests against manifold-csg, the `i_triangle` fallback, BVH/rstar inference, offsets: their lanes.
 - The kernel runs in a Web Worker today but rebuilds the spike scene per request; a persistent worker-side document with undo arrives with the tools.

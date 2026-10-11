@@ -7,7 +7,7 @@ use sawhorse_tessellate::TessellateError;
 
 /// Errors from the sticky (sketch) tier.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum StickyError {
+pub enum SketchError {
     #[error("no sketch #{0}")]
     NoSuchSketch(u32),
     #[error("no region #{0} in this sketch")]
@@ -45,7 +45,7 @@ pub enum BuildError {
 
 /// Errors from push/pull (which includes extruding a sketch region).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum PushPullError {
+pub enum PushError {
     #[error("distance must be at least 0.01 mm")]
     ZeroDistance,
     #[error("distance is not finite or is beyond 10 km")]
@@ -67,9 +67,9 @@ pub enum PushPullError {
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
-    Sticky(#[from] StickyError),
+    Sketch(#[from] SketchError),
     #[error(transparent)]
-    PushPull(#[from] PushPullError),
+    Push(#[from] PushError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]

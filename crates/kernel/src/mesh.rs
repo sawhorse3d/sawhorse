@@ -1,4 +1,4 @@
-//! Render mesh for the viewport: flat-shaded (vertices not shared between faces), f32
+//! View mesh for the viewport: flat-shaded (vertices not shared between faces), f32
 //! positions in metres, one face id per triangle, plus edge segments for line drawing.
 
 use glam::{DVec2, DVec3};
@@ -7,7 +7,7 @@ use sawhorse_tessellate::{TessellateError, triangulate};
 use crate::model::Model;
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct RenderMesh {
+pub struct ViewMesh {
     /// xyz per render vertex.
     pub positions: Vec<f32>,
     /// Three per triangle.
@@ -19,7 +19,7 @@ pub struct RenderMesh {
     pub edges: Vec<f32>,
 }
 
-impl RenderMesh {
+impl ViewMesh {
     fn push_face(
         &mut self,
         face_id: u32,
@@ -54,8 +54,8 @@ impl RenderMesh {
     }
 }
 
-pub fn render_mesh(model: &Model) -> Result<RenderMesh, TessellateError> {
-    let mut m = RenderMesh::default();
+pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
+    let mut m = ViewMesh::default();
     let mut face_id = 0u32;
     for o in model.objects() {
         let b = o.brep();
