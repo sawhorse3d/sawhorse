@@ -46,15 +46,34 @@ pub enum Violation {
     NonFiniteVertex(VertexId),
     ZeroLengthEdge(EdgeId),
     DuplicateDirectedEdge(HalfEdgeId),
-    NonPlanar { face: FaceId, deviation: f64 },
+    NonPlanar {
+        face: FaceId,
+        deviation: f64,
+    },
     OuterLoopWinding(FaceId),
-    HoleWinding { face: FaceId, hole: LoopId },
-    HoleOutsideOuter { face: FaceId, hole: LoopId },
-    NestedHoles { face: FaceId },
+    HoleWinding {
+        face: FaceId,
+        hole: LoopId,
+    },
+    HoleOutsideOuter {
+        face: FaceId,
+        hole: LoopId,
+    },
+    NestedHoles {
+        face: FaceId,
+    },
     SelfIntersectingFace(FaceId),
+    /// The solid's boundary crosses or touches itself away from shared edges/vertices.
+    SelfIntersectingSolid(crate::intersect::SelfHit),
     SketchInvalid(String),
-    EulerOdd { shell: usize, chi: i64 },
-    EulerTooLarge { shell: usize, chi: i64 },
+    EulerOdd {
+        shell: usize,
+        chi: i64,
+    },
+    EulerTooLarge {
+        shell: usize,
+        chi: i64,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]

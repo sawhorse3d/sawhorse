@@ -1,0 +1,81 @@
+{
+  "name": "push_tilted_boolean",
+  "description": "Lane 2: a box on a tilted plane, imprint on a side wall, pull it out, then push the boss through the whole box (boolean path, re-polygonised, off-axis).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.3,
+        -0.2,
+        0.1
+      ],
+      "normal": [
+        0.3,
+        -0.5,
+        0.8
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": -0.5,
+      "y": -0.25,
+      "w": 1.2,
+      "h": 0.8
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.6
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 2,
+      "points": [
+        [
+          0.3384430671073486,
+          -0.5361828669383619,
+          0.09820819407203048
+        ],
+        [
+          0.7500396714493698,
+          -0.28922490433314924,
+          0.09820819407203048
+        ],
+        [
+          0.822770654657129,
+          -0.4104432096794145,
+          0.29215748262605495
+        ],
+        [
+          0.4111740503151078,
+          -0.6574011722846272,
+          0.29215748262605495
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": 0.2
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -1.5
+    }
+  ],
+  "hash": "63c6ec1453ddba02",
+  "stats": {
+    "objects": 1,
+    "faces": 10,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 1,
+    "watertight": true
+  }
+}

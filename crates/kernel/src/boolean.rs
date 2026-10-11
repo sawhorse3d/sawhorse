@@ -1,13 +1,23 @@
 //! 3D booleans behind our own trait (ADR-0001).
 //!
 //! The engine sees triangle solids with a per-triangle face id; the kernel triangulates
-//! operand faces with `sawhorse-tessellate`, runs the engine, groups output triangles by
-//! inherited face id, and re-polygonises (that last part lands with the push/pull lane).
-//! Today: the trait, the Manifold adapter, and its round-trip tests.
+//! operand faces with `sawhorse-tessellate` ([`polys_tri_solid`]), runs the engine, groups
+//! output triangles by inherited face id, and re-polygonises them into n-gons with holes,
+//! re-fitted planes, coplanar faces merged except across user-drawn edges
+//! ([`repolygonise`]); [`combine`] is the whole round trip. Callers validate and commit.
 
-use glam::DVec3;
+use std::collections::{BTreeMap, BTreeSet};
+
+use glam::{DVec2, DVec3};
+use sawhorse_tessellate::{signed_area, triangulate};
+
+use crate::brep::{PolyFace, Polys};
+use crate::faceops::heal_vertices;
+use crate::plane::Plane;
+use crate::tolerance::{AREA_EPS, PLANARITY, POINT_MERGE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BoolOp {
     Union,
     Difference,
@@ -48,6 +58,13 @@ pub enum BooleanError {
     Engine(String),
     #[error("no boolean engine is compiled in (enable the `manifold` feature)")]
     Unavailable,
+    /// The engine's result could not be turned back into valid n-gon faces (a pinched
+    /// face, a sliver). The operation is refused; nothing changed.
+    #[error("the result has degenerate geometry: {0}")]
+    Degenerate(String),
+    /// The re-polygonised result failed validation (e.g. two shells touching).
+    #[error("the result is not a valid solid: {0}")]
+    InvalidResult(String),
 }
 
 pub trait BooleanEngine {
@@ -115,6 +132,305 @@ mod manifold_adapter {
             })
         }
     }
+}
+
+// ---- the kernel side of a boolean: triangulate, run, re-polygonise --------------------
+
+/// The engine compiled into this build (Manifold), or [`BooleanError::Unavailable`].
+pub fn default_engine() -> Result<Box<dyn BooleanEngine>, BooleanError> {
+    #[cfg(feature = "manifold")]
+    {
+        Ok(Box::new(ManifoldEngine))
+    }
+    #[cfg(not(feature = "manifold"))]
+    {
+        Err(BooleanError::Unavailable)
+    }
+}
+
+/// Triangle solid of a polygon B-rep: shared vertices in point order, one face id per
+/// triangle (`base` + face index). Every point on a face boundary is used by that face's
+/// triangles (no T-junctions), so a closed `Polys` gives a manifold mesh.
+pub fn polys_tri_solid(p: &Polys, base: u32) -> Result<TriSolid, BooleanError> {
+    let mut triangles = Vec::new();
+    let mut face_ids = Vec::new();
+    for (fi, f) in p.faces.iter().enumerate() {
+        let plane = p
+            .plane(fi)
+            .ok_or_else(|| BooleanError::Degenerate(format!("face {fi} has no plane")))?;
+        let flat: Vec<usize> = f.rings().flatten().copied().collect();
+        let ring2 = |r: &Vec<usize>| {
+            r.iter()
+                .map(|&i| plane.to_local(p.points[i]))
+                .collect::<Vec<_>>()
+        };
+        let holes: Vec<Vec<DVec2>> = f.holes.iter().map(ring2).collect();
+        let tris = triangulate(&ring2(&f.outer), &holes)
+            .map_err(|e| BooleanError::Degenerate(format!("face {fi}: {e}")))?;
+        for t in tris {
+            triangles.push(t.map(|k| flat[k as usize] as u32));
+            face_ids.push(base + fi as u32);
+        }
+    }
+    Ok(TriSolid {
+        positions: p.points.clone(),
+        triangles,
+        face_ids,
+    })
+}
+
+fn find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+fn segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
+    let ab = b - a;
+    let len2 = ab.length_squared();
+    if len2 == 0.0 {
+        return p.distance(a);
+    }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// An engine result back to n-gons with holes (ADR-0001).
+///
+/// Triangles are grouped by inherited face id; triangles of different source faces are
+/// grouped too when the faces are coplanar and their shared edge does not lie on a
+/// user-drawn source edge (`preserved`). Each edge-connected group becomes a face: its
+/// boundary edges are chained into loops, the one counter-clockwise loop is the outer, the
+/// rest are holes. The face keeps its source
+/// plane (`planes[face id]`) when every vertex is on it, else a fitted one. Vertices left
+/// running straight through between two faces are healed away, unused points dropped,
+/// and output edges lying on preserved source edges are flagged user-drawn again.
+///
+/// Refuses (typed) a group whose loops touch at a vertex (a pinched face) or that does not
+/// have exactly one outer loop.
+pub fn repolygonise(
+    out: &TriSolid,
+    planes: &[Plane],
+    preserved: &[(DVec3, DVec3)],
+) -> Result<Polys, BooleanError> {
+    let pos = &out.positions;
+    let nt = out.triangles.len();
+    let label = |t: usize| out.face_ids[t] as usize;
+    if out.face_ids.iter().any(|&f| f as usize >= planes.len()) {
+        return Err(BooleanError::Degenerate("unknown face id".into()));
+    }
+    let mut dir: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for (t, tri) in out.triangles.iter().enumerate() {
+        for k in 0..3 {
+            if dir.insert((tri[k], tri[(k + 1) % 3]), t).is_some() {
+                return Err(BooleanError::Degenerate(
+                    "engine output is not manifold".into(),
+                ));
+            }
+        }
+    }
+    let on_preserved = |u: usize, v: usize| {
+        preserved.iter().any(|&(a, b)| {
+            segment_distance(pos[u], a, b) <= PLANARITY
+                && segment_distance(pos[v], a, b) <= PLANARITY
+        })
+    };
+    // A source face can come out flipped (the second operand of a difference): orient each
+    // label's plane the way its output triangles actually face.
+    let mut flip: Vec<Option<bool>> = vec![None; planes.len()];
+    for (t, tri) in out.triangles.iter().enumerate() {
+        let l = label(t);
+        if flip[l].is_some() {
+            continue;
+        }
+        let [a, b, c] = tri.map(|i| pos[i as usize]);
+        let n = (b - a).cross(c - a);
+        let d = n.dot(planes[l].normal);
+        if d.abs() > 1e-12 * n.length().max(1e-300) && n.length() > 0.0 {
+            flip[l] = Some(d < 0.0);
+        }
+    }
+    let planes: Vec<Plane> = planes
+        .iter()
+        .zip(&flip)
+        .map(|(p, f)| {
+            if f == &Some(true) {
+                Plane {
+                    origin: p.origin,
+                    normal: -p.normal,
+                    u: p.u,
+                    v: -p.v,
+                }
+            } else {
+                *p
+            }
+        })
+        .collect();
+    let coplanar = |a: usize, b: usize| {
+        let (pa, pb) = (planes[a], planes[b]);
+        pa.normal.dot(pb.normal) >= 1.0 - 1e-10 && pa.signed_distance(pb.origin).abs() <= PLANARITY
+    };
+    let mut parent: Vec<usize> = (0..nt).collect();
+    for (&(u, v), &t) in &dir {
+        let Some(&s) = dir.get(&(v, u)) else {
+            return Err(BooleanError::Degenerate(
+                "engine output is not closed".into(),
+            ));
+        };
+        if t >= s {
+            continue;
+        }
+        let (la, lb) = (label(t), label(s));
+        if la == lb || (coplanar(la, lb) && !on_preserved(u as usize, v as usize)) {
+            let (ra, rb) = (find(&mut parent, t), find(&mut parent, s));
+            if ra != rb {
+                parent[ra.max(rb)] = ra.min(rb);
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for t in 0..nt {
+        let r = find(&mut parent, t);
+        groups.entry(r).or_default().push(t);
+    }
+    let mut faces: Vec<(usize, PolyFace)> = Vec::new();
+    for tris in groups.values() {
+        let lab = tris
+            .iter()
+            .map(|&t| label(t))
+            .min()
+            .expect("non-empty group");
+        let plane = planes[lab];
+        let edges: BTreeSet<(usize, usize)> = tris
+            .iter()
+            .flat_map(|&t| {
+                let tri = out.triangles[t];
+                (0..3).map(move |k| (tri[k] as usize, tri[(k + 1) % 3] as usize))
+            })
+            .collect();
+        // Boundary edges, chained. A vertex with two ways on is a pinch: refused below.
+        let mut next: BTreeMap<usize, usize> = BTreeMap::new();
+        for &(u, v) in &edges {
+            if !edges.contains(&(v, u)) && next.insert(u, v).is_some() {
+                return Err(BooleanError::Degenerate(
+                    "a face of the result touches itself at a vertex".into(),
+                ));
+            }
+        }
+        let p2 = |i: usize| plane.to_local(pos[i]);
+        let mut seen: BTreeSet<usize> = BTreeSet::new();
+        let mut loops: Vec<Vec<usize>> = Vec::new();
+        for &start in next.keys() {
+            if seen.contains(&start) {
+                continue;
+            }
+            let mut lp = Vec::new();
+            let mut v = start;
+            while seen.insert(v) {
+                lp.push(v);
+                v = *next
+                    .get(&v)
+                    .ok_or_else(|| BooleanError::Degenerate("open face boundary".into()))?;
+            }
+            if v != start {
+                return Err(BooleanError::Degenerate("tangled face boundary".into()));
+            }
+            loops.push(lp);
+        }
+        let all: Vec<usize> = loops.iter().flatten().copied().collect();
+        let distinct: BTreeSet<usize> = all.iter().copied().collect();
+        if distinct.len() != all.len() {
+            return Err(BooleanError::Degenerate(
+                "a face of the result touches itself at a vertex".into(),
+            ));
+        }
+        let areas: Vec<f64> = loops
+            .iter()
+            .map(|l| signed_area(&l.iter().map(|&i| p2(i)).collect::<Vec<_>>()))
+            .collect();
+        let outers: Vec<usize> = (0..loops.len()).filter(|&i| areas[i] > 0.0).collect();
+        if outers.len() != 1 {
+            return Err(BooleanError::Degenerate(format!(
+                "a face of the result has {} outer loops",
+                outers.len()
+            )));
+        }
+        let o = outers[0];
+        let mut holes: Vec<Vec<usize>> = (0..loops.len())
+            .filter(|&i| i != o)
+            .map(|i| loops[i].clone())
+            .collect();
+        holes.sort();
+        let on_plane = all
+            .iter()
+            .all(|&i| plane.signed_distance(pos[i]).abs() <= PLANARITY);
+        faces.push((
+            lab,
+            PolyFace {
+                outer: loops[o].clone(),
+                holes,
+                plane: on_plane.then_some(plane),
+            },
+        ));
+    }
+    faces.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.outer.iter().min().cmp(&b.1.outer.iter().min()))
+    });
+    let mut p = Polys {
+        points: pos.clone(),
+        faces: faces.into_iter().map(|(_, f)| f).collect(),
+        user_edges: BTreeSet::new(),
+    };
+    for f in &p.faces {
+        for r in f.rings() {
+            for k in 0..r.len() {
+                let (u, v) = (r[k], r[(k + 1) % r.len()]);
+                if on_preserved(u, v) {
+                    p.user_edges.insert(Polys::key(u, v));
+                }
+            }
+        }
+    }
+    let every: BTreeSet<usize> = (0..p.points.len()).collect();
+    heal_vertices(&mut p, &every);
+    p.compact();
+    Ok(p)
+}
+
+/// `a op b` for two closed polygon B-reps (see [`repolygonise`]). `Ok(None)` when the
+/// result is empty. User-drawn edges of either operand survive where the result still
+/// has an edge along them.
+pub fn combine(
+    a: &Polys,
+    b: &Polys,
+    op: BoolOp,
+    engine: &dyn BooleanEngine,
+) -> Result<Option<Polys>, BooleanError> {
+    let ta = polys_tri_solid(a, 0)?;
+    let tb = polys_tri_solid(b, a.faces.len() as u32)?;
+    let mut planes = Vec::with_capacity(a.faces.len() + b.faces.len());
+    for (p, n) in [(a, a.faces.len()), (b, b.faces.len())] {
+        for i in 0..n {
+            planes.push(
+                p.plane(i)
+                    .ok_or_else(|| BooleanError::Degenerate(format!("face {i} has no plane")))?,
+            );
+        }
+    }
+    let mut preserved = Vec::new();
+    for p in [a, b] {
+        for &(u, v) in &p.user_edges {
+            preserved.push((p.points[u], p.points[v]));
+        }
+    }
+    let out = engine.run(&ta, &tb, op)?;
+    if out.triangles.is_empty() || out.volume().abs() <= AREA_EPS * POINT_MERGE {
+        return Ok(None);
+    }
+    repolygonise(&out, &planes, &preserved).map(Some)
 }
 
 #[cfg(all(test, feature = "manifold"))]

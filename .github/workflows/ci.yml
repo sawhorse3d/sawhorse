@@ -78,6 +78,8 @@ jobs:
         run: npm run wasm
       - name: WASM kernel matches native golden hashes
         run: npm run golden:wasm
+      - name: Boolean differential (kernel vs npm manifold-3d vs hand-computed)
+        run: npm run boolean:diff
       - name: build (tsc + vite)
         run: npm run build
       - name: vitest

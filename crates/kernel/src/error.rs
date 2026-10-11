@@ -51,14 +51,12 @@ pub enum PushError {
     NoSuchObject(u64),
     #[error("no face #{0} on this object")]
     NoSuchFace(u32),
-    #[error("push/pull of this face is not supported yet: {0}")]
-    Unsupported(&'static str),
-    #[error("pushing through the opposite face needs the boolean path (push/pull lane)")]
-    ThroughOppositeFace,
-    #[error("that distance would collapse some edges but not the whole solid")]
-    WouldCollapseEdge,
     #[error("could not build the solid: {0}")]
     Build(#[from] BuildError),
+    /// The boolean path (push through, into or flush with another part) could not produce
+    /// a valid solid; nothing changed.
+    #[error("push/pull through the solid: {0}")]
+    Boolean(#[from] BooleanError),
 }
 
 /// Errors from drawing on an object's face (split_face, imprint). Refusals of bad input;

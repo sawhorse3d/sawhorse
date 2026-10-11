@@ -1,30 +1,22 @@
 //! The solid tier: a manifold, watertight half-edge solid (ADR-0001).
 //!
-//! Born by extruding a sketch region (push/pull of a flat region). Lane 1 also implements
-//! the "extend" branch of push/pull on an existing face: when every face touching the
-//! pushed face runs parallel to the push direction (a prism cap, the common woodworking
-//! case), the face's vertices slide along its normal and no new topology is needed.
-//! Pushing a cap exactly onto the opposite cap collapses the solid (the model then hands
-//! the region back to its sketch). Pushing further, or pushing a face whose neighbours are
-//! not parallel to the push, needs the boolean / side-wall path of the push/pull lane and
-//! is refused with a typed error today.
-
-use std::collections::BTreeSet;
+//! Born by extruding a sketch region (push/pull of a flat region); changed by general
+//! push/pull ([`crate::push`]), drawing on faces ([`crate::faceops`]: split_face,
+//! imprint) and booleans ([`crate::boolean`]). Every edit rebuilds the B-rep from plain
+//! data and must validate (topology, watertight, no self-intersection) before commit.
 
 use glam::{DVec2, DVec3};
 use slotmap::Key;
 
 use sawhorse_tessellate::{TessellateError, signed_area, triangulate};
 
-use crate::boolean::TriSolid;
+use crate::boolean::{BoolOp, BooleanError, TriSolid};
 use crate::brep::{Brep, PolyFace};
 use crate::error::{FaceEditError, PushError};
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
-use crate::tolerance::{MIN_EXTRUDE, PARALLEL_EPS, POINT_MERGE, in_bounds};
-use crate::validate::{
-    TopologyError, TopologyReport, Violation, holes_contained, rings_cross, validate,
-};
+use crate::tolerance::{MIN_EXTRUDE, in_bounds};
+use crate::validate::{TopologyError, TopologyReport, Violation, validate};
 
 /// Where a solid came from, so collapsing it can return its footprint to that sketch.
 #[derive(Debug, Clone, PartialEq)]
@@ -162,6 +154,9 @@ impl Object {
         if report.shells.iter().any(|s| !s.closed) {
             v.push(Violation::DanglingKey("object has an open shell"));
         }
+        if let Some(hit) = crate::intersect::self_intersection(&self.brep) {
+            v.push(Violation::SelfIntersectingSolid(hit));
+        }
         if v.is_empty() {
             Ok(report)
         } else {
@@ -172,119 +167,65 @@ impl Object {
         }
     }
 
-    /// Push/pull an existing face by `distance` along its outward normal ("extend" branch).
-    pub fn push_pull(&mut self, face: FaceId, distance: f64) -> Result<PushOutcome, PushError> {
-        if !in_bounds(distance) {
-            return Err(PushError::OutOfBounds);
+    /// Push/pull face `face` (ordinal) by `distance` metres along its outward normal
+    /// (negative pushes inward). Any planar face of a watertight solid; see [`crate::push`]
+    /// for the collapse / topological / boolean paths. On `Moved` the solid is replaced;
+    /// on `Collapsed` it is left as it was (the caller removes it).
+    pub fn push_pull(&mut self, face: usize, distance: f64) -> Result<PushOutcome, PushError> {
+        let (outcome, next) = crate::push::push_pull(self, face, distance)?;
+        if let Some(mut next) = next {
+            next.source = self.source.clone();
+            *self = next;
         }
-        if distance.abs() < MIN_EXTRUDE {
-            return Err(PushError::ZeroDistance);
-        }
-        let b = &self.brep;
-        let f = b.face(face).ok_or(PushError::NoSuchFace(u32::MAX))?;
-        let n = f.plane.normal;
-        let moved: BTreeSet<VertexId> = b.face_vertices(face);
+        Ok(outcome)
+    }
 
-        // Every other face touching the moved vertices must contain the push direction.
-        for &v in &moved {
-            for g in b.faces_around_vertex(v) {
-                if g != face && b.faces[g].plane.normal.dot(n).abs() > PARALLEL_EPS.sqrt() {
-                    return Err(PushError::Unsupported(
-                        "a neighbouring face is not parallel to the push",
-                    ));
-                }
-            }
+    /// A solid from an already-built B-rep (watertight flag from the validator).
+    pub(crate) fn from_brep(brep: Brep) -> Object {
+        let watertight = validate(&brep).map(|r| r.watertight).unwrap_or(false);
+        Object {
+            brep,
+            watertight,
+            source: None,
         }
-        // Rails: edges with exactly one moved end. Each must run straight along the normal:
-        // "behind" rails (into the material, along -n) lengthen as the face moves out;
-        // "ahead" rails (e.g. a hole's ring edges seen from its wall) shorten.
-        let mut rails: Vec<(f64, f64)> = Vec::new(); // (length, +1 behind / -1 ahead)
-        for (eid, _) in b.edges() {
-            let he = b.edges[eid].he;
-            let (a, c) = (b.half_edges[he].origin, b.dest(he));
-            let (ma, mc) = (moved.contains(&a), moved.contains(&c));
-            if ma == mc {
-                continue;
-            }
-            let (from, to) = if ma { (a, c) } else { (c, a) };
-            let d = b.vertices[to].pos - b.vertices[from].pos;
-            let len = d.length();
-            let along = if len > 0.0 { (d / len).dot(n) } else { 0.0 };
-            let sign = if along <= -(1.0 - PARALLEL_EPS.sqrt()) {
-                1.0
-            } else if along >= 1.0 - PARALLEL_EPS.sqrt() {
-                -1.0
-            } else {
-                return Err(PushError::Unsupported(
-                    "an edge leaving the face is not parallel to the push",
-                ));
-            };
-            rails.push((len, sign));
-        }
-        if rails.is_empty() {
-            return Err(PushError::Unsupported(
-                "the face has no edges running back from it",
-            ));
-        }
-        let new_lengths: Vec<f64> = rails.iter().map(|(l, s)| l + s * distance).collect();
-        if new_lengths.iter().any(|&l| l < -POINT_MERGE) {
-            return Err(PushError::ThroughOppositeFace);
-        }
-        let collapsing = new_lengths.iter().filter(|&&l| l <= POINT_MERGE).count();
-        if collapsing == new_lengths.len() && rails.iter().all(|(_, s)| *s > 0.0) {
-            let footprint = f
-                .loops()
-                .map(|l| {
-                    b.loop_points(l)
-                        .into_iter()
-                        .map(|p| p + n * distance)
-                        .collect()
-                })
-                .collect();
-            return Ok(PushOutcome::Collapsed { footprint });
-        }
-        if collapsing > 0 {
-            return Err(PushError::WouldCollapseEdge);
-        }
-        // The moved face must not pass through another part of this solid: every face that
-        // changes shape keeps simple, properly nested rings (enough for prisms; general solids
-        // get a 3D check with the push/pull lane).
-        let delta = n * distance;
-        let pos = |v: VertexId| {
-            b.vertices[v].pos
-                + if moved.contains(&v) {
-                    delta
-                } else {
-                    DVec3::ZERO
-                }
-        };
-        let touched: BTreeSet<FaceId> = moved
-            .iter()
-            .flat_map(|&v| b.faces_around_vertex(v))
-            .collect();
-        for g in touched {
-            let fg = &b.faces[g];
-            let pts: Vec<DVec3> = b.loop_vertices(fg.outer).into_iter().map(pos).collect();
-            let Ok(plane) = Plane::fit(&pts) else {
-                return Err(PushError::WouldCollapseEdge);
-            };
-            let rings: Vec<Vec<DVec2>> = fg
-                .loops()
-                .map(|l| {
-                    b.loop_vertices(l)
-                        .into_iter()
-                        .map(|v| plane.to_local(pos(v)))
-                        .collect()
-                })
-                .collect();
-            if rings_cross(&rings) || holes_contained(&rings).is_err() {
-                return Err(PushError::Unsupported(
-                    "the face would pass through another part of the solid",
-                ));
-            }
-        }
-        self.brep.translate_vertices(&moved, n * distance);
-        Ok(PushOutcome::Moved)
+    }
+
+    /// `self op other` through the boolean engine, re-polygonised (see
+    /// [`crate::boolean::combine`]). `Ok(None)`: the result is empty.
+    pub fn combine(&self, other: &Object, op: BoolOp) -> Result<Option<Object>, BooleanError> {
+        let engine = crate::boolean::default_engine()?;
+        let res = crate::boolean::combine(
+            &self.brep.to_polys(),
+            &other.brep.to_polys(),
+            op,
+            engine.as_ref(),
+        )?;
+        let Some(p) = res else { return Ok(None) };
+        let brep = Brep::build(&p).map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
+        let o = Object::from_brep(brep);
+        o.validate()
+            .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
+        Ok(Some(o))
+    }
+
+    /// Total face area in square metres.
+    pub fn surface_area(&self) -> f64 {
+        self.brep
+            .faces()
+            .map(|(_, f)| {
+                f.loops()
+                    .map(|l| {
+                        let pts: Vec<DVec2> = self
+                            .brep
+                            .loop_points(l)
+                            .iter()
+                            .map(|&p| f.plane.to_local(p))
+                            .collect();
+                        signed_area(&pts)
+                    })
+                    .sum::<f64>()
+            })
+            .sum()
     }
 
     /// Split face `face` (ordinal) along `path` (world points on the face's plane): ends on
@@ -434,73 +375,6 @@ mod tests {
         assert_eq!(r.shells[0].euler, 0);
         assert_eq!(r.shells[0].genus, Some(1));
         assert!((o.volume() - 12.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn push_pull_cap_extends_and_restores() {
-        let mut o = Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1.0).unwrap();
-        let before = o.clone();
-        let cap = o.face_ids()[1];
-        assert_eq!(o.push_pull(cap, 0.25).unwrap(), PushOutcome::Moved);
-        assert!((o.volume() - 1.25).abs() < 1e-9);
-        assert_eq!(o.push_pull(cap, -0.25).unwrap(), PushOutcome::Moved);
-        assert!(o.same_shape(&before, 1e-12));
-        assert!(matches!(
-            o.push_pull(cap, -1.0).unwrap(),
-            PushOutcome::Collapsed { .. }
-        ));
-        assert_eq!(o.push_pull(cap, -1.5), Err(PushError::ThroughOppositeFace));
-        assert_eq!(o.push_pull(cap, 0.0), Err(PushError::ZeroDistance));
-    }
-
-    #[test]
-    fn push_pull_side_wall_also_extends() {
-        let mut o = Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1.0).unwrap();
-        let side = o.face_ids()[2];
-        assert_eq!(o.push_pull(side, 0.5).unwrap(), PushOutcome::Moved);
-        assert!((o.volume() - 1.5).abs() < 1e-9);
-        o.validate().unwrap();
-    }
-
-    #[test]
-    fn push_pull_hole_wall_shrinks_the_hole() {
-        let mut hole = vec![
-            DVec2::ONE,
-            DVec2::new(3.0, 1.0),
-            DVec2::new(3.0, 3.0),
-            DVec2::new(1.0, 3.0),
-        ];
-        hole.reverse();
-        let mut o = Object::extrude(&Plane::GROUND, &rect(4.0, 4.0), &[hole], 1.0).unwrap();
-        // Find the hole wall facing +x (at x = 1).
-        let wall = o
-            .face_ids()
-            .into_iter()
-            .find(|&f| {
-                let p = o.brep.face(f).unwrap().plane;
-                p.normal.x > 0.5 && (p.origin.x - 1.0).abs() < 1e-9
-            })
-            .unwrap();
-        assert_eq!(o.push_pull(wall, 0.5).unwrap(), PushOutcome::Moved);
-        assert!((o.volume() - 13.0).abs() < 1e-9);
-        assert_eq!(o.push_pull(wall, 1.5), Err(PushError::WouldCollapseEdge));
-        assert_eq!(o.push_pull(wall, 3.0), Err(PushError::ThroughOppositeFace));
-        // Pushing the hole wall back through the outer wall would leave the hole outside.
-        assert!(matches!(
-            o.push_pull(wall, -2.0),
-            Err(PushError::Unsupported(_))
-        ));
-        // Pushing the outer wall in through the hole, likewise.
-        let outer_wall = o
-            .face_ids()
-            .into_iter()
-            .find(|&f| o.brep.face(f).unwrap().plane.normal.x < -0.5)
-            .unwrap();
-        assert!(matches!(
-            o.push_pull(outer_wall, -2.0),
-            Err(PushError::Unsupported(_))
-        ));
-        o.validate().unwrap();
     }
 
     #[test]

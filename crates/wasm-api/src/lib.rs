@@ -122,6 +122,29 @@ pub fn replay_hash_core(ops_json: &str) -> Result<String, String> {
         .map_err(|(i, e)| format!("op {i}: {e}"))
 }
 
+/// Run one boolean differential case (tests/booleans/cases.json format) through the kernel
+/// and return its result plus both operand meshes, as JSON, for scripts/boolean-diff.mjs.
+pub fn boolean_case_core(case_json: &str) -> Result<String, String> {
+    use sawhorse_kernel::testing::{BoolCase, build_solid, run_boolean_case};
+    let c: BoolCase = serde_json::from_str(case_json).map_err(|e| e.to_string())?;
+    let result = run_boolean_case(&c)?;
+    let mesh = |spec| -> Result<serde_json::Value, String> {
+        let o = build_solid(spec)?;
+        let t = o.tri_solid().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "positions": t.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect::<Vec<f64>>(),
+            "triangles": t.triangles.iter().flatten().copied().collect::<Vec<u32>>(),
+        }))
+    };
+    Ok(serde_json::json!({ "result": result, "a": mesh(&c.a)?, "b": mesh(&c.b)? }).to_string())
+}
+
+/// See [`boolean_case_core`].
+#[wasm_bindgen]
+pub fn boolean_case(case_json: &str) -> Result<String, JsError> {
+    boolean_case_core(case_json).map_err(js)
+}
+
 fn js(e: String) -> JsError {
     JsError::new(&e)
 }

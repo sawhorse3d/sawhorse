@@ -1,0 +1,81 @@
+{
+  "name": "push_pocket_flush",
+  "description": "Lane 2: imprint pushed in (pocket), then pulled back flush; the rails weld and the user-drawn imprint edges survive.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 2.0,
+      "h": 1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.0
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.75,
+          1.0
+        ],
+        [
+          0.5,
+          0.75,
+          1.0
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -0.4
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": 0.4
+    }
+  ],
+  "hash": "7735e10e1696fdc4",
+  "stats": {
+    "objects": 1,
+    "faces": 7,
+    "edges": 16,
+    "vertices": 12,
+    "genus": 0,
+    "watertight": true
+  }
+}

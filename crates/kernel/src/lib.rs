@@ -20,10 +20,12 @@ pub mod error;
 pub mod faceops;
 pub mod hash;
 pub mod ids;
+pub mod intersect;
 pub mod mesh;
 pub mod model;
 pub mod object;
 pub mod plane;
+pub mod push;
 pub mod sketch;
 #[doc(hidden)]
 pub mod testing;

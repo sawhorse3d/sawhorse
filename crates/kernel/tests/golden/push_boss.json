@@ -1,0 +1,81 @@
+{
+  "name": "push_boss",
+  "description": "Lane 2 general push/pull, topological path: imprint on the cap, pull the sub-face up into a boss with side walls, then push its top back down halfway.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 2.0,
+      "h": 1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.0
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.75,
+          1.0
+        ],
+        [
+          0.5,
+          0.75,
+          1.0
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": 0.3
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -0.15
+    }
+  ],
+  "hash": "cbb44ec275849278",
+  "stats": {
+    "objects": 1,
+    "faces": 11,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 0,
+    "watertight": true
+  }
+}

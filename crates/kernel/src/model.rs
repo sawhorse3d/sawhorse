@@ -304,11 +304,7 @@ impl Model {
             } => {
                 let oid = self.object_key(*object)?;
                 let o = &mut self.objects[oid];
-                let fid = *o
-                    .face_ids()
-                    .get(*face as usize)
-                    .ok_or(PushError::NoSuchFace(*face))?;
-                match o.push_pull(fid, *distance)? {
+                match o.push_pull(*face as usize, *distance)? {
                     PushOutcome::Moved => Ok(OpOutcome::FaceMoved),
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");

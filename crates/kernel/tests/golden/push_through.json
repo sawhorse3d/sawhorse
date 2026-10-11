@@ -1,0 +1,75 @@
+{
+  "name": "push_through",
+  "description": "Lane 2 boolean path: imprint pushed through the far side (difference with the swept prism, re-polygonised): a genus-1 box.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 2.0,
+      "h": 1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.0
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.25,
+          1.0
+        ],
+        [
+          1.5,
+          0.75,
+          1.0
+        ],
+        [
+          0.5,
+          0.75,
+          1.0
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -1.5
+    }
+  ],
+  "hash": "0b6e0dbbc1e1299f",
+  "stats": {
+    "objects": 1,
+    "faces": 10,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 1,
+    "watertight": true
+  }
+}
