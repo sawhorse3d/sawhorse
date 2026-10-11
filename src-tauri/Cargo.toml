@@ -22,8 +22,12 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Opens Stripe Checkout in the system browser (called from Rust, not exposed to the webview).
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The render-credit device key in the OS secure store (ADR-0004).
+sawhorse-device-key = { path = "device-key" }
 
 [profile.release]
 codegen-units = 1

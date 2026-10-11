@@ -23,6 +23,9 @@ import { ArcTool } from "./tools/arc";
 import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
+import { useCredits } from "./credits/useCredits";
+import { storageNote } from "./credits/device";
+import { NothingToRenderError, renderPasses } from "./render/passes";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
@@ -550,9 +553,33 @@ export function App() {
 
   const valueLabel = active?.valueLabel() ?? null;
 
+  // Render credits (lane 8): the chip and the Render pane share one connection and balance.
+  const credits = useCredits();
+  const [renderFocus, setRenderFocus] = useState(0);
+  const capture = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine) throw new NothingToRenderError("The 3D view is not available (WebGL2 is off in this browser), so there is nothing to render from.");
+    return renderPasses(engine.captureSource());
+  }, []);
+  const cs = credits.state;
+  const chipTitle =
+    cs.connection === "connected"
+      ? `Render credits on this device (${cs.balance?.devices ?? 1} of ${cs.balance?.max_devices ?? 2} devices). ${cs.storage ? storageNote(cs.storage) : ""}`
+      : cs.connection === "unlinked"
+        ? "These credits were moved to another device with a claim code."
+        : (cs.problem ?? "Render service not connected.");
+
   return (
     <div className="app" id="app">
-      <TopBar view={camView} onView={setView} credits={0} menus={menus} />
+      <TopBar
+        view={camView}
+        onView={setView}
+        credits={cs.connection === "connected" ? cs.credits : null}
+        creditsState={cs.connection}
+        creditsTitle={chipTitle}
+        onCredits={() => setRenderFocus((n) => n + 1)}
+        menus={menus}
+      />
       <ToolRail active={toolId} onSelect={selectTool} />
       <Viewport
         mesh={scene?.mesh ?? null}
@@ -581,7 +608,7 @@ export function App() {
           engineRef.current = e;
         }}
       />
-      <SidePanel credits={0} />
+      <SidePanel credits={credits} capture={capture} focusRender={renderFocus} />
       <ValueBar
         ref={vcbRef}
         tool={valueLabel ? { ...tool, vcb: valueLabel } : tool}

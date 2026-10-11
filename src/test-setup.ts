@@ -22,3 +22,18 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 if (typeof HTMLCanvasElement !== "undefined") {
   HTMLCanvasElement.prototype.getContext = (() => null) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 }
+
+// The render service is never reached from unit tests: the default credits client is offline
+// (components that need a live one get a fake through useCredits(client)).
+import { setDefaultCreditsClient } from "./credits/useCredits";
+import { RenderServiceClient } from "./credits/client";
+setDefaultCreditsClient(
+  () =>
+    new RenderServiceClient(
+      "http://render.test.invalid",
+      async () => ({ installId: "aaaaaaaaaaaaaaaaaaaa", publicKey: new Uint8Array(32), storage: "session-only", sign: async () => new Uint8Array(64) }),
+      async () => {
+        throw new TypeError("offline in unit tests");
+      },
+    ),
+);

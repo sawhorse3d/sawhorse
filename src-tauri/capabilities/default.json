@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core defaults only. No fs, shell or http permissions until a lane needs them.",
+  "description": "Main window: core defaults only. The app's own commands (device_public_key, device_sign, open_external) are allowed by default; the opener plugin is driven from Rust, so no opener, fs, shell or http permission is granted to the webview.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }

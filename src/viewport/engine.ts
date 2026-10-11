@@ -676,6 +676,11 @@ export class ViewportEngine {
     return { ...this.size };
   }
 
+  /** What the render passes (src/render/passes.ts) draw from: this renderer, the current camera and the model. */
+  captureSource(): { renderer: THREE.WebGLRenderer; camera: THREE.Camera; mesh: MeshData | null; size: { w: number; h: number } } {
+    return { renderer: this.renderer, camera: this.camera, mesh: this.meshData, size: { ...this.size } };
+  }
+
   private ndc(x: number, y: number): THREE.Vector2 {
     return new THREE.Vector2((x / this.size.w) * 2 - 1, -(y / this.size.h) * 2 + 1);
   }
