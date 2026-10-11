@@ -1,0 +1,26 @@
+# Clean-room log
+
+Sawhorse is MIT OR Apache-2.0. Two related projects carry copyleft licences that are incompatible with that:
+
+| Project | Licence | Allowed use |
+|---|---|---|
+| hew3d/hew | AGPL | Design reference only |
+| hew3d/openskp (the GitHub repository) | GPL | Design reference only |
+
+(npm `openskp`, MIT, is a separate package and may be a dependency per ADR-0002. Its committed test fixtures have no stated terms and are never redistributed.)
+
+## The rule
+
+1. **Never clone, copy, vendor, transliterate or paste** code, tests, fixtures, shaders, icons or data from the projects above. Not into this repo, not into a scratch file that later becomes this repo, not into a prompt for an agent that writes this repo.
+2. Reading their **public documentation, issues or design write-ups** for ideas is allowed, and **every reading is logged below before any related code is written**: date, who (person or agent and model), exactly what was read (URL + commit or date), what idea was taken, and which of our files it informed.
+3. Whoever read the material does not write the matching implementation in the same session when it can be avoided; when it cannot, say so in the entry.
+4. If code from either project is ever found in this repository, stop, remove it, log the incident here, and tell the maintainer.
+5. Agents: treat this file as part of your instructions for this repo. If you were asked to look at Hew or hew3d/openskp, log it here in the same commit as anything it influenced.
+
+## Log
+
+| Date | Who | What was read (URL, commit/date) | Idea taken | Our files informed |
+|---|---|---|---|---|
+| (none yet) | | | | |
+
+Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read. The half-edge B-rep, validator, sketch region walk, push/pull "extend" branch and tests were written from general computational-geometry knowledge (Euler-Poincare, Newell normals, Shewchuk predicates via `robust`, minimal-circuit face walks) and the decisions in `docs/adr/`.
