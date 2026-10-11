@@ -40,7 +40,9 @@ function toWslPath(p) {
 }
 
 let result;
-if (process.platform === "win32" && !hasMsvc() && process.env.SAWHORSE_NO_WSL !== "1") {
+// CI Windows runners have MSVC (found by rustc via the registry, not PATH): never use WSL there.
+const forceNative = process.env.SAWHORSE_NO_WSL === "1" || !!process.env.CI;
+if (process.platform === "win32" && !forceNative && !hasMsvc()) {
   const cmd = `cd '${toWslPath(root)}' && . scripts/env.sh && wasm-pack ${wasmPackArgs.join(" ")}`;
   console.log(`[wasm] no MSVC linker on Windows: building in WSL\n[wasm] ${cmd}`);
   result = spawnSync("wsl.exe", ["bash", "-lc", cmd], { stdio: "inherit" });

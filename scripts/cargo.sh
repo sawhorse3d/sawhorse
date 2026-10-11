@@ -17,6 +17,7 @@ needs_wsl() {
   # A real MSVC link.exe makes native Windows builds possible; Git's /usr/bin/link is not it.
   if command -v cl.exe >/dev/null 2>&1; then return 1; fi
   [ "${SAWHORSE_NO_WSL:-}" = "1" ] && return 1
+  [ -n "${CI:-}" ] && return 1
   return 0
 }
 

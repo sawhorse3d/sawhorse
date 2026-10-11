@@ -1,0 +1,85 @@
+name: Release
+
+# Desktop installers for Windows, macOS and Linux, built by tauri-action on a v* tag.
+# Unsigned until signing secrets exist: every signing variable is optional and only
+# exported when its secret is set, so this workflow needs no secrets today.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SAWHORSE_NO_WSL: "1"
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates
+            src-tauri
+      - name: Linux webview deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: Tauri stays on 2.x
+        run: npm run check:tauri
+      - name: Optional signing secrets (exported only when set)
+        shell: bash
+        env:
+          S_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          S_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          S_APPLE_ID: ${{ secrets.APPLE_ID }}
+          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for v in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD APPLE_CERTIFICATE \
+                   APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            s="S_$v"
+            if [ -n "${!s}" ]; then
+              delim="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+              { echo "$v<<$delim"; printf '%s\n' "${!s}"; echo "$delim"; } >> "$GITHUB_ENV"
+              echo "signing: $v set"
+            fi
+          done
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+          releaseName: "Sawhorse __VERSION__"
+          releaseBody: "Pre-alpha build. Installers are unsigned until signing is set up; your OS will warn before opening them."
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}
