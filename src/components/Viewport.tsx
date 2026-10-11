@@ -39,6 +39,8 @@ export function Viewport({ mesh, view, hud, kernel }: ViewportProps) {
       return;
     }
     engineRef.current = engine;
+    // Read-only hook for e2e tests and lane-end captures (scripts/capture.mjs).
+    (window as unknown as { __sawhorse?: object }).__sawhorse = { visibleEndpoints: () => engine.visibleEndpoints() };
     const ro = new ResizeObserver(() => {
       const r = host.getBoundingClientRect();
       engine.resize(r.width, r.height);

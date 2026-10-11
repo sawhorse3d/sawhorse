@@ -97,10 +97,9 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 
 /* ---- App additions (not in the mock; kept visually identical to the mock's elements) ---- */
 #root{height:100%}
-.vcb button.units{padding:2px 4px;border-radius:4px}
+.vcb button.units{padding:2px 4px;border-radius:4px;text-transform:inherit}
 .vcb button.units:hover{background:var(--rail);color:var(--fg)}
 .vcb .hint.err b{color:var(--warn)}
-.vp .hud span.ok{color:var(--ok)}
 .vp .hud span.err{color:var(--warn)}
 .vp .tip[hidden]{display:none}
 .vp canvas{touch-action:none}

@@ -316,6 +316,18 @@ export class ViewportEngine {
     return classifyHover([x, y], segs, hit ? [x, y] : null);
   }
 
+  /** Screen positions (canvas CSS px) of visible edge endpoints: a test and capture hook. */
+  visibleEndpoints(): [number, number][] {
+    const out: [number, number][] = [];
+    const e = this.edgeData;
+    const p = new THREE.Vector3();
+    for (let i = 0; i + 2 < e.length; i += 3) {
+      p.set(e[i], e[i + 1], e[i + 2]);
+      if (!this.occluded(p)) out.push(this.toScreen(p));
+    }
+    return out;
+  }
+
   private ndc(x: number, y: number): THREE.Vector2 {
     return new THREE.Vector2((x / this.size.w) * 2 - 1, -(y / this.size.h) * 2 + 1);
   }

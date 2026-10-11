@@ -50,6 +50,14 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 
 `?theme=light` or `?theme=dark` on the URL forces a theme.
 
+Lane-end capture (every lane ends with one, saved beside the repo in `../_captures/`), with `npm run dev` running:
+
+```bash
+node scripts/capture.mjs --out ../_captures/2026-10-11-lane01-shell.png --theme light --tool p --type "3/4" --hover endpoint
+```
+
+It drives the installed Edge through Playwright, waits for the kernel, applies the typed value, hovers a visible corner (via the read-only `window.__sawhorse.visibleEndpoints()` hook) and prints the kernel state it captured.
+
 ## Rust (from Git Bash on Windows, forwarded to WSL)
 
 `scripts/cargo.sh <args>` runs `cargo <args>` in `crates/`, inside WSL when needed (it also forwards `UPDATE_GOLDEN`, `FUZZ_CASES`, `PROPTEST_CASES`, `RUST_BACKTRACE`, `RUSTFLAGS`).
