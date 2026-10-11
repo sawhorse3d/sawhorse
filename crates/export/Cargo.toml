@@ -1,0 +1,19 @@
+[package]
+name = "sawhorse-export"
+description = "Exporters for Sawhorse: binary STL (hand-written, mm, Z-up) and 3MF (threemf)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sawhorse-kernel.workspace = true
+glam.workspace = true
+threemf.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

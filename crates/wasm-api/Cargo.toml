@@ -1,0 +1,32 @@
+[package]
+name = "sawhorse-wasm"
+description = "wasm-bindgen surface of the Sawhorse kernel for the webview (browser build and Tauri)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sawhorse-kernel.workspace = true
+sawhorse-export.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+
+[package.metadata.wasm-pack.profile.release]
+# wasm-opt (binaryen) is a separate ~15 MB download; CI may enable it, local builds on a
+# metered link skip it.
+wasm-opt = false
+
+# Not the workspace lints: wasm-bindgen expands to `unsafe` glue, which `forbid(unsafe_code)` rejects.
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"

@@ -55,3 +55,25 @@ Split these into `docs/adr/NNNN-*.md` as they are implemented. Source of truth f
 - No MSVC Build Tools locally (cellular bandwidth). Native Windows installers are built by GitHub Actions (`tauri-action`). Local = kernel + tests (WSL or Windows), browser build, `tauri dev` only once a linker is available.
 - Every lane ends with the feature exercised in the running build and a screenshot in `../_captures/`.
 - Clean-room log in `docs/CLEANROOM.md`: Hew (AGPL) and hew3d/openskp (GPL) are design references only; record what was read and when; no code copied.
+
+## Day-1 spike result (2026-10-11, lane 1)
+
+`cargo check --workspace --target wasm32-unknown-unknown` passes with the full candidate set, so nothing was feature-gated or dropped:
+
+| Crate | Version | Used by | wasm32 |
+|---|---|---|---|
+| glam (f64) | 0.34.1 | all | builds |
+| slotmap | 1.1.1 | kernel | builds |
+| robust | 1.2.0 | kernel (sketch predicates) | builds |
+| earcut (georust) | 0.4.11 | tessellate | builds |
+| i_overlay | 9.0.1 | tessellate::overlay | builds |
+| manifold-rust | =0.16.0 (pure Rust, Apache-2.0) | kernel::boolean (feature `manifold`, default on) | builds, `parallel`/rayon left off |
+| threemf | 0.8.0 (0BSD; zip 8 + zlib-rs, pure Rust) | export | builds |
+| wasm-bindgen | 0.2.129 | wasm-api | builds |
+| proptest 1.12 / arbitrary 1.5 | dev / feature `arbitrary` | kernel tests, fuzz harness | dev-only |
+
+Findings that change how we work (recorded here, detailed in docs/DEVELOPMENT.md):
+
+- **On Windows without MSVC, `cargo check` itself fails**, not just linking final binaries: build scripts and proc-macros (serde_derive, thiserror, wasm-bindgen-macro) are host executables that need `link.exe`. Git Bash's `/usr/bin/link` shadows the name and fails with "extra operand". So every Rust command (check, test, clippy, wasm-pack) runs in WSL Ubuntu via `scripts/cargo.sh`, which forwards automatically. `rustfmt` also runs there.
+- The `crates/` workspace excludes `src-tauri/` (it has its own `[workspace]`), so the wasm32 check never sees Tauri.
+- `manifold-rust` imports a MeshGL64 with per-triangle `face_id` and returns it through booleans, which is the hook ADR-0001's re-polygonise step needs. Verified by `kernel::boolean` tests (difference / union / intersection volumes and face-id provenance).

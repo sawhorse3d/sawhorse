@@ -1,0 +1,66 @@
+# Sawhorse geometry workspace. Pure Rust, no UI, no IO, no network (ADR-0001).
+# Every member must build for wasm32-unknown-unknown:
+#   cargo check --workspace --target wasm32-unknown-unknown
+# Never commit a target-dir here; CARGO_TARGET_DIR comes from scripts/env.sh.
+[workspace]
+resolver = "3"
+members = ["kernel", "tessellate", "inference", "export", "wasm-api"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["the maintainer"]
+repository = "https://github.com/sawhorse3d/sawhorse"
+publish = false
+
+[workspace.dependencies]
+sawhorse-kernel = { path = "kernel" }
+sawhorse-tessellate = { path = "tessellate" }
+sawhorse-inference = { path = "inference" }
+sawhorse-export = { path = "export" }
+
+# Math: f64 everywhere inside the kernel.
+glam = { version = "0.34", default-features = false, features = ["std", "f64"] }
+# Generational ids for vertices / half-edges / edges / loops / faces / objects.
+slotmap = "1.1"
+# Shewchuk adaptive predicates.
+robust = "1.2"
+# Triangulation with holes (georust/earcut; NOT earcutr).
+earcut = "0.4.11"
+# 2D polygon booleans (coplanar merge, imprint tests).
+i_overlay = "9.0"
+# 3D booleans. Pure-Rust port of Manifold, Apache-2.0. Pinned EXACTLY (ADR-0001).
+manifold-rust = { version = "=0.16.0", default-features = false }
+# 3MF export.
+threemf = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+
+# Test infrastructure.
+proptest = "1.12"
+arbitrary = { version = "1.5", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# Kernel tests run in debug (validator after every mutation) but with optimised deps
+# so proptest and the sequence fuzzer get through enough cases.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+opt-level = 1
