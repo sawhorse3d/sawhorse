@@ -1,0 +1,365 @@
+<title>Sawhorse Mock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen tool shell. Top bar / left tool rail / viewport / right panel / bottom value bar. Stacks at phone width. */
+:root{
+  --bg:#edeeea; --panel:#f7f8f5; --rail:#e3e5df; --fg:#1d211f; --muted:#5f6660; --line:#c9cdc5;
+  --accent:#2a63a8; --accent-ink:#ffffff; --sel:#2a63a8;
+  --inf-end:#7bc043; --inf-mid:#17a2a0; --inf-edge:#e08a1e; --inf-face:#8a5cd6;
+  --vp:#f4f5f1; --vp-grid:#d4d8cf; --vp-axis:#9aa39a; --face:#e9e4d6; --face-top:#f3efe3; --face-side:#d9d2c0; --edge:#3a3f3b;
+  --ok:#2e8b57; --warn:#c77d12;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#1a1d1b; --panel:#222623; --rail:#1f2320; --fg:#e8eae5; --muted:#9aa39b; --line:#3a403b;
+  --accent:#6ea3e4; --accent-ink:#0f1a28; --sel:#6ea3e4;
+  --vp:#20242a; --vp-grid:#2f353c; --vp-axis:#5a636c; --face:#8a8470; --face-top:#a39c86; --face-side:#6f6a59; --edge:#e6e2d4;
+  --ok:#5ec98a; --warn:#e3a94a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#1a1d1b; --panel:#222623; --rail:#1f2320; --fg:#e8eae5; --muted:#9aa39b; --line:#3a403b;
+  --accent:#6ea3e4; --accent-ink:#0f1a28; --sel:#6ea3e4;
+  --vp:#20242a; --vp-grid:#2f353c; --vp-axis:#5a636c; --face:#8a8470; --face-top:#a39c86; --face-side:#6f6a59; --edge:#e6e2d4;
+  --ok:#5ec98a; --warn:#e3a94a; color-scheme:dark }
+
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:13px;line-height:1.4}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.app{display:grid;height:100%;min-height:560px;grid-template-rows:auto 1fr auto;grid-template-columns:56px 1fr 300px;grid-template-areas:"top top top" "rail vp side" "vcb vcb side"}
+.top{grid-area:top;display:flex;align-items:center;gap:14px;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.brand{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:.02em;display:flex;align-items:center;gap:8px}
+.brand svg{width:22px;height:22px}
+.menu{display:flex;gap:2px;flex-wrap:wrap}
+.menu button{padding:4px 8px;border-radius:4px;color:var(--muted)}
+.menu button:hover{background:var(--rail);color:var(--fg)}
+.top .spacer{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+.chip b{color:var(--accent);font-weight:500}
+.views{display:flex;gap:2px}
+.views button{padding:3px 7px;border-radius:4px;border:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--muted)}
+.views button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+
+.rail{grid-area:rail;background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:6px 4px;gap:2px;overflow:auto}
+.rail .grp{width:100%;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;border-bottom:1px solid var(--line)}
+.rail .grp:last-child{border-bottom:0}
+.tool{width:44px;height:40px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--muted);position:relative}
+.tool svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tool small{font-size:8px;line-height:1;letter-spacing:.02em;text-transform:uppercase}
+.tool:hover{background:var(--panel);color:var(--fg)}
+.tool[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.tool kbd{position:absolute;top:2px;right:4px;font:9px var(--mono);opacity:.6}
+
+.vp{grid-area:vp;position:relative;background:var(--vp);min-width:0;min-height:300px;overflow:hidden}
+.vp canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.vp .hud{position:absolute;left:10px;top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.vp .hud span{font:11px var(--mono);padding:2px 7px;border-radius:4px;background:color-mix(in srgb,var(--panel) 85%,transparent);border:1px solid var(--line);color:var(--muted)}
+.vp .tip{position:absolute;pointer-events:none;font:11px var(--mono);padding:3px 7px;border-radius:4px;background:var(--panel);border:1px solid var(--line);color:var(--fg);white-space:nowrap}
+.vp .tip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.vp .axes{position:absolute;right:10px;bottom:8px;font:10px var(--mono);color:var(--muted)}
+
+.side{grid-area:side;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;padding:9px 4px;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);border-bottom:2px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.pane{padding:12px;overflow:auto;flex:1;min-height:0}
+.pane h3{font-family:var(--display);font-weight:600;font-size:15px;margin:0 0 8px;letter-spacing:.02em}
+.pane h3 small{font-family:var(--body);font-weight:400;color:var(--muted);font-size:11px;margin-left:6px;text-transform:none;letter-spacing:0}
+.tree{list-style:none;margin:0;padding:0;font-family:var(--mono);font-size:12px}
+.tree li{padding:3px 4px;border-radius:4px;display:flex;align-items:center;gap:6px}
+.tree li.sel{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.tree li .k{color:var(--muted);font-size:10px}
+.tree li.lvl1{padding-left:18px}.tree li.lvl2{padding-left:32px}
+.tag{display:inline-block;width:9px;height:9px;border-radius:2px}
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-family:var(--body);font-weight:600;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+td.n,th.n{text-align:right}
+.tablewrap{overflow-x:auto;margin:0 -4px}
+.sum{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.sum div{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:var(--bg)}
+.sum b{display:block;font-family:var(--display);font-size:20px;font-weight:600;line-height:1}
+.sum span{color:var(--muted);font-size:11px}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.btn{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);font-weight:500}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:hover{filter:brightness(1.05)}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.presets button{padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);text-align:left;font-size:12px}
+.presets button[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.presets button small{display:block;color:var(--muted);font-size:10.5px}
+textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:12px var(--body);padding:7px}
+.result{margin-top:10px;border:1px solid var(--line);border-radius:6px;aspect-ratio:16/10;max-width:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;padding:10px;background:var(--bg)}
+.result.done{background:linear-gradient(160deg,#c9b48a 0%,#8f7a52 45%,#3b3a3a 100%);color:#fff9ec;text-shadow:0 1px 2px #0008}
+.packs{display:flex;gap:6px;margin-top:8px}
+.packs button{flex:1;border:1px solid var(--line);border-radius:6px;padding:7px 4px;background:var(--bg);font-family:var(--mono);font-size:11.5px;line-height:1.3}
+.packs button b{display:block;font-size:13px;font-weight:500}
+.note{color:var(--muted);font-size:11px;margin-top:8px}
+
+.vcb{grid-area:vcb;display:flex;align-items:center;gap:12px;padding:6px 12px;border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.vcb .hint{color:var(--muted);flex:1;min-width:160px}
+.vcb .hint b{color:var(--fg);font-weight:500}
+.vcb label{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+.vcb input{width:120px;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);font:13px var(--mono);text-align:right}
+.vcb input:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+.vcb .units{font:11px var(--mono);color:var(--muted)}
+
+.legend{position:absolute;left:10px;bottom:8px;display:flex;gap:10px;font:10px var(--mono);color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+
+.notes{padding:14px 16px 20px;border-top:1px solid var(--line);background:var(--panel);font-size:12.5px}
+.notes h2{font-family:var(--display);font-weight:600;font-size:18px;margin:0 0 6px;letter-spacing:.02em}
+.notes ul{margin:4px 0 0;padding-left:18px}
+.notes li{margin:2px 0}
+.notes .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.notes .cols>div{min-width:0}
+
+@media (max-width:860px){
+  .app{min-height:0;height:auto;grid-template-columns:1fr;grid-template-rows:auto auto 440px auto auto;grid-template-areas:"top" "rail" "vp" "vcb" "side"}
+  .rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:4px 8px;gap:4px}
+  .rail .grp{flex-direction:row;width:auto;border-bottom:0;border-right:1px solid var(--line);padding:0 6px 0 0}
+  .side{border-left:0;border-top:1px solid var(--line);max-height:520px}
+  .notes .cols{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){ *{transition:none!important;animation:none!important} }
+</style>
+
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand" title="Sawhorse">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18M5 9l-2 11M19 9l2 11M8 9l-1.5 11M16 9l1.5 11M6.5 15h11" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+      Sawhorse
+    </div>
+    <nav class="menu" aria-label="Menu">
+      <button>File</button><button>Edit</button><button>View</button><button>Draw</button><button>Tools</button><button>Window</button><button>Help</button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="views" role="group" aria-label="Views">
+      <button aria-pressed="true">Iso</button><button aria-pressed="false">Top</button><button aria-pressed="false">Front</button><button aria-pressed="false">Right</button><button aria-pressed="false">Persp</button>
+    </div>
+    <span class="chip" title="Render credits on this device">Credits <b id="credits">100</b></span>
+  </header>
+
+  <aside class="rail" aria-label="Tools">
+    <div class="grp">
+      <button class="tool" data-tool="select" data-hint="Click an entity. Drag for a window. Double-click a group to edit it." data-vcb="" aria-pressed="true"><kbd>␣</kbd><svg viewBox="0 0 24 24"><path d="M5 3l14 9-6 1-3 6z"/></svg><small>Select</small></button>
+      <button class="tool" data-tool="erase" data-hint="Click or drag over edges to erase. Shift hides, Ctrl softens." data-vcb=""><kbd>E</kbd><svg viewBox="0 0 24 24"><path d="M4 16l9-9 6 6-9 9H8z M13 7l4-4"/></svg><small>Erase</small></button>
+    </div>
+    <div class="grp">
+      <button class="tool" data-tool="line" data-hint="Click to start. Type a length and press Enter. Closed loops form faces." data-vcb="Length"><kbd>L</kbd><svg viewBox="0 0 24 24"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="1.5"/><circle cx="20" cy="4" r="1.5"/></svg><small>Line</small></button>
+      <button class="tool" data-tool="rect" data-hint="Click two corners. Type 24,12 for exact size." data-vcb="Dimensions"><kbd>R</kbd><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12"/></svg><small>Rect</small></button>
+      <button class="tool" data-tool="circle" data-hint="Click center, then radius. Type a radius and press Enter." data-vcb="Radius"><kbd>C</kbd><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg><small>Circle</small></button>
+      <button class="tool" data-tool="arc" data-hint="Two-point arc. Click ends, then bulge. Type a radius or 12s for segments." data-vcb="Bulge"><kbd>A</kbd><svg viewBox="0 0 24 24"><path d="M4 18a8 8 0 0 1 16 0"/></svg><small>Arc</small></button>
+    </div>
+    <div class="grp">
+      <button class="tool" data-tool="pushpull" data-hint="Click a face and move. Type 3/4 for 3/4 in. Double-click repeats the last distance." data-vcb="Distance"><kbd>P</kbd><svg viewBox="0 0 24 24"><path d="M4 16l6 4 10-6V8l-6-4L4 10z M10 20V10l10-6 M10 10L4 6"/><path d="M14 3v5M12 6l2-2 2 2" /></svg><small>Push</small></button>
+      <button class="tool" data-tool="move" data-hint="Click, move, click. Ctrl copies. Type 36 then x3 for an array." data-vcb="Distance"><kbd>M</kbd><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><small>Move</small></button>
+      <button class="tool" data-tool="rotate" data-hint="Set the protractor on a face, click the start angle, then the end. Type 90." data-vcb="Angle"><kbd>Q</kbd><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-8-8"/><path d="M12 4l3-2M12 4l3 2"/></svg><small>Rotate</small></button>
+      <button class="tool" data-tool="scale" data-hint="Drag a grip. Type 2 for 2x, or 48in for an absolute size." data-vcb="Scale"><kbd>S</kbd><svg viewBox="0 0 24 24"><rect x="4" y="10" width="10" height="10"/><path d="M14 10l6-6M20 4h-5M20 4v5"/></svg><small>Scale</small></button>
+      <button class="tool" data-tool="offset" data-hint="Click a face, move inward or outward. Type 3/4." data-vcb="Distance"><kbd>F</kbd><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18"/><rect x="8" y="8" width="8" height="8"/></svg><small>Offset</small></button>
+      <button class="tool" data-tool="follow" data-hint="Select a path, then click a profile face to extrude it along the path." data-vcb=""><kbd>W</kbd><svg viewBox="0 0 24 24"><path d="M3 18c5 0 5-12 10-12s5 12 8 12"/><circle cx="3" cy="18" r="2"/></svg><small>Follow</small></button>
+    </div>
+    <div class="grp">
+      <button class="tool" data-tool="tape" data-hint="Click two points to measure. Click an edge and move for a guide." data-vcb="Length"><kbd>T</kbd><svg viewBox="0 0 24 24"><path d="M3 15l12-12 6 6-12 12z M7 11l2 2M10 8l2 2M13 5l2 2"/></svg><small>Tape</small></button>
+      <button class="tool" data-tool="dim" data-hint="Click two points, then place the dimension line." data-vcb=""><kbd>D</kbd><svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg><small>Dim</small></button>
+      <button class="tool" data-tool="paint" data-hint="Click a face to paint the active material." data-vcb=""><kbd>B</kbd><svg viewBox="0 0 24 24"><path d="M4 20c0-3 2-5 5-5l6-9 4 4-9 6c0 3-2 5-6 4z M12 8l4 4"/></svg><small>Paint</small></button>
+    </div>
+  </aside>
+
+  <main class="vp" aria-label="Viewport">
+    <canvas id="cv" aria-label="Demo scene: a blocked-out bookshelf, example only"></canvas>
+    <div class="hud"><span>Demo scene: bookshelf (example)</span><span>Units: fractional in</span><span>Edit: Bookshelf › Side L</span></div>
+    <div class="tip" id="tip"><i style="background:var(--inf-face)"></i>On Face</div>
+    <div class="legend"><span><i style="background:var(--inf-end)"></i>Endpoint</span><span><i style="background:var(--inf-mid)"></i>Midpoint</span><span><i style="background:var(--inf-edge)"></i>On Edge</span><span><i style="background:var(--inf-face)"></i>On Face</span></div>
+    <div class="axes">x ─ red · y ─ green · z ─ blue</div>
+  </main>
+
+  <aside class="side" aria-label="Panels">
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-pane="outliner">Outliner</button>
+      <button role="tab" aria-selected="false" data-pane="tags">Tags</button>
+      <button role="tab" aria-selected="false" data-pane="cutlist">Cut list</button>
+      <button role="tab" aria-selected="false" data-pane="render">Render</button>
+    </div>
+
+    <section class="pane" id="pane-outliner">
+      <h3>Outliner <small>groups and components</small></h3>
+      <ul class="tree">
+        <li><span class="k">▾</span> Bookshelf <span class="k">group</span></li>
+        <li class="lvl1 sel"><span class="k">▸</span> Side L <span class="k">component · 1 of 2</span></li>
+        <li class="lvl1"><span class="k">▸</span> Side R <span class="k">component · 2 of 2</span></li>
+        <li class="lvl1"><span class="k">▸</span> Shelf <span class="k">component · 4 instances</span></li>
+        <li class="lvl1"><span class="k">▸</span> Top</li>
+        <li class="lvl1"><span class="k">▸</span> Back panel <span class="k">1/4 ply</span></li>
+        <li><span class="k">▸</span> Dado jig <span class="k">group · hidden</span></li>
+      </ul>
+      <p class="note">Double-click to edit in place. Right-click for Make Unique, Explode, Lock.</p>
+    </section>
+
+    <section class="pane" id="pane-tags" hidden>
+      <h3>Tags</h3>
+      <ul class="tree">
+        <li><span class="tag" style="background:#3a3f3b"></span> Untagged <span class="k">default</span></li>
+        <li><span class="tag" style="background:#c48a2a"></span> Carcass</li>
+        <li><span class="tag" style="background:#6a9b5a"></span> Shelves</li>
+        <li><span class="tag" style="background:#8a5cd6"></span> Hardware</li>
+        <li><span class="tag" style="background:#9aa39a"></span> Jigs <span class="k">hidden</span></li>
+      </ul>
+      <p class="note">Tags control visibility only. Geometry stays in its group.</p>
+    </section>
+
+    <section class="pane" id="pane-cutlist" hidden>
+      <h3>Cut list <small>from components</small></h3>
+      <div class="tablewrap">
+      <table>
+        <thead><tr><th>Part</th><th class="n">Qty</th><th class="n">T</th><th class="n">W</th><th class="n">L</th><th>Material</th></tr></thead>
+        <tbody>
+          <tr><td>Side</td><td class="n">2</td><td class="n">3/4</td><td class="n">11 1/4</td><td class="n">72</td><td>Oak S4S</td></tr>
+          <tr><td>Top</td><td class="n">1</td><td class="n">3/4</td><td class="n">11 1/4</td><td class="n">35 1/4</td><td>Oak S4S</td></tr>
+          <tr><td>Shelf</td><td class="n">4</td><td class="n">3/4</td><td class="n">11</td><td class="n">34 1/2</td><td>Oak S4S</td></tr>
+          <tr><td>Back panel</td><td class="n">1</td><td class="n">1/4</td><td class="n">35 1/4</td><td class="n">71 1/4</td><td>Oak ply</td></tr>
+          <tr><td>Toe kick</td><td class="n">1</td><td class="n">3/4</td><td class="n">3</td><td class="n">34 1/2</td><td>Oak S4S</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="sum">
+        <div><b>27.6</b><span>board feet, solid oak</span></div>
+        <div><b>1</b><span>sheet 4×8 ply, 1/4</span></div>
+      </div>
+      <div class="btnrow"><button class="btn">CSV</button><button class="btn">PDF</button><button class="btn">Labels</button><button class="btn" title="Week 4">Nesting ›</button></div>
+      <p class="note">Grain runs along L. Dimensions are finished sizes, kerf not included until nesting.</p>
+    </section>
+
+    <section class="pane" id="pane-render" hidden>
+      <h3>Render <small>current view</small></h3>
+      <div class="presets" role="group" aria-label="Presets">
+        <button aria-pressed="true">Workshop<small>soft daylight, oak</small></button>
+        <button aria-pressed="false">Kitchen<small>painted, warm</small></button>
+        <button aria-pressed="false">Living room<small>walnut, evening</small></button>
+        <button aria-pressed="false">Exterior<small>deck, overcast</small></button>
+      </div>
+      <textarea id="prompt" aria-label="Prompt">Oak bookshelf in a bright workshop, soft daylight through a window, sawdust on the bench</textarea>
+      <div class="btnrow"><button class="btn primary" id="renderBtn">Render · 1 credit</button><button class="btn">History</button></div>
+      <div class="result" id="result">Render appears here. The model's depth and edge passes are sent with the prompt; nothing else leaves this machine.</div>
+      <div class="packs" role="group" aria-label="Credit packs">
+        <button><b>$10</b>100 credits</button><button><b>$25</b>250 credits</button><button><b>$50</b>500 credits</button>
+      </div>
+      <p class="note">No account. Packs are tied to this device; a claim code moves them.</p>
+    </section>
+  </aside>
+
+  <footer class="vcb">
+    <div class="hint" id="hint"><b>Select.</b> Click an entity. Drag for a window. Double-click a group to edit it.</div>
+    <label id="vcbLabel" hidden><span id="vcbName">Distance</span> <input id="vcb" value="3/4" aria-label="Value"> <span class="units">in</span></label>
+  </footer>
+</div>
+
+<section class="notes">
+  <h2>What this mock decides</h2>
+  <div class="cols">
+    <div>
+      <strong>In the week-3 alpha</strong>
+      <ul>
+        <li>Left rail: the tools people's hands already know, same keys, our own glyphs.</li>
+        <li>Inference dots in our own four colors, named in the legend.</li>
+        <li>Value bar at the bottom: type mid-gesture, fractional inches first-class.</li>
+        <li>Right panel: Outliner, Tags, Cut list, Render. Cut list ships day one.</li>
+        <li>Render panel: presets, one credit per render, packs with no account.</li>
+      </ul>
+    </div>
+    <div>
+      <strong>Not in the alpha</strong>
+      <ul>
+        <li>Materials and styles panels, section planes, scenes (weeks 5 and 7).</li>
+        <li>Nesting and cutting diagrams (week 4), shown as a disabled button here.</li>
+        <li>.skp export (week 5). Import is in.</li>
+        <li>Plugin panel (week 7).</li>
+      </ul>
+      <p class="note">Click any tool, tab, preset or the Render button. The scene is a drawn placeholder, not the kernel.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+  // Tool rail
+  var tools=document.querySelectorAll('.tool'), hint=document.getElementById('hint'), vcbLabel=document.getElementById('vcbLabel'), vcbName=document.getElementById('vcbName');
+  tools.forEach(function(b){ b.addEventListener('click',function(){
+    tools.forEach(function(x){x.setAttribute('aria-pressed','false')}); b.setAttribute('aria-pressed','true');
+    hint.innerHTML='<b>'+b.querySelector('small').textContent+'.</b> '+b.getAttribute('data-hint');
+    var v=b.getAttribute('data-vcb'); if(v){vcbName.textContent=v; vcbLabel.hidden=false;} else {vcbLabel.hidden=true;}
+    draw(b.getAttribute('data-tool'));
+  })});
+  // Views
+  document.querySelectorAll('.views button').forEach(function(b){ b.addEventListener('click',function(){ document.querySelectorAll('.views button').forEach(function(x){x.setAttribute('aria-pressed','false')}); b.setAttribute('aria-pressed','true'); })});
+  // Tabs
+  var tabs=document.querySelectorAll('[role=tab]');
+  tabs.forEach(function(t){ t.addEventListener('click',function(){
+    tabs.forEach(function(x){x.setAttribute('aria-selected','false')}); t.setAttribute('aria-selected','true');
+    document.querySelectorAll('.pane').forEach(function(p){p.hidden=true});
+    document.getElementById('pane-'+t.getAttribute('data-pane')).hidden=false;
+  })});
+  // Presets
+  var presets=document.querySelectorAll('.presets button'), prompt=document.getElementById('prompt');
+  var ptext={Workshop:'Oak bookshelf in a bright workshop, soft daylight through a window, sawdust on the bench',Kitchen:'Painted bookshelf in a warm kitchen, morning light, ceramic bowls on the shelves','Living room':'Walnut bookshelf in a living room at evening, lamp light, books and a plant',Exterior:'Cedar shelf unit on a covered deck, overcast sky, wet boards'};
+  presets.forEach(function(b){ b.addEventListener('click',function(){ presets.forEach(function(x){x.setAttribute('aria-pressed','false')}); b.setAttribute('aria-pressed','true'); var k=b.firstChild.textContent.trim(); if(ptext[k]) prompt.value=ptext[k]; })});
+  // Render
+  var rb=document.getElementById('renderBtn'), res=document.getElementById('result'), credits=document.getElementById('credits'), busy=false;
+  rb.addEventListener('click',function(){ if(busy) return; var c=parseInt(credits.textContent,10); if(c<=0){res.className='result';res.textContent='No credits on this device. Buy a pack below.';return;}
+    busy=true; res.className='result'; res.textContent='Rendering… about 15 s'; var t=0; var iv=setInterval(function(){ t++; res.textContent='Rendering… '+Math.min(99,t*12)+'%'; if(t>=8){clearInterval(iv); res.className='result done'; res.textContent='Example render (placeholder)'; credits.textContent=String(c-1); busy=false;} },250);
+  });
+  document.querySelectorAll('.packs button').forEach(function(b){ b.addEventListener('click',function(){ var n=parseInt(b.textContent.replace(/\D+/g,' ').trim().split(' ')[1],10)||100; credits.textContent=String(parseInt(credits.textContent,10)+n); res.className='result'; res.textContent='Mock: added '+n+' credits. In the app this opens Stripe Checkout in your browser.'; })});
+
+  // Viewport drawing (isometric placeholder)
+  var cv=document.getElementById('cv'), ctx=cv.getContext('2d'), tip=document.getElementById('tip');
+  function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+  function iso(x,y,z,o,s){ return [o.x+(x-y)*s*0.866, o.y+(x+y)*s*0.5-z*s]; }
+  function poly(pts,fill,stroke){ ctx.beginPath(); pts.forEach(function(p,i){ i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); }); ctx.closePath(); if(fill){ctx.fillStyle=fill;ctx.fill();} if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1.2;ctx.stroke();} }
+  function box(x,y,z,w,d,h,o,s,hi){ // draw a box with 3 visible faces
+    var p=function(a,b,c){return iso(a,b,c,o,s)};
+    var top=[p(x,y,z+h),p(x+w,y,z+h),p(x+w,y+d,z+h),p(x,y+d,z+h)];
+    var right=[p(x+w,y,z),p(x+w,y+d,z),p(x+w,y+d,z+h),p(x+w,y,z+h)];
+    var front=[p(x,y+d,z),p(x+w,y+d,z),p(x+w,y+d,z+h),p(x,y+d,z+h)];
+    var e=css('--edge');
+    poly(right,css('--face-side'),e); poly(front,hi?hi:css('--face'),e); poly(top,css('--face-top'),e);
+  }
+  var tool='select';
+  function draw(t){ if(t) tool=t;
+    var r=cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1; cv.width=r.width*dpr; cv.height=r.height*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle=css('--vp'); ctx.fillRect(0,0,r.width,r.height);
+    var s=Math.min(r.width,r.height)/9.5, o={x:r.width*0.52,y:r.height*0.56};
+    // grid
+    ctx.strokeStyle=css('--vp-grid'); ctx.lineWidth=1;
+    for(var i=-6;i<=6;i++){ var a=iso(i,-6,0,o,s),b=iso(i,6,0,o,s); ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke(); var c=iso(-6,i,0,o,s),d=iso(6,i,0,o,s); ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke(); }
+    // axes
+    ctx.lineWidth=1.4; var O=iso(0,0,0,o,s);
+    [['#c0392b',iso(7,0,0,o,s)],['#27ae60',iso(0,7,0,o,s)],['#2a63a8',iso(0,0,5.5,o,s)]].forEach(function(ax){ ctx.strokeStyle=ax[0]; ctx.beginPath(); ctx.moveTo(O[0],O[1]); ctx.lineTo(ax[1][0],ax[1][1]); ctx.stroke(); });
+    // bookshelf blockout: units ~ 1 = 12 in. Sides 72 tall (6), 11.25 deep (~0.94), 0.75 thick (0.0625)
+    var T=0.0625, D=0.94, H=6, W=3;
+    box(0,0,0,T,D,H,o,s);                 // side L
+    box(W-T,0,0,T,D,H,o,s);               // side R
+    box(T,0,H-T,W-2*T,D,T,o,s);           // top
+    for(var k=1;k<=4;k++){ box(T,0.02,k*1.35-0.2,W-2*T,D-0.02,T,o,s, (tool==='pushpull'&&k===2)?css('--sel'):null); }
+    box(T,0,0,W-2*T,T,0.25,o,s);          // toe kick
+    // dado cut on side L (push/pull result)
+    if(tool==='pushpull'||tool==='select'){ var dz=1.35*2-0.2; var q=[iso(0,0.1,dz,o,s),iso(T,0.1,dz,o,s),iso(T,0.1,dz+T,o,s),iso(0,0.1,dz+T,o,s)]; poly(q,css('--sel'),css('--edge')); }
+    // inference point + dimension
+    var pt=iso(T,D*0.5,2.5,o,s), col=css('--inf-face'), label='On Face';
+    if(tool==='line'||tool==='rect'){ pt=iso(W-T,0,H-T,o,s); col=css('--inf-end'); label='Endpoint'; }
+    if(tool==='move'||tool==='tape'){ pt=iso(W/2,D,H-T,o,s); col=css('--inf-mid'); label='Midpoint'; }
+    if(tool==='pushpull'||tool==='offset'){ pt=iso(T,0.1,1.35*2-0.2+T/2,o,s); col=css('--inf-edge'); label='On Edge'; }
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(pt[0],pt[1],4.5,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=css('--vp'); ctx.lineWidth=1.5; ctx.stroke();
+    tip.style.left=(pt[0]+12)+'px'; tip.style.top=(pt[1]-26)+'px'; tip.innerHTML='<i style="background:'+col+'"></i>'+label+(tool==='pushpull'?' · 3/4 in':'');
+    // dimension line
+    var a=iso(W,D+0.35,0,o,s), b=iso(W,D+0.35,H,o,s); ctx.strokeStyle=css('--muted'); ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+    ctx.fillStyle=css('--fg'); ctx.font='11px '+css('--mono'); ctx.fillText('72"',b[0]+6,(a[1]+b[1])/2);
+    var c1=iso(0,D+0.6,0,o,s), c2=iso(W,D+0.6,0,o,s); ctx.strokeStyle=css('--muted'); ctx.beginPath(); ctx.moveTo(c1[0],c1[1]); ctx.lineTo(c2[0],c2[1]); ctx.stroke(); ctx.fillText('36"',(c1[0]+c2[0])/2-10,c1[1]+16);
+  }
+  draw(); window.addEventListener('resize',function(){draw()});
+  if(window.matchMedia){ try{ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){draw()}); }catch(e){} }
+  new MutationObserver(function(){draw()}).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>

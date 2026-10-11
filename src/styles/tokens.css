@@ -1,0 +1,23 @@
+/* Design tokens, copied verbatim from the approved mock (docs/mock/sawhorse-mock.html, ADR-0003).
+   Light by default, dark via prefers-color-scheme unless data-theme="light", forced dark via data-theme="dark".
+   Inference colours are OURS: endpoint lime, midpoint teal, on-edge amber, on-face violet. */
+:root{
+  --bg:#edeeea; --panel:#f7f8f5; --rail:#e3e5df; --fg:#1d211f; --muted:#5f6660; --line:#c9cdc5;
+  --accent:#2a63a8; --accent-ink:#ffffff; --sel:#2a63a8;
+  --inf-end:#7bc043; --inf-mid:#17a2a0; --inf-edge:#e08a1e; --inf-face:#8a5cd6;
+  --vp:#f4f5f1; --vp-grid:#d4d8cf; --vp-axis:#9aa39a; --face:#e9e4d6; --face-top:#f3efe3; --face-side:#d9d2c0; --edge:#3a3f3b;
+  --ok:#2e8b57; --warn:#c77d12;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono","Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#1a1d1b; --panel:#222623; --rail:#1f2320; --fg:#e8eae5; --muted:#9aa39b; --line:#3a403b;
+  --accent:#6ea3e4; --accent-ink:#0f1a28; --sel:#6ea3e4;
+  --vp:#20242a; --vp-grid:#2f353c; --vp-axis:#5a636c; --face:#8a8470; --face-top:#a39c86; --face-side:#6f6a59; --edge:#e6e2d4;
+  --ok:#5ec98a; --warn:#e3a94a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#1a1d1b; --panel:#222623; --rail:#1f2320; --fg:#e8eae5; --muted:#9aa39b; --line:#3a403b;
+  --accent:#6ea3e4; --accent-ink:#0f1a28; --sel:#6ea3e4;
+  --vp:#20242a; --vp-grid:#2f353c; --vp-axis:#5a636c; --face:#8a8470; --face-top:#a39c86; --face-side:#6f6a59; --edge:#e6e2d4;
+  --ok:#5ec98a; --warn:#e3a94a; color-scheme:dark }

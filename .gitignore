@@ -1,0 +1,20 @@
+.worktrees/
+node_modules/
+target/
+dist/
+.env
+src-tauri/target/
+src-tauri/gen/schemas/
+# wasm-pack output (rebuilt by `npm run wasm`)
+src/wasm/pkg/
+crates/**/pkg/
+# test output
+test-results/
+playwright-report/
+coverage/
+crates/kernel/fuzz/target/
+crates/kernel/fuzz/corpus/
+crates/kernel/fuzz/artifacts/
+crates/kernel/proptest-regressions/*.tmp
+*.log
+.DS_Store
