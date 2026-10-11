@@ -126,9 +126,11 @@ Stay on Tauri 2.x stable. 3.0 is alpha; `npm run check:tauri` fails on anything 
 
 ## CI (`.github/workflows/ci.yml`)
 
-- `rust` (ubuntu-latest): `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace`, 10,000-sequence fuzz, wasm32 check.
-- `web` (ubuntu-latest): `npm ci`, Tauri guard, `wasm-pack` build, golden cross-check, `npm run build`, Vitest, Playwright Chromium e2e with `REQUIRE_KERNEL=1`.
-- `tauri-check` (ubuntu-22.04): `cargo check --locked` in `src-tauri` with webkit2gtk.
+- `rust` (ubuntu-24.04): `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace`, 10,000-sequence fuzz, wasm32 check.
+- `web` (ubuntu-24.04): `npm ci`, Tauri guard, `wasm-pack` build, golden cross-check, `npm run build`, Vitest, Playwright Chromium e2e with `REQUIRE_KERNEL=1`.
+- `tauri-check` (ubuntu-22.04, kept on the older glibc the Linux release build targets): `cargo check --locked` in `src-tauri` with webkit2gtk.
+
+Runners are pinned (never `ubuntu-latest`, which moves to a new Ubuntu on 2026-10-19 without notice in the logs); actions are `actions/checkout@v5` and `actions/setup-node@v5` (Node 24 runtime).
 
 No secrets are needed; no auto-merge is configured.
 

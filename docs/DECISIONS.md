@@ -32,7 +32,7 @@ Findings that change how we work (details in `docs/DEVELOPMENT.md`):
 - **On Windows without MSVC, `cargo check` itself fails**, not just linking final binaries: build scripts and proc-macros (serde_derive, thiserror, wasm-bindgen-macro) are host executables that need `link.exe`. Git Bash's `/usr/bin/link` shadows the name and fails with "extra operand". So every Rust command (check, test, clippy, fmt, wasm-pack) runs in WSL Ubuntu; `scripts/cargo.sh` and `scripts/build-wasm.mjs` forward automatically.
 - The `crates/` workspace excludes `src-tauri/` (it has its own `[workspace]`), so the wasm32 check never sees Tauri.
 - `manifold-rust` imports a MeshGL64 with per-triangle `face_id` and returns it through booleans, which is the hook ADR-0001's re-polygonise step needs. Verified by `kernel::boolean` tests (difference / union / intersection volumes and face-id provenance).
-- Native and WASM kernels hash all six golden op sequences identically (`npm run golden:wasm`).
+- Native and WASM kernels hash every golden op sequence identically (`npm run golden:wasm`; six in lane 1, 13 after lane 2).
 
 ## Build rules (from CLAUDE.md, applied here)
 

@@ -34,7 +34,7 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 
 ### Day-1 spike (2026-10-11): passed, nothing dropped
 
-`cargo check --workspace --target wasm32-unknown-unknown` passes with glam 0.34 (f64), slotmap 1.1, robust 1.2, earcut 0.4.11 (georust), i_overlay 9.0, manifold-rust =0.16.0 (pure Rust; `parallel`/rayon left off), threemf 0.8 (zip 8 + zlib-rs, pure Rust) and wasm-bindgen 0.2.129. proptest 1.12 and arbitrary 1.5 are test-only. The WASM release build is 556 KB (183 KB gzipped) without wasm-opt.
+`cargo check --workspace --target wasm32-unknown-unknown` passes with glam 0.34 (f64), slotmap 1.1, robust 1.2, earcut 0.4.11 (georust), i_overlay 9.0, manifold-rust =0.16.0 (pure Rust; `parallel`/rayon left off), threemf 0.8 (zip 8 + zlib-rs, pure Rust) and wasm-bindgen 0.2.129. proptest 1.12 and arbitrary 1.5 are test-only. The day-1 WASM release build was 556 KB (183 KB gzipped) without wasm-opt; since lane 2 calls into manifold-rust for booleans it is about 2.55 MB (about 770 KB gzipped; 2,548,421 bytes / 759,537 bytes at gzip -9 on 2026-10-11).
 
 ### Built in lane 1
 
@@ -65,7 +65,7 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 | Global self-intersection | `kernel/src/intersect.rs` | Part of `Object::validate`: edges through non-incident faces (exact orient3d), chords across a face, vertices within POINT_MERGE of a non-incident face, edges within POINT_MERGE of each other, coplanar faces overlapping; plus positive enclosed volume |
 | Document | `kernel/src/document.rs` | Model + op log (undo/redo included) + undo ring of 200 snapshots; replaying the log reproduces the state and the log hash; groups, tags (visibility), delete |
 | WASM | `crates/wasm-api` | `document_new()` -> `Doc` with `apply_op(json)`, `undo`, `redo`, `get_view_mesh(object_id)`, `get_scene_mesh`, `document_hash`, `export_stl(object_id)`, `export_obj(object_id)`; the worker holds one persistent document |
-| Tests | `kernel/tests/` | sketch_props (order independence, simple boundaries, split-then-erase identity), face_props (split/imprint then merge identity, transactional refusals), push.rs (every push path, volume/area/Euler), booleans.rs (26 hand-computed cases; `npm run boolean:diff` runs them against npm manifold-3d), document unit tests, 14 goldens (WASM == native), op-sequence fuzzer over every op with undo/redo interleaved |
+| Tests | `kernel/tests/` | sketch_props (order independence, simple boundaries, split-then-erase identity), face_props (split/imprint then merge identity, transactional refusals), push.rs (every push path, volume/area/Euler), booleans.rs (26 hand-computed cases; `npm run boolean:diff` runs them against npm manifold-3d), document unit tests, 13 goldens (WASM == native), op-sequence fuzzer over every op with undo/redo interleaved |
 
 ### Deliberate gaps (owned by later lanes)
 

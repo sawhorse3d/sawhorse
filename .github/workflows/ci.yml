@@ -21,12 +21,12 @@ env:
 jobs:
   rust:
     name: Rust (fmt, clippy, test, wasm32 check)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: crates
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -56,10 +56,10 @@ jobs:
 
   web:
     name: Web (wasm-pack, build, vitest, golden, e2e)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -103,7 +103,7 @@ jobs:
     name: Tauri shell compiles (Linux)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: webview deps
         run: |
           sudo apt-get update
