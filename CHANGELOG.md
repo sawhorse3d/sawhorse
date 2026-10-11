@@ -4,6 +4,42 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 8, render service and credit store, 2026-10-11)
+
+- Render credits per ADR-0004, with no accounts:
+  - The app holds an Ed25519 device key. On the desktop it lives in the OS secure store (`src-tauri/device-key`, `keyring`); in the browser demo it is a non-extractable WebCrypto key in IndexedDB.
+  - `install_id = base32(sha256(public key))[:20]`, and every request to the render service is signed.
+- The Credits chip shows this device's balance (a dash when the service is not connected) and opens the Render pane.
+- The Render pane is live:
+  - Presets, the prompt, and **Render · 1 credit**.
+  - The depth pass shows faintly while the render runs, then the result.
+  - A history gallery.
+  - The $10 / $25 / $50 packs open Stripe Checkout in the system browser and the chip follows the payment.
+  - **Move credits**: an emailed claim code moves a balance to a new device, two devices at most.
+  - "Render service not connected" when the service cannot be reached; nothing is charged or simulated.
+- Render passes from the current three.js view (`src/render/passes.ts`), each with our own PNG writer:
+  - a 16-bit linear depth map normalised over the model;
+  - an edge line render with hidden lines removed;
+  - a clay render.
+- The render service, in its own repository (`../render-service`, not deployed):
+  - Hono on Node 24, Postgres (PGlite locally, node-postgres in production).
+  - Stripe Checkout and an idempotent webhook.
+  - Atomic credit decrement; fal first, Replicate as the fallback, re-credit on failure.
+  - Claim codes over Resend; limits of 2 concurrent, 6 a minute and 200 a day.
+  - 56 tests, also run on real Postgres; a Dockerfile, a systemd unit for the production host and a deploy guide.
+- Tauri: the `device_public_key`, `device_sign` and `open_external` commands (the last opens only Stripe Checkout and the local dev checkout), plus the opener plugin. The CSP allows the local service.
+- Tests:
+  - The shared signing vector, checked in TypeScript, Rust and the service.
+  - Client, PNG and Render pane unit tests.
+  - `e2e/render.spec.ts`, with a fake service inside Playwright that verifies every signature and decodes the real passes.
+  - `scripts/capture-credits.mjs`, the full session against the real service, with screenshots.
+- Docs: `docs/RENDER.md`, and `docs/LAUNCH-CREDITS.md` (what the maintainer provides before credits go live).
+
+### Changed (lane 8)
+
+- CI `tauri-check` installs `libdbus-1-dev`, which `keyring`'s Secret Service backend needs, and runs the device-key tests, clippy and fmt for `src-tauri`. The release workflow installs `libdbus-1-dev` too.
+- `PW_PORT` sets the Playwright preview port (default 4173), so parallel worktrees can run e2e side by side.
+
 ### Added (lane 1, foundations, 2026-10-11)
 
 - Browser app shell built from the approved mock: top bar with menus, Iso/Top/Front/Right/Persp views and Credits chip; tool rail with the SketchUp-2017 default keys and our own glyphs; three.js WebGL2 viewport (Z-up, grid, axes, coarse hover inference in our four colours); Outliner / Tags / Cut list / Render panel; Value Control Box with fractional in, decimal in, ft-in, mm, cm and m. Light and dark themes.

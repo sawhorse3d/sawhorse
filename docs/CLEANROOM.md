@@ -45,3 +45,8 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No design question needed them.
 - **SketchUp:** its public behaviour (keys, the push/pull gesture, typing mid-gesture, inference kinds, window vs crossing selection, guide lines from the tape) was described from memory as a user knows it. No SketchUp icon, UI string or layout was copied; the glyphs, wording and layout are the approved Sawhorse mock's, and the inference colours are ours (endpoint lime, midpoint teal, on-edge amber, on-face violet; the added kinds in magenta, blue, indigo, grey, tan and sage; see `docs/USER-GUIDE.md`).
 - **Check:** `git grep -i -E 'hew3d|\bhew\b|openskp'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002 (the MIT npm package and the rule itself).
+
+### 2026-10-11 — lane 8 (render service and credit store): nothing read
+- **Who:** the lane-8 builder (Claude Opus 5.5).
+- **Read:** nothing from hew3d/hew or hew3d/openskp, and no published URL of any kind. The Stripe, fal, Replicate and Resend integrations were written from general knowledge of those public APIs. The Stripe webhook signature check uses the official `stripe` npm SDK, and its own type definitions in `node_modules` were consulted. The fal and Replicate request field names are marked for verification against the live schemas before launch (`docs/LAUNCH-CREDITS.md`). Package versions were looked up in the crates.io and npm registries; no documentation was read.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b|openskp'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002.

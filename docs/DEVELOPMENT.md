@@ -51,6 +51,12 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 
 `?theme=light` or `?theme=dark` on the URL forces a theme.
 
+`PW_PORT=4178` (any free port) runs the Playwright preview on another port, so two worktrees can run e2e at the same time. Without it, a second run would reuse whatever is already on 4173, which may be another lane's build.
+
+### Render service (lane 8)
+
+The Render pane talks to the render service (`../render-service`, its own repository) at `VITE_RENDER_SERVICE_URL`, default `http://127.0.0.1:8787`. Run it with `cd ../render-service && npm ci && npm run dev`. With no keys it uses a mock provider, a simulated checkout and an embedded Postgres. Without it, the pane says "Render service not connected" and the chip shows a dash. The full local loop, the device key and what is sent are in `docs/RENDER.md`. Device-key tests run in WSL: `cd src-tauri && cargo test -p sawhorse-device-key` (WSL needs `libdbus-1-dev` and `pkg-config`).
+
 ### The e2e suites (lane 3)
 
 | Spec | What it drives |
@@ -63,6 +69,7 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 | `e2e/draw.spec.ts` | Line, Rect, Rotated Rect, Circle, Polygon, Arc, 3-Point Arc; a stroke across a face becomes `split_face` |
 | `e2e/push.spec.ts` | press-drag-release, click-move-click, typed mid-gesture, double-click repeat, Ctrl new face, push-through, typed refusals |
 | `e2e/tape.spec.ts` | Tape measure, guides from an edge, guide crossings as snaps, Dimension, erasing a guide |
+| `e2e/render.spec.ts` | lane 8: Credits chip and Render pane against a fake render service that verifies every signature; not connected, a render with the real 16-bit depth, edge and clay passes, a pack opening checkout and the chip following the payment |
 | `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, and prints its time and the refusal tally |
 
 The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
