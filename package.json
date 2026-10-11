@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "build:all": "npm run wasm && npm run build",
     "wasm": "node scripts/build-wasm.mjs",
+    "golden:wasm": "node scripts/golden-wasm.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
