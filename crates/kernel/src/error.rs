@@ -89,6 +89,25 @@ pub enum FaceEditError {
     Build(#[from] BuildError),
 }
 
+/// Errors from document-level commands (undo, redo, groups, tags, deleting objects).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum DocumentError {
+    #[error("nothing to undo")]
+    NothingToUndo,
+    #[error("nothing to redo")]
+    NothingToRedo,
+    #[error("undo and redo act on a document, not on a bare model")]
+    NotAModelOp,
+    #[error("no object #{0}")]
+    NoSuchObject(u64),
+    #[error("no group #{0}")]
+    NoSuchGroup(u64),
+    #[error("a group needs at least one object")]
+    EmptyGroup,
+    #[error("a name must be 1 to 64 characters")]
+    BadName,
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
@@ -97,6 +116,8 @@ pub enum KernelError {
     Push(#[from] PushError),
     #[error(transparent)]
     FaceEdit(#[from] FaceEditError),
+    #[error(transparent)]
+    Document(#[from] DocumentError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]

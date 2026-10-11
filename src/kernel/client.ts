@@ -1,5 +1,5 @@
-// Promise wrapper around the kernel worker.
-import type { MeshData, RequestBody, SpikeRecipe, WorkerRequest, WorkerResponse } from "./types";
+// Promise wrapper around the kernel worker, which holds the persistent document.
+import type { KernelOp, OpOutcome, RequestBody, SceneData, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -8,7 +8,20 @@ export class KernelUnavailableError extends Error {
   }
 }
 
+/** A typed kernel refusal: the document is unchanged. */
+export class KernelRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "KernelRefusal";
+  }
+}
+
 type Pending = { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void };
+
+export interface EditResult {
+  outcome: OpOutcome;
+  scene: SceneData;
+}
 
 export class KernelClient {
   private worker: Worker;
@@ -30,27 +43,54 @@ export class KernelClient {
     };
   }
 
-  private call(req: RequestBody): Promise<WorkerResponse> {
+  private async call(req: RequestBody): Promise<WorkerResponse & { ok: true }> {
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
+    const r = await new Promise<WorkerResponse>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       const msg: WorkerRequest = { ...req, id };
       this.worker.postMessage(msg);
     });
+    if (!r.ok) throw r.missing ? new KernelUnavailableError(r.error) : new KernelRefusal(r.error);
+    return r;
   }
 
   async version(): Promise<string> {
-    const r = await this.call({ kind: "version" });
-    if (!r.ok) throw r.missing ? new KernelUnavailableError(r.error) : new Error(r.error);
-    return r.version ?? "unknown";
+    return (await this.call({ kind: "version" })).version ?? "unknown";
   }
 
-  /** Build the spike scene: rectangle on the ground plane, extruded by recipe.distance. */
-  async build(recipe: SpikeRecipe): Promise<MeshData> {
-    const r = await this.call({ kind: "build", recipe });
-    if (!r.ok) throw r.missing ? new KernelUnavailableError(r.error) : new Error(r.error);
-    if (!r.mesh) throw new Error("kernel returned no mesh");
-    return r.mesh;
+  /** Start a fresh document (ground sketch only). */
+  async init(): Promise<SceneData> {
+    const r = await this.call({ kind: "init" });
+    if (!r.scene) throw new Error("kernel returned no scene");
+    return r.scene;
+  }
+
+  /** Apply one op to the persistent document. Throws KernelRefusal when refused. */
+  async apply(op: KernelOp): Promise<EditResult> {
+    return this.edit(await this.call({ kind: "apply", op }));
+  }
+
+  async undo(): Promise<EditResult> {
+    return this.edit(await this.call({ kind: "undo" }));
+  }
+
+  async redo(): Promise<EditResult> {
+    return this.edit(await this.call({ kind: "redo" }));
+  }
+
+  async log(): Promise<KernelOp[]> {
+    return (await this.call({ kind: "log" })).log ?? [];
+  }
+
+  async export(format: "stl" | "obj", object: number): Promise<Uint8Array | string> {
+    const r = await this.call({ kind: "export", format, object });
+    if (r.file === undefined) throw new Error("kernel returned no file");
+    return r.file;
+  }
+
+  private edit(r: WorkerResponse & { ok: true }): EditResult {
+    if (!r.outcome || !r.scene) throw new Error("kernel returned no result");
+    return { outcome: r.outcome, scene: r.scene };
   }
 
   dispose(): void {

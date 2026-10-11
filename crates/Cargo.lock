@@ -528,6 +528,7 @@ version = "0.0.1"
 dependencies = [
  "glam",
  "sawhorse-kernel",
+ "sawhorse-tessellate",
  "thiserror",
  "threemf",
 ]

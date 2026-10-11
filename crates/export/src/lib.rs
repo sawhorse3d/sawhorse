@@ -4,10 +4,13 @@
 //! - [`stl::write_binary`]: hand-written binary STL, millimetres, Z-up.
 //! - [`three_mf::write`]: 3MF via the `threemf` crate, millimetres (3MF's default unit).
 //!
+//! - [`obj::write`]: hand-written Wavefront OBJ, millimetres, Z-up, n-gons where possible.
+//!
 //! GLB, DXF and SVG exporters land with the export lane.
 
 use glam::DVec3;
 
+pub mod obj;
 pub mod stl;
 pub mod three_mf;
 
@@ -74,6 +77,14 @@ fn with_object<T>(
 /// Binary STL of one kernel object.
 pub fn object_stl(object: &sawhorse_kernel::object::Object) -> Result<Vec<u8>, ExportError> {
     with_object(object, stl::write_binary)
+}
+
+/// Wavefront OBJ of one kernel object.
+pub fn object_obj(
+    object: &sawhorse_kernel::object::Object,
+    name: &str,
+) -> Result<String, ExportError> {
+    obj::write(object, name)
 }
 
 /// 3MF of one kernel object.

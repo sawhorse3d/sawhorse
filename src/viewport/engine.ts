@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { MeshData } from "../kernel/types";
+import type { Vec3 } from "../lib/edit";
 import { classifyHover, type HoverHit, type ScreenSegment } from "../lib/hoverInference";
 
 export type ViewId = "iso" | "top" | "front" | "right" | "persp";
@@ -41,6 +42,14 @@ interface Theme {
   faceTop: string;
   faceSide: string;
   edge: string;
+  sel: string;
+}
+
+/** What a click or hover lands on: a mesh part (index into MeshData.parts), or the ground. */
+export interface Pick {
+  point: Vec3;
+  /** Part index, or -1 for the ground plane (z = 0). */
+  part: number;
 }
 
 function readTheme(el: Element): Theme {
@@ -53,6 +62,7 @@ function readTheme(el: Element): Theme {
     faceTop: v("--face-top", "#f3efe3"),
     faceSide: v("--face-side", "#d9d2c0"),
     edge: v("--edge", "#3a3f3b"),
+    sel: v("--sel", "#2a63a8"),
   };
 }
 
@@ -77,6 +87,11 @@ export class ViewportEngine {
   private faces: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
   private edgeData: Float32Array = new Float32Array();
+  private meshData: MeshData | null = null;
+  private selected = -1;
+  private preview: THREE.LineLoop | null = null;
+  /** Content the camera was last fitted to; the view refits only when content outgrows it. */
+  private fitted: THREE.Box3 | null = null;
   private raycaster = new THREE.Raycaster();
   private theme: Theme;
   private view: ViewId = "iso";
@@ -146,6 +161,7 @@ export class ViewportEngine {
     this.renderer.setClearColor(new THREE.Color(this.theme.vp), 1);
     (this.grid.material as THREE.LineBasicMaterial).color.set(this.theme.grid);
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.theme.edge);
+    if (this.preview) (this.preview.material as THREE.LineBasicMaterial).color.set(this.theme.sel);
     if (this.faces) this.colourFaces(this.faces.geometry);
     this.requestRender();
   }
@@ -159,6 +175,10 @@ export class ViewportEngine {
     const top = new THREE.Color(this.theme.faceTop);
     const front = new THREE.Color(this.theme.face);
     const side = new THREE.Color(this.theme.faceSide);
+    const sel = new THREE.Color(this.theme.sel);
+    const tinted = (c: THREE.Color) => c.clone().lerp(sel, 0.45);
+    const [selTop, selFront, selSide] = [tinted(top), tinted(front), tinted(side)];
+    const ids = this.meshData?.faceIds;
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
@@ -171,7 +191,9 @@ export class ViewportEngine {
       b.fromBufferAttribute(pos, ib);
       c.fromBufferAttribute(pos, ic);
       n.subVectors(b, a).cross(c.sub(a)).normalize();
-      const col = n.z > 0.5 ? top : n.z < -0.5 ? side : Math.abs(n.y) >= Math.abs(n.x) ? front : side;
+      const picked = ids !== undefined && this.selected >= 0 && ids[t / 3] === this.selected;
+      const kind = n.z > 0.5 ? 0 : n.z < -0.5 ? 2 : Math.abs(n.y) >= Math.abs(n.x) ? 1 : 2;
+      const col = picked ? [selTop, selFront, selSide][kind] : [top, front, side][kind];
       for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
     }
     geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -191,6 +213,8 @@ export class ViewportEngine {
       this.edges = null;
     }
     this.edgeData = new Float32Array();
+    this.meshData = mesh;
+    if (this.selected >= (mesh?.parts.length ?? 0)) this.selected = -1;
     if (mesh && mesh.indices.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
@@ -212,8 +236,101 @@ export class ViewportEngine {
       this.edges.renderOrder = 3;
       this.edgeData = mesh.edges;
       this.scene.add(this.faces, this.edges);
+    } else if (mesh && mesh.edges.length > 0) {
+      const eg = new THREE.BufferGeometry();
+      eg.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+      this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge }));
+      this.edgeData = mesh.edges;
+      this.scene.add(this.edges);
     }
-    this.fit();
+    // Refit only when the model outgrows what the camera was framed for, so editing
+    // does not make the view jump.
+    const box = this.contentBox();
+    if (!this.fitted || !this.fitted.containsBox(box)) {
+      this.fit();
+    } else {
+      this.requestRender();
+    }
+  }
+
+  /** Highlight one part (index into MeshData.parts), or none with -1. */
+  setSelection(part: number): void {
+    if (part === this.selected) return;
+    this.selected = part;
+    if (this.faces) this.colourFaces(this.faces.geometry);
+    this.requestRender();
+  }
+
+  /** Draw a closed outline (e.g. the rectangle being dragged), or clear it with null. */
+  setPreview(points: Vec3[] | null): void {
+    if (this.preview) {
+      this.scene.remove(this.preview);
+      this.preview.geometry.dispose();
+      (this.preview.material as THREE.Material).dispose();
+      this.preview = null;
+    }
+    if (points && points.length >= 2) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(points.flat(), 3));
+      this.preview = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: this.theme.sel, depthTest: false }));
+      this.preview.renderOrder = 4;
+      this.scene.add(this.preview);
+    }
+    this.requestRender();
+  }
+
+  /** The eye ray through canvas CSS pixel (x, y). */
+  ray(x: number, y: number): { origin: Vec3; dir: Vec3 } {
+    this.raycaster.setFromCamera(this.ndc(x, y), this.camera);
+    const { origin, direction } = this.raycaster.ray;
+    return { origin: [origin.x, origin.y, origin.z], dir: [direction.x, direction.y, direction.z] };
+  }
+
+  /** What is under canvas pixel (x, y): the nearest mesh part, else the ground plane. */
+  pick(x: number, y: number): Pick | null {
+    this.raycaster.setFromCamera(this.ndc(x, y), this.camera);
+    if (this.faces && this.meshData) {
+      const hit = this.raycaster.intersectObject(this.faces, false)[0];
+      if (hit && hit.faceIndex != null) {
+        const part = this.meshData.faceIds[hit.faceIndex] ?? -1;
+        return { point: [hit.point.x, hit.point.y, hit.point.z], part };
+      }
+    }
+    const ground = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const p = this.raycaster.ray.intersectPlane(ground, new THREE.Vector3());
+    return p ? { point: [p.x, p.y, p.z], part: -1 } : null;
+  }
+
+  /** Canvas CSS pixel over a visible point of part `part` (its largest triangle's centroid). */
+  partScreenCenter(part: number): [number, number] | null {
+    const m = this.meshData;
+    if (!m) return null;
+    let best = -1;
+    let bestArea = 0;
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    for (let t = 0; t < m.faceIds.length; t++) {
+      if (m.faceIds[t] !== part) continue;
+      a.fromArray(m.positions, m.indices[3 * t] * 3);
+      b.fromArray(m.positions, m.indices[3 * t + 1] * 3);
+      c.fromArray(m.positions, m.indices[3 * t + 2] * 3);
+      const area = b.clone().sub(a).cross(c.clone().sub(a)).length();
+      if (area > bestArea) {
+        bestArea = area;
+        best = t;
+      }
+    }
+    if (best < 0) return null;
+    a.fromArray(m.positions, m.indices[3 * best] * 3);
+    b.fromArray(m.positions, m.indices[3 * best + 1] * 3);
+    c.fromArray(m.positions, m.indices[3 * best + 2] * 3);
+    return this.toScreen(a.add(b).add(c).multiplyScalar(1 / 3));
+  }
+
+  /** Canvas CSS pixel of a world point. */
+  worldToScreen(p: Vec3): [number, number] {
+    return this.toScreen(new THREE.Vector3(p[0], p[1], p[2]));
   }
 
   /** Bounding box of everything worth framing: the model, or a default 2 ft working area. */
@@ -237,6 +354,7 @@ export class ViewportEngine {
   /** Frame the content for the current view. */
   fit(): void {
     const box = this.contentBox();
+    this.fitted = box.clone().expandByScalar(box.getSize(new THREE.Vector3()).length() * 0.15);
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const { dir, up } = VIEW_DIRS[this.view];
     const r = Math.max(sphere.radius, 0.05);
@@ -345,6 +463,7 @@ export class ViewportEngine {
 
   dispose(): void {
     this.disposed = true;
+    this.setPreview(null);
     this.setMesh(null);
     this.controls.dispose();
     this.grid.geometry.dispose();

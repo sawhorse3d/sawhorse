@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 sawhorse-kernel.workspace = true
+sawhorse-tessellate.workspace = true
 glam.workspace = true
 threemf.workspace = true
 thiserror.workspace = true

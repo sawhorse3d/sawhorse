@@ -16,6 +16,7 @@
 
 pub mod boolean;
 pub mod brep;
+pub mod document;
 pub mod error;
 pub mod faceops;
 pub mod hash;
@@ -32,7 +33,8 @@ pub mod testing;
 pub mod tolerance;
 pub mod validate;
 
-pub use error::{BuildError, FaceEditError, KernelError, PushError, SketchError};
+pub use document::Document;
+pub use error::{BuildError, DocumentError, FaceEditError, KernelError, PushError, SketchError};
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};
 

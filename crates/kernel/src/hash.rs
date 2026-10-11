@@ -153,8 +153,13 @@ pub fn model_hash(m: &Model) -> u64 {
     }
     let objects = m.objects();
     h.usize(objects.len());
-    for (_, o) in objects {
+    for (id, o) in objects {
         h.tag("object");
+        h.u64(id);
+        match o.tag() {
+            Some(t) => h.tag(t),
+            None => h.u64(u64::MAX),
+        }
         let b = o.brep();
         let vord = ordinals(&b.vertices);
         h.usize(b.vertices.len());
@@ -190,6 +195,19 @@ pub fn model_hash(m: &Model) -> u64 {
             h.usize(y);
         }
         h.u64(u64::from(o.is_watertight()));
+    }
+    let groups = m.groups();
+    h.usize(groups.len());
+    for (id, g) in groups {
+        h.u64(id);
+        h.tag(&g.name);
+        h.usize(g.objects.len());
+        g.objects.iter().for_each(|&o| h.u64(o));
+    }
+    h.usize(m.tags().len());
+    for (t, visible) in m.tags() {
+        h.tag(t);
+        h.u64(u64::from(*visible));
     }
     h.finish()
 }

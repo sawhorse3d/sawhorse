@@ -14,8 +14,10 @@
 use glam::{DVec2, DVec3};
 use slotmap::SlotMap;
 
-use crate::error::{FaceEditError, KernelError, PushError, SketchError};
-use crate::ids::{ObjectId, RegionId, SketchId, from_public, to_public};
+use std::collections::BTreeMap;
+
+use crate::error::{DocumentError, FaceEditError, KernelError, PushError, SketchError};
+use crate::ids::{GroupId, ObjectId, RegionId, SketchId, from_public, to_public};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::plane::Plane;
 use crate::sketch::Sketch;
@@ -83,6 +85,20 @@ pub enum Op {
         face: u32,
         points: Vec<[f64; 3]>,
     },
+    /// Delete an object (it also leaves any group).
+    DeleteObject { object: u64 },
+    /// Group objects under a name.
+    CreateGroup { name: String, objects: Vec<u64> },
+    /// Dissolve a group (its objects stay).
+    DeleteGroup { group: u64 },
+    /// Put an object on a tag (layer), or take it off (`None`). New tags start visible.
+    SetTag { object: u64, tag: Option<String> },
+    /// Show or hide every object on a tag.
+    SetTagVisible { tag: String, visible: bool },
+    /// Step back one op (document command; see [`crate::document::Document`]).
+    Undo,
+    /// Step forward again after an undo (document command).
+    Redo,
 }
 
 /// What an op did, with the ids the UI needs next.
@@ -108,6 +124,14 @@ pub enum OpOutcome {
     Imprinted {
         face: u32,
     },
+    ObjectDeleted,
+    GroupCreated {
+        group: u64,
+    },
+    GroupDeleted,
+    TagSet,
+    Undone,
+    Redone,
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -121,6 +145,24 @@ pub struct Model {
     sketch_order: Vec<SketchId>,
     objects: SlotMap<ObjectId, Object>,
     object_order: Vec<ObjectId>,
+    groups: SlotMap<GroupId, Group>,
+    /// Tag name -> visible. Every tag an object uses is listed here.
+    tags: BTreeMap<String, bool>,
+}
+
+/// A named set of objects (by public id).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Group {
+    pub name: String,
+    pub objects: Vec<u64>,
+}
+
+fn check_name(n: &str) -> Result<(), DocumentError> {
+    if n.trim().is_empty() || n.chars().count() > 64 {
+        Err(DocumentError::BadName)
+    } else {
+        Ok(())
+    }
 }
 
 /// Counts for the UI and tests.
@@ -185,6 +227,24 @@ impl Model {
     /// Public ids of the objects, in creation order.
     pub fn object_ids(&self) -> Vec<u64> {
         self.object_order.iter().map(|&k| to_public(k)).collect()
+    }
+
+    /// Groups with their public ids, in id order.
+    pub fn groups(&self) -> Vec<(u64, &Group)> {
+        self.groups.iter().map(|(k, g)| (to_public(k), g)).collect()
+    }
+
+    /// Tags and their visibility, by name.
+    pub fn tags(&self) -> &BTreeMap<String, bool> {
+        &self.tags
+    }
+
+    /// True when the object is shown (untagged, or on a visible tag).
+    pub fn is_visible(&self, object: u64) -> bool {
+        self.object(object).is_some_and(|o| {
+            o.tag()
+                .is_none_or(|t| self.tags.get(t).copied().unwrap_or(true))
+        })
     }
 
     /// Public ids of the sketches, in creation order.
@@ -309,6 +369,7 @@ impl Model {
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");
                         self.object_order.retain(|&k| k != oid);
+                        self.forget_object(*object);
                         let regions = match removed.source {
                             Some(src) => self.return_footprint(src.sketch, &footprint)?,
                             None => Vec::new(),
@@ -337,7 +398,72 @@ impl Model {
                 let sub = o.imprint(*face as usize, &pts)?;
                 Ok(OpOutcome::Imprinted { face: sub })
             }
+            Op::DeleteObject { object } => {
+                let k = from_public::<ObjectId>(*object);
+                if self.objects.remove(k).is_none() {
+                    return Err(DocumentError::NoSuchObject(*object).into());
+                }
+                self.object_order.retain(|&o| o != k);
+                self.forget_object(*object);
+                Ok(OpOutcome::ObjectDeleted)
+            }
+            Op::CreateGroup { name, objects } => {
+                check_name(name)?;
+                if objects.is_empty() {
+                    return Err(DocumentError::EmptyGroup.into());
+                }
+                let mut members: Vec<u64> = Vec::new();
+                for &o in objects {
+                    if self.object(o).is_none() {
+                        return Err(DocumentError::NoSuchObject(o).into());
+                    }
+                    if !members.contains(&o) {
+                        members.push(o);
+                    }
+                }
+                let g = self.groups.insert(Group {
+                    name: name.clone(),
+                    objects: members,
+                });
+                Ok(OpOutcome::GroupCreated {
+                    group: to_public(g),
+                })
+            }
+            Op::DeleteGroup { group } => {
+                if self.groups.remove(from_public::<GroupId>(*group)).is_none() {
+                    return Err(DocumentError::NoSuchGroup(*group).into());
+                }
+                Ok(OpOutcome::GroupDeleted)
+            }
+            Op::SetTag { object, tag } => {
+                if let Some(t) = tag {
+                    check_name(t)?;
+                }
+                let o = self
+                    .objects
+                    .get_mut(from_public::<ObjectId>(*object))
+                    .ok_or(DocumentError::NoSuchObject(*object))?;
+                o.tag = tag.clone();
+                if let Some(t) = tag {
+                    self.tags.entry(t.clone()).or_insert(true);
+                }
+                Ok(OpOutcome::TagSet)
+            }
+            Op::SetTagVisible { tag, visible } => {
+                check_name(tag)?;
+                self.tags.insert(tag.clone(), *visible);
+                Ok(OpOutcome::TagSet)
+            }
+            Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
+    }
+
+    /// Drop a removed object from every group (and empty groups with it).
+    fn forget_object(&mut self, object: u64) {
+        for g in self.groups.values_mut() {
+            g.objects.retain(|&o| o != object);
+        }
+        self.groups.retain(|_, g| !g.objects.is_empty());
     }
 
     fn face_edit_target(&mut self, object: u64, face: u32) -> Result<&mut Object, FaceEditError> {
@@ -377,8 +503,23 @@ impl Model {
         s.release_footprint(&rings2)
     }
 
-    /// Validate every object (topology + watertight) and every sketch graph.
+    /// Validate every object (topology + watertight), every sketch graph, and the
+    /// document bookkeeping (groups name live objects, every object tag is listed).
     pub fn validate(&self) -> Result<(), TopologyError> {
+        let dangling = |what: &'static str| TopologyError {
+            violations: vec![Violation::DanglingKey(what)],
+            report: Default::default(),
+        };
+        for g in self.groups.values() {
+            if g.objects.is_empty() || g.objects.iter().any(|&o| self.object(o).is_none()) {
+                return Err(dangling("group names a missing object"));
+            }
+        }
+        for (_, o) in self.objects() {
+            if o.tag().is_some_and(|t| !self.tags.contains_key(t)) {
+                return Err(dangling("object tag is not listed"));
+            }
+        }
         for (_, o) in self.objects() {
             o.validate()?;
         }

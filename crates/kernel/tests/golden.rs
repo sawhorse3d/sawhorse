@@ -1,6 +1,7 @@
 //! Deterministic replay with golden hashes.
 //!
-//! Each `tests/golden/*.json` holds an op sequence and the model hash it must produce.
+//! Each `tests/golden/*.json` holds a document op log (undo and redo included) and the
+//! state hash replaying it must produce.
 //! The same files are replayed through the WASM build by `scripts/golden-wasm.mjs`, so a
 //! passing pair proves native and browser kernels agree bit for bit (after quantisation).
 //!
@@ -9,7 +10,8 @@
 
 use std::path::PathBuf;
 
-use sawhorse_kernel::model::{Model, Op};
+use sawhorse_kernel::Document;
+use sawhorse_kernel::model::Op;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Golden {
@@ -46,10 +48,11 @@ fn golden_hashes() {
     let mut mismatches = Vec::new();
     for f in files {
         let mut g: Golden = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
-        let m = Model::replay(&g.ops)
+        let d = Document::replay(&g.ops)
             .unwrap_or_else(|(i, e)| panic!("{}: op {i} failed: {e}", f.display()));
         // Replay twice: the hash must not depend on anything but the ops.
-        assert_eq!(m.hash(), Model::replay(&g.ops).unwrap().hash());
+        assert_eq!(d.hash(), Document::replay(&g.ops).unwrap().hash());
+        let m = d.model();
         let st = m.stats();
         let stats = GoldenStats {
             objects: st.objects,

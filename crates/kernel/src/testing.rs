@@ -14,6 +14,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use crate::document::Document;
 use crate::mesh::view_mesh;
 use crate::model::{Model, Op};
 
@@ -54,51 +55,86 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     Ok(())
 }
 
-/// Run `ops` from an empty model and check every invariant. `Err` describes the first
-/// violation, naming the op index.
+/// Run `ops` (any commands, undo and redo included) on an empty document and check
+/// every invariant after each one. `Err` describes the first violation, naming the op.
+///
+/// Beyond [`check_model`]: a refused command changes nothing (state hash, op log, undo
+/// depth); after an accepted edit, undo restores the previous state exactly and redo
+/// returns to the new one; at the end, replaying the document's own log reproduces its
+/// state and log hashes, and a second run from scratch lands on the same state.
 pub fn check_sequence(ops: &[Op]) -> Result<RunSummary, String> {
-    let mut m = Model::new();
+    let mut d = Document::new();
     let mut summary = RunSummary::default();
     for (i, op) in ops.iter().enumerate() {
-        let before = m.hash();
+        let before = d.hash();
+        let (log, depth) = (d.log().len(), d.depth());
         let attempt = catch_unwind(AssertUnwindSafe(|| {
-            let mut next = m.clone();
+            let mut next = d.clone();
             let r = next.apply(op);
             (next, r)
         }));
         match attempt {
             Err(p) => return Err(format!("op {i} {op:?} panicked: {}", panic_message(p))),
             Ok((next, Ok(_))) => {
-                check_model(&next).map_err(|e| format!("op {i} {op:?}: {e}"))?;
-                m = next;
+                check_model(next.model()).map_err(|e| format!("op {i} {op:?}: {e}"))?;
+                if !matches!(op, Op::Undo | Op::Redo) {
+                    let mut probe = next.clone();
+                    probe
+                        .undo()
+                        .map_err(|e| format!("op {i} {op:?}: undo failed: {e}"))?;
+                    if probe.hash() != before {
+                        return Err(format!("op {i} {op:?}: undo did not restore the state"));
+                    }
+                    probe
+                        .redo()
+                        .map_err(|e| format!("op {i} {op:?}: redo failed: {e}"))?;
+                    if probe.hash() != next.hash() {
+                        return Err(format!("op {i} {op:?}: redo did not return to the state"));
+                    }
+                }
+                d = next;
                 summary.accepted += 1;
             }
             Ok((next, Err(e))) => {
                 if e.is_bug() {
                     return Err(format!("op {i} {op:?}: validator rejected the result: {e}"));
                 }
-                if next.hash() != before || m.hash() != before {
+                if next.hash() != before
+                    || d.hash() != before
+                    || next.log().len() != log
+                    || next.depth() != depth
+                {
                     return Err(format!(
-                        "op {i} {op:?}: refused ({e}) but the model changed"
+                        "op {i} {op:?}: refused ({e}) but the document changed"
                     ));
                 }
                 summary.refused += 1;
             }
         }
     }
-    // Determinism: a second run lands on the same model.
-    let mut again = Model::new();
+    // The log is the history: replaying it lands on the same state and the same log.
+    let replayed =
+        Document::replay(d.log()).map_err(|(i, e)| format!("log replay refused entry {i}: {e}"))?;
+    if replayed.hash() != d.hash() || replayed.log_hash() != d.log_hash() {
+        return Err(format!(
+            "log replay diverged: {} vs {}",
+            replayed.hash_hex(),
+            d.hash_hex()
+        ));
+    }
+    // Determinism: a second run of the raw commands lands on the same document.
+    let mut again = Document::new();
     for op in ops {
         let _ = again.apply(op);
     }
-    if again.hash() != m.hash() {
+    if again.hash() != d.hash() {
         return Err(format!(
             "non-deterministic: {} vs {}",
             again.hash_hex(),
-            m.hash_hex()
+            d.hash_hex()
         ));
     }
-    summary.objects = m.objects().len();
+    summary.objects = d.model().objects().len();
     Ok(summary)
 }
 

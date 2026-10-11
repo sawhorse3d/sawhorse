@@ -1,7 +1,11 @@
 /// <reference lib="webworker" />
 // The kernel runs in a Web Worker (ADR-0001): geometry work never blocks the UI
 // thread, and the same WASM runs in the browser build and the Tauri webview.
-import type { MeshData, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+//
+// The worker owns ONE persistent kernel document for the session (model + op log +
+// undo ring). Every edit is an op applied transactionally; after each request the
+// worker answers with the outcome and the fresh scene (view mesh + document state).
+import type { KernelOp, MeshData, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -11,6 +15,7 @@ const WASM_ENTRY = "../wasm/pkg/sawhorse_wasm.js";
 class KernelMissing extends Error {}
 
 let ready: Promise<WasmModule> | null = null;
+let doc: WasmDoc | null = null;
 
 function load(): Promise<WasmModule> {
   if (!ready) {
@@ -25,25 +30,24 @@ function load(): Promise<WasmModule> {
   return ready;
 }
 
-function build(mod: WasmModule, recipe: { width: number; depth: number; distance: number }): MeshData {
-  const scene = mod.new_scene();
+function document(mod: WasmModule): WasmDoc {
+  if (!doc) doc = mod.document_new();
+  return doc;
+}
+
+function scene(d: WasmDoc): SceneData {
+  const m = d.get_scene_mesh();
   try {
-    const region = scene.add_rectangle(0, 0, recipe.width, recipe.depth);
-    scene.extrude(region, recipe.distance);
-    const mesh = scene.get_mesh();
-    try {
-      return {
-        positions: mesh.positions(),
-        indices: mesh.indices(),
-        faceIds: mesh.face_ids(),
-        edges: mesh.edges(),
-        stats: JSON.parse(scene.stats_json()),
-      };
-    } finally {
-      mesh.free();
-    }
+    const mesh: MeshData = {
+      positions: m.positions(),
+      indices: m.indices(),
+      faceIds: m.face_ids(),
+      edges: m.edges(),
+      parts: JSON.parse(m.parts_json()),
+    };
+    return { mesh, state: JSON.parse(d.state_json()) };
   } finally {
-    scene.free();
+    m.free();
   }
 }
 
@@ -54,18 +58,50 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   let res: WorkerResponse;
   try {
     const mod = await load();
-    if (req.kind === "version") {
-      res = { id: req.id, ok: true, version: mod.kernel_version() };
-    } else {
-      res = { id: req.id, ok: true, mesh: build(mod, req.recipe) };
+    switch (req.kind) {
+      case "version":
+        res = { id: req.id, ok: true, version: mod.kernel_version() };
+        break;
+      case "init": {
+        doc?.free();
+        doc = mod.document_new();
+        res = { id: req.id, ok: true, scene: scene(doc) };
+        break;
+      }
+      case "scene":
+        res = { id: req.id, ok: true, scene: scene(document(mod)) };
+        break;
+      case "apply": {
+        const d = document(mod);
+        const outcome = JSON.parse(d.apply_op(JSON.stringify(req.op)));
+        res = { id: req.id, ok: true, outcome, scene: scene(d) };
+        break;
+      }
+      case "undo":
+      case "redo": {
+        const d = document(mod);
+        const outcome = JSON.parse(req.kind === "undo" ? d.undo() : d.redo());
+        res = { id: req.id, ok: true, outcome, scene: scene(d) };
+        break;
+      }
+      case "log":
+        res = { id: req.id, ok: true, log: JSON.parse(document(mod).op_log_json()) as KernelOp[] };
+        break;
+      case "export": {
+        const d = document(mod);
+        const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);
+        res = { id: req.id, ok: true, file };
+        break;
+      }
     }
   } catch (err) {
     res = { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), missing: err instanceof KernelMissing };
   }
   const transfer: Transferable[] = [];
-  if (res.ok && res.mesh) {
-    const m = res.mesh;
+  if (res.ok && res.scene) {
+    const m = res.scene.mesh;
     transfer.push(m.positions.buffer, m.indices.buffer, m.faceIds.buffer, m.edges.buffer);
   }
+  if (res.ok && res.file instanceof Uint8Array) transfer.push(res.file.buffer);
   ctx.postMessage(res, transfer);
 };

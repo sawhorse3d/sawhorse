@@ -1,0 +1,102 @@
+{
+  "name": "document_undo_redo",
+  "description": "Lane 2 document log: the verify-by-looking flow (box, imprint, pull a boss, push through), undo twice, redo once, then a tag and a group. Replayed through Document::replay.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.6096,
+      "h": 0.4064
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.3048
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.15,
+          0.1,
+          0.3048
+        ],
+        [
+          0.45,
+          0.1,
+          0.3048
+        ],
+        [
+          0.45,
+          0.3,
+          0.3048
+        ],
+        [
+          0.15,
+          0.3,
+          0.3048
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": 0.1
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -0.5
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "set_tag",
+      "object": 1,
+      "tag": "Top"
+    },
+    {
+      "op": "create_group",
+      "name": "Box",
+      "objects": [
+        1
+      ]
+    }
+  ],
+  "hash": "7439fabacb15d071",
+  "stats": {
+    "objects": 1,
+    "faces": 11,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 0,
+    "watertight": true
+  }
+}

@@ -118,7 +118,9 @@ impl ViewMesh {
 pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
     let mut m = ViewMesh::default();
     for (id, o) in model.objects() {
-        m.push_object(id, o)?;
+        if model.is_visible(id) {
+            m.push_object(id, o)?;
+        }
     }
     for (sid, s) in model.sketches() {
         let plane = *s.plane();

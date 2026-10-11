@@ -29,6 +29,8 @@ pub struct Object {
     pub(crate) brep: Brep,
     pub(crate) watertight: bool,
     pub(crate) source: Option<Provenance>,
+    /// Tag (layer) name; `None` is untagged. Hidden tags hide the object in the view.
+    pub(crate) tag: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +124,7 @@ impl Object {
             brep,
             watertight: false,
             source: None,
+            tag: None,
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -137,6 +140,10 @@ impl Object {
 
     pub fn source(&self) -> Option<&Provenance> {
         self.source.as_ref()
+    }
+
+    pub fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
     }
 
     /// Faces in deterministic order (index = the face ordinal used by ops and the UI).
@@ -175,6 +182,7 @@ impl Object {
         let (outcome, next) = crate::push::push_pull(self, face, distance)?;
         if let Some(mut next) = next {
             next.source = self.source.clone();
+            next.tag = self.tag.clone();
             *self = next;
         }
         Ok(outcome)
@@ -187,6 +195,7 @@ impl Object {
             brep,
             watertight,
             source: None,
+            tag: None,
         }
     }
 
