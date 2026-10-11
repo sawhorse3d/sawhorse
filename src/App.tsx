@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { TopBar } from "./components/TopBar";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TopBar, type MenuItem } from "./components/TopBar";
 import { ToolRail } from "./components/ToolRail";
-import { Viewport, type KernelState } from "./components/Viewport";
+import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
 import { SidePanel } from "./components/SidePanel";
 import { ValueBar } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
@@ -34,7 +34,9 @@ import {
   UNIT_SYSTEMS,
   type UnitSystem,
 } from "./lib/units";
-import type { ViewId, ViewportEngine } from "./viewport/engine";
+import type { Highlight, OverlayItem, Projection, ViewId, ViewportEngine } from "./viewport/engine";
+import { NO_HIGHLIGHT } from "./viewport/engine";
+import { projectionForView, VIEWS } from "./viewport/camera";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
@@ -70,7 +72,19 @@ type Message = { text: string; error: boolean } | null;
 export function App() {
   const [toolId, setToolId] = useState<ToolId>("select");
   const tool = toolById(toolId);
-  const [view, setView] = useState<ViewId>("iso");
+  // Camera: the requested standard view (re-applied when viewSeq changes), the projection,
+  // zoom-extents requests, and what the camera actually shows (null after an orbit).
+  const [view, setViewState] = useState<ViewId>("iso");
+  const [viewSeq, setViewSeq] = useState(0);
+  const [projection, setProjection] = useState<Projection>("parallel");
+  const [fitSeq, setFitSeq] = useState(0);
+  const [camView, setCamView] = useState<ViewId | null>("iso");
+  const setView = useCallback((v: ViewId) => {
+    setViewState(v);
+    setViewSeq((n) => n + 1);
+    setProjection(projectionForView(v));
+  }, []);
+  const zoomExtents = useCallback(() => setFitSeq((n) => n + 1), []);
   const [units, setUnits] = useState<UnitSystem>(loadUnits);
   const [scene, setScene] = useState<SceneData | null>(null);
   const [kernelState, setKernelState] = useState<KernelState>("loading");
@@ -256,6 +270,25 @@ export function App() {
     [scene, toolId, rectStart, drawRectangle],
   );
 
+  const downAt = useRef<[number, number] | null>(null);
+  const onPointer = useCallback(
+    (p: ViewportPointer) => {
+      if (p.type === "down") {
+        downAt.current = p.button === 0 ? [p.x, p.y] : null;
+        return;
+      }
+      if (p.type === "up") {
+        const start = downAt.current;
+        downAt.current = null;
+        // A click is a left press and release that barely moved (the left button belongs to the tool).
+        if (start && p.button === 0 && Math.hypot(p.x - start[0], p.y - start[1]) <= 4) onCanvasClickRef.current(p.x, p.y);
+        return;
+      }
+      if (p.type === "move") onCanvasMoveRef.current(p.x, p.y);
+    },
+    [],
+  );
+
   const onCanvasMove = useCallback(
     (x: number, y: number) => {
       if (toolId !== "rect" || !rectStart) return;
@@ -270,6 +303,11 @@ export function App() {
     },
     [toolId, rectStart],
   );
+
+  const onCanvasClickRef = useRef(onCanvasClick);
+  onCanvasClickRef.current = onCanvasClick;
+  const onCanvasMoveRef = useRef(onCanvasMove);
+  onCanvasMoveRef.current = onCanvasMove;
 
   const commit = useCallback(
     (text: string) => {
@@ -324,9 +362,15 @@ export function App() {
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (isTextEntry(e.target)) return;
+      if (e.shiftKey && (e.key === "Z" || e.key === "z")) {
+        e.preventDefault();
+        zoomExtents();
+        return;
+      }
       if (e.key === "Escape") {
         setMessage(null);
         cancelGesture();
+        setTarget(null);
         return;
       }
       if (tool.vcb && startsValueEntry(e.key)) {
@@ -343,7 +387,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tool, selectTool, undo, redo, cancelGesture]);
+  }, [tool, selectTool, undo, redo, cancelGesture, zoomExtents]);
 
   const cycleUnits = () => {
     const next = nextUnitSystem(units);
@@ -374,20 +418,46 @@ export function App() {
   hud.push({ text: `Units: ${u.label}` });
   hud.push({ text: `Edit: Model · undo ${st?.undo_depth ?? 0} · redo ${st?.redo_depth ?? 0}` });
 
+  const highlight = useMemo<Highlight>(() => (selection >= 0 ? { ...NO_HIGHLIGHT, selectedParts: [selection] } : NO_HIGHLIGHT), [selection]);
+  const overlay = useMemo<OverlayItem[]>(() => (preview ? [{ kind: "loop", points: preview, color: "--sel", width: 2 }] : []), [preview]);
+  const menus = useMemo<Record<string, MenuItem[]>>(
+    () => ({
+      Edit: [
+        { label: "Undo", keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
+        { label: "Redo", keys: "Ctrl+Y", disabled: !st?.can_redo, onSelect: () => void redo() },
+      ],
+      View: [
+        { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
+        "-",
+        { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
+        "-",
+        ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
+      ],
+    }),
+    [st?.can_undo, st?.can_redo, undo, redo, zoomExtents, projection, setView],
+  );
+
   return (
     <div className="app" id="app">
-      <TopBar view={view} onView={setView} credits={0} />
+      <TopBar view={camView} onView={setView} credits={0} menus={menus} />
       <ToolRail active={toolId} onSelect={selectTool} />
       <Viewport
         mesh={scene?.mesh ?? null}
+        units={units}
         view={view}
+        viewSeq={viewSeq}
+        projection={projection}
+        fitSeq={fitSeq}
         hud={hud}
         kernel={kernelState}
-        info={st ? { hash: st.stats.hash, watertight: st.stats.watertight, objects: st.stats.objects, canUndo: st.can_undo, canRedo: st.can_redo } : undefined}
-        selection={selection}
-        preview={preview}
-        onCanvasClick={onCanvasClick}
-        onCanvasMove={onCanvasMove}
+        info={st ? { hash: st.stats.hash, watertight: st.stats.watertight, objects: st.stats.objects, canUndo: st.can_undo, canRedo: st.can_redo, volume: st.stats.volume_m3 } : undefined}
+        highlight={highlight}
+        overlay={overlay}
+        onPointer={onPointer}
+        onCamera={(v, p) => {
+          setCamView(v);
+          setProjection(p);
+        }}
         onEngine={(e) => {
           engineRef.current = e;
         }}

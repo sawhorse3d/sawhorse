@@ -106,3 +106,17 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .vcb label.idle input{color:var(--muted)}
 .vp .snap{position:absolute;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--vp);transform:translate(-50%,-50%);pointer-events:none}
 .btn:disabled{cursor:not-allowed}
+
+/* ---- Lane 3 additions: labels pinned to the model, selection box, menus ---- */
+.vp .vlabel{position:absolute;transform:translate(-50%,-50%);pointer-events:none;font:11px var(--mono);padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);color:var(--fg);white-space:nowrap}
+.vp .vlabel.dim{border-color:var(--accent);color:var(--accent)}
+.vp .vlabel.live{border-color:var(--sel);font-weight:500}
+.vp .selbox{position:absolute;pointer-events:none;border:1px solid var(--sel);background:color-mix(in srgb,var(--sel) 8%,transparent)}
+.vp .selbox.crossing{border-style:dashed;background:color-mix(in srgb,var(--sel) 4%,transparent)}
+.menu{position:relative}
+.menu .drop{position:absolute;top:100%;margin-top:4px;min-width:220px;z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px;box-shadow:0 6px 18px #0002;display:flex;flex-direction:column}
+.menu .drop button{display:flex;justify-content:space-between;gap:16px;text-align:left;padding:5px 8px;border-radius:4px;color:var(--fg)}
+.menu .drop button:hover{background:var(--rail)}
+.menu .drop kbd{font:11px var(--mono);color:var(--muted)}
+.menu .drop hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.menu button[aria-expanded="true"]{background:var(--rail);color:var(--fg)}
