@@ -43,7 +43,8 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
         h.statuses.push({ text: "refused", error: true });
         return null;
       }
-      const r = { outcome: h.outcome, scene: { mesh: h._mesh, state: h._state } } as unknown as EditResult;
+      const state = h._state ?? ({ stats: { objects: 1, faces: 6, edges: 12, vertices: 8, genus: 0, watertight: true, volume_m3: 1 }, sketches: [], groups: [] } as unknown as DocState);
+      const r = { outcome: h.outcome, scene: { mesh: h._mesh, state } } as unknown as EditResult;
       if (describe) h.statuses.push({ text: describe(r), error: false });
       return r;
     },
@@ -62,6 +63,14 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
     enterGroup: () => {},
     toScreen: (p: V3) => [p[0] * 100, -p[1] * 100],
     target: () => h._target,
+    outline: async () => [
+      [
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+      ],
+    ],
     setTarget: (t) => {
       h._target = t;
     },

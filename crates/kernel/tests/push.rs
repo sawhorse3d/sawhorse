@@ -333,3 +333,43 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn ctrl_pull_leaves_a_seam_where_the_face_was() {
+    let mut m = run(&[rect(0.0, 0.0, 1.0, 1.0), extrude(1, 1.0)]);
+    let out = m
+        .apply(&Op::PushPullNewFace {
+            object: 1,
+            face: 2,
+            distance: 0.5,
+        })
+        .unwrap();
+    assert_eq!(out, OpOutcome::FaceMoved);
+    let s = shape(&m);
+    assert!(close(s.volume, 1.5));
+    assert_eq!(s.faces, 10, "base, cap, four old walls, four new walls");
+    // The cap kept its id and moved up.
+    let o = m.object(1).unwrap();
+    let p = o.brep().to_polys();
+    let cap = p.plane(o.face_ordinal(2).unwrap()).unwrap();
+    assert!((cap.origin.z - 1.5).abs() < 1e-12);
+    // The seam is user-drawn: erasing one seam edge merges those two walls.
+    m.apply(&Op::EraseEdge {
+        object: 1,
+        a: [0.0, 0.0, 1.0],
+        b: [1.0, 0.0, 1.0],
+    })
+    .unwrap();
+    assert_eq!(shape(&m).faces, 9);
+    // An inward push with the flag is an ordinary push.
+    let mut m = run(&[rect(0.0, 0.0, 1.0, 1.0), extrude(1, 1.0)]);
+    m.apply(&Op::PushPullNewFace {
+        object: 1,
+        face: 2,
+        distance: -0.25,
+    })
+    .unwrap();
+    let s = shape(&m);
+    assert_eq!(s.faces, 6);
+    assert!(close(s.volume, 0.75));
+}

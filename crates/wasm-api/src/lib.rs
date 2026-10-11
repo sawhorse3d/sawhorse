@@ -211,6 +211,44 @@ impl DocCore {
         serde_json::to_string(&faces).map_err(|e| e.to_string())
     }
 
+    /// The outline of a face (`kind` "face": object id, persistent face id) or a sketch
+    /// region (`kind` "region": sketch id, region id) as world rings (outer first), JSON.
+    pub fn outline_json(&self, kind: &str, owner: u64, index: u64) -> Result<String, String> {
+        let m = self.doc.model();
+        let rings: Vec<Vec<[f64; 3]>> = match kind {
+            "face" => {
+                let o = self.object(owner)?;
+                let fi = o
+                    .face_ordinal(index)
+                    .ok_or_else(|| format!("no face #{index}"))?;
+                let p = o.brep().to_polys();
+                p.faces[fi]
+                    .rings()
+                    .map(|r| r.iter().map(|&i| p.points[i].to_array()).collect())
+                    .collect()
+            }
+            "region" => {
+                let s = m
+                    .sketch(owner)
+                    .ok_or_else(|| format!("no sketch #{owner}"))?;
+                let r = s
+                    .region(sawhorse_kernel::ids::from_public(index))
+                    .ok_or_else(|| format!("no region #{index}"))?;
+                let (o, h) = s.region_rings(r);
+                std::iter::once(o)
+                    .chain(h)
+                    .map(|ring| {
+                        ring.iter()
+                            .map(|&q| s.plane().to_world(q).to_array())
+                            .collect()
+                    })
+                    .collect()
+            }
+            _ => return Err(format!("unknown part kind {kind}")),
+        };
+        serde_json::to_string(&rings).map_err(|e| e.to_string())
+    }
+
     fn object(&self, id: u64) -> Result<&sawhorse_kernel::object::Object, String> {
         self.doc
             .model()
@@ -370,6 +408,14 @@ impl Doc {
         self.core.state_json()
     }
 
+    /// World rings (outer first) of a face (`"face"`, object id, face id) or a region
+    /// (`"region"`, sketch id, region id), as JSON: what Push/Pull previews.
+    pub fn outline(&self, kind: &str, owner: f64, index: f64) -> Result<String, JsError> {
+        self.core
+            .outline_json(kind, id(owner)?, id(index)?)
+            .map_err(js)
+    }
+
     /// The faces of one object with their persistent ids, planes, centroids and areas, as
     /// JSON (see [`DocCore::faces_json`]).
     pub fn faces_json(&self, object_id: f64) -> Result<String, JsError> {
@@ -523,6 +569,11 @@ mod tests {
             st["sketches"][0]["normal"],
             serde_json::json!([0.0, 0.0, 1.0])
         );
+        let rings: Vec<Vec<[f64; 3]>> =
+            serde_json::from_str(&d.outline_json("face", 1, 7).unwrap()).unwrap();
+        assert_eq!(rings.len(), 1, "the boss top");
+        assert_eq!(rings[0].len(), 4);
+        assert!(d.outline_json("face", 1, 99).is_err());
         let m = d.scene_mesh().unwrap();
         assert_eq!(m.edge_owner.len() * 6, m.edges.len());
         assert_eq!(m.edge_owners[0].kind, "object");

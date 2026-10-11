@@ -132,6 +132,11 @@ export function App() {
           return r;
         } catch (err) {
           live.current.lastError = err instanceof Error ? err.message : String(err);
+          // Refusals by message, for tests and the lane report (tilted-plane boolean refusals).
+          const w = window as unknown as { __sawhorse?: { refusals?: Record<string, number> } };
+          w.__sawhorse = w.__sawhorse ?? {};
+          const tally = (w.__sawhorse.refusals = w.__sawhorse.refusals ?? {});
+          tally[live.current.lastError] = (tally[live.current.lastError] ?? 0) + 1;
           fail(err);
           return null;
         }
@@ -213,6 +218,15 @@ export function App() {
       },
       toScreen: (p) => engineRef.current?.worldToScreen(p) ?? [0, 0],
       target: () => live.current.target,
+      outline: async (t) => {
+        const k = kernelRef.current;
+        if (!k) return [];
+        try {
+          return t.kind === "face" ? await k.outline("face", t.object, t.face) : await k.outline("region", t.sketch, t.region);
+        } catch {
+          return [];
+        }
+      },
       setTarget: (t) => {
         live.current.target = t;
         setTarget(t);

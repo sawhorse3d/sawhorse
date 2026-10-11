@@ -146,6 +146,18 @@ fn collapses(p: &Polys, fi: usize, plane: &Plane, d: f64) -> bool {
 /// The topological push/pull candidate (see the module docs), or `None` when the face's
 /// neighbourhood cannot take it (the caller then uses the boolean path).
 pub fn topological(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Option<Polys> {
+    topological_with(p, fi, plane, d, true)
+}
+
+/// [`topological`], optionally without sliding any vertex (every boundary edge then gets
+/// its own new side wall: the "new face" push).
+pub fn topological_with(
+    p: &Polys,
+    fi: usize,
+    plane: &Plane,
+    d: f64,
+    allow_slide: bool,
+) -> Option<Polys> {
     let n = plane.normal;
     let rings = face_rings(p, fi);
     let fverts: BTreeSet<usize> = rings.iter().flatten().copied().collect();
@@ -161,7 +173,12 @@ pub fn topological(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Option<Polys>
     let contains_n = |g: usize| planes[g].is_some_and(|pl| pl.normal.dot(n).abs() <= CONTAINS_DIR);
     let slide: BTreeMap<usize, bool> = fverts
         .iter()
-        .map(|&v| (v, around[&v].iter().all(|&g| g == fi || contains_n(g))))
+        .map(|&v| {
+            (
+                v,
+                allow_slide && around[&v].iter().all(|&g| g == fi || contains_n(g)),
+            )
+        })
         .collect();
     let mut q = p.clone();
     let mut moved: BTreeMap<usize, usize> = BTreeMap::new();
@@ -182,7 +199,7 @@ pub fn topological(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Option<Polys>
             if g == fi {
                 return None;
             }
-            if contains_n(g) {
+            if allow_slide && contains_n(g) {
                 // The neighbour stretches: b -> a becomes b -> [b'] -> [a'] -> a.
                 let mut extra = Vec::new();
                 if !slide[&b] {
@@ -291,16 +308,39 @@ pub(crate) fn push_pull(
     fi: usize,
     d: f64,
 ) -> Result<(PushOutcome, Option<Object>), PushError> {
+    push_pull_with(obj, fi, d, false)
+}
+
+/// Push/pull; with `new_face` (Ctrl in the UI) an outward pull leaves an edge loop where
+/// the face was: no vertex slides, every boundary edge of the face gets a new side wall,
+/// and the old boundary stays as user-drawn edges so coplanar merging keeps it (the side
+/// walls carry a seam at the old height). Inward pushes ignore the flag.
+pub(crate) fn push_pull_with(
+    obj: &Object,
+    fi: usize,
+    d: f64,
+    new_face: bool,
+) -> Result<(PushOutcome, Option<Object>), PushError> {
     if !in_bounds(d) {
         return Err(PushError::OutOfBounds);
     }
     if d.abs() < MIN_EXTRUDE {
         return Err(PushError::ZeroDistance);
     }
-    let p = obj.brep().to_polys();
+    let mut p = obj.brep().to_polys();
     if fi >= p.faces.len() {
         return Err(PushError::NoSuchFace(fi as u64));
     }
+    let new_face = new_face && d > 0.0;
+    if new_face {
+        let rings: Vec<Vec<usize>> = p.faces[fi].rings().cloned().collect();
+        for r in rings {
+            for k in 0..r.len() {
+                p.user_edges.insert(Polys::key(r[k], r[(k + 1) % r.len()]));
+            }
+        }
+    }
+    let p = p;
     let plane = p
         .plane(fi)
         .ok_or(PushError::Boolean(BooleanError::Degenerate(
@@ -322,7 +362,7 @@ pub(crate) fn push_pull(
     }
     let before = obj.validate().map(|r| r.shells.len()).unwrap_or(0);
     if before == 1
-        && let Some(q) = topological(&p, fi, &plane, d)
+        && let Some(q) = topological_with(&p, fi, &plane, d, !new_face)
         && let Ok(cand) = accept(obj, &q, Some(1))
     {
         let expect = obj.volume() + face_area(&p, fi, &plane) * d;

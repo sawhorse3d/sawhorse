@@ -74,6 +74,14 @@ pub enum Op {
         face: u64,
         distance: f64,
     },
+    /// Push/pull that leaves a seam where the face was (Ctrl in the UI): an outward pull
+    /// gives every edge of the face a new side wall instead of stretching the old walls.
+    /// Inward pushes behave like [`Op::PushPull`].
+    PushPullNewFace {
+        object: u64,
+        face: u64,
+        distance: f64,
+    },
     /// Cut face `face` of `object` in two along `path` (world points on the face's plane;
     /// ends on the face's boundary, interior strictly inside).
     SplitFace {
@@ -417,10 +425,19 @@ impl Model {
                 object,
                 face,
                 distance,
+            }
+            | Op::PushPullNewFace {
+                object,
+                face,
+                distance,
             } => {
                 let oid = self.object_key(*object)?;
                 let o = &mut self.objects[oid];
-                match o.push_pull_id(*face, *distance)? {
+                let pushed = match op {
+                    Op::PushPullNewFace { .. } => o.push_pull_new_face(*face, *distance)?,
+                    _ => o.push_pull_id(*face, *distance)?,
+                };
+                match pushed {
                     PushOutcome::Moved => Ok(OpOutcome::FaceMoved),
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");

@@ -72,6 +72,8 @@ enum Fuzz {
     Polyline(u8, Vec<[f64; 2]>, bool),
     Extrude(u8, u8, f64),
     Push(u8, u8, f64),
+    /// Push/pull leaving a seam (Ctrl).
+    PushNew(u8, u8, f64),
     Split {
         object: u8,
         face: u8,
@@ -153,6 +155,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         2 => Just(Fuzz::Redo),
         1 => (0u64..4, 0u64..6, distance()).prop_map(|(sketch, region, distance)| Fuzz::Raw(Op::Extrude { sketch, region, distance })),
         1 => (0u64..4, 0u64..14, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Op::PushPull { object, face, distance })),
+        2 => (any::<u8>(), any::<u8>(), distance()).prop_map(|(o, f, d)| Fuzz::PushNew(o, f, d)),
     ]
 }
 
@@ -236,6 +239,14 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             Op::PushPull {
                 object: oid,
                 face,
+                distance: *distance,
+            }
+        }
+        Fuzz::PushNew(o, k, distance) => {
+            let oid = object(*o);
+            Op::PushPullNewFace {
+                object: oid,
+                face: face(oid, *k).map_or(1, |(id, _, _)| id),
                 distance: *distance,
             }
         }

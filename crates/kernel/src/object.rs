@@ -262,6 +262,25 @@ impl Object {
         Ok(outcome)
     }
 
+    /// Push/pull leaving the face's old boundary as a seam (Ctrl in the UI; outward pulls
+    /// only, see [`crate::push::push_pull_with`]).
+    pub fn push_pull_new_face(
+        &mut self,
+        face_id: u64,
+        distance: f64,
+    ) -> Result<PushOutcome, PushError> {
+        let fi = self
+            .face_ordinal(face_id)
+            .ok_or(PushError::NoSuchFace(face_id))?;
+        let (outcome, next) = crate::push::push_pull_with(self, fi, distance, true)?;
+        if let Some(mut next) = next {
+            next.source = self.source.clone();
+            next.tag = self.tag.clone();
+            *self = next;
+        }
+        Ok(outcome)
+    }
+
     /// Push/pull the face with persistent id `face_id` (see [`Object::push_pull`]).
     pub fn push_pull_id(&mut self, face_id: u64, distance: f64) -> Result<PushOutcome, PushError> {
         let fi = self

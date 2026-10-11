@@ -11,6 +11,7 @@ export type KernelOp =
   | { op: "add_polyline"; sketch: number; points: [number, number][]; closed: boolean }
   | { op: "extrude"; sketch: number; region: number; distance: number }
   | { op: "push_pull"; object: number; face: number; distance: number }
+  | { op: "push_pull_new_face"; object: number; face: number; distance: number }
   | { op: "split_face"; object: number; face: number; path: [number, number, number][] }
   | { op: "imprint"; object: number; face: number; points: [number, number, number][] }
   | {
@@ -241,6 +242,7 @@ export interface WasmDoc {
   pick(query: string): string;
   infer(query: string): string;
   faces_json(object: number): string;
+  outline(kind: string, owner: number, index: number): string;
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
   free(): void;
@@ -262,6 +264,7 @@ export type RequestBody =
   | { kind: "log" }
   | { kind: "pick"; query: PickQuery }
   | { kind: "infer"; query: InferQuery }
+  | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
   | { kind: "export"; format: "stl" | "obj"; object: number };
 export type WorkerRequest = RequestBody & { id: number };
 
@@ -275,6 +278,7 @@ export type WorkerResponse =
       log?: KernelOp[];
       picked?: Picked | null;
       inference?: Inference | null;
+      rings?: V3[][];
       file?: Uint8Array | string;
     }
   | { id: number; ok: false; error: string; missing?: boolean };

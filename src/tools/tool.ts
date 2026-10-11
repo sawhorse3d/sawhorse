@@ -109,6 +109,8 @@ export interface ToolHost {
    */
   target(): Target | null;
   setTarget(t: Target | null): void;
+  /** World rings of a face or region (empty when it is gone). */
+  outline(t: Target): Promise<V3[][]>;
 }
 
 export abstract class Tool {

@@ -86,6 +86,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, outcome, scene: scene(d) };
         break;
       }
+      case "outline":
+        res = { id: req.id, ok: true, rings: JSON.parse(document(mod).outline(req.part, req.owner, req.index)) };
+        break;
       case "infer":
         res = { id: req.id, ok: true, inference: JSON.parse(document(mod).infer(JSON.stringify(req.query))) as Inference | null };
         break;
