@@ -32,7 +32,7 @@
     {
       "op": "imprint",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "points": [
         [
           0.15,
@@ -59,13 +59,13 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 6,
+      "face": 7,
       "distance": 0.1
     },
     {
       "op": "push_pull",
       "object": 1,
-      "face": 6,
+      "face": 7,
       "distance": -0.5
     },
     {
@@ -90,7 +90,7 @@
       ]
     }
   ],
-  "hash": "7439fabacb15d071",
+  "hash": "f5237881106d9cfc",
   "stats": {
     "objects": 1,
     "faces": 11,

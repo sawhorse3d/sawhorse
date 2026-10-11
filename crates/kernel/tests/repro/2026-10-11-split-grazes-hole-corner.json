@@ -81,7 +81,7 @@
     {
       "op": "imprint",
       "object": 1,
-      "face": 4,
+      "face": 5,
       "points": [
         [
           -0.275,
@@ -108,7 +108,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 3,
+      "face": 4,
       "path": [
         [
           0,
@@ -138,7 +138,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 4,
+      "face": 5,
       "path": [
         [
           -0.5,

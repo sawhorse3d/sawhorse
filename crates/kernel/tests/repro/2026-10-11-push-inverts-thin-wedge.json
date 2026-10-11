@@ -73,13 +73,13 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 5,
+      "face": 6,
       "distance": -3
     },
     {
       "op": "push_pull",
       "object": 1,
-      "face": 5,
+      "face": 6,
       "distance": -1.1670848203903263
     }
   ]

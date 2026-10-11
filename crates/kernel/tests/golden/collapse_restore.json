@@ -32,7 +32,7 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "distance": -0.3
     },
     {
@@ -42,7 +42,7 @@
       "distance": 0.6
     }
   ],
-  "hash": "0f3ce6d6a702e0cb",
+  "hash": "f5c19f9457681c18",
   "stats": {
     "objects": 1,
     "faces": 6,

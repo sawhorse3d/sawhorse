@@ -5,6 +5,14 @@
 //! output triangles by inherited face id, and re-polygonises them into n-gons with holes,
 //! re-fitted planes, coplanar faces merged except across user-drawn edges
 //! ([`repolygonise`]); [`combine`] is the whole round trip. Callers validate and commit.
+//!
+//! Persistent face ids survive the round trip in two steps: every output face inherits the
+//! id of the operand face its triangles came from (the engine carries the face id through
+//! MeshGL64), and then [`resolve_face_ids`] settles the ambiguous cases by geometry: when
+//! one source face comes out in several pieces, the piece that best matches the source
+//! (same plane, nearest centroid, closest area) keeps the id; a face that came out without
+//! an id takes the id of an unused operand face it matches within tolerance (same plane,
+//! centroid within [`ID_MATCH_DISTANCE`], area within [`ID_MATCH_AREA`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -197,6 +205,123 @@ fn segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
     p.distance(a + ab * t)
 }
 
+/// Centroid distance within which a re-numbered face is matched to an operand face.
+pub const ID_MATCH_DISTANCE: f64 = POINT_MERGE;
+/// Relative area difference within which a re-numbered face is matched to an operand face.
+pub const ID_MATCH_AREA: f64 = 1e-6;
+
+/// What identifies a face geometrically: its plane, area-weighted centroid and area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FaceSignature {
+    pub plane: Plane,
+    pub centroid: DVec3,
+    pub area: f64,
+}
+
+/// Signature of face `fi` of `p` (outer ring minus holes), or `None` without a plane.
+pub fn face_signature(p: &Polys, fi: usize) -> Option<FaceSignature> {
+    let plane = p.plane(fi)?;
+    let mut area = 0.0;
+    let mut c = DVec2::ZERO;
+    for r in p.faces[fi].rings() {
+        let pts: Vec<DVec2> = r.iter().map(|&i| plane.to_local(p.points[i])).collect();
+        let n = pts.len();
+        for k in 0..n {
+            let (a, b) = (pts[k], pts[(k + 1) % n]);
+            let cross = a.perp_dot(b);
+            area += cross / 2.0;
+            c += (a + b) * cross;
+        }
+    }
+    if area.abs() <= AREA_EPS {
+        return None;
+    }
+    let centroid = plane.to_world(c / (6.0 * area));
+    Some(FaceSignature {
+        plane,
+        centroid,
+        area,
+    })
+}
+
+fn same_plane(a: &Plane, b: &Plane) -> bool {
+    a.normal.dot(b.normal) >= 1.0 - 1e-9 && a.signed_distance(b.origin).abs() <= PLANARITY
+}
+
+/// How far a face is from a source signature (smaller is better); `None` off its plane.
+fn signature_cost(f: &FaceSignature, s: &FaceSignature) -> Option<f64> {
+    if !same_plane(&f.plane, &s.plane) {
+        return None;
+    }
+    Some(f.centroid.distance(s.centroid) + (f.area.sqrt() - s.area.max(0.0).sqrt()).abs())
+}
+
+/// Settle persistent face ids after a boolean (see the module docs). `sources` holds
+/// every operand face that had an id. Faces left without an id get fresh ones from the
+/// owning object ([`crate::object::assign_face_ids`]).
+pub fn resolve_face_ids(p: &mut Polys, sources: &[(u64, FaceSignature)]) {
+    let sigs: Vec<Option<FaceSignature>> =
+        (0..p.faces.len()).map(|i| face_signature(p, i)).collect();
+    let source = |id: u64| sources.iter().find(|(s, _)| *s == id).map(|(_, sig)| sig);
+    // Duplicates: the best match keeps the id.
+    let mut by_id: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for (i, f) in p.faces.iter().enumerate() {
+        if let Some(id) = f.id {
+            by_id.entry(id).or_default().push(i);
+        }
+    }
+    for (id, faces) in by_id {
+        if faces.len() < 2 {
+            continue;
+        }
+        let cost = |i: usize| -> (bool, f64, f64) {
+            match (sigs[i], source(id)) {
+                (Some(f), Some(s)) => match signature_cost(&f, s) {
+                    Some(c) => (false, c, -f.area),
+                    None => (true, f64::INFINITY, -f.area),
+                },
+                (Some(f), None) => (true, f64::INFINITY, -f.area),
+                _ => (true, f64::INFINITY, 0.0),
+            }
+        };
+        let keep = faces
+            .iter()
+            .copied()
+            .min_by(|&a, &b| {
+                cost(a)
+                    .partial_cmp(&cost(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .expect("non-empty");
+        for &i in &faces {
+            if i != keep {
+                p.faces[i].id = None;
+            }
+        }
+    }
+    // Orphans: match unused source faces within tolerance.
+    let used: BTreeSet<u64> = p.faces.iter().filter_map(|f| f.id).collect();
+    let mut free: Vec<(u64, FaceSignature)> = sources
+        .iter()
+        .filter(|(id, _)| !used.contains(id))
+        .copied()
+        .collect();
+    for (face, sig) in p.faces.iter_mut().zip(&sigs) {
+        if face.id.is_some() {
+            continue;
+        }
+        let Some(f) = sig else { continue };
+        let found = free.iter().position(|(_, s)| {
+            same_plane(&f.plane, &s.plane)
+                && f.centroid.distance(s.centroid) <= ID_MATCH_DISTANCE
+                && (f.area - s.area).abs() <= ID_MATCH_AREA * s.area.abs().max(AREA_EPS)
+        });
+        if let Some(k) = found {
+            face.id = Some(free.remove(k).0);
+        }
+    }
+}
+
 /// An engine result back to n-gons with holes (ADR-0001).
 ///
 /// Triangles are grouped by inherited face id; triangles of different source faces are
@@ -210,9 +335,14 @@ fn segment_distance(p: DVec3, a: DVec3, b: DVec3) -> f64 {
 ///
 /// Refuses (typed) a group whose loops touch at a vertex (a pinched face) or that does not
 /// have exactly one outer loop.
+///
+/// `ids[label]` is the persistent id of each source face (or `None`); every output face
+/// inherits the id of its group's smallest label. Duplicates are settled by the caller
+/// ([`resolve_face_ids`]).
 pub fn repolygonise(
     out: &TriSolid,
     planes: &[Plane],
+    ids: &[Option<u64>],
     preserved: &[(DVec3, DVec3)],
 ) -> Result<Polys, BooleanError> {
     let pos = &out.positions;
@@ -370,6 +500,7 @@ pub fn repolygonise(
                 outer: loops[o].clone(),
                 holes,
                 plane: on_plane.then_some(plane),
+                id: ids.get(lab).copied().flatten(),
             },
         ));
     }
@@ -455,16 +586,26 @@ pub fn combine(
         }
     }
     let mut preserved = Vec::new();
+    let mut ids = Vec::with_capacity(planes.len());
+    let mut sources = Vec::new();
     for p in [a, b] {
         for &(u, v) in &p.user_edges {
             preserved.push((p.points[u], p.points[v]));
+        }
+        for (i, f) in p.faces.iter().enumerate() {
+            ids.push(f.id);
+            if let (Some(id), Some(sig)) = (f.id, face_signature(p, i)) {
+                sources.push((id, sig));
+            }
         }
     }
     let out = engine.run(&ta, &tb, op)?;
     if out.triangles.is_empty() || out.volume().abs() <= AREA_EPS * POINT_MERGE {
         return Ok(None);
     }
-    repolygonise(&out, &planes, &preserved).map(Some)
+    let mut res = repolygonise(&out, &planes, &ids, &preserved)?;
+    resolve_face_ids(&mut res, &sources);
+    Ok(Some(res))
 }
 
 #[cfg(all(test, feature = "manifold"))]

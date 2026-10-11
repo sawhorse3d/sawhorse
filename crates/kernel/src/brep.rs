@@ -58,6 +58,9 @@ pub struct Face {
     pub outer: LoopId,
     pub holes: Vec<LoopId>,
     pub plane: Plane,
+    /// Persistent face id, unique within its object and never reused (see
+    /// [`crate::object::Object`]). 0 only on a bare B-rep that no object owns yet.
+    pub id: u64,
 }
 
 impl Face {
@@ -75,6 +78,9 @@ pub struct PolyFace {
     /// The face's stored plane; `None` fits one from the outer loop (Newell). Edits keep
     /// the original plane of a face they reshape, so its frame never drifts.
     pub plane: Option<Plane>,
+    /// Persistent face id carried through edits; `None` for a face an edit just made (the
+    /// owning object gives it a fresh id, see [`crate::object::assign_face_ids`]).
+    pub id: Option<u64>,
 }
 
 impl PolyFace {
@@ -83,6 +89,7 @@ impl PolyFace {
             outer,
             holes,
             plane: None,
+            id: None,
         }
     }
 
@@ -237,6 +244,7 @@ impl Brep {
                 outer: LoopId::null(),
                 holes: Vec::new(),
                 plane,
+                id: pf.id.unwrap_or(0),
             });
             for (ri, ring) in rings.iter().enumerate() {
                 let lid = b.loops.insert(Loop {
@@ -321,6 +329,7 @@ impl Brep {
                 outer: ring(f.outer),
                 holes: f.holes.iter().map(|&h| ring(h)).collect(),
                 plane: Some(f.plane),
+                id: (f.id != 0).then_some(f.id),
             })
             .collect();
         let user_edges = self
@@ -384,6 +393,19 @@ impl Brep {
     }
     pub fn face_ids(&self) -> Vec<FaceId> {
         self.faces.keys().collect()
+    }
+
+    /// Ordinal (position in face order) of the face with persistent id `id`.
+    pub fn face_ordinal(&self, id: u64) -> Option<usize> {
+        if id == 0 {
+            return None;
+        }
+        self.faces.values().position(|f| f.id == id)
+    }
+
+    /// Persistent ids of the faces, in face order.
+    pub fn persistent_face_ids(&self) -> Vec<u64> {
+        self.faces.values().map(|f| f.id).collect()
     }
 
     /// Destination vertex of a half-edge (origin of its `next`).

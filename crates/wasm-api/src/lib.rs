@@ -114,6 +114,27 @@ impl DocCore {
         serde_json::to_string(self.doc.log()).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// Every face of an object by persistent id, in face order: `[{id, normal, origin,
+    /// centroid, area}]` (metres). Faces are addressed by these ids in ops, never by
+    /// position in this list.
+    pub fn faces_json(&self, object: u64) -> Result<String, String> {
+        let o = self.object(object)?;
+        let p = o.brep().to_polys();
+        let faces: Vec<serde_json::Value> = (0..p.faces.len())
+            .filter_map(|i| {
+                let sig = sawhorse_kernel::boolean::face_signature(&p, i)?;
+                Some(serde_json::json!({
+                    "id": o.face_id_at(i)?,
+                    "normal": sig.plane.normal.to_array(),
+                    "origin": sig.plane.origin.to_array(),
+                    "centroid": sig.centroid.to_array(),
+                    "area": sig.area,
+                }))
+            })
+            .collect();
+        serde_json::to_string(&faces).map_err(|e| e.to_string())
+    }
+
     fn object(&self, id: u64) -> Result<&sawhorse_kernel::object::Object, String> {
         self.doc
             .model()
@@ -260,6 +281,12 @@ impl Doc {
         self.core.state_json()
     }
 
+    /// The faces of one object with their persistent ids, planes, centroids and areas, as
+    /// JSON (see [`DocCore::faces_json`]).
+    pub fn faces_json(&self, object_id: f64) -> Result<String, JsError> {
+        self.core.faces_json(id(object_id)?).map_err(js)
+    }
+
     /// Binary STL (mm, Z-up) of one object; refuses non-watertight solids.
     pub fn export_stl(&self, object_id: f64) -> Result<Vec<u8>, JsError> {
         self.core.stl(id(object_id)?).map_err(js)
@@ -336,16 +363,16 @@ mod tests {
         assert_eq!(d.object_mesh(1).unwrap().triangle_count(), 12);
         op(
             &mut d,
-            r#"{"op":"imprint","object":1,"face":1,"points":[[0.15,0.1,0.3048],[0.45,0.1,0.3048],[0.45,0.3,0.3048],[0.15,0.3,0.3048]]}"#,
+            r#"{"op":"imprint","object":1,"face":2,"points":[[0.15,0.1,0.3048],[0.45,0.1,0.3048],[0.45,0.3,0.3048],[0.15,0.3,0.3048]]}"#,
         );
         op(
             &mut d,
-            r#"{"op":"push_pull","object":1,"face":6,"distance":0.1}"#,
+            r#"{"op":"push_pull","object":1,"face":7,"distance":0.1}"#,
         );
         let boss = d.document().hash_hex();
         op(
             &mut d,
-            r#"{"op":"push_pull","object":1,"face":6,"distance":-0.5}"#,
+            r#"{"op":"push_pull","object":1,"face":7,"distance":-0.5}"#,
         );
         let state: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!(state["stats"]["genus"], 1, "pushed through");
@@ -356,6 +383,26 @@ mod tests {
         d.redo().unwrap();
         assert_eq!(d.document().hash_hex(), boss);
         assert_eq!(replay_hash_core(&d.log_json()).unwrap(), boss);
+        // Faces by persistent id (state: the boss again): the box's six, the boss top (the
+        // imprint, still id 7 after its push) and the four boss walls 8..=11.
+        let faces: serde_json::Value = serde_json::from_str(&d.faces_json(1).unwrap()).unwrap();
+        let ids: Vec<u64> = faces
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_u64().unwrap())
+            .collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(sorted, (1..=11).collect::<Vec<u64>>());
+        let mesh_ids: Vec<u64> = d
+            .object_mesh(1)
+            .unwrap()
+            .parts
+            .iter()
+            .map(|p| p.index)
+            .collect();
+        assert_eq!(ids, mesh_ids, "mesh parts name faces by the same ids");
         assert!(d.stl(1).unwrap().len() > 84);
         assert!(d.obj(1).unwrap().starts_with("# Sawhorse OBJ"));
         assert!(d.object_mesh(9).is_err());

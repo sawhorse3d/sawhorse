@@ -68,7 +68,7 @@ export interface DocState {
   tags: Record<string, boolean>;
 }
 
-/** A pickable part: an object's face (index = face ordinal) or a sketch region (index = region id). */
+/** A pickable part: an object's face (index = persistent face id) or a sketch region (index = region id). */
 export interface MeshPart {
   kind: "face" | "region";
   owner: number;

@@ -1,8 +1,9 @@
 //! View mesh for the viewport: flat-shaded (vertices not shared between faces), f32
 //! positions in metres, one part index per triangle, plus edge segments for line drawing.
 //!
-//! A *part* is something the user can point at: an object's face (by ordinal) or a sketch
-//! region (by public id). The UI raycasts a triangle, reads its part, and sends the op.
+//! A *part* is something the user can point at: an object's face (by persistent face id,
+//! never by ordinal) or a sketch region (by public id). The UI raycasts a triangle, reads
+//! its part, and sends the op.
 
 use glam::{DVec2, DVec3};
 use sawhorse_tessellate::{TessellateError, triangulate};
@@ -15,7 +16,7 @@ use crate::plane::Plane;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartKind {
-    /// `owner` is an object id, `index` the face ordinal.
+    /// `owner` is an object id, `index` the persistent face id.
     Face,
     /// `owner` is a sketch id, `index` the region id.
     Region,
@@ -99,11 +100,11 @@ impl ViewMesh {
 
     fn push_object(&mut self, id: u64, o: &Object) -> Result<(), TessellateError> {
         let b = o.brep();
-        for (i, (_, f)) in b.faces().enumerate() {
+        for (_, f) in b.faces() {
             let outer = b.loop_points(f.outer);
             let holes: Vec<Vec<DVec3>> = f.holes.iter().map(|&h| b.loop_points(h)).collect();
             let plane = f.plane;
-            let part = MeshPart::new(PartKind::Face, id, i as u64, &plane);
+            let part = MeshPart::new(PartKind::Face, id, f.id, &plane);
             self.push_face(part, &outer, &holes, |p| plane.to_local(p))?;
         }
         for (e, _) in b.edges() {

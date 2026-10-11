@@ -86,7 +86,7 @@ mod tests {
             },
             Op::Imprint {
                 object: 1,
-                face: 1,
+                face: 2, // the top (persistent id 2)
                 points: vec![
                     [0.02, 0.02, 0.05],
                     [0.08, 0.02, 0.05],

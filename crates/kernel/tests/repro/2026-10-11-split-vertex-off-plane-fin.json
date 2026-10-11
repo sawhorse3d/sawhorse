@@ -32,7 +32,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 4,
+      "face": 5,
       "path": [
         [
           0.350004,
@@ -49,7 +49,7 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 6,
+      "face": 7,
       "distance": -0.25
     },
     {
@@ -68,7 +68,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 0,
+      "face": 1,
       "path": [
         [
           0.350004,
@@ -98,7 +98,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 0,
+      "face": 1,
       "path": [
         [
           0.350004,
@@ -128,7 +128,7 @@
     {
       "op": "imprint",
       "object": 1,
-      "face": 2,
+      "face": 4,
       "points": [
         [
           0.350004,
@@ -155,7 +155,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 4,
+      "face": 6,
       "path": [
         [
           0.250004,
@@ -172,7 +172,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 2,
+      "face": 4,
       "path": [
         [
           0.350004,

@@ -11,7 +11,7 @@ use slotmap::Key;
 use sawhorse_tessellate::{TessellateError, signed_area, triangulate};
 
 use crate::boolean::{BoolOp, BooleanError, TriSolid};
-use crate::brep::{Brep, PolyFace};
+use crate::brep::{Brep, PolyFace, Polys};
 use crate::error::{FaceEditError, PushError};
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
@@ -31,6 +31,31 @@ pub struct Object {
     pub(crate) source: Option<Provenance>,
     /// Tag (layer) name; `None` is untagged. Hidden tags hide the object in the view.
     pub(crate) tag: Option<String>,
+    /// Next persistent face id to hand out. Face ids start at 1 and are never reused, so an
+    /// id the UI holds either names the same face (possibly reshaped) or no face at all.
+    pub(crate) next_face_id: u64,
+}
+
+/// Give every face of `p` a persistent id: a face keeps the id it carries unless an
+/// earlier face already took it (the first piece of a split keeps the id, the second
+/// gets a new one); faces without one get `*next`, `*next + 1`, ... in face order.
+pub fn assign_face_ids(p: &mut Polys, next: &mut u64) {
+    let mut used = std::collections::BTreeSet::new();
+    for f in &mut p.faces {
+        match f.id {
+            Some(id) if id != 0 && used.insert(id) => {
+                *next = (*next).max(id + 1);
+            }
+            _ => f.id = None,
+        }
+    }
+    for f in &mut p.faces {
+        if f.id.is_none() {
+            f.id = Some(*next);
+            used.insert(*next);
+            *next += 1;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,12 +144,16 @@ impl Object {
                 }
             }
         }
+        for (k, f) in faces.iter_mut().enumerate() {
+            f.id = Some(k as u64 + 1);
+        }
         let brep = Brep::from_polygons(&points, &faces)?;
         let mut obj = Object {
             brep,
             watertight: false,
             source: None,
             tag: None,
+            next_face_id: faces.len() as u64 + 1,
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -146,15 +175,52 @@ impl Object {
         self.tag.as_deref()
     }
 
-    /// Faces in deterministic order (index = the face ordinal used by ops and the UI).
+    /// Faces in deterministic order (index = the face ordinal).
     pub fn face_ids(&self) -> Vec<FaceId> {
         self.brep.face_ids()
+    }
+
+    /// Ordinal of the face with persistent id `id` (what ops and the UI address).
+    pub fn face_ordinal(&self, id: u64) -> Option<usize> {
+        self.brep.face_ordinal(id)
+    }
+
+    /// Persistent id of the face at ordinal `ordinal`.
+    pub fn face_id_at(&self, ordinal: usize) -> Option<u64> {
+        self.brep.faces.values().nth(ordinal).map(|f| f.id)
+    }
+
+    /// The next persistent face id this object will hand out.
+    pub fn next_face_id(&self) -> u64 {
+        self.next_face_id
+    }
+
+    /// Rebuild from plain data, giving new faces fresh persistent ids (never reusing one
+    /// this object handed out). Keeps provenance and tag. Not validated.
+    pub(crate) fn rebuilt(&self, mut p: Polys) -> Result<Object, crate::error::BuildError> {
+        let mut next = self.next_face_id;
+        assign_face_ids(&mut p, &mut next);
+        let brep = Brep::build(&p)?;
+        let mut o = Object::from_brep(brep);
+        o.next_face_id = o.next_face_id.max(next);
+        o.source = self.source.clone();
+        o.tag = self.tag.clone();
+        Ok(o)
     }
 
     /// Validate topology plus the object rules: watertight, and the stored flag agrees.
     pub fn validate(&self) -> Result<TopologyReport, TopologyError> {
         let report = validate(&self.brep)?;
         let mut v = Vec::new();
+        let mut ids = std::collections::BTreeSet::new();
+        for (_, f) in self.brep.faces() {
+            if f.id == 0 || f.id >= self.next_face_id || !ids.insert(f.id) {
+                v.push(Violation::DanglingKey(
+                    "face ids must be non-zero, unique and below the object's counter",
+                ));
+                break;
+            }
+        }
         if !report.watertight || !self.watertight {
             v.push(Violation::DanglingKey("object is not watertight"));
         }
@@ -183,7 +249,9 @@ impl Object {
     /// Push/pull face `face` (ordinal) by `distance` metres along its outward normal
     /// (negative pushes inward). Any planar face of a watertight solid; see [`crate::push`]
     /// for the collapse / topological / boolean paths. On `Moved` the solid is replaced;
-    /// on `Collapsed` it is left as it was (the caller removes it).
+    /// on `Collapsed` it is left as it was (the caller removes it). Face ids survive: the
+    /// pushed face keeps its id on both paths (on the boolean path the swept prism's cap
+    /// inherits it), faces the push reshapes keep theirs, new walls get fresh ones.
     pub fn push_pull(&mut self, face: usize, distance: f64) -> Result<PushOutcome, PushError> {
         let (outcome, next) = crate::push::push_pull(self, face, distance)?;
         if let Some(mut next) = next {
@@ -194,14 +262,31 @@ impl Object {
         Ok(outcome)
     }
 
-    /// A solid from an already-built B-rep (watertight flag from the validator).
-    pub(crate) fn from_brep(brep: Brep) -> Object {
+    /// Push/pull the face with persistent id `face_id` (see [`Object::push_pull`]).
+    pub fn push_pull_id(&mut self, face_id: u64, distance: f64) -> Result<PushOutcome, PushError> {
+        let fi = self
+            .face_ordinal(face_id)
+            .ok_or(PushError::NoSuchFace(face_id))?;
+        self.push_pull(fi, distance)
+    }
+
+    /// A solid from an already-built B-rep (watertight flag from the validator). Faces
+    /// without an id (a bare B-rep) get fresh ones after the largest id present.
+    pub(crate) fn from_brep(mut brep: Brep) -> Object {
         let watertight = validate(&brep).map(|r| r.watertight).unwrap_or(false);
+        let mut next = brep.faces.values().map(|f| f.id + 1).max().unwrap_or(1);
+        for f in brep.faces.values_mut() {
+            if f.id == 0 {
+                f.id = next;
+                next += 1;
+            }
+        }
         Object {
             brep,
             watertight,
             source: None,
             tag: None,
+            next_face_id: next,
         }
     }
 
@@ -216,8 +301,9 @@ impl Object {
             engine.as_ref(),
         )?;
         let Some(p) = res else { return Ok(None) };
-        let brep = Brep::build(&p).map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
-        let o = Object::from_brep(brep);
+        let o = self
+            .rebuilt(p)
+            .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
         o.validate()
             .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
         Ok(Some(o))
@@ -244,31 +330,36 @@ impl Object {
     }
 
     /// Split face `face` (ordinal) along `path` (world points on the face's plane): ends on
-    /// the boundary, interior strictly inside. Returns the two faces' ordinals (the first
-    /// keeps `face`). See [`crate::faceops::split_face`].
-    pub fn split_face(&mut self, face: usize, path: &[DVec3]) -> Result<[u32; 2], FaceEditError> {
+    /// the boundary, interior strictly inside. Returns the two faces' persistent ids (the
+    /// first piece keeps the face's id, the second gets a new one). See
+    /// [`crate::faceops::split_face`].
+    pub fn split_face(&mut self, face: usize, path: &[DVec3]) -> Result<[u64; 2], FaceEditError> {
         let mut p = self.brep.to_polys();
         if face >= p.faces.len() {
-            return Err(FaceEditError::NoSuchFace(face as u32));
+            return Err(FaceEditError::NoSuchFace(face as u64));
         }
         let (a, b) = crate::faceops::split_face(&mut p, face, path)?;
+        assign_face_ids(&mut p, &mut self.next_face_id);
+        let ids = [p.faces[a].id, p.faces[b].id].map(|i| i.unwrap_or(0));
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("split_face");
-        Ok([a as u32, b as u32])
+        Ok(ids)
     }
 
     /// Imprint the closed loop `points` (strictly inside face `face`) as a coplanar
-    /// sub-face; the face gains the twin hole. Returns the sub-face's ordinal. See
-    /// [`crate::faceops::imprint`].
-    pub fn imprint(&mut self, face: usize, points: &[DVec3]) -> Result<u32, FaceEditError> {
+    /// sub-face; the face gains the twin hole. Returns the sub-face's persistent id (new).
+    /// See [`crate::faceops::imprint`].
+    pub fn imprint(&mut self, face: usize, points: &[DVec3]) -> Result<u64, FaceEditError> {
         let mut p = self.brep.to_polys();
         if face >= p.faces.len() {
-            return Err(FaceEditError::NoSuchFace(face as u32));
+            return Err(FaceEditError::NoSuchFace(face as u64));
         }
         let sub = crate::faceops::imprint(&mut p, face, points)?;
+        assign_face_ids(&mut p, &mut self.next_face_id);
+        let id = p.faces[sub].id.unwrap_or(0);
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("imprint");
-        Ok(sub as u32)
+        Ok(id)
     }
 
     /// Indexed triangle solid (shared vertices in slotmap order, face ordinal per triangle),

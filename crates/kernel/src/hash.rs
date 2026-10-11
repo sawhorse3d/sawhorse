@@ -4,6 +4,8 @@
 //! topology written as ordinals (slotmap insertion order), never as raw keys or pointer
 //! values. The same op sequence therefore hashes identically on every platform, natively
 //! and in WASM. Stored face planes are deliberately excluded: they are derived data.
+//! Persistent face ids (and each object's id counter) are included: ops address faces by
+//! id, so two states that differ only in ids would replay differently (v3).
 //!
 //! Sketches hash canonically (vertices ordered by quantised position, rings and edges in
 //! that numbering, sorted), so the same strokes drawn in any order hash the same. Region
@@ -19,7 +21,7 @@ use crate::sketch::Sketch;
 use crate::tolerance::HASH_QUANTUM;
 
 /// Bump when the hashed representation changes (and regenerate goldens on purpose).
-pub const HASH_FORMAT: &str = "sawhorse-model-hash-v2";
+pub const HASH_FORMAT: &str = "sawhorse-model-hash-v3";
 
 #[derive(Debug, Clone, Copy)]
 pub struct StableHasher(u64);
@@ -169,7 +171,9 @@ pub fn model_hash(m: &Model) -> u64 {
             h.len(v.pos.z);
         }
         h.usize(b.faces.len());
+        h.u64(o.next_face_id());
         for f in b.faces.values() {
+            h.u64(f.id);
             h.usize(1 + f.holes.len());
             for l in f.loops() {
                 let vs = b.loop_vertices(l);

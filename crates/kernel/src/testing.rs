@@ -199,7 +199,7 @@ mod tests {
             },
             Op::PushPull {
                 object: 1,
-                face: 1,
+                face: 2, // the cap (persistent id 2)
                 distance: 0.25,
             },
         ];
@@ -332,7 +332,7 @@ pub fn build_solid(s: &SolidSpec) -> Result<crate::object::Object, String> {
     if let Some(pts) = &s.imprint_top {
         m.apply(&Op::Imprint {
             object: 1,
-            face: 1,
+            face: 2, // the top (persistent id 2)
             points: pts.iter().map(|p| [p[0], p[1], z1]).collect(),
         })
         .map_err(e)?;

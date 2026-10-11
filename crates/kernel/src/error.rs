@@ -50,7 +50,7 @@ pub enum PushError {
     #[error("no object #{0}")]
     NoSuchObject(u64),
     #[error("no face #{0} on this object")]
-    NoSuchFace(u32),
+    NoSuchFace(u64),
     #[error("could not build the solid: {0}")]
     Build(#[from] BuildError),
     /// The boolean path (push through, into or flush with another part) could not produce
@@ -66,7 +66,7 @@ pub enum FaceEditError {
     #[error("no object #{0}")]
     NoSuchObject(u64),
     #[error("no face #{0} on this object")]
-    NoSuchFace(u32),
+    NoSuchFace(u64),
     #[error("a path needs at least {0} points")]
     TooFewPoints(usize),
     #[error("a coordinate is not finite or is beyond 10 km")]

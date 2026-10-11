@@ -135,7 +135,8 @@ proptest! {
         let centre = c.iter().copied().sum::<DVec3>() / 4.0;
         let mid = a.lerp(b, 0.5).lerp(centre, bend.abs());
         let path: Vec<[f64; 3]> = if bend > 0.0 { vec![a.to_array(), mid.to_array(), b.to_array()] } else { vec![a.to_array(), b.to_array()] };
-        match m.apply(&Op::SplitFace { object: 1, face: face as u32, path }) {
+        // A fresh box's face at ordinal k has persistent id k + 1.
+        match m.apply(&Op::SplitFace { object: 1, face: face as u64 + 1, path }) {
             Ok(OpOutcome::FaceSplit { faces }) => {
                 prop_assert_eq!(faces.len(), 2);
                 check_solid(&m, vol)?;
@@ -172,8 +173,8 @@ proptest! {
         .into_iter()
         .map(|p| p.to_array())
         .collect();
-        let out = m.apply(&Op::Imprint { object: 1, face: face as u32, points: pts });
-        prop_assert!(matches!(out, Ok(OpOutcome::Imprinted { face: 6 })), "{:?}", out);
+        let out = m.apply(&Op::Imprint { object: 1, face: face as u64 + 1, points: pts });
+        prop_assert!(matches!(out, Ok(OpOutcome::Imprinted { face: 7 })), "{:?}", out);
         check_solid(&m, vol)?;
         let r = m.object(1).unwrap().validate().unwrap();
         prop_assert_eq!((r.faces, r.holes), (7, 1));
@@ -191,10 +192,12 @@ proptest! {
         let (o, ux, uy) = (c[0], c[1] - c[0], c[3] - c[0]);
         let nrm = ux.cross(uy).normalize();
         let world: Vec<[f64; 3]> = pts.iter().map(|&(s, t)| (o + ux * s + uy * t + nrm * lift).to_array()).collect();
+        // Persistent ids 1..=6 name the box's faces; 7 names none (a typed refusal).
+        let id = u64::from(face) + 1;
         let op = if imprint {
-            Op::Imprint { object: 1, face, points: world }
+            Op::Imprint { object: 1, face: id, points: world }
         } else {
-            Op::SplitFace { object: 1, face, path: world }
+            Op::SplitFace { object: 1, face: id, path: world }
         };
         match m.apply(&op) {
             Ok(_) => check_solid(&m, vol)?,
@@ -230,7 +233,7 @@ fn extruding_consumes_the_region_and_the_face_takes_drawing() {
     let out = m
         .apply(&Op::Imprint {
             object: 1,
-            face: 1,
+            face: 2, // the cap
             points: vec![
                 [0.25, 0.25, 0.5],
                 [0.75, 0.25, 0.5],
@@ -239,15 +242,15 @@ fn extruding_consumes_the_region_and_the_face_takes_drawing() {
             ],
         })
         .unwrap();
-    assert_eq!(out, OpOutcome::Imprinted { face: 6 });
+    assert_eq!(out, OpOutcome::Imprinted { face: 7 });
     let out = m
         .apply(&Op::SplitFace {
             object: 1,
-            face: 6,
+            face: 7,
             path: vec![[0.5, 0.25, 0.5], [0.5, 0.75, 0.5]],
         })
         .unwrap();
-    assert_eq!(out, OpOutcome::FaceSplit { faces: vec![6, 7] });
+    assert_eq!(out, OpOutcome::FaceSplit { faces: vec![7, 8] });
     let st = m.stats();
     assert!(st.watertight);
     assert_eq!((st.faces, st.holes, st.euler), (8, 1, 2));

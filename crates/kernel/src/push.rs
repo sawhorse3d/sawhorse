@@ -30,7 +30,7 @@ use glam::{DVec2, DVec3};
 use sawhorse_tessellate::signed_area;
 
 use crate::boolean::{BoolOp, BooleanError, combine, default_engine};
-use crate::brep::{Brep, PolyFace, Polys};
+use crate::brep::{PolyFace, Polys};
 use crate::error::PushError;
 use crate::faceops::merge_coplanar;
 use crate::object::{Object, PushOutcome};
@@ -61,7 +61,9 @@ fn face_area(p: &Polys, fi: usize, plane: &Plane) -> f64 {
 }
 
 /// The prism swept by face `fi` over `d` along its normal, as a closed `Polys` whose base
-/// vertices are exactly the face's vertices (so the engine sees exact coincidence).
+/// vertices are exactly the face's vertices (so the engine sees exact coincidence). The
+/// cap (the face's new position) carries the face's persistent id, so the boolean path
+/// hands it to the moved face; the base and walls carry none.
 pub fn prism(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Polys {
     let rings = face_rings(p, fi);
     let mut points = Vec::new();
@@ -80,9 +82,11 @@ pub fn prism(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Polys {
         .map(|r| r.iter().map(|&i| i + n_base).collect())
         .collect();
     let rev = |r: &Vec<usize>| r.iter().rev().copied().collect::<Vec<_>>();
+    let mut cap_face = PolyFace::new(cap[0].clone(), cap[1..].to_vec());
+    cap_face.id = p.faces[fi].id;
     let mut faces = vec![
         PolyFace::new(rev(&base[0]), base[1..].iter().map(rev).collect()),
-        PolyFace::new(cap[0].clone(), cap[1..].to_vec()),
+        cap_face,
     ];
     for (b, c) in base.iter().zip(&cap) {
         for k in 0..b.len() {
@@ -268,9 +272,9 @@ fn weld_collapsed_rails(q: &mut Polys, slide: &BTreeMap<usize, bool>) {
 }
 
 /// A candidate solid is acceptable: valid (incl. no self-intersection), `shells` shells.
-fn accept(q: &Polys, shells: Option<usize>) -> Result<Object, String> {
-    let brep = Brep::build(q).map_err(|e| e.to_string())?;
-    let obj = Object::from_brep(brep);
+/// New faces get fresh persistent ids from `base`'s counter.
+fn accept(base: &Object, q: &Polys, shells: Option<usize>) -> Result<Object, String> {
+    let obj = base.rebuilt(q.clone()).map_err(|e| e.to_string())?;
     let r = obj.validate().map_err(|e| e.to_string())?;
     if let Some(s) = shells
         && r.shells.len() != s
@@ -295,7 +299,7 @@ pub(crate) fn push_pull(
     }
     let p = obj.brep().to_polys();
     if fi >= p.faces.len() {
-        return Err(PushError::NoSuchFace(fi as u32));
+        return Err(PushError::NoSuchFace(fi as u64));
     }
     let plane = p
         .plane(fi)
@@ -319,7 +323,7 @@ pub(crate) fn push_pull(
     let before = obj.validate().map(|r| r.shells.len()).unwrap_or(0);
     if before == 1
         && let Some(q) = topological(&p, fi, &plane, d)
-        && let Ok(cand) = accept(&q, Some(1))
+        && let Ok(cand) = accept(obj, &q, Some(1))
     {
         let expect = obj.volume() + face_area(&p, fi, &plane) * d;
         if expect > 0.0 && (cand.volume() - expect).abs() <= 1e-9 * expect.abs().max(1.0) {
@@ -355,7 +359,7 @@ pub(crate) fn push_pull(
             None,
         )),
         Some(q) => {
-            let cand = accept(&q, None).map_err(BooleanError::InvalidResult)?;
+            let cand = accept(obj, &q, None).map_err(BooleanError::InvalidResult)?;
             Ok((PushOutcome::Moved, Some(cand)))
         }
     }

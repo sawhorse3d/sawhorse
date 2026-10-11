@@ -69,7 +69,7 @@ describe("tool ops", () => {
     expect(nextTarget({ op: "extrude", sketch: 1, region: 4, distance: 1 }, { kind: "object_created", object: 7 }, null)).toEqual({
       kind: "face",
       object: 7,
-      face: 1,
+      face: 2, // the cap: persistent id 2
     });
     const imp = rectangleOp({ frame: frameOfPart(top), point: [0.1, 0.1, 0.3], face: { object: 1, face: 1 } }, [0.2, 0.2]);
     expect(nextTarget(imp, { kind: "imprinted", face: 6 }, null)).toEqual({ kind: "face", object: 1, face: 6 });

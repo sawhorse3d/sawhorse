@@ -16,7 +16,14 @@ export interface Frame {
 export const GROUND_SKETCH = 1;
 export const GROUND: Frame = { origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] };
 
-/** What a Push/Pull acts on: a sketch region (extrude) or an object face. */
+/**
+ * Persistent face id of a new solid's cap (the face opposite the sketch). The kernel numbers
+ * an extrusion's faces base 1, cap 2, walls 3.. and never reuses an id, so the UI holds on to
+ * face ids across edits; it never addresses a face by its position in a list.
+ */
+export const CAP_FACE_ID = 2;
+
+/** What a Push/Pull acts on: a sketch region (extrude) or an object face (by persistent id). */
 export type Target = { kind: "region"; sketch: number; region: number } | { kind: "face"; object: number; face: number };
 
 /** Where a rectangle starts: on the ground sketch, or on an object face (imprint). */
@@ -107,7 +114,7 @@ export function pushOp(t: Target, distance: number): KernelOp {
 
 /**
  * What the Push tool should act on next after an op: the region a rectangle drew, the
- * sub-face an imprint made, the cap of a new solid (face 1), the same face after a move.
+ * sub-face an imprint made, the cap of a new solid (face id 2), the same face after a move.
  */
 export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | null): Target | null {
   switch (outcome.kind) {
@@ -116,7 +123,7 @@ export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | 
     case "imprinted":
       return op.op === "imprint" ? { kind: "face", object: op.object, face: outcome.face } : previous;
     case "object_created":
-      return { kind: "face", object: outcome.object, face: 1 };
+      return { kind: "face", object: outcome.object, face: CAP_FACE_ID };
     case "face_moved":
       return op.op === "push_pull" ? { kind: "face", object: op.object, face: op.face } : previous;
     case "object_collapsed":

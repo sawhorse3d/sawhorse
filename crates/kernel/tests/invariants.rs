@@ -69,9 +69,9 @@ proptest! {
         let ops = box_ops(o, n, 0.0, 0.0, w, h, d);
         let sketch_only = Model::replay(&ops[..2]).unwrap();
         let mut m = Model::replay(&ops).unwrap();
-        // Face 1 is the cap, d away from the sketch plane; pushing it back by -|d| along its
+        // Face id 2 is the cap, d away from the sketch plane; pushing it back by -|d| along its
         // own outward normal flattens the solid.
-        let out = m.apply(&Op::PushPull { object: 1, face: 1, distance: -d.abs() }).map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let out = m.apply(&Op::PushPull { object: 1, face: 2, distance: -d.abs() }).map_err(|e| TestCaseError::fail(e.to_string()))?;
         let OpOutcome::ObjectCollapsed { regions } = out else {
             return Err(TestCaseError::fail(format!("not collapsed: {out:?}")));
         };
@@ -89,6 +89,8 @@ proptest! {
         let before = m.object(1).unwrap().clone();
         // Pushing inward by more than the solid's depth is refused (typed), not corrupted.
         let k = if out_first { k } else { -k };
+        // A fresh box's face at ordinal k has persistent id k + 1; the id survives the push.
+        let face = u64::from(face) + 1;
         match m.apply(&Op::PushPull { object: 1, face, distance: k }) {
             Ok(OpOutcome::FaceMoved) => {
                 let undo = m.apply(&Op::PushPull { object: 1, face, distance: -k });

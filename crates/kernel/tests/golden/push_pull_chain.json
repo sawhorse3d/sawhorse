@@ -32,23 +32,23 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "distance": 0.5
     },
     {
       "op": "push_pull",
       "object": 1,
-      "face": 2,
+      "face": 3,
       "distance": 0.1
     },
     {
       "op": "push_pull",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "distance": -0.25
     }
   ],
-  "hash": "9688beabff390712",
+  "hash": "8906253c053053a9",
   "stats": {
     "objects": 1,
     "faces": 6,

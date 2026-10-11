@@ -65,7 +65,7 @@ impl FaceView {
         let f = p
             .faces
             .get(fi)
-            .ok_or(FaceEditError::NoSuchFace(fi as u32))?;
+            .ok_or(FaceEditError::NoSuchFace(fi as u64))?;
         let plane = p.plane(fi).ok_or(FaceEditError::Degenerate)?;
         let rings: Vec<Vec<usize>> = f.rings().cloned().collect();
         let rings2 = rings
@@ -401,11 +401,13 @@ pub fn split_face(
                 outer: c1,
                 holes: h1,
                 plane: Some(plane),
+                id: face.id,
             },
             PolyFace {
                 outer: c2,
                 holes: h2,
                 plane: Some(plane),
+                id: None,
             },
         )
     } else {
@@ -424,11 +426,13 @@ pub fn split_face(
                 outer: face.outer.clone(),
                 holes: rest,
                 plane: Some(plane),
+                id: face.id,
             },
             PolyFace {
                 outer: cap,
                 holes: in_cap,
                 plane: Some(plane),
+                id: None,
             },
         )
     };
@@ -508,11 +512,13 @@ pub fn imprint(p: &mut Polys, fi: usize, pts: &[DVec3]) -> Result<usize, FaceEdi
         outer: parent.outer.clone(),
         holes: outer_holes,
         plane: Some(view.plane),
+        id: parent.id,
     };
     q.faces.push(PolyFace {
         outer: idx.clone(),
         holes: inner,
         plane: Some(view.plane),
+        id: None,
     });
     for k in 0..n {
         q.user_edges.insert(Polys::key(idx[k], idx[(k + 1) % n]));
@@ -546,7 +552,7 @@ fn find(parent: &mut [usize], mut x: usize) -> usize {
 /// dissolving those edges. User-drawn edges are kept (not dissolved) when `keep_user`.
 /// Groups whose merged boundary would pinch at a vertex stay unmerged. Vertices left
 /// running straight through between the merged edges are healed. Returns the number of
-/// edges dissolved. The merged face takes the smallest member's index and plane.
+/// edges dissolved. The merged face takes the smallest member's index, plane and persistent id.
 pub fn merge_coplanar(p: &mut Polys, keep_user: bool) -> usize {
     let directed = p.directed_edges();
     let nf = p.faces.len();
@@ -658,6 +664,7 @@ pub fn merge_coplanar(p: &mut Polys, keep_user: bool) -> usize {
             outer: loops[o].clone(),
             holes,
             plane: Some(plane),
+            id: p.faces[root].id,
         };
         for &m in &members[1..] {
             doomed.insert(m);

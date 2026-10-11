@@ -119,7 +119,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         3 => Just(Fuzz::Undo),
         2 => Just(Fuzz::Redo),
         1 => (0u64..4, 0u64..6, distance()).prop_map(|(sketch, region, distance)| Fuzz::Raw(Op::Extrude { sketch, region, distance })),
-        1 => (0u64..4, 0u32..12, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Op::PushPull { object, face, distance })),
+        1 => (0u64..4, 0u64..14, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Op::PushPull { object, face, distance })),
     ]
 }
 
@@ -137,14 +137,16 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
     let sketch = |k: u8| pick(&sketches, k).unwrap_or(1);
     let object = |k: u8| pick(&objects, k).unwrap_or(1);
     // Outer ring (world) and plane of a face, if it exists.
-    let face = |o: u64, k: u8| -> Option<(u32, Vec<DVec3>, sawhorse_kernel::plane::Plane)> {
-        let p = m.object(o)?.brep().to_polys();
+    // Faces are addressed by persistent id: pick the k-th face, send its id.
+    let face = |o: u64, k: u8| -> Option<(u64, Vec<DVec3>, sawhorse_kernel::plane::Plane)> {
+        let ob = m.object(o)?;
+        let p = ob.brep().to_polys();
         if p.faces.is_empty() {
             return None;
         }
         let fi = k as usize % p.faces.len();
         let ring = p.faces[fi].outer.iter().map(|&i| p.points[i]).collect();
-        Some((fi as u32, ring, p.plane(fi)?))
+        Some((ob.face_id_at(fi)?, ring, p.plane(fi)?))
     };
     match f {
         Fuzz::NewSketch(o, n) => Op::NewSketch {
@@ -191,10 +193,16 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         }
         Fuzz::Push(o, k, distance) => {
             let oid = object(*o);
-            let n = m.object(oid).map_or(1, |ob| ob.brep().face_count().max(1));
+            let face = m
+                .object(oid)
+                .and_then(|ob| {
+                    let n = ob.brep().face_count().max(1);
+                    ob.face_id_at(*k as usize % n)
+                })
+                .unwrap_or(1);
             Op::PushPull {
                 object: oid,
-                face: (*k as usize % n) as u32,
+                face,
                 distance: *distance,
             }
         }

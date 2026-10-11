@@ -106,13 +106,13 @@
     {
       "op": "push_pull",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "distance": 0.000001
     },
     {
       "op": "push_pull",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "distance": -0.5
     },
     {

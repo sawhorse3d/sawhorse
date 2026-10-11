@@ -5,9 +5,11 @@
 //! additionally runs the full validator on the spot, so a kernel bug panics at the mutation
 //! that caused it.
 //!
-//! Ops address sketches, regions and objects by **public id** (see [`crate::ids`]): stable
-//! across edits, so the UI can hold on to them. Faces are addressed by ordinal within their
-//! object (the deterministic face order; the UI reads it from the view mesh it just drew).
+//! Ops address sketches, regions and objects by **public id** (see [`crate::ids`]) and
+//! faces by **persistent face id** within their object (see [`crate::object::Object`]):
+//! all stable across edits, so the UI can hold on to them. A face id survives the push
+//! that moves the face (topological and boolean paths alike), splits (the first piece
+//! keeps it) and coplanar merges (the merged face keeps the smallest member's id).
 //! An op sequence is plain data: it serialises to JSON for the fuzzer's repro files, the
 //! golden replays and the document's op log, and replays identically everywhere.
 
@@ -65,24 +67,25 @@ pub enum Op {
         region: u64,
         distance: f64,
     },
-    /// Push/pull face `face` (ordinal) of object `object` along its outward normal.
+    /// Push/pull face `face` (persistent face id) of object `object` along its outward
+    /// normal.
     PushPull {
         object: u64,
-        face: u32,
+        face: u64,
         distance: f64,
     },
     /// Cut face `face` of `object` in two along `path` (world points on the face's plane;
     /// ends on the face's boundary, interior strictly inside).
     SplitFace {
         object: u64,
-        face: u32,
+        face: u64,
         path: Vec<[f64; 3]>,
     },
     /// Imprint the closed loop `points` (strictly inside face `face`) as a coplanar
     /// sub-face twinned with a new hole in the face.
     Imprint {
         object: u64,
-        face: u32,
+        face: u64,
         points: Vec<[f64; 3]>,
     },
     /// Delete an object (it also leaves any group).
@@ -116,13 +119,13 @@ pub enum OpOutcome {
         object: u64,
     },
     FaceMoved,
-    /// A face was split; the two pieces' ordinals (the first keeps the old ordinal).
+    /// A face was split; the two pieces' persistent ids (the first keeps the old id).
     FaceSplit {
-        faces: Vec<u32>,
+        faces: Vec<u64>,
     },
-    /// A loop was imprinted; the new sub-face's ordinal.
+    /// A loop was imprinted; the new sub-face's persistent id.
     Imprinted {
-        face: u32,
+        face: u64,
     },
     ObjectDeleted,
     GroupCreated {
@@ -364,7 +367,7 @@ impl Model {
             } => {
                 let oid = self.object_key(*object)?;
                 let o = &mut self.objects[oid];
-                match o.push_pull(*face as usize, *distance)? {
+                match o.push_pull_id(*face, *distance)? {
                     PushOutcome::Moved => Ok(OpOutcome::FaceMoved),
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");
@@ -382,8 +385,8 @@ impl Model {
             }
             Op::SplitFace { object, face, path } => {
                 let pts: Vec<DVec3> = path.iter().map(|p| DVec3::from_array(*p)).collect();
-                let o = self.face_edit_target(*object, *face)?;
-                let faces = o.split_face(*face as usize, &pts)?;
+                let (o, fi) = self.face_edit_target(*object, *face)?;
+                let faces = o.split_face(fi, &pts)?;
                 Ok(OpOutcome::FaceSplit {
                     faces: faces.to_vec(),
                 })
@@ -394,8 +397,8 @@ impl Model {
                 points,
             } => {
                 let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
-                let o = self.face_edit_target(*object, *face)?;
-                let sub = o.imprint(*face as usize, &pts)?;
+                let (o, fi) = self.face_edit_target(*object, *face)?;
+                let sub = o.imprint(fi, &pts)?;
                 Ok(OpOutcome::Imprinted { face: sub })
             }
             Op::DeleteObject { object } => {
@@ -466,16 +469,21 @@ impl Model {
         self.groups.retain(|_, g| !g.objects.is_empty());
     }
 
-    fn face_edit_target(&mut self, object: u64, face: u32) -> Result<&mut Object, FaceEditError> {
+    /// The object and the ordinal of its face with persistent id `face`.
+    fn face_edit_target(
+        &mut self,
+        object: u64,
+        face: u64,
+    ) -> Result<(&mut Object, usize), FaceEditError> {
         let k = from_public::<ObjectId>(object);
         let o = self
             .objects
             .get_mut(k)
             .ok_or(FaceEditError::NoSuchObject(object))?;
-        if face as usize >= o.brep().face_count() {
-            return Err(FaceEditError::NoSuchFace(face));
-        }
-        Ok(o)
+        let fi = o
+            .face_ordinal(face)
+            .ok_or(FaceEditError::NoSuchFace(face))?;
+        Ok((o, fi))
     }
 
     /// A collapsed solid's flat footprint goes back to its source sketch when it lies on
@@ -682,7 +690,7 @@ mod tests {
         let out = m
             .apply(&Op::PushPull {
                 object: 1,
-                face: 1,
+                face: 2,
                 distance: -0.5,
             })
             .unwrap();
@@ -750,7 +758,7 @@ mod tests {
             },
             Op::PushPull {
                 object: 1,
-                face: 1,
+                face: 2,
                 distance: 0.1,
             },
         ];

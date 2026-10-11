@@ -35,7 +35,9 @@ fn extrude(region: u64, d: f64) -> Op {
     }
 }
 
-fn push(face: u32, d: f64) -> Op {
+/// Push/pull the face with persistent id `face`. On a freshly extruded box the base is 1,
+/// the cap 2, the walls 3..=6; an imprint's sub-face is 7.
+fn push(face: u64, d: f64) -> Op {
     Op::PushPull {
         object: 1,
         face,
@@ -46,7 +48,7 @@ fn push(face: u32, d: f64) -> Op {
 fn imprint_top(z: f64, x0: f64, y0: f64, x1: f64, y1: f64) -> Op {
     Op::Imprint {
         object: 1,
-        face: 1,
+        face: 2,
         points: vec![[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]],
     }
 }
@@ -85,7 +87,7 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-9 * b.abs().max(1.0)
 }
 
-/// A 2 x 1 x 1 box with a 1 x 0.5 imprint centred on its top (object 1, sub-face 6).
+/// A 2 x 1 x 1 box with a 1 x 0.5 imprint centred on its top (object 1, sub-face id 7).
 fn boxed_with_imprint() -> Vec<Op> {
     vec![
         rect(0.0, 0.0, 2.0, 1.0),
@@ -97,14 +99,14 @@ fn boxed_with_imprint() -> Vec<Op> {
 #[test]
 fn cap_pulls_and_pushes_without_new_topology() {
     let mut m = run(&[rect(0.0, 0.0, 1.0, 1.0), extrude(1, 1.0)]);
-    assert_eq!(m.apply(&push(1, 0.25)).unwrap(), OpOutcome::FaceMoved);
+    assert_eq!(m.apply(&push(2, 0.25)).unwrap(), OpOutcome::FaceMoved);
     let s = shape(&m);
     assert_eq!((s.faces, s.genus), (6, 0));
     assert!(close(s.volume, 1.25) && close(s.area, 2.0 + 4.0 * 1.25));
-    m.apply(&push(1, -0.75)).unwrap();
+    m.apply(&push(2, -0.75)).unwrap();
     assert!(close(shape(&m).volume, 0.5));
     // A side wall: its neighbours run along the push, so it slides too.
-    m.apply(&push(2, 0.5)).unwrap();
+    m.apply(&push(3, 0.5)).unwrap();
     let s = shape(&m);
     assert_eq!(s.faces, 6);
     assert!(close(s.volume, 0.75));
@@ -113,7 +115,7 @@ fn cap_pulls_and_pushes_without_new_topology() {
 #[test]
 fn imprint_pulled_up_grows_side_walls() {
     let mut ops = boxed_with_imprint();
-    ops.push(push(6, 0.3));
+    ops.push(push(7, 0.3));
     let m = run(&ops);
     let s = shape(&m);
     assert_eq!((s.faces, s.holes, s.shells, s.genus), (11, 1, 1, 0));
@@ -127,7 +129,7 @@ fn imprint_pulled_up_grows_side_walls() {
 #[test]
 fn imprint_pushed_in_makes_a_pocket_and_flush_restores_the_imprint() {
     let mut ops = boxed_with_imprint();
-    ops.push(push(6, -0.4));
+    ops.push(push(7, -0.4));
     let mut m = run(&ops);
     let s = shape(&m);
     assert_eq!((s.faces, s.holes, s.genus), (11, 1, 0));
@@ -135,7 +137,7 @@ fn imprint_pushed_in_makes_a_pocket_and_flush_restores_the_imprint() {
     assert!(close(s.area, 10.0 + 0.4 * 3.0));
     // Pull the pocket floor back up flush: the walls vanish (boolean path), but the user's
     // imprint edges are kept, so the top is still a face with a hole plus the sub-face.
-    m.apply(&push(6, 0.4)).unwrap();
+    m.apply(&push(7, 0.4)).unwrap();
     let s = shape(&m);
     assert_eq!((s.faces, s.holes, s.genus), (7, 1, 0));
     assert!(close(s.volume, 2.0) && close(s.area, 10.0));
@@ -146,7 +148,7 @@ fn imprint_pushed_in_makes_a_pocket_and_flush_restores_the_imprint() {
 #[test]
 fn push_through_the_far_side_drills_a_hole() {
     let mut ops = boxed_with_imprint();
-    ops.push(push(6, -1.5));
+    ops.push(push(7, -1.5));
     let m = run(&ops);
     let s = shape(&m);
     assert_eq!((s.faces, s.holes, s.shells, s.genus), (10, 2, 1, 1));
@@ -154,7 +156,7 @@ fn push_through_the_far_side_drills_a_hole() {
     assert!(close(s.area, 10.0 - 2.0 * 0.5 + 3.0 * 1.0));
     // Exactly to the far side: same hole (the prism's end is coplanar with the bottom).
     let mut ops = boxed_with_imprint();
-    ops.push(push(6, -1.0));
+    ops.push(push(7, -1.0));
     let s = shape(&run(&ops));
     assert_eq!((s.faces, s.genus), (10, 1));
     assert!(close(s.volume, 1.5));
@@ -164,8 +166,8 @@ fn push_through_the_far_side_drills_a_hole() {
 fn boss_pushed_back_through_the_box() {
     // Pull the imprint up into a boss, then push the boss's top down through everything.
     let mut ops = boxed_with_imprint();
-    ops.push(push(6, 0.3));
-    ops.push(push(6, -1.5));
+    ops.push(push(7, 0.3));
+    ops.push(push(7, -1.5));
     let s = shape(&run(&ops));
     assert_eq!((s.genus, s.shells), (1, 1));
     assert!(close(s.volume, 1.5));
@@ -177,12 +179,12 @@ fn diagonal_half_of_the_top_pulled_up_slides_one_corner() {
     let out = m
         .apply(&Op::SplitFace {
             object: 1,
-            face: 1,
+            face: 2,
             path: vec![[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
         })
         .unwrap();
-    assert_eq!(out, OpOutcome::FaceSplit { faces: vec![1, 6] });
-    m.apply(&push(6, 0.5)).unwrap();
+    assert_eq!(out, OpOutcome::FaceSplit { faces: vec![2, 7] });
+    m.apply(&push(7, 0.5)).unwrap();
     let s = shape(&m);
     assert!(close(s.volume, 1.0 + 0.5 * 0.5));
     assert_eq!((s.shells, s.genus), (1, 0));
@@ -217,7 +219,8 @@ fn pulling_into_the_other_arm_fills_the_notch() {
             pl.normal.x > 0.99
                 && (pl.signed_distance(sawhorse_kernel::DVec3::new(1.0, 1.5, 0.5))).abs() < 1e-9
         })
-        .unwrap() as u32;
+        .unwrap();
+    let face = m.object(1).unwrap().face_id_at(face).unwrap();
     // Pull it 1.5 to the right: across the notch and into the right arm (boolean union).
     m.apply(&push(face, 1.5)).unwrap();
     let s = shape(&m);
@@ -239,7 +242,8 @@ fn tube_hole_wall_moves_and_pushes_through() {
             let pl = p.plane(i).unwrap();
             pl.normal.x > 0.99 && pl.origin.x.abs() < 1.0 + 1e-9 && pl.origin.x > 0.5
         })
-        .unwrap() as u32;
+        .unwrap();
+    let wall = m.object(1).unwrap().face_id_at(wall).unwrap();
     m.apply(&push(wall, 0.5)).unwrap();
     assert!(close(shape(&m).volume, 13.0));
     // Pushing the hole wall back through the outer wall opens the ring into a C.
@@ -254,21 +258,21 @@ fn collapse_and_refusals() {
     let mut m = run(&[rect(0.0, 0.0, 1.0, 1.0), extrude(1, 1.0)]);
     let before = m.hash();
     for (op, want) in [
-        (push(1, 0.0), PushError::ZeroDistance),
-        (push(1, 5e-6), PushError::ZeroDistance),
-        (push(1, f64::NAN), PushError::OutOfBounds),
-        (push(1, 2e4), PushError::OutOfBounds),
+        (push(2, 0.0), PushError::ZeroDistance),
+        (push(2, 5e-6), PushError::ZeroDistance),
+        (push(2, f64::NAN), PushError::OutOfBounds),
+        (push(2, 2e4), PushError::OutOfBounds),
         (push(42, 1.0), PushError::NoSuchFace(42)),
     ] {
         assert_eq!(m.apply(&op), Err(KernelError::Push(want)), "{op:?}");
         assert_eq!(m.hash(), before);
     }
     assert!(
-        matches!(m.apply(&push(1, -1.0)).unwrap(), OpOutcome::ObjectCollapsed { ref regions } if regions.len() == 1)
+        matches!(m.apply(&push(2, -1.0)).unwrap(), OpOutcome::ObjectCollapsed { ref regions } if regions.len() == 1)
     );
     let mut m = run(&[rect(0.0, 0.0, 1.0, 1.0), extrude(1, 1.0)]);
     assert_eq!(
-        m.apply(&push(1, -3.0)).unwrap(),
+        m.apply(&push(2, -3.0)).unwrap(),
         OpOutcome::ObjectCollapsed { regions: vec![] },
         "pushed past the base: gone, and nothing lands on the sketch"
     );
@@ -300,7 +304,7 @@ proptest! {
         let p = m.object(1).unwrap().brep().to_polys();
         let c: Vec<_> = p.faces[face as usize].outer.iter().map(|&i| p.points[i]).collect();
         let at = |s: f64, t: f64| c[0].lerp(c[1], s).lerp(c[3].lerp(c[2], s), t).to_array();
-        m.apply(&Op::Imprint { object: 1, face, points: vec![at(0.3, 0.3), at(0.7, 0.3), at(0.7, 0.7), at(0.3, 0.7)] }).unwrap();
+        m.apply(&Op::Imprint { object: 1, face: u64::from(face) + 1, points: vec![at(0.3, 0.3), at(0.7, 0.3), at(0.7, 0.7), at(0.3, 0.7)] }).unwrap();
         let p = m.object(1).unwrap().brep().to_polys();
         let pl = p.plane(6).unwrap();
         let area: f64 = sawhorse_tessellate::signed_area(&p.faces[6].outer.iter().map(|&i| pl.to_local(p.points[i])).collect::<Vec<_>>());
@@ -310,14 +314,16 @@ proptest! {
             -other
         };
         let v0 = m.object(1).unwrap().volume();
-        match m.apply(&Op::PushPull { object: 1, face: 6, distance: k }) {
+        // The sub-face keeps persistent id 7 whichever path the push takes (a pocket's floor
+        // on the boolean path inherits it from the swept prism's cap), so it can be pushed back.
+        match m.apply(&Op::PushPull { object: 1, face: 7, distance: k }) {
             Ok(OpOutcome::FaceMoved) => {
                 let s = shape(&m);
                 let expect = if k < -depth { v0 - area * depth } else { v0 + area * k };
                 prop_assert!(close(s.volume, expect), "volume {} expected {} (k {}, depth {})", s.volume, expect, k, depth);
                 if k > -depth + 1e-6 {
                     // Back by the same amount.
-                    let back = m.apply(&Op::PushPull { object: 1, face: 6, distance: -k });
+                    let back = m.apply(&Op::PushPull { object: 1, face: 7, distance: -k });
                     prop_assert!(back.is_ok(), "{:?}", back);
                     prop_assert!(close(shape(&m).volume, v0));
                 }

@@ -32,7 +32,7 @@
     {
       "op": "imprint",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "points": [
         [
           0.4,
@@ -59,7 +59,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 6,
+      "face": 7,
       "path": [
         [
           0.6,
@@ -76,7 +76,7 @@
     {
       "op": "split_face",
       "object": 1,
-      "face": 1,
+      "face": 2,
       "path": [
         [
           0.1,
@@ -101,7 +101,7 @@
       ]
     }
   ],
-  "hash": "e155bd62df925369",
+  "hash": "89f569805f88063d",
   "stats": {
     "objects": 1,
     "faces": 9,
