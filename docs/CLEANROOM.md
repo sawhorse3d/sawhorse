@@ -24,3 +24,13 @@ Sawhorse is MIT OR Apache-2.0. Two related projects carry copyleft licences that
 | (none yet) | | | | |
 
 Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read. The half-edge B-rep, validator, sketch region walk, push/pull "extend" branch and tests were written from general computational-geometry knowledge (Euler-Poincare, Newell normals, Shewchuk predicates via `robust`, minimal-circuit face walks) and the decisions in `docs/adr/`.
+
+## Log
+
+### 2026-10-10 17:53 — survey agent read Hew (disclosed 2026-10-11)
+- **Who:** a Sonnet research agent in the planning session (kernel-crate survey for the Ultra-Plot), NOT the lane-1 builder. The builder read neither Hew nor hew3d/openskp.
+- **What:** cloned github.com/hew3d/hew (AGPL-3.0-only + plugin exception) into the session scratchpad and read docs/agents/ARCHITECTURE.md, docs/INTEROP.md and the public source of ops.rs, topo.rs, validate.rs, sketch.rs, boolean.rs, tessellate and mesh-heal, to answer "which Rust crates and what architecture" for the plan.
+- **Influence:** the design positions in ADR-0001 (pure kernel to WASM in the webview; two-tier Sketch/Object sticky geometry; editing-context-scoped stickiness; validator-first, transactional apply, typed errors; faceID round-trip through a manifold boolean) follow Hew's PUBLISHED architecture notes. Ideas and architecture are not copyrightable expression; no Hew code, comments or docs text were copied into this repository.
+- **Evidence:** lane-1 verifier (2026-10-11) ran an overlap check without reading the Hew text: 8 of 1,221 long lines identical, all generic idioms (SlotMap field declarations, a clamp-projection formula, union-find setup); best sequence-similarity cluster 0.12; max 10.5% of any file's lines also present in some Hew file. `git grep -i 'hew3d\|hew\|openskp'` hits only these docs.
+- **Naming proximity:** `PushPullError`, `StickyError`, `RenderMesh`, `loop_half_edges` exist in both codebases. Not protectable, but lane 2 renames them to Sawhorse-specific names to remove any doubt.
+- **Remediation:** the scratchpad clone and the extracted architecture note were deleted on 2026-10-11 before lane 2. Rule from here: no agent clones or reads Hew source; Hew's published docs may be cited by URL only, and every citation is logged here in the same commit as the code it influenced.
