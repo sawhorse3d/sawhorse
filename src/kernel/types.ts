@@ -132,6 +132,42 @@ export interface PixelModel {
   forward: V3;
 }
 
+/** An inference line to draw (crates/inference infer::InfLine). */
+export interface InfLine {
+  from: V3;
+  to: V3;
+  kind: import("../lib/inferenceStyle").InferenceKind;
+}
+
+/** Where the cursor snaps (crates/inference infer::Inference). */
+export interface Inference {
+  kind: import("../lib/inferenceStyle").InferenceKind;
+  point: V3;
+  tip: string;
+  entity: Entity | null;
+  surface: SurfaceHit | null;
+  lines: InfLine[];
+  /** The nearest edge under the cursor (kept as a parallel reference). */
+  edge: [V3, V3] | null;
+  picked: Picked | null;
+}
+
+/** An inference request (crates/inference infer::InferQuery). */
+export interface InferQuery {
+  origin: V3;
+  dir: V3;
+  px: PixelModel;
+  start?: V3 | null;
+  plane?: { origin: V3; normal: V3 } | null;
+  lock?: { dir: V3; kind: import("../lib/inferenceStyle").InferenceKind } | null;
+  refs?: [V3, V3][];
+  anchors?: V3[];
+  grid?: boolean;
+  grid_step?: [number, number];
+  point_px?: number;
+  line_px?: number;
+}
+
 export interface PickQuery {
   origin: V3;
   dir: V3;
@@ -194,6 +230,7 @@ export interface WasmDoc {
   op_log_json(): string;
   state_json(): string;
   pick(query: string): string;
+  infer(query: string): string;
   faces_json(object: number): string;
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
@@ -215,6 +252,7 @@ export type RequestBody =
   | { kind: "redo" }
   | { kind: "log" }
   | { kind: "pick"; query: PickQuery }
+  | { kind: "infer"; query: InferQuery }
   | { kind: "export"; format: "stl" | "obj"; object: number };
 export type WorkerRequest = RequestBody & { id: number };
 
@@ -227,6 +265,7 @@ export type WorkerResponse =
       scene?: SceneData;
       log?: KernelOp[];
       picked?: Picked | null;
+      inference?: Inference | null;
       file?: Uint8Array | string;
     }
   | { id: number; ok: false; error: string; missing?: boolean };

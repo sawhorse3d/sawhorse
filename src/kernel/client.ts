@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, WorkerRequest, WorkerResponse } from "./types";
+import type { Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -81,6 +81,11 @@ export class KernelClient {
   /** What is under the cursor (read-only; never changes the document). */
   async pick(query: PickQuery): Promise<Picked | null> {
     return (await this.call({ kind: "pick", query })).picked ?? null;
+  }
+
+  /** Where the cursor snaps for a drawing tool (read-only). */
+  async infer(query: InferQuery): Promise<Inference | null> {
+    return (await this.call({ kind: "infer", query })).inference ?? null;
   }
 
   async log(): Promise<KernelOp[]> {

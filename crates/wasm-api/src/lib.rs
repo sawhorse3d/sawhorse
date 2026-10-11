@@ -120,6 +120,14 @@ impl DocCore {
         serde_json::to_string(&r).map_err(|e| e.to_string())
     }
 
+    /// Where the cursor snaps (see `sawhorse_inference::infer`): JSON in, JSON (or null) out.
+    pub fn infer_json(&self, query_json: &str) -> Result<String, String> {
+        let q: sawhorse_inference::infer::InferQuery =
+            serde_json::from_str(query_json).map_err(|e| format!("bad inference query: {e}"))?;
+        let r = sawhorse_inference::infer::infer(&self.scene(), &q);
+        serde_json::to_string(&r).map_err(|e| e.to_string())
+    }
+
     pub fn undo(&mut self) -> Result<String, String> {
         self.apply_json(r#"{"op":"undo"}"#)
     }
@@ -315,6 +323,13 @@ impl Doc {
         self.core.pick_json(query_json).map_err(js)
     }
 
+    /// Where the cursor snaps for a drawing tool: query `{origin, dir, px, start?, plane?,
+    /// lock?, refs?, anchors?, grid?, grid_step?}` as JSON; returns the inference (kind,
+    /// point, tip, entity, surface, lines, edge, picked) as JSON, or `null`.
+    pub fn infer(&self, query_json: &str) -> Result<String, JsError> {
+        self.core.infer_json(query_json).map_err(js)
+    }
+
     pub fn redo(&mut self) -> Result<String, JsError> {
         self.core.redo().map_err(js)
     }
@@ -495,6 +510,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hit["entity"]["kind"], "face");
+        let inf: serde_json::Value = serde_json::from_str(
+            &d.infer_json(r#"{"origin":[0.6096,0.4064,5],"dir":[0,0,-1],"px":{"ortho":true,"scale":0.001,"eye":[0.6096,0.4064,5],"forward":[0,0,-1]}}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inf["kind"], "endpoint");
+        assert_eq!(inf["tip"], "Endpoint");
         assert_eq!(hit["entity"]["object"], 1);
         let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!(

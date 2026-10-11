@@ -5,16 +5,27 @@ import { parseDimensions } from "../lib/units";
 import { GROUND, rectCorners, rectangleOp, toLocal, toWorld, type RectAnchor, type Vec3 } from "../lib/edit";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { rayPlane } from "../lib/edit";
+import { LockState } from "./lock";
 
 export class RectTool extends Tool {
   readonly id = "rect" as const;
   private anchor: RectAnchor | null = null;
   private corner: Vec3 | null = null;
   private snap: Snap | null = null;
+  private lock = new LockState();
 
   reset(): void {
     this.anchor = null;
     this.corner = null;
+    this.lock.clear();
+  }
+
+  onKey(e: KeyboardEvent): boolean {
+    return this.lock.onKey(e.key, this.snap, this.anchor?.point ?? null);
+  }
+
+  onShift(down: boolean): void {
+    if (this.lock.onShift(down, this.snap, this.anchor?.point ?? null)) this.host.changed();
   }
 
   busy(): boolean {
@@ -26,7 +37,7 @@ export class RectTool extends Tool {
   }
 
   inferContext() {
-    return this.anchor ? { start: this.anchor.point, plane: { origin: this.anchor.frame.origin, normal: this.anchor.frame.normal } } : {};
+    return this.anchor ? { start: this.anchor.point, plane: { origin: this.anchor.frame.origin, normal: this.anchor.frame.normal }, lock: this.lock.lock } : {};
   }
 
   onEvent(e: ToolEvent): void {

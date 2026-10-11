@@ -5,7 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
-import type { KernelOp, MeshData, Picked, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+import type { Inference, KernelOp, MeshData, Picked, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -86,6 +86,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, outcome, scene: scene(d) };
         break;
       }
+      case "infer":
+        res = { id: req.id, ok: true, inference: JSON.parse(document(mod).infer(JSON.stringify(req.query))) as Inference | null };
+        break;
       case "pick":
         res = { id: req.id, ok: true, picked: JSON.parse(document(mod).pick(JSON.stringify(req.query))) as Picked | null };
         break;

@@ -8,7 +8,7 @@
 // with a fake host (src/tools/*.test.ts).
 import type { EditResult } from "../kernel/client";
 import type { DocState, Entity, KernelOp, MeshData, Picked, SceneData, SurfaceHit, V3 } from "../kernel/types";
-import type { InferenceKind } from "../lib/inferenceStyle";
+import { INFERENCE_STYLES, type InferenceKind } from "../lib/inferenceStyle";
 import type { ToolId } from "../lib/tools";
 import type { UnitSystem } from "../lib/units";
 import type { Label, Marker, SelectionBox } from "../components/Viewport";
@@ -25,8 +25,8 @@ export interface Snap {
   surface: SurfaceHit | null;
   /** The entity the snap came from (edge, vertex, face ...), if any. */
   entity: Entity | null;
-  /** A line to draw for the inference (axis / parallel / from-point), world points. */
-  line?: { from: V3; to: V3; token: string; dashed?: boolean } | null;
+  /** Lines to draw for the inference (axis from the start, dotted from-point alignment). */
+  lines: { from: V3; to: V3; kind: InferenceKind }[];
 }
 
 export type ToolEventType = "move" | "down" | "click" | "dblclick" | "drag" | "dragend" | "leave";
@@ -157,8 +157,15 @@ export function markerOf(s: Snap | null): Marker | null {
   return { at: s.point, kind: s.kind, tip: s.tip };
 }
 
-/** The overlay line an inference wants drawn, if any. */
+/** The overlay lines an inference wants drawn: solid in the axis or parallel colour from
+ * the gesture start, dotted for "from point" alignments. */
 export function inferenceLine(s: Snap | null): OverlayItem[] {
-  if (!s?.line) return [];
-  return [{ kind: "segments", points: [s.line.from, s.line.to], color: s.line.token, width: 1.5, dashed: s.line.dashed ?? true }];
+  if (!s?.lines?.length) return [];
+  return s.lines.map((l) => ({
+    kind: "segments" as const,
+    points: [l.from, l.to],
+    color: INFERENCE_STYLES[l.kind].token,
+    width: l.kind === "from-point" ? 1.25 : 1.75,
+    dashed: l.kind === "from-point",
+  }));
 }

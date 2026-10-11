@@ -11,13 +11,13 @@ import { eraseOps, highlightFor, partsOf } from "./lib/entities";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
 import { formatLength, M_PER_IN, nextUnitSystem, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
 import type { Projection, ViewId, ViewportEngine } from "./viewport/engine";
-import { projectionForView, VIEWS } from "./viewport/camera";
+import { gridSpec, projectionForView, VIEWS } from "./viewport/camera";
 import { EMPTY_VIEW, type Tool, type ToolHost, type ToolView } from "./tools/tool";
 import { SelectTool } from "./tools/select";
 import { EraseTool } from "./tools/erase";
 import { RectTool } from "./tools/rect";
 import { PushTool } from "./tools/push";
-import { kernelResolver, ToolDriver } from "./tools/driver";
+import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
@@ -217,11 +217,23 @@ export function App() {
   activeRef.current = active;
 
   const driverRef = useRef<ToolDriver | null>(null);
+  const memoryRef = useRef(new InferenceMemory());
   if (!driverRef.current) {
     driverRef.current = new ToolDriver(
       kernelResolver(
         () => kernelRef.current,
         () => engineRef.current,
+        () => {
+          const g = gridSpec(live.current.units);
+          return [g.minor, g.major];
+        },
+        memoryRef.current,
+        (inf) => {
+          (window as unknown as { __sawhorse?: Record<string, unknown> }).__sawhorse = {
+            ...((window as unknown as { __sawhorse?: Record<string, unknown> }).__sawhorse ?? {}),
+            lastInference: inf,
+          };
+        },
       ),
       () => activeRef.current ?? (toolsRef.current!.get("select") as Tool),
     );

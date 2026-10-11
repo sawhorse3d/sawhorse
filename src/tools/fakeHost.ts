@@ -82,7 +82,7 @@ export function ev(type: ToolEvent["type"], point: V3, opts: Partial<ToolEvent> 
     alt: false,
     ray: { origin: [point[0], point[1], 10], dir: [0, 0, -1] },
     picked: null,
-    snap: { point, kind, tip: kind, surface: null, entity: null },
+    snap: { point, kind, tip: kind, surface: null, entity: null, lines: [] },
     ...rest,
   };
 }

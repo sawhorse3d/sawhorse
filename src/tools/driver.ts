@@ -4,7 +4,7 @@
 // was made. "Resolved" means: the eye ray, what is under the cursor (a pick) and where the
 // cursor snaps (an inference), both answered by the kernel worker.
 import type { KernelClient } from "../kernel/client";
-import type { Picked, V3 } from "../kernel/types";
+import type { Inference, InferQuery, Picked, V3 } from "../kernel/types";
 import type { ViewportPointer } from "../components/Viewport";
 import type { ViewportEngine } from "../viewport/engine";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
@@ -25,33 +25,85 @@ export function snapFromPick(picked: Picked | null, ray: { origin: V3; dir: V3 }
   if (picked) {
     const e = picked.entity;
     const kind = e.kind === "vertex" ? "endpoint" : e.kind === "edge" ? "on-edge" : "on-face";
-    return { point: picked.point, kind, tip: INFERENCE_STYLES[kind].label, surface: picked.surface, entity: e };
+    return { point: picked.point, kind, tip: INFERENCE_STYLES[kind].label, surface: picked.surface, entity: e, lines: [] };
   }
   // The ground plane.
   const dz = ray.dir[2];
   if (Math.abs(dz) < 1e-12) return null;
   const t = -ray.origin[2] / dz;
   if (!(t > 0)) return null;
-  return { point: [ray.origin[0] + ray.dir[0] * t, ray.origin[1] + ray.dir[1] * t, 0], kind: "free", tip: "", surface: null, entity: null };
+  return { point: [ray.origin[0] + ray.dir[0] * t, ray.origin[1] + ray.dir[1] * t, 0], kind: "free", tip: "", surface: null, entity: null, lines: [] };
 }
 
-/** The resolver backed by the kernel worker's pick (step 4) and inference (step 5). */
-export function kernelResolver(kernel: () => KernelClient | null, engine: () => ViewportEngine | null): Resolver {
-  return async (x, y) => {
+/** A snap from the inference engine's answer. */
+export function snapOf(inf: Inference): Snap {
+  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface: inf.surface, entity: inf.entity, lines: inf.lines };
+}
+
+const ANCHOR_KINDS = new Set(["endpoint", "midpoint", "intersection", "centre", "guide-point"]);
+
+/**
+ * What the cursor recently rested on: points become "from point" anchors (their axis lines
+ * are inferable), and the last edge under the cursor is a parallel / perpendicular
+ * reference, the way a modeller hovers an edge before drawing parallel to it.
+ */
+export class InferenceMemory {
+  anchors: V3[] = [];
+  refs: [V3, V3][] = [];
+  static MAX_ANCHORS = 2;
+
+  observe(inf: Inference | null): void {
+    if (!inf) return;
+    if (ANCHOR_KINDS.has(inf.kind)) {
+      const p = inf.point;
+      this.anchors = [p, ...this.anchors.filter((a) => Math.hypot(a[0] - p[0], a[1] - p[1], a[2] - p[2]) > 1e-9)].slice(0, InferenceMemory.MAX_ANCHORS);
+    }
+    if (inf.edge) this.refs = [inf.edge];
+  }
+
+  forget(): void {
+    this.anchors = [];
+    this.refs = [];
+  }
+}
+
+/** The resolver backed by the kernel worker's inference engine (crates/inference). */
+export function kernelResolver(
+  kernel: () => KernelClient | null,
+  engine: () => ViewportEngine | null,
+  gridStep: () => [number, number],
+  memory = new InferenceMemory(),
+  onInference?: (inf: Inference | null, q: InferQuery) => void,
+): Resolver {
+  return async (x, y, ctx) => {
     const eng = engine();
     const k = kernel();
     if (!eng) return null;
     const ray = eng.ray(x, y);
     const px = eng.pixelScale();
-    let picked: Picked | null = null;
-    if (k) {
-      try {
-        picked = await k.pick({ origin: ray.origin, dir: ray.dir, px: { ortho: px.ortho, scale: px.scale, eye: px.eye, forward: px.forward } });
-      } catch {
-        picked = null;
-      }
+    if (!k) return { ray, picked: null, snap: snapFromPick(null, ray) };
+    const q: InferQuery = {
+      origin: ray.origin,
+      dir: ray.dir,
+      px: { ortho: px.ortho, scale: px.scale, eye: px.eye, forward: px.forward },
+      start: ctx.start ?? null,
+      plane: ctx.plane ?? null,
+      lock: ctx.lock ?? null,
+      refs: [...(ctx.refs ?? []), ...memory.refs],
+      anchors: memory.anchors,
+      grid: ctx.grid ?? true,
+      grid_step: gridStep(),
+    };
+    let inf: Inference | null = null;
+    try {
+      inf = await k.infer(q);
+    } catch {
+      inf = null;
     }
-    return { ray, picked, snap: snapFromPick(picked, ray) };
+    memory.observe(inf);
+    onInference?.(inf, q);
+    const picked: Picked | null = inf?.picked ?? null;
+    return { ray, picked, snap: inf ? snapOf(inf) : snapFromPick(null, ray) };
   };
 }
 
