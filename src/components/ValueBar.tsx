@@ -11,7 +11,14 @@ export interface ValueBarProps {
   units: UnitSystem;
   onCycleUnits: () => void;
   /** Overrides the tool hint, e.g. to report a parse error or a kernel result. */
-  message: { text: string; error: boolean } | null;
+  message: StatusMessage | null;
+}
+
+/** A status-line message; `actions` render as buttons after the text ("Restore unsaved work?"). */
+export interface StatusMessage {
+  text: string;
+  error: boolean;
+  actions?: { label: string; run: () => void }[];
 }
 
 /** The Value Control Box: type mid-gesture, press Enter. */
@@ -24,6 +31,11 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
     <footer className="vcb">
       <div className={message?.error ? "hint err" : "hint"} id="hint" role="status" aria-live="polite">
         <b>{message?.error ? "Can't do that." : `${tool.label}.`}</b> {message ? message.text : tool.hint}
+        {message?.actions?.map((a) => (
+          <button key={a.label} type="button" className="hint-action" onClick={a.run}>
+            {a.label}
+          </button>
+        ))}
       </div>
       {/* Always visible, as rendered in the approved mock (its `hidden` toggle never applied
           because .vcb label sets display:flex). Tools without a typed value show it read-only. */}

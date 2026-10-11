@@ -224,3 +224,27 @@ describe("draw tools", () => {
     close(a.points[6], [1, 1, 0]);
   });
 });
+
+describe("rectangle direction and extents (lane-3 verifier)", () => {
+  it("the preview labels each side with its length and direction", () => {
+    const h = fakeHost();
+    const t = new RectTool(h);
+    t.onEvent(ev("click", [0, 0, 0], { snapKind: "grid" }));
+    t.onEvent(ev("move", [-0.5, 0.25, 0], { snapKind: "free" }));
+    const texts = t.view().labels.map((l) => l.text);
+    expect(texts.some((x) => x.endsWith("−red"))).toBe(true);
+    expect(texts.some((x) => x.endsWith("+green"))).toBe(true);
+    // Two short ticks at the first corner show the directions.
+    expect(t.view().overlay.some((o) => o.kind === "segments" && o.points.length === 4)).toBe(true);
+  });
+
+  it("the commit message states the extents, directions and the first corner", async () => {
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 1, regions: [1], faces: [], inside: 1 } });
+    const t = new RectTool(h);
+    t.onValue("24, 16");
+    await Promise.resolve();
+    const msg = h.statuses.map((s) => s.text).join(" | ");
+    expect(msg).toContain("Rectangle 24 × 16 in on the ground");
+    expect(msg).toContain("24 in along +red and 16 in along +green from (0, 0, 0)");
+  });
+});

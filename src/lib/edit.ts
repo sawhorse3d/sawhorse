@@ -1,6 +1,7 @@
 // Pure helpers that turn tool gestures into kernel ops (no DOM, no three.js), so the
 // tool logic is unit-tested. Lengths are metres; frames are right-handed (u x v = normal).
 import type { KernelOp, MeshPart, OpOutcome } from "../kernel/types";
+import { faceOf, regionName } from "./names";
 
 export type Vec3 = [number, number, number];
 
@@ -145,5 +146,5 @@ export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | 
 
 export function describeTarget(t: Target | null): string {
   if (!t) return "nothing selected";
-  return t.kind === "region" ? `region ${t.region}` : `face ${t.face} of solid ${t.object}`;
+  return t.kind === "region" ? regionName(t.sketch, t.region) : faceOf(t.object, t.face);
 }

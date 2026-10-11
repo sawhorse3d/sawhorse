@@ -70,11 +70,25 @@ struct DocState<'a> {
     log_len: usize,
     log_hash: String,
     objects: Vec<u64>,
+    /// Per solid, in creation order: display number, bounds and volume.
+    solids: Vec<SolidInfo>,
     sketches: Vec<SketchInfo>,
     groups: Vec<GroupInfo<'a>>,
     guides: Vec<GuideInfo>,
     dimensions: Vec<DimensionInfo>,
     tags: &'a std::collections::BTreeMap<String, bool>,
+}
+
+/// One solid as the UI names and measures it.
+#[derive(Debug, serde::Serialize)]
+struct SolidInfo {
+    id: u64,
+    /// Display number: the UI says "solid 3", never the public id (which carries slot-reuse
+    /// bits once objects are deleted).
+    number: u64,
+    min: [f64; 3],
+    max: [f64; 3],
+    volume: f64,
 }
 
 /// A guide: a line through `point` along `dir`, or a point (`dir` null).
@@ -177,6 +191,20 @@ impl DocCore {
             log_len: self.doc.log().len(),
             log_hash: self.doc.log_hash_hex(),
             objects: m.object_ids(),
+            solids: m
+                .objects()
+                .into_iter()
+                .map(|(id, o)| {
+                    let (lo, hi) = o.bounds();
+                    SolidInfo {
+                        id,
+                        number: o.number(),
+                        min: lo.to_array(),
+                        max: hi.to_array(),
+                        volume: o.volume(),
+                    }
+                })
+                .collect(),
             sketches: m
                 .sketches()
                 .into_iter()
@@ -558,6 +586,11 @@ mod tests {
         );
         let state: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
         assert_eq!(state["stats"]["genus"], 1, "pushed through");
+        assert_eq!(state["solids"][0]["number"], 1, "display number");
+        assert_eq!(
+            state["solids"][0]["min"],
+            serde_json::json!([0.0, 0.0, 0.0])
+        );
         assert_eq!(state["can_undo"], true);
         d.undo().unwrap();
         assert_eq!(d.document().hash_hex(), boss);

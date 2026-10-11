@@ -65,6 +65,13 @@ export class KernelClient {
     return r.scene;
   }
 
+  /** Replace the document with one rebuilt from an op log (autosave restore, undo history included). */
+  async replay(ops: KernelOp[]): Promise<SceneData> {
+    const r = await this.call({ kind: "replay", ops });
+    if (!r.scene) throw new Error("kernel returned no scene");
+    return r.scene;
+  }
+
   /** Apply one op to the persistent document. Throws KernelRefusal when refused. */
   async apply(op: KernelOp): Promise<EditResult> {
     return this.edit(await this.call({ kind: "apply", op }));

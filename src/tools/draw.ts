@@ -1,6 +1,7 @@
 // Shared pieces of the draw tools (Line, Rect, Circle, Polygon, Arc): which plane a stroke
 // goes on, a frame aligned with the world on that plane, the kernel op, and the geometry of
 // circles, polygons and arcs. Pure functions, unit-tested.
+import { faceOf } from "../lib/names";
 import type { KernelOp, SurfaceHit, V3 } from "../kernel/types";
 import type { Frame } from "../lib/edit";
 import type { Snap } from "./tool";
@@ -58,11 +59,11 @@ function surfacePlane(s: SurfaceHit, p: V3): DrawPlane | null {
   const frame = alignedFrame(f.origin, f.normal);
   if (s.at.kind === "face") {
     const { object, face } = s.at;
-    return { frame, target: { on: "face", object, face }, where: () => `on face ${face} of solid ${object}` };
+    return { frame, target: { on: "face", object, face }, where: () => `on ${faceOf(object, face)}` };
   }
   const { sketch } = s.at;
   const ground = sketch === 1;
-  return { frame, target: { on: "sketch", sketch }, where: (fmt) => (ground ? "on the ground" : `on sketch ${sketch} (${fmt(f.origin[2])} up)`) };
+  return { frame, target: { on: "sketch", sketch }, where: (fmt) => (ground ? "on the ground" : `on a sketch (${fmt(f.origin[2])} up)`) };
 }
 
 /** A horizontal plane through `p` (the ground when p is on it). */
@@ -240,4 +241,33 @@ export function arcThrough(f: Frame, centre: V3, p0: V3, p1: V3, via: V3, segmen
   }
   out.push(p1);
   return out;
+}
+
+const AXIS_NAMES = ["red", "green", "blue"];
+
+/**
+ * A direction in words: "+red", "−green", "+blue" along an axis (plus is the way the axis
+ * points); otherwise the nearest axis with "about" ("about +red").
+ */
+export function dirName(v: V3): string {
+  const n = len(v);
+  if (!(n > 1e-12)) return "nowhere";
+  const u = mul(v, 1 / n);
+  let k = 0;
+  for (const i of [1, 2]) if (Math.abs(u[i]) > Math.abs(u[k])) k = i;
+  const name = `${u[k] < 0 ? "−" : "+"}${AXIS_NAMES[k]}`;
+  return Math.abs(u[k]) > 1 - 1e-9 ? name : `about ${name}`;
+}
+
+/** "(0, 3/4, 12)" in the display units. */
+export function fmtPoint(p: V3, fmt: (m: number) => string): string {
+  const z = (x: number) => (Math.abs(x) < 1e-12 ? 0 : x);
+  return `(${p.map((x) => fmt(z(x))).join(", ")})`;
+}
+
+/** The two sides of a rectangle from frame-local `a` to `b`, as world directions and lengths. */
+export function rectSides(f: Frame, a: [number, number], b: [number, number]): { u: { dir: V3; len: number }; v: { dir: V3; len: number } } {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  return { u: { dir: mul(f.u, dx < 0 ? -1 : 1), len: Math.abs(dx) }, v: { dir: mul(f.v, dy < 0 ? -1 : 1), len: Math.abs(dy) } };
 }

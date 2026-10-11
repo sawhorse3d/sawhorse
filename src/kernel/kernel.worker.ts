@@ -70,6 +70,14 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, scene: scene(doc) };
         break;
       }
+      case "replay": {
+        // Build first, swap after: a refused log leaves the current document alone.
+        const next = mod.document_replay(JSON.stringify(req.ops));
+        doc?.free();
+        doc = next;
+        res = { id: req.id, ok: true, scene: scene(doc) };
+        break;
+      }
       case "scene":
         res = { id: req.id, ok: true, scene: scene(document(mod)) };
         break;

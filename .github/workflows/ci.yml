@@ -48,7 +48,7 @@ jobs:
         run: cargo check --workspace --target wasm32-unknown-unknown
       - name: upload pending fuzzer repro
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-repro
           path: crates/kernel/tests/repro/pending-*.json
@@ -90,7 +90,7 @@ jobs:
         env:
           REQUIRE_KERNEL: "1"
         run: npx playwright test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: failure()
         with:
           name: playwright-report

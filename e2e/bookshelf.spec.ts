@@ -190,6 +190,27 @@ test("the bookshelf with dados, in under five minutes of steps", async ({ page }
   console.log(`BOOKSHELF scripted: ${seconds.toFixed(1)} s, volume ${volume.toFixed(5)} in³, refusals ${JSON.stringify(state)}, tilted-plane boolean refusals ${tilted}`);
   test.info().annotations.push({ type: "bookshelf", description: `${seconds.toFixed(1)} s; refusals ${JSON.stringify(state)}; tilted ${tilted}` });
   expect(Object.keys(state)).toEqual([]);
+
+  // Every part where it belongs: each solid's bounding box (inches) must match one expected
+  // part, so a shelf that lands an inch off or a side pulled the wrong way fails here even
+  // when the total volume is right.
+  const boxes: [string, V3, V3][] = [
+    ["left side", [0, 0, 0], [0.75, 11.25, SIDE_H]],
+    ["right side", [RIGHT_X, 0, 0], [36, 11.25, SIDE_H]],
+    ...SHELVES.map((z, i): [string, V3, V3] => [`shelf ${i + 1}`, [0.375, 0, z], [35.625, 11.25, z + 0.75]]),
+    ["toe kick", [0.75, 2, 0], [RIGHT_X, 2.75, 3.5]],
+    ["top", [0, 0, SIDE_H], [36, 11.25, 72]],
+  ];
+  const solids = await page.evaluate(() => (window as unknown as { __sawhorse: { solids(): { number: number; min: V3; max: V3 }[] } }).__sawhorse.solids());
+  expect(solids).toHaveLength(boxes.length);
+  const toIn = (p: V3): V3 => p.map((m) => m / IN) as V3;
+  const near = (a: V3, b: V3) => a.every((x, k) => Math.abs(x - b[k]) < 1e-4);
+  const unmatched = [...solids];
+  for (const [name, lo, hi] of boxes) {
+    const i = unmatched.findIndex((s) => near(toIn(s.min), lo) && near(toIn(s.max), hi));
+    expect(i, `${name}: no solid spans ${JSON.stringify(lo)} to ${JSON.stringify(hi)} in; solids: ${JSON.stringify(unmatched.map((s) => [toIn(s.min), toIn(s.max)]))}`).toBeGreaterThanOrEqual(0);
+    unmatched.splice(i, 1);
+  }
   await page.screenshot({ path: "test-results/bookshelf-scripted.png" });
 });
 

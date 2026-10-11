@@ -11,7 +11,7 @@ import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
 import { GROUND } from "../lib/edit";
-import { add, dist, dot, horizontalAt, local, mul, onPlane, planeAt, planeFromSnap, rectangle, rotatedRectangle, rotatedWidth, sub, unit, type DrawPlane } from "./draw";
+import { add, dirName, dist, dot, fmtPoint, horizontalAt, local, mul, onPlane, planeAt, planeFromSnap, rectangle, rectSides, rotatedRectangle, rotatedWidth, sub, unit, world, type DrawPlane } from "./draw";
 import { StrokeTool, faceNote } from "./stroke";
 import { finalTarget } from "./target";
 import type { Snap, ToolEvent, ToolView } from "./tool";
@@ -170,6 +170,7 @@ export class RectTool extends StrokeTool {
     const f = plane.frame;
     let pts: V3[];
     let what: string;
+    let extents = "";
     if (this.variant === "rotated") {
       const e = this.edgeEnd;
       if (!e) return;
@@ -181,11 +182,14 @@ export class RectTool extends StrokeTool {
       const lb: [number, number] = size ? [la[0] + size[0], la[1] + size[1]] : local(f, p);
       pts = rectangle(f, la, lb);
       what = `Rectangle ${h.fmt(Math.abs(lb[0] - la[0]))} × ${h.fmt(Math.abs(lb[1] - la[1]))} ${h.unitLabel()}`;
+      // Say which way it went: each side's length and direction, from the first corner.
+      const s = rectSides(f, la, lb);
+      extents = `: ${h.fmt(s.u.len)} ${h.unitLabel()} along ${dirName(s.u.dir)} and ${h.fmt(s.v.len)} ${h.unitLabel()} along ${dirName(s.v.dir)} from ${fmtPoint(a, h.fmt)}`;
     }
     const target = finalTarget(plane, this.snaps);
     this.reset();
     h.changed();
-    await this.stroke(target.target, pts, true, (r: EditResult) => `${what} ${target.where(h.fmt)}${faceNote(r)}. Push/Pull (P) and type a distance to raise it.`);
+    await this.stroke(target.target, pts, true, (r: EditResult) => `${what} ${target.where(h.fmt)}${faceNote(r)}${extents}. Push/Pull (P) and type a distance to raise it.`);
   }
 
   onValue(text: string): void {
@@ -229,6 +233,7 @@ export class RectTool extends StrokeTool {
     const a = this.anchor;
     const c = this.cursor;
     const extra = [];
+    const sideLabels: { at: V3; text: string; className?: string }[] = [];
     let label = "";
     if (f && a && c) {
       if (this.variant === "rotated") {
@@ -245,8 +250,18 @@ export class RectTool extends StrokeTool {
         const lc = local(f, c);
         extra.push({ kind: "loop" as const, points: rectangle(f, la, lc), color: "--sel", width: 2 });
         label = `${this.host.fmt(Math.abs(lc[0] - la[0]))} × ${this.host.fmt(Math.abs(lc[1] - la[1]))}`;
+        // Direction and extents: each side from the first corner, labelled at its middle with
+        // its length and the way it runs; the first corner carries two short direction ticks.
+        const s = rectSides(f, la, lc);
+        const fmt = this.host.fmt;
+        if (s.u.len > 1e-9) sideLabels.push({ at: world(f, (la[0] + lc[0]) / 2, la[1]), text: `${fmt(s.u.len)} ${dirName(s.u.dir)}`, className: "dim" });
+        if (s.v.len > 1e-9) sideLabels.push({ at: world(f, la[0], (la[1] + lc[1]) / 2), text: `${fmt(s.v.len)} ${dirName(s.v.dir)}`, className: "dim" });
+        const tick = Math.max(s.u.len, s.v.len) * 0.08;
+        if (tick > 0) {
+          extra.push({ kind: "segments" as const, points: [a, add(a, mul(s.u.dir, tick)), a, add(a, mul(s.v.dir, tick))], color: "--accent", width: 3 });
+        }
       }
     }
-    return this.baseView(extra, label ? this.live(label) : []);
+    return this.baseView(extra, [...sideLabels, ...(label ? this.live(label) : [])]);
   }
 }

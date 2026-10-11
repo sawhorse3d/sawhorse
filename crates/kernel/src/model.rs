@@ -242,6 +242,8 @@ pub struct Model {
     tags: BTreeMap<String, bool>,
     guides: SlotMap<GuideId, Guide>,
     dimensions: SlotMap<DimensionId, Dimension>,
+    /// Last display number handed to an object (see [`Object::number`]).
+    last_number: u64,
 }
 
 /// A guide line (unit `dir`) or a guide point (`dir` zero).
@@ -485,8 +487,7 @@ impl Model {
                 let mut obj = Object::extrude(s.plane(), &outer, &holes, *distance)?;
                 obj.source = Some(Provenance { sketch: sid });
                 self.sketches[sid].consume_region(rid)?;
-                let id = self.objects.insert(obj);
-                self.object_order.push(id);
+                let id = self.insert_object(obj);
                 Ok(OpOutcome::ObjectCreated {
                     object: to_public(id),
                 })
@@ -722,6 +723,15 @@ impl Model {
             }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
+    }
+
+    /// Add a new object at the end of the creation order with the next display number.
+    pub(crate) fn insert_object(&mut self, mut obj: Object) -> ObjectId {
+        self.last_number += 1;
+        obj.number = self.last_number;
+        let id = self.objects.insert(obj);
+        self.object_order.push(id);
+        id
     }
 
     /// The sketch lying on `plane` (either facing, within the planarity tolerance), or a
@@ -1044,6 +1054,45 @@ mod tests {
                 .unwrap()
                 .region(from_public(first_region(&m)))
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn display_numbers_are_never_reused() {
+        let mut m = Model::with_ground_sketch();
+        m.apply(&rect(0.0, 0.0, 1.0, 1.0)).unwrap();
+        m.apply(&Op::Extrude {
+            sketch: GROUND,
+            region: first_region(&m),
+            distance: 1.0,
+        })
+        .unwrap();
+        m.apply(&Op::DeleteObject { object: 1 }).unwrap();
+        m.apply(&rect(3.0, 0.0, 1.0, 1.0)).unwrap();
+        let out = m
+            .apply(&Op::Extrude {
+                sketch: GROUND,
+                region: first_region(&m),
+                distance: 1.0,
+            })
+            .unwrap();
+        let OpOutcome::ObjectCreated { object } = out else {
+            panic!("{out:?}")
+        };
+        assert_eq!(
+            object,
+            (1 << 32) | 1,
+            "the slot is reused, the public id says so"
+        );
+        assert_eq!(
+            m.object(object).unwrap().number(),
+            2,
+            "the display number is not"
+        );
+        let (lo, hi) = m.object(object).unwrap().bounds();
+        assert_eq!(
+            (lo, hi),
+            (DVec3::new(3.0, 0.0, 0.0), DVec3::new(4.0, 1.0, 1.0))
         );
     }
 

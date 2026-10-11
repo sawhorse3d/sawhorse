@@ -34,6 +34,11 @@ pub struct Object {
     /// Next persistent face id to hand out. Face ids start at 1 and are never reused, so an
     /// id the UI holds either names the same face (possibly reshaped) or no face at all.
     pub(crate) next_face_id: u64,
+    /// Display number ("Solid 3"), handed out by the model when the object is created and
+    /// never reused within a document's history. The UI names solids by it instead of by
+    /// public id (which carries slot-reuse bits). Not part of the model hash: it is a pure
+    /// function of the op history, like the ids.
+    pub(crate) number: u64,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
@@ -154,6 +159,7 @@ impl Object {
             source: None,
             tag: None,
             next_face_id: faces.len() as u64 + 1,
+            number: 0,
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -173,6 +179,22 @@ impl Object {
 
     pub fn tag(&self) -> Option<&str> {
         self.tag.as_deref()
+    }
+
+    /// Display number ("Solid 3"): stable for the object's life, never reused.
+    pub fn number(&self) -> u64 {
+        self.number
+    }
+
+    /// Axis-aligned bounds (min, max) of the solid's vertices, metres.
+    pub fn bounds(&self) -> (DVec3, DVec3) {
+        let mut lo = DVec3::splat(f64::INFINITY);
+        let mut hi = DVec3::splat(f64::NEG_INFINITY);
+        for (_, v) in self.brep.vertices() {
+            lo = lo.min(v.pos);
+            hi = hi.max(v.pos);
+        }
+        (lo, hi)
     }
 
     /// Faces in deterministic order (index = the face ordinal).
@@ -205,6 +227,7 @@ impl Object {
         o.next_face_id = o.next_face_id.max(next);
         o.source = self.source.clone();
         o.tag = self.tag.clone();
+        o.number = self.number;
         Ok(o)
     }
 
@@ -257,6 +280,7 @@ impl Object {
         if let Some(mut next) = next {
             next.source = self.source.clone();
             next.tag = self.tag.clone();
+            next.number = self.number;
             *self = next;
         }
         Ok(outcome)
@@ -276,6 +300,7 @@ impl Object {
         if let Some(mut next) = next {
             next.source = self.source.clone();
             next.tag = self.tag.clone();
+            next.number = self.number;
             *self = next;
         }
         Ok(outcome)
@@ -306,6 +331,7 @@ impl Object {
             source: None,
             tag: None,
             next_face_id: next,
+            number: 0,
         }
     }
 

@@ -87,6 +87,8 @@ export interface DocState {
   log_len: number;
   log_hash: string;
   objects: number[];
+  /** Per solid, in creation order: display number ("solid 3"), bounds (m) and volume (m^3). */
+  solids: SolidInfo[];
   /** Every sketch with its plane frame (world <-> sketch coordinates). */
   sketches: SketchInfo[];
   groups: { id: number; name: string; objects: number[] }[];
@@ -97,6 +99,16 @@ export interface DocState {
 }
 
 export type V3 = [number, number, number];
+
+export interface SolidInfo {
+  /** Public id (what ops use). */
+  id: number;
+  /** Display number: what people see ("solid 3"); never reused. */
+  number: number;
+  min: V3;
+  max: V3;
+  volume: number;
+}
 
 export interface SketchInfo {
   id: number;
@@ -263,12 +275,15 @@ export interface WasmDoc {
 export interface WasmModule {
   default: (input?: unknown) => Promise<unknown>;
   document_new(): WasmDoc;
+  /** A document rebuilt by replaying an op log (JSON). Throws on a refused entry. */
+  document_replay(opsJson: string): WasmDoc;
   kernel_version(): string;
 }
 
 export type RequestBody =
   | { kind: "version" }
   | { kind: "init" }
+  | { kind: "replay"; ops: KernelOp[] }
   | { kind: "scene" }
   | { kind: "apply"; op: KernelOp }
   | { kind: "undo" }

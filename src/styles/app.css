@@ -122,3 +122,7 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .menu button[aria-expanded="true"]{background:var(--rail);color:var(--fg)}
 /* Viewport overlays never swallow pointer events meant for the canvas (window selection can start under them). */
 .vp .hud,.vp .legend,.vp .axes{pointer-events:none}
+
+/* ---- Lane 4 additions: status-line actions ("Restore unsaved work?") ---- */
+.vcb .hint .hint-action{margin-left:8px;padding:1px 8px;border:1px solid var(--accent);border-radius:4px;color:var(--accent);background:var(--bg);font:12px var(--body)}
+.vcb .hint .hint-action:hover{background:var(--accent);color:var(--accent-ink)}

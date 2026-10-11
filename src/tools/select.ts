@@ -4,6 +4,7 @@
 // crossing box (right to left: what it touches). Shift adds, Ctrl toggles, Esc clears.
 import type { Entity } from "../kernel/types";
 import { applySelection, boxSelect, modeFor, objectOf } from "../lib/entities";
+import { faceOf, regionName, solidName } from "../lib/names";
 import { EMPTY_VIEW, Tool, type ToolEvent, type ToolView } from "./tool";
 
 /** Pixels the pointer must travel with the button down before a click becomes a box. */
@@ -53,7 +54,7 @@ export class SelectTool extends Tool {
           return;
         }
         h.setSelection(applySelection(h.selection(), [{ kind: "object", object }], modeFor(e)));
-        h.status(`Selected solid ${object}.`);
+        h.status(`Selected ${solidName(object)}.`);
         return;
       }
       case "drag": {
@@ -97,19 +98,19 @@ export class SelectTool extends Tool {
 export function describe(e: Entity): string {
   switch (e.kind) {
     case "face":
-      return `Selected face ${e.face} of solid ${e.object}. Delete erases it if it was drawn on a face.`;
+      return `Selected ${faceOf(e.object, e.face)}. Delete erases it if it was drawn on a face.`;
     case "edge":
       return e.owner.kind === "sketch"
         ? "Selected a sketch edge. Delete erases it."
         : e.drawn
-          ? `Selected a line drawn on solid ${e.owner.id}. Delete erases it.`
-          : `Selected an edge of solid ${e.owner.id}.`;
+          ? `Selected a line drawn on ${solidName(e.owner.id)}. Delete erases it.`
+          : `Selected an edge of ${solidName(e.owner.id)}.`;
     case "vertex":
       return "Selected a point.";
     case "region":
-      return `Selected region ${e.region}. Push/Pull (P) raises it; Delete erases it.`;
+      return `Selected ${regionName(e.sketch, e.region)}. Push/Pull (P) raises it; Delete erases it.`;
     case "object":
-      return `Selected solid ${e.object}.`;
+      return `Selected ${solidName(e.object)}.`;
     case "guide":
       return "Selected a guide. Delete erases it.";
     case "dimension":

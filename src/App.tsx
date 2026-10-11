@@ -3,7 +3,7 @@ import { TopBar, type MenuItem } from "./components/TopBar";
 import { ToolRail } from "./components/ToolRail";
 import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
 import { SidePanel } from "./components/SidePanel";
-import { ValueBar } from "./components/ValueBar";
+import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
@@ -23,6 +23,8 @@ import { ArcTool } from "./tools/arc";
 import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
+import { friendlyError, setNameSource } from "./lib/names";
+import { autosaveEnabled, clearAutosave, describeAutosave, loadAutosave, saveAutosave, worthRestoring, type Autosave } from "./lib/autosave";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
@@ -53,7 +55,7 @@ function isTextEntry(el: EventTarget | null): boolean {
   return el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
 
-type Message = { text: string; error: boolean } | null;
+type Message = StatusMessage | null;
 
 export function App() {
   const [toolId, setToolId] = useState<ToolId>("select");
@@ -94,13 +96,32 @@ export function App() {
   const editsPending = useRef(0);
 
   const fail = useCallback((err: unknown) => {
-    const text = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    // Kernel refusals name things by public id; the status line never shows raw ids.
+    const text = friendlyError(raw);
     if (err instanceof KernelUnavailableError) {
       setKernelState("missing");
       setKernelNote(text);
     } else {
       setMessage({ text, error: true });
     }
+  }, []);
+
+  // ---- dev autosave (IndexedDB): the op log after every edit; offered back on reload ----
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** An autosave found at load and not yet restored or discarded (also on the Edit menu). */
+  const [pendingRestore, setPendingRestore] = useState<Autosave | null>(null);
+  const scheduleAutosave = useCallback(() => {
+    if (!autosaveEnabled()) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      const k = kernelRef.current;
+      if (!k) return;
+      void k
+        .log()
+        .then((log) => saveAutosave({ log, savedAt: Date.now(), solids: live.current.scene?.state.stats.objects ?? 0 }))
+        .catch(() => undefined);
+    }, 300);
   }, []);
 
   /** Run one kernel request (an op, undo or redo); the scene and push target follow. */
@@ -115,6 +136,7 @@ export function App() {
           // Tools read the host synchronously right after this resolves (a key waiting on
           // the edit), so the live copy is updated here, not on the next render.
           live.current.scene = r.scene;
+          setNameSource(r.scene.state, r.scene.mesh);
           setScene(r.scene);
           setKernelState("ready");
           const parts = r.scene.mesh.parts;
@@ -131,9 +153,10 @@ export function App() {
           setHover(null);
           if (describe) setMessage({ text: describe(r), error: false });
           live.current.lastError = null;
+          scheduleAutosave();
           return r;
         } catch (err) {
-          live.current.lastError = err instanceof Error ? err.message : String(err);
+          live.current.lastError = friendlyError(err instanceof Error ? err.message : String(err));
           // Refusals by message, for tests and the lane report (tilted-plane boolean refusals).
           const w = window as unknown as { __sawhorse?: { refusals?: Record<string, number> } };
           w.__sawhorse = w.__sawhorse ?? {};
@@ -154,6 +177,40 @@ export function App() {
   const undo = useCallback(() => run((k) => k.undo(), null, (r) => `Undone. ${r.scene.state.undo_depth} more step(s) to undo.`), [run]);
   const redo = useCallback(() => run((k) => k.redo(), null, (r) => `Redone. ${r.scene.state.redo_depth} more step(s) to redo.`), [run]);
 
+  const restore = useCallback(
+    (a: Autosave) => {
+      const k = kernelRef.current;
+      if (!k) return;
+      setPendingRestore(null);
+      editsPending.current++;
+      const next = queue.current.then(async () => {
+        try {
+          const s = await k.replay(a.log);
+          live.current.scene = s;
+          setNameSource(s.state, s.mesh);
+          setScene(s);
+          live.current.target = null;
+          setTarget(null);
+          live.current.selection = [];
+          setSelection([]);
+          setMessage({ text: `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.log.length} steps (undo works as before).`, error: false });
+          setFitSeq((n) => n + 1);
+          scheduleAutosave();
+        } catch (err) {
+          setMessage({ text: `Could not restore the unsaved work: ${friendlyError(err instanceof Error ? err.message : String(err))}`, error: true });
+        }
+      });
+      void next.finally(() => editsPending.current--);
+      queue.current = next;
+    },
+    [scheduleAutosave],
+  );
+  const discardRestore = useCallback(() => {
+    setPendingRestore(null);
+    void clearAutosave();
+    setMessage({ text: "Unsaved work discarded.", error: false });
+  }, []);
+
   useEffect(() => {
     const k = createKernel();
     kernelRef.current = k;
@@ -163,9 +220,15 @@ export function App() {
       return;
     }
     k.init()
-      .then((s) => {
+      .then(async (s) => {
+        setNameSource(s.state, s.mesh);
+        live.current.scene = s;
         setScene(s);
         setKernelState("ready");
+        if (!autosaveEnabled()) return;
+        const saved = await loadAutosave();
+        if (!worthRestoring(saved)) return;
+        setPendingRestore(saved);
       })
       .catch((err) => {
         if (err instanceof KernelUnavailableError) {
@@ -180,6 +243,24 @@ export function App() {
       k.dispose();
       kernelRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingRestore) return;
+    setMessage({
+      text: `Restore unsaved work? ${describeAutosave(pendingRestore)}.`,
+      error: false,
+      actions: [
+        { label: "Restore", run: () => restore(pendingRestore) },
+        { label: "Discard", run: discardRestore },
+      ],
+    });
+  }, [pendingRestore, restore, discardRestore]);
+
+  // Read-only hooks for e2e tests: every solid with its display number, bounds and volume.
+  useEffect(() => {
+    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+    w.__sawhorse = { ...(w.__sawhorse ?? {}), solids: () => live.current.scene?.state.solids ?? [] };
   }, []);
 
   // ---- tools -----------------------------------------------------------------------------
@@ -536,6 +617,8 @@ export function App() {
         { label: "Select None", keys: "Esc", onSelect: () => setSelection([]) },
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
         { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
+        "-",
+        { label: "Restore Unsaved Work", disabled: !pendingRestore, onSelect: () => pendingRestore && restore(pendingRestore) },
       ],
       View: [
         { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
@@ -545,7 +628,7 @@ export function App() {
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
       ],
     }),
-    [st?.can_undo, st?.can_redo, st?.guides?.length, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length, pendingRestore, restore],
   );
 
   const valueLabel = active?.valueLabel() ?? null;

@@ -15,6 +15,8 @@ export default defineConfig({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 5174 } : undefined,
+    // Other lanes' git worktrees (.worktrees/) and lane-end captures (_captures/) never
+    // trigger a reload.
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/.worktrees/**", "**/_captures/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
