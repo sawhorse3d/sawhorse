@@ -341,6 +341,9 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const inVcb = e.target === vcbRef.current;
+      // Focus rules: the Value Control Box only owns the keyboard while something is being
+      // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
+      const textEntry = isTextEntry(e.target) && !(inVcb && !live.current.vcbEditing);
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.altKey && (!isTextEntry(e.target) || inVcb)) {
         const k = e.key.toLowerCase();
@@ -360,9 +363,10 @@ export function App() {
           return;
         }
       }
-      if (e.key === "Shift") activeRef.current?.onShift(true);
+      if (e.key === "Shift" && !textEntry) activeRef.current?.onShift(true);
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTextEntry(e.target)) return;
+      if (textEntry) return;
+      if (inVcb && (e.key === "Enter" || e.key === "Escape")) return; // the box's own keys
       if (e.key === "Escape") {
         setMessage(null);
         if (activeRef.current?.cancel()) return;

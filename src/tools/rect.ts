@@ -1,7 +1,7 @@
 // Rectangle (R): click two corners, or one corner and type "width, depth". On the ground it
 // draws into the ground sketch; on an object face it imprints in the face's frame.
 import type { EditResult } from "../kernel/client";
-import { parseDimensions } from "../lib/units";
+import { notHere, parseVcb } from "../lib/vcb";
 import { GROUND, rectCorners, rectangleOp, toLocal, toWorld, type RectAnchor, type Vec3 } from "../lib/edit";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { rayPlane } from "../lib/edit";
@@ -81,13 +81,17 @@ export class RectTool extends Tool {
 
   onValue(text: string): void {
     const h = this.host;
-    const r = parseDimensions(text, h.units());
+    const r = parseVcb(text, h.units());
     if (!r.ok) {
       h.status(r.error, true);
       return;
     }
+    if (r.value.kind !== "lengths" || r.value.m.length !== 2) {
+      h.status(notHere(r.value, "Rect", "two sizes separated by a comma, like 24,12"), true);
+      return;
+    }
     if (!this.anchor) this.anchor = { frame: GROUND, point: [0, 0, 0], face: null };
-    void this.draw(null, r.metres);
+    void this.draw(null, [r.value.m[0], r.value.m[1]]);
   }
 
   private async draw(end: [number, number] | null, size?: [number, number]): Promise<void> {

@@ -3,7 +3,7 @@
 // path or the boolean path). Lane 3 step 8 adds the drag gesture and repeats.
 import type { EditResult } from "../kernel/client";
 import { describeTarget, pushOp, type Target } from "../lib/edit";
-import { parseLength } from "../lib/units";
+import { notHere, parseVcb } from "../lib/vcb";
 import { EMPTY_VIEW, Tool, markerOf, type Snap, type ToolEvent, type ToolView } from "./tool";
 
 export function targetOf(e: { kind: string; object?: number; face?: number; sketch?: number; region?: number } | null): Target | null {
@@ -50,9 +50,13 @@ export class PushTool extends Tool {
 
   onValue(text: string): void {
     const h = this.host;
-    const r = parseLength(text, h.units());
+    const r = parseVcb(text, h.units());
     if (!r.ok) {
       h.status(r.error, true);
+      return;
+    }
+    if (r.value.kind !== "length") {
+      h.status(notHere(r.value, "Push/Pull", "a distance (negative pushes in)"), true);
       return;
     }
     const t = h.target();
@@ -60,7 +64,7 @@ export class PushTool extends Tool {
       h.status("Click a face or a region first, then type the distance.", true);
       return;
     }
-    const d = r.metres;
+    const d = r.value.m;
     void h
       .apply(pushOp(t, d), (res: EditResult) => {
         const s = res.scene.state.stats;

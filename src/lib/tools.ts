@@ -62,7 +62,11 @@ export function toolById(id: ToolId): ToolDef {
   return t;
 }
 
-/** Whether a keydown should start typing into the Value Control Box (SketchUp-style: just type). */
+/**
+ * Whether a keydown should start typing into the Value Control Box (SketchUp-style: just
+ * type). Digits, a decimal point, a sign, a fraction slash, feet and inch marks, and the
+ * array prefixes (x, *) reserved for Move.
+ */
 export function startsValueEntry(key: string): boolean {
-  return key.length === 1 && /[0-9.\-/'",~]/.test(key);
+  return key.length === 1 && /[0-9.\-/'",~x*]/i.test(key);
 }
