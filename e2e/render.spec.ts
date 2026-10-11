@@ -55,7 +55,7 @@ test("renders the current view: signed requests, 16-bit depth + edge + clay pass
   await expect(page.locator("#renderImg")).toHaveJSProperty("complete", true);
   expect(await page.locator("#renderImg").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(64);
   await expect(page.locator("#credits")).toHaveText("2");
-  await expect(page.locator("#result .cap")).toHaveText("Mock render (no provider keys on the service)");
+  await expect(page.locator("#result .cap")).toHaveText("Mock render · no provider keys");
 
   const r = svc.renders[0];
   expect(r.prompt).toMatch(/warm kitchen/);

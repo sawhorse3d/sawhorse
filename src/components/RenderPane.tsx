@@ -273,7 +273,7 @@ export function RenderPane({ credits, capture }: RenderPaneProps) {
         {result.kind === "done" ? (
           <>
             <img src={result.url} alt={`Render: ${result.prompt}`} id="renderImg" />
-            <span className="cap">{result.mock ? "Mock render (no provider keys on the service)" : `Rendered by ${result.provider}`}</span>
+            <span className="cap">{result.mock ? "Mock render · no provider keys" : `Rendered by ${result.provider}`}</span>
           </>
         ) : null}
       </div>

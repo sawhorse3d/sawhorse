@@ -97,7 +97,7 @@ describe("Render pane", () => {
     expect(atob(req.clay_png!).charCodeAt(4)).toBe(3);
     expect(req.request_id).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect((document.getElementById("renderImg") as HTMLImageElement).src).toBe("http://svc.test/v1/renders/x/image?exp=1&sig=s");
-    expect(screen.getByText("Mock render (no provider keys on the service)")).toBeTruthy();
+    expect(screen.getByText("Mock render · no provider keys")).toBeTruthy();
     expect(screen.getByTestId("chip").textContent).toBe("2");
   });
 
