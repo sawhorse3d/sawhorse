@@ -232,6 +232,12 @@ impl Model {
             o.validate()?;
         }
         for s in self.sketches() {
+            if let Err(e) = s.check() {
+                return Err(TopologyError {
+                    violations: vec![Violation::SketchInvalid(e)],
+                    report: Default::default(),
+                });
+            }
             for key in s.consumed().keys() {
                 if !s.regions().iter().any(|r| &r.key() == key) {
                     return Err(TopologyError {

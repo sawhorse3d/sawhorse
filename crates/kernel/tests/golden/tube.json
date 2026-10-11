@@ -1,0 +1,50 @@
+{
+  "name": "tube",
+  "description": "A rectangle with a nested rectangle: the outer region has a hole and extrudes to a genus-1 tube.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.25,
+      "y": 0.25,
+      "w": 0.5,
+      "h": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.2
+    }
+  ],
+  "hash": "4c053f43da8e60d7",
+  "stats": {
+    "objects": 1,
+    "faces": 10,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 1,
+    "watertight": true
+  }
+}

@@ -1,0 +1,29 @@
+# cargo-fuzz harness for the kernel's op sequences (nightly + libFuzzer; Linux/macOS).
+#   cd crates/kernel && cargo +nightly fuzz run op_sequence
+# Crashes land in fuzz/artifacts/; convert one to JSON with
+#   cargo +nightly fuzz fmt op_sequence <artifact>
+# and save it under tests/repro/ so the stable test suite replays it forever.
+[package]
+name = "sawhorse-kernel-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sawhorse-kernel = { path = "..", features = ["arbitrary"] }
+serde_json = "1"
+
+[[bin]]
+name = "op_sequence"
+path = "fuzz_targets/op_sequence.rs"
+test = false
+doc = false
+bench = false
+
+# Own workspace: never part of `cargo test --workspace` or the wasm32 check.
+[workspace]

@@ -1,0 +1,42 @@
+{
+  "name": "spike_box",
+  "description": "The lane-1 spike: 24 x 16 in rectangle on the ground, pushed up 12 in.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.6096,
+      "h": 0.4064
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.3048
+    }
+  ],
+  "hash": "4fd28e0b1ba4d727",
+  "stats": {
+    "objects": 1,
+    "faces": 6,
+    "edges": 12,
+    "vertices": 8,
+    "genus": 0,
+    "watertight": true
+  }
+}

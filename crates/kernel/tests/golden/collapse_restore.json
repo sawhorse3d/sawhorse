@@ -1,0 +1,54 @@
+{
+  "name": "collapse_restore",
+  "description": "Extrude, push the cap back to the sketch (solid collapses, region returns), extrude again higher.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.5,
+      "h": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.3
+    },
+    {
+      "op": "push_pull",
+      "object": 0,
+      "face": 1,
+      "distance": -0.3
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.6
+    }
+  ],
+  "hash": "99758e029bc05d63",
+  "stats": {
+    "objects": 1,
+    "faces": 6,
+    "edges": 12,
+    "vertices": 8,
+    "genus": 0,
+    "watertight": true
+  }
+}

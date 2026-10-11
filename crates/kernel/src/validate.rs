@@ -52,6 +52,7 @@ pub enum Violation {
     HoleOutsideOuter { face: FaceId, hole: LoopId },
     NestedHoles { face: FaceId },
     SelfIntersectingFace(FaceId),
+    SketchInvalid(String),
     EulerOdd { shell: usize, chi: i64 },
     EulerTooLarge { shell: usize, chi: i64 },
 }

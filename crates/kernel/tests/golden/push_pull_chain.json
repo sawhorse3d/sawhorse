@@ -1,0 +1,60 @@
+{
+  "name": "push_pull_chain",
+  "description": "Box, then cap up, side wall out, cap back down.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.25
+    },
+    {
+      "op": "push_pull",
+      "object": 0,
+      "face": 1,
+      "distance": 0.5
+    },
+    {
+      "op": "push_pull",
+      "object": 0,
+      "face": 2,
+      "distance": 0.1
+    },
+    {
+      "op": "push_pull",
+      "object": 0,
+      "face": 1,
+      "distance": -0.25
+    }
+  ],
+  "hash": "13aafd1f408eae1f",
+  "stats": {
+    "objects": 1,
+    "faces": 6,
+    "edges": 12,
+    "vertices": 8,
+    "genus": 0,
+    "watertight": true
+  }
+}

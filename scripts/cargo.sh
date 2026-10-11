@@ -26,7 +26,12 @@ if needs_wsl; then
   wslpath="/mnt/${drive}${win:2}"
   args=""
   for a in "$@"; do args+=" $(printf '%q' "$a")"; done
-  exec wsl.exe bash -lc "cd '$wslpath/crates' && . ../scripts/env.sh && cargo$args"
+  # Environment does not cross into WSL by itself; forward the knobs the tests read.
+  envs=""
+  for v in UPDATE_GOLDEN FUZZ_CASES PROPTEST_CASES RUST_BACKTRACE RUSTFLAGS; do
+    if [ -n "${!v:-}" ]; then envs+="$v=$(printf '%q' "${!v}") "; fi
+  done
+  exec wsl.exe bash -lc "cd '$wslpath/crates' && . ../scripts/env.sh && ${envs}cargo$args"
 fi
 
 # shellcheck source=/dev/null

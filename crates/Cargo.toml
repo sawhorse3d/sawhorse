@@ -5,6 +5,8 @@
 [workspace]
 resolver = "3"
 members = ["kernel", "tessellate", "inference", "export", "wasm-api"]
+# cargo-fuzz harness: needs nightly + libFuzzer, so it is its own workspace.
+exclude = ["kernel/fuzz"]
 
 [workspace.package]
 version = "0.0.1"

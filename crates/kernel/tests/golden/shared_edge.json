@@ -1,0 +1,56 @@
+{
+  "name": "shared_edge",
+  "description": "Two rectangles sharing an edge, each extruded to a different height (two solids that touch but never weld).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": 1.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 1,
+      "distance": 1.0
+    }
+  ],
+  "hash": "e9755e752a76d594",
+  "stats": {
+    "objects": 2,
+    "faces": 12,
+    "edges": 24,
+    "vertices": 16,
+    "genus": 0,
+    "watertight": true
+  }
+}

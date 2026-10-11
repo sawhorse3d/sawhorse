@@ -24,6 +24,8 @@ pub mod model;
 pub mod object;
 pub mod plane;
 pub mod sketch;
+#[doc(hidden)]
+pub mod testing;
 pub mod tolerance;
 pub mod validate;
 

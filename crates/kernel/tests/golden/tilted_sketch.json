@@ -1,0 +1,42 @@
+{
+  "name": "tilted_sketch",
+  "description": "A sketch on a tilted plane off the origin, extruded downward.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "normal": [
+        1.0,
+        2.0,
+        3.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 0,
+      "x": -0.5,
+      "y": -0.5,
+      "w": 1.0,
+      "h": 1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 0,
+      "region": 0,
+      "distance": -0.75
+    }
+  ],
+  "hash": "6fbdd77975035931",
+  "stats": {
+    "objects": 1,
+    "faces": 6,
+    "edges": 12,
+    "vertices": 8,
+    "genus": 0,
+    "watertight": true
+  }
+}

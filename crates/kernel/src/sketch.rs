@@ -244,8 +244,70 @@ impl Sketch {
             .iter()
             .position(|r| r.key() == key)
             .ok_or(StickyError::IntersectionUnsupported)?;
+        #[cfg(debug_assertions)]
+        if let Err(e) = next.check() {
+            panic!("sketch invalid after add_rectangle: {e}");
+        }
         *self = next;
         Ok(idx)
+    }
+
+    /// Sketch-graph invariants: edges join two distinct, distant vertices; no two edges
+    /// touch or cross except at a shared endpoint; regions are CCW with CW holes. Runs in
+    /// `Model::validate` and, in debug builds, after every sketch mutation.
+    pub fn check(&self) -> Result<(), String> {
+        let edges: Vec<[SVertexId; 2]> = self.edges.values().copied().collect();
+        for &[a, b] in &edges {
+            let (Some(pa), Some(pb)) = (self.vertices.get(a), self.vertices.get(b)) else {
+                return Err("edge references a missing vertex".into());
+            };
+            if a == b || pa.distance(*pb) <= POINT_MERGE {
+                return Err("zero-length sketch edge".into());
+            }
+        }
+        for i in 0..edges.len() {
+            for j in i + 1..edges.len() {
+                let [a, b] = edges[i];
+                let [c, d] = edges[j];
+                let (pa, pb, pc, pd) = (
+                    self.vertices[a],
+                    self.vertices[b],
+                    self.vertices[c],
+                    self.vertices[d],
+                );
+                if (a == c && b == d) || (a == d && b == c) {
+                    return Err("duplicate sketch edge".into());
+                }
+                if proper_cross(pa, pb, pc, pd) {
+                    return Err("sketch edges cross".into());
+                }
+                for (x, px, seg) in [
+                    (a, pa, (c, d)),
+                    (b, pb, (c, d)),
+                    (c, pc, (a, b)),
+                    (d, pd, (a, b)),
+                ] {
+                    if x != seg.0
+                        && x != seg.1
+                        && point_segment_distance(px, self.vertices[seg.0], self.vertices[seg.1])
+                            <= POINT_MERGE
+                    {
+                        return Err("sketch vertex lies on another edge".into());
+                    }
+                }
+            }
+        }
+        for r in &self.regions {
+            let (o, hs) = self.region_rings(r);
+            if sawhorse_tessellate::signed_area(&o) <= 0.0
+                || hs
+                    .iter()
+                    .any(|h| sawhorse_tessellate::signed_area(h) >= 0.0)
+            {
+                return Err("region winding is wrong".into());
+            }
+        }
+        Ok(())
     }
 
     /// Minimal closed circuits -> regions with holes. Deterministic.
