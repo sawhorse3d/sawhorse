@@ -17,7 +17,7 @@
     },
     {
       "op": "add_rectangle",
-      "sketch": 0,
+      "sketch": 1,
       "x": 0.0,
       "y": 0.0,
       "w": 1.0,
@@ -25,30 +25,30 @@
     },
     {
       "op": "extrude",
-      "sketch": 0,
-      "region": 0,
+      "sketch": 1,
+      "region": 1,
       "distance": 0.25
     },
     {
       "op": "push_pull",
-      "object": 0,
+      "object": 1,
       "face": 1,
       "distance": 0.5
     },
     {
       "op": "push_pull",
-      "object": 0,
+      "object": 1,
       "face": 2,
       "distance": 0.1
     },
     {
       "op": "push_pull",
-      "object": 0,
+      "object": 1,
       "face": 1,
       "distance": -0.25
     }
   ],
-  "hash": "13aafd1f408eae1f",
+  "hash": "3c765cd9d4c6fbbb",
   "stats": {
     "objects": 1,
     "faces": 6,

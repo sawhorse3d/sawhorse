@@ -4,16 +4,22 @@
 //! topology written as ordinals (slotmap insertion order), never as raw keys or pointer
 //! values. The same op sequence therefore hashes identically on every platform, natively
 //! and in WASM. Stored face planes are deliberately excluded: they are derived data.
+//!
+//! Sketches hash canonically (vertices ordered by quantised position, rings and edges in
+//! that numbering, sorted), so the same strokes drawn in any order hash the same. Region
+//! ids are left out: they record history, not shape.
 
 use std::collections::BTreeMap;
 
 use slotmap::Key;
 
+use crate::ids::SVertexId;
 use crate::model::Model;
+use crate::sketch::Sketch;
 use crate::tolerance::HASH_QUANTUM;
 
 /// Bump when the hashed representation changes (and regenerate goldens on purpose).
-pub const HASH_FORMAT: &str = "sawhorse-model-hash-v1";
+pub const HASH_FORMAT: &str = "sawhorse-model-hash-v2";
 
 #[derive(Debug, Clone, Copy)]
 pub struct StableHasher(u64);
@@ -55,47 +61,99 @@ fn ordinals<K: Key, V>(map: &slotmap::SlotMap<K, V>) -> BTreeMap<K, usize> {
     map.keys().enumerate().map(|(i, k)| (k, i)).collect()
 }
 
+/// Quantised position key (1 nm grid).
+fn q(x: f64) -> i64 {
+    let v = (x / HASH_QUANTUM).round();
+    if v == 0.0 { 0 } else { v as i64 }
+}
+
+/// A region in canonical vertex numbering: outer ring, holes, pinched, consumed.
+type CanonRegion = (Vec<usize>, Vec<Vec<usize>>, bool, bool);
+
+/// Canonical sketch hash: independent of the order strokes were drawn in. Vertices are
+/// ordered by quantised position, edges and region rings are written in that ordering and
+/// sorted. Region ids are deliberately left out: they record history, not shape.
+fn hash_sketch(h: &mut StableHasher, s: &Sketch) {
+    h.tag("sketch");
+    let p = s.plane();
+    for v in [p.origin, p.normal, p.u] {
+        h.len(v.x);
+        h.len(v.y);
+        h.len(v.z);
+    }
+    let mut verts: Vec<((i64, i64), SVertexId)> =
+        s.vertices().map(|(k, p)| ((q(p.x), q(p.y)), k)).collect();
+    verts.sort();
+    let ord: BTreeMap<SVertexId, usize> = verts
+        .iter()
+        .enumerate()
+        .map(|(i, (_, k))| (*k, i))
+        .collect();
+    h.usize(verts.len());
+    for ((x, y), _) in &verts {
+        h.u64(*x as u64);
+        h.u64(*y as u64);
+    }
+    let mut edges: Vec<(usize, usize)> = s
+        .edges()
+        .map(|(_, [a, b])| (ord[&a].min(ord[&b]), ord[&a].max(ord[&b])))
+        .collect();
+    edges.sort();
+    h.usize(edges.len());
+    for (a, b) in edges {
+        h.usize(a);
+        h.usize(b);
+    }
+    let ring = |r: &[SVertexId]| -> Vec<usize> {
+        let idx: Vec<usize> = r.iter().map(|v| ord[v]).collect();
+        let start = (0..idx.len()).min_by_key(|&i| idx[i]).unwrap_or(0);
+        idx[start..]
+            .iter()
+            .chain(idx[..start].iter())
+            .copied()
+            .collect()
+    };
+    let mut regions: Vec<CanonRegion> = s
+        .all_regions()
+        .map(|(_, r)| {
+            let mut holes: Vec<Vec<usize>> = r.holes.iter().map(|h| ring(h)).collect();
+            holes.sort();
+            (ring(&r.outer), holes, r.pinched, r.consumed)
+        })
+        .collect();
+    regions.sort();
+    h.usize(regions.len());
+    for (outer, holes, pinched, consumed) in regions {
+        h.usize(outer.len());
+        outer.iter().for_each(|&i| h.usize(i));
+        h.usize(holes.len());
+        for hole in holes {
+            h.usize(hole.len());
+            hole.iter().for_each(|&i| h.usize(i));
+        }
+        h.u64(u64::from(pinched));
+        h.u64(u64::from(consumed));
+    }
+}
+
+/// Canonical hash of one sketch (for order-independence tests and the UI).
+pub fn sketch_hash(s: &Sketch) -> u64 {
+    let mut h = StableHasher::default();
+    hash_sketch(&mut h, s);
+    h.finish()
+}
+
 pub fn model_hash(m: &Model) -> u64 {
     let mut h = StableHasher::default();
     h.tag(HASH_FORMAT);
     let sketches = m.sketches();
     h.usize(sketches.len());
-    for s in sketches {
-        h.tag("sketch");
-        let p = s.plane();
-        for v in [p.origin, p.normal, p.u] {
-            h.len(v.x);
-            h.len(v.y);
-            h.len(v.z);
-        }
-        let verts: Vec<_> = s.vertices().collect();
-        let ord: BTreeMap<_, _> = verts
-            .iter()
-            .enumerate()
-            .map(|(i, (k, _))| (*k, i))
-            .collect();
-        h.usize(verts.len());
-        for (_, q) in &verts {
-            h.len(q.x);
-            h.len(q.y);
-        }
-        let edges: Vec<_> = s.edges().collect();
-        h.usize(edges.len());
-        for (_, [a, b]) in edges {
-            h.usize(ord[&a]);
-            h.usize(ord[&b]);
-        }
-        h.usize(s.consumed().len());
-        for key in s.consumed().keys() {
-            h.usize(key.len());
-            for v in key {
-                h.usize(ord[v]);
-            }
-        }
+    for (_, s) in sketches {
+        hash_sketch(&mut h, s);
     }
     let objects = m.objects();
     h.usize(objects.len());
-    for o in objects {
+    for (_, o) in objects {
         h.tag("object");
         let b = o.brep();
         let vord = ordinals(&b.vertices);

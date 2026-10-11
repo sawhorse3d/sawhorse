@@ -17,7 +17,7 @@
     },
     {
       "op": "add_rectangle",
-      "sketch": 0,
+      "sketch": 1,
       "x": -0.5,
       "y": -0.5,
       "w": 1.0,
@@ -25,12 +25,12 @@
     },
     {
       "op": "extrude",
-      "sketch": 0,
-      "region": 0,
+      "sketch": 1,
+      "region": 1,
       "distance": -0.75
     }
   ],
-  "hash": "6fbdd77975035931",
+  "hash": "fef3d1609ae3111d",
   "stats": {
     "objects": 1,
     "faces": 6,

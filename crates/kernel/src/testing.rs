@@ -38,7 +38,7 @@ fn panic_message(p: Box<dyn std::any::Any + Send>) -> String {
 /// Invariants of any committed model.
 pub fn check_model(m: &Model) -> Result<(), String> {
     m.validate().map_err(|e| format!("validate: {e}"))?;
-    for (i, o) in m.objects().iter().enumerate() {
+    for (i, o) in m.objects() {
         if !o.is_watertight() {
             return Err(format!("object {i} is not watertight"));
         }
@@ -143,32 +143,32 @@ mod tests {
                 normal: [0.0, 0.0, 1.0],
             },
             Op::AddRectangle {
-                sketch: 0,
+                sketch: 1,
                 x: 0.0,
                 y: 0.0,
                 w: 1.0,
                 h: 1.0,
             },
             Op::AddRectangle {
-                sketch: 0,
+                sketch: 1,
                 x: 0.5,
                 y: 0.5,
                 w: 1.0,
                 h: 1.0,
-            }, // refused: crossing
+            }, // crossing: splits into three regions
             Op::Extrude {
-                sketch: 0,
-                region: 0,
+                sketch: 1,
+                region: 1,
                 distance: 0.5,
             },
             Op::PushPull {
-                object: 0,
+                object: 1,
                 face: 1,
                 distance: 0.25,
             },
         ];
         let s = check_sequence(&ops).unwrap();
-        assert_eq!((s.accepted, s.refused, s.objects), (4, 1, 1));
+        assert_eq!((s.accepted, s.refused, s.objects), (5, 0, 1));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

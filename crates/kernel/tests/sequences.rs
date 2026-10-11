@@ -51,9 +51,9 @@ fn normal() -> impl Strategy<Value = [f64; 3]> {
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
         1 => (grid(), grid(), grid(), normal()).prop_map(|(x, y, z, normal)| Op::NewSketch { origin: [x, y, z], normal }),
-        6 => (0u32..3, grid(), grid(), grid(), grid()).prop_map(|(sketch, x, y, w, h)| Op::AddRectangle { sketch, x, y, w, h }),
-        4 => (0u32..2, 0u32..3, distance()).prop_map(|(sketch, region, distance)| Op::Extrude { sketch, region, distance }),
-        5 => (0u32..2, 0u32..10, distance()).prop_map(|(object, face, distance)| Op::PushPull { object, face, distance }),
+        6 => (1u64..4, grid(), grid(), grid(), grid()).prop_map(|(sketch, x, y, w, h)| Op::AddRectangle { sketch, x, y, w, h }),
+        4 => (1u64..3, 1u64..5, distance()).prop_map(|(sketch, region, distance)| Op::Extrude { sketch, region, distance }),
+        5 => (1u64..3, 0u32..10, distance()).prop_map(|(object, face, distance)| Op::PushPull { object, face, distance }),
     ]
 }
 

@@ -1,18 +1,132 @@
 {
   "name": "2026-10-11-seed-refusals-roll-back",
-  "error": "seed: hand-written; every refusal kind must leave the model unchanged",
+  "error": "seed: hand-written; every refusal kind must leave the model unchanged (lane 2: sketch edits that cross or touch are accepted and split)",
   "ops": [
-    { "op": "new_sketch", "origin": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0] },
-    { "op": "add_rectangle", "sketch": 0, "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0 },
-    { "op": "add_rectangle", "sketch": 0, "x": 0.5, "y": 0.5, "w": 1.0, "h": 1.0 },
-    { "op": "add_rectangle", "sketch": 0, "x": 1.0, "y": 0.25, "w": 1.0, "h": 0.5 },
-    { "op": "extrude", "sketch": 0, "region": 0, "distance": 0.0 },
-    { "op": "extrude", "sketch": 0, "region": 0, "distance": 0.5 },
-    { "op": "extrude", "sketch": 0, "region": 0, "distance": 0.5 },
-    { "op": "add_rectangle", "sketch": 0, "x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5 },
-    { "op": "push_pull", "object": 0, "face": 1, "distance": -0.75 },
-    { "op": "push_pull", "object": 0, "face": 99, "distance": 0.1 },
-    { "op": "push_pull", "object": 0, "face": 1, "distance": -0.5 },
-    { "op": "extrude", "sketch": 0, "region": 0, "distance": -0.25 }
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0,
+      "y": 0,
+      "w": 1,
+      "h": 1
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.5,
+      "y": 0.5,
+      "w": 1,
+      "h": 1
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 1,
+      "y": 0.25,
+      "w": 1,
+      "h": 0.5
+    },
+    {
+      "op": "insert_segment",
+      "sketch": 1,
+      "a": [
+        0.25,
+        0.25
+      ],
+      "b": [
+        0.25,
+        0.250004
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0,
+      "y": 0,
+      "w": 20000,
+      "h": 1
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 9,
+      "x": 0,
+      "y": 0,
+      "w": 1,
+      "h": 1
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 77,
+      "distance": 0.5
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 99,
+      "distance": 0.1
+    },
+    {
+      "op": "push_pull",
+      "object": 5,
+      "face": 1,
+      "distance": 0.1
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": 0.000001
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": -0.5
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        0
+      ]
+    }
   ]
 }

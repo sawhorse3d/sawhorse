@@ -90,7 +90,7 @@ mod tests {
     fn kernel_box_exports() {
         let mut m = Model::with_ground_sketch();
         m.apply(&Op::AddRectangle {
-            sketch: 0,
+            sketch: 1,
             x: 0.0,
             y: 0.0,
             w: 0.1,
@@ -98,12 +98,12 @@ mod tests {
         })
         .unwrap();
         m.apply(&Op::Extrude {
-            sketch: 0,
-            region: 0,
+            sketch: 1,
+            region: 1,
             distance: 0.05,
         })
         .unwrap();
-        let o = m.object(0).unwrap();
+        let o = m.object(1).unwrap();
         let stl = object_stl(o).unwrap();
         assert_eq!(u32::from_le_bytes(stl[80..84].try_into().unwrap()), 12);
         assert_eq!(&object_3mf(o).unwrap()[..2], b"PK");

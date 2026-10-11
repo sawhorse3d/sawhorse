@@ -5,25 +5,22 @@ use crate::plane::PlaneError;
 use crate::validate::TopologyError;
 use sawhorse_tessellate::TessellateError;
 
-/// Errors from the sticky (sketch) tier.
+/// Errors from the sketch tier. Only genuinely degenerate input is refused: intersecting,
+/// touching and overlapping strokes are resolved by the insertion rules (see `sketch`).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum SketchError {
     #[error("no sketch #{0}")]
-    NoSuchSketch(u32),
+    NoSuchSketch(u64),
     #[error("no region #{0} in this sketch")]
-    NoSuchRegion(u32),
+    NoSuchRegion(u64),
     #[error("region #{0} is already a solid")]
-    RegionConsumed(u32),
+    RegionConsumed(u64),
     #[error("that shape is too small (under 0.01 mm)")]
     Degenerate,
     #[error("a coordinate is not finite or is beyond 10 km")]
     OutOfBounds,
-    #[error(
-        "the new edges touch or cross existing edges; intersecting sketch edits arrive with the draw-tools lane"
-    )]
-    IntersectionUnsupported,
-    #[error("that edit would change a region that is already a solid")]
-    EditsConsumedRegion,
+    #[error("region #{0} touches itself at a point; a solid made from it would not be manifold")]
+    PinchedRegion(u64),
     #[error("bad sketch plane: {0}")]
     Plane(#[from] PlaneError),
 }
@@ -51,7 +48,7 @@ pub enum PushError {
     #[error("distance is not finite or is beyond 10 km")]
     OutOfBounds,
     #[error("no object #{0}")]
-    NoSuchObject(u32),
+    NoSuchObject(u64),
     #[error("no face #{0} on this object")]
     NoSuchFace(u32),
     #[error("push/pull of this face is not supported yet: {0}")]

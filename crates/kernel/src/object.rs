@@ -21,17 +21,15 @@ use crate::brep::{Brep, PolyFace};
 use crate::error::PushError;
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
-use crate::sketch::RegionKey;
 use crate::tolerance::{MIN_EXTRUDE, PARALLEL_EPS, POINT_MERGE, in_bounds};
 use crate::validate::{
     TopologyError, TopologyReport, Violation, holes_contained, rings_cross, validate,
 };
 
-/// Where a solid came from, so collapsing it can return the region to its sketch.
+/// Where a solid came from, so collapsing it can return its footprint to that sketch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     pub sketch: SketchId,
-    pub region: RegionKey,
 }
 
 #[derive(Debug, Clone)]
@@ -41,12 +39,13 @@ pub struct Object {
     pub(crate) source: Option<Provenance>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PushOutcome {
-    /// The face moved; topology unchanged.
+    /// The face moved.
     Moved,
     /// The face met the opposite face: the solid has zero volume and should be removed.
-    Collapsed,
+    /// `footprint`: the flat rings (outer, then holes) it collapsed onto, world coordinates.
+    Collapsed { footprint: Vec<Vec<DVec3>> },
 }
 
 impl Object {
@@ -239,7 +238,16 @@ impl Object {
         }
         let collapsing = new_lengths.iter().filter(|&&l| l <= POINT_MERGE).count();
         if collapsing == new_lengths.len() && rails.iter().all(|(_, s)| *s > 0.0) {
-            return Ok(PushOutcome::Collapsed);
+            let footprint = f
+                .loops()
+                .map(|l| {
+                    b.loop_points(l)
+                        .into_iter()
+                        .map(|p| p + n * distance)
+                        .collect()
+                })
+                .collect();
+            return Ok(PushOutcome::Collapsed { footprint });
         }
         if collapsing > 0 {
             return Err(PushError::WouldCollapseEdge);
@@ -415,7 +423,10 @@ mod tests {
         assert!((o.volume() - 1.25).abs() < 1e-9);
         assert_eq!(o.push_pull(cap, -0.25).unwrap(), PushOutcome::Moved);
         assert!(o.same_shape(&before, 1e-12));
-        assert_eq!(o.push_pull(cap, -1.0).unwrap(), PushOutcome::Collapsed);
+        assert!(matches!(
+            o.push_pull(cap, -1.0).unwrap(),
+            PushOutcome::Collapsed { .. }
+        ));
         assert_eq!(o.push_pull(cap, -1.5), Err(PushError::ThroughOppositeFace));
         assert_eq!(o.push_pull(cap, 0.0), Err(PushError::ZeroDistance));
     }

@@ -51,39 +51,40 @@ impl SceneCore {
         self.model.apply(&op).map_err(|e| e.to_string())
     }
 
+    /// Returns the id of the (first) region inside the rectangle.
     pub fn add_rectangle(
         &mut self,
-        sketch: u32,
+        sketch: u64,
         x: f64,
         y: f64,
         w: f64,
         h: f64,
-    ) -> Result<u32, String> {
+    ) -> Result<u64, String> {
         match self.apply(Op::AddRectangle { sketch, x, y, w, h })? {
-            OpOutcome::RegionAdded(r) => Ok(r),
+            OpOutcome::SketchEdited { regions } if !regions.is_empty() => Ok(regions[0]),
             other => Err(format!("unexpected outcome {other:?}")),
         }
     }
 
-    pub fn extrude(&mut self, sketch: u32, region: u32, distance: f64) -> Result<u32, String> {
+    pub fn extrude(&mut self, sketch: u64, region: u64, distance: f64) -> Result<u64, String> {
         match self.apply(Op::Extrude {
             sketch,
             region,
             distance,
         })? {
-            OpOutcome::ObjectCreated(o) => Ok(o),
+            OpOutcome::ObjectCreated { object } => Ok(object),
             other => Err(format!("unexpected outcome {other:?}")),
         }
     }
 
-    pub fn push_pull(&mut self, object: u32, face: u32, distance: f64) -> Result<String, String> {
+    pub fn push_pull(&mut self, object: u64, face: u32, distance: f64) -> Result<String, String> {
         Ok(
             match self.apply(Op::PushPull {
                 object,
                 face,
                 distance,
             })? {
-                OpOutcome::ObjectCollapsed => "collapsed".to_string(),
+                OpOutcome::ObjectCollapsed { .. } => "collapsed".to_string(),
                 _ => "moved".to_string(),
             },
         )
@@ -104,7 +105,7 @@ impl SceneCore {
         serde_json::to_string(&self.model.stats()).unwrap_or_else(|_| "{}".to_string())
     }
 
-    pub fn stl(&self, object: u32) -> Result<Vec<u8>, String> {
+    pub fn stl(&self, object: u64) -> Result<Vec<u8>, String> {
         let o = self
             .model
             .object(object)
@@ -152,30 +153,41 @@ impl Scene {
     }
 
     /// Rectangle on the ground sketch, corner (x, y), size (w, h), metres. Returns the region index.
-    pub fn add_rectangle(&mut self, x: f64, y: f64, w: f64, h: f64) -> Result<u32, JsError> {
-        self.core.add_rectangle(0, x, y, w, h).map_err(js)
+    pub fn add_rectangle(&mut self, x: f64, y: f64, w: f64, h: f64) -> Result<f64, JsError> {
+        self.core
+            .add_rectangle(1, x, y, w, h)
+            .map(|r| r as f64)
+            .map_err(js)
     }
 
     /// Rectangle on any sketch.
     pub fn add_rectangle_on(
         &mut self,
-        sketch: u32,
+        sketch: f64,
         x: f64,
         y: f64,
         w: f64,
         h: f64,
-    ) -> Result<u32, JsError> {
-        self.core.add_rectangle(sketch, x, y, w, h).map_err(js)
+    ) -> Result<f64, JsError> {
+        self.core
+            .add_rectangle(sketch as u64, x, y, w, h)
+            .map(|r| r as f64)
+            .map_err(js)
     }
 
     /// Extrude a ground-sketch region by `distance` metres. Returns the object index.
-    pub fn extrude(&mut self, region: u32, distance: f64) -> Result<u32, JsError> {
-        self.core.extrude(0, region, distance).map_err(js)
+    pub fn extrude(&mut self, region: f64, distance: f64) -> Result<f64, JsError> {
+        self.core
+            .extrude(1, region as u64, distance)
+            .map(|o| o as f64)
+            .map_err(js)
     }
 
     /// Push/pull face `face` of object `object`. Returns "moved" or "collapsed".
-    pub fn push_pull(&mut self, object: u32, face: u32, distance: f64) -> Result<String, JsError> {
-        self.core.push_pull(object, face, distance).map_err(js)
+    pub fn push_pull(&mut self, object: f64, face: u32, distance: f64) -> Result<String, JsError> {
+        self.core
+            .push_pull(object as u64, face, distance)
+            .map_err(js)
     }
 
     /// Apply one op in the JSON repro format.
@@ -198,8 +210,8 @@ impl Scene {
     }
 
     /// Binary STL (mm, Z-up) of one object; refuses non-watertight solids.
-    pub fn export_stl(&self, object: u32) -> Result<Vec<u8>, JsError> {
-        self.core.stl(object).map_err(js)
+    pub fn export_stl(&self, object: f64) -> Result<Vec<u8>, JsError> {
+        self.core.stl(object as u64).map_err(js)
     }
 }
 
@@ -236,9 +248,9 @@ mod tests {
     #[test]
     fn spike_scene_end_to_end() {
         let mut s = SceneCore::default();
-        let r = s.add_rectangle(0, 0.0, 0.0, 0.6096, 0.4064).unwrap();
-        let o = s.extrude(0, r, 0.3048).unwrap();
-        assert_eq!(o, 0);
+        let r = s.add_rectangle(1, 0.0, 0.0, 0.6096, 0.4064).unwrap();
+        let o = s.extrude(1, r, 0.3048).unwrap();
+        assert_eq!(o, 1);
         let m = s.mesh().unwrap();
         assert_eq!(m.triangle_count(), 12);
         assert_eq!(m.face_ids.len(), 12);
@@ -250,14 +262,14 @@ mod tests {
         let stats: serde_json::Value = serde_json::from_str(&s.stats_json()).unwrap();
         assert_eq!(stats["watertight"], true);
         assert_eq!(stats["faces"], 6);
-        assert_eq!(s.stl(0).unwrap().len(), 84 + 12 * 50);
+        assert_eq!(s.stl(1).unwrap().len(), 84 + 12 * 50);
     }
 
     #[test]
     fn refusals_are_messages() {
         let mut s = SceneCore::default();
-        let r = s.add_rectangle(0, 0.0, 0.0, 1.0, 1.0).unwrap();
-        let e = s.extrude(0, r, 0.0).unwrap_err();
+        let r = s.add_rectangle(1, 0.0, 0.0, 1.0, 1.0).unwrap();
+        let e = s.extrude(1, r, 0.0).unwrap_err();
         assert!(e.contains("0.01 mm"), "{e}");
         assert!(s.apply_json("{\"op\":\"nope\"}").is_err());
     }
