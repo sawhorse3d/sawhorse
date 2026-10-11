@@ -102,8 +102,10 @@ mod manifold_adapter {
                 .collect();
             let triangles = out
                 .tri_verts
-                .chunks_exact(3)
-                .map(|t| [t[0] as u32, t[1] as u32, t[2] as u32])
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| t.map(|i| i as u32))
                 .collect();
             let face_ids = out.face_id.iter().map(|&f| f as u32).collect();
             Ok(TriSolid {

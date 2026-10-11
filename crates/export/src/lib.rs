@@ -33,6 +33,8 @@ pub enum ExportError {
     BadIndex(usize),
     #[error("3MF writer: {0}")]
     ThreeMf(String),
+    #[error("could not triangulate the model: {0}")]
+    Tessellate(String),
 }
 
 impl ExportMesh<'_> {
@@ -52,5 +54,58 @@ impl ExportMesh<'_> {
             return Err(ExportError::BadIndex(i));
         }
         Ok(())
+    }
+}
+
+fn with_object<T>(
+    object: &sawhorse_kernel::object::Object,
+    f: impl FnOnce(&ExportMesh<'_>) -> Result<T, ExportError>,
+) -> Result<T, ExportError> {
+    let solid = object
+        .tri_solid()
+        .map_err(|e| ExportError::Tessellate(e.to_string()))?;
+    f(&ExportMesh {
+        positions: &solid.positions,
+        triangles: &solid.triangles,
+        watertight: object.is_watertight(),
+    })
+}
+
+/// Binary STL of one kernel object.
+pub fn object_stl(object: &sawhorse_kernel::object::Object) -> Result<Vec<u8>, ExportError> {
+    with_object(object, stl::write_binary)
+}
+
+/// 3MF of one kernel object.
+pub fn object_3mf(object: &sawhorse_kernel::object::Object) -> Result<Vec<u8>, ExportError> {
+    with_object(object, three_mf::write)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sawhorse_kernel::{Model, Op};
+
+    #[test]
+    fn kernel_box_exports() {
+        let mut m = Model::with_ground_sketch();
+        m.apply(&Op::AddRectangle {
+            sketch: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 0.1,
+            h: 0.2,
+        })
+        .unwrap();
+        m.apply(&Op::Extrude {
+            sketch: 0,
+            region: 0,
+            distance: 0.05,
+        })
+        .unwrap();
+        let o = m.object(0).unwrap();
+        let stl = object_stl(o).unwrap();
+        assert_eq!(u32::from_le_bytes(stl[80..84].try_into().unwrap()), 12);
+        assert_eq!(&object_3mf(o).unwrap()[..2], b"PK");
     }
 }

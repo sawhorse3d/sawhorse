@@ -83,11 +83,11 @@ pub fn triangulate(
     let mut out: Vec<u32> = Vec::new();
     earcut::Earcut::new().earcut(data.iter().copied(), &hole_indices, &mut out);
     let deviation = earcut::deviation(data.iter().copied(), &hole_indices, &out);
-    if !(deviation <= MAX_AREA_DEVIATION) || out.is_empty() {
+    if deviation.is_nan() || deviation > MAX_AREA_DEVIATION || out.is_empty() {
         return Err(TessellateError::AreaDeviation { deviation });
     }
     let mut tris = Vec::with_capacity(out.len() / 3);
-    for t in out.chunks_exact(3) {
+    for t in out.as_chunks::<3>().0 {
         let (a, b, c) = (
             data[t[0] as usize],
             data[t[1] as usize],
