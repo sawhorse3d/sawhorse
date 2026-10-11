@@ -1,6 +1,6 @@
 # ADR-0001: Geometry kernel
 
-- Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations) and lane 2 (kernel core) implemented, 2026-10-11
+- Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations), lane 2 (kernel core) and lane 3 (feel) implemented, 2026-10-11
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed, vault note `the maintainer's notes`
 
@@ -67,9 +67,24 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 | WASM | `crates/wasm-api` | `document_new()` -> `Doc` with `apply_op(json)`, `undo`, `redo`, `get_view_mesh(object_id)`, `get_scene_mesh`, `document_hash`, `export_stl(object_id)`, `export_obj(object_id)`; the worker holds one persistent document |
 | Tests | `kernel/tests/` | sketch_props (order independence, simple boundaries, split-then-erase identity), face_props (split/imprint then merge identity, transactional refusals), push.rs (every push path, volume/area/Euler), booleans.rs (26 hand-computed cases; `npm run boolean:diff` runs them against npm manifold-3d), document unit tests, 13 goldens (WASM == native), op-sequence fuzzer over every op with undo/redo interleaved |
 
+### Built in lane 3 (feel, 2026-10-11)
+
+| Area | Where | Notes |
+|---|---|---|
+| Persistent face ids | `brep.rs`, `object.rs`, `boolean.rs`, `push.rs` | see the closed gap below; hash format v3 |
+| Erase | `faceops::erase_edge`, `erase_face`, `dissolve_between`, `Sketch::erase_region` | `EraseEdge` / `EraseFace` / `EraseRegion`: only user-drawn edges and imprinted faces dissolve; a structural edge or face is refused (`WouldOpenSolid`, `WouldPinch`, `NothingToErase`); `Batch` applies several ops as one transaction and one undo step (`EmptyBatch`, `NotInBatch`) |
+| Draw on anything | `kernel/src/draw.rs`, `Op::Draw { target: Sketch / Plane / Face, points, closed }` | One op for every stroke tool. On a face: a closed loop strictly inside imprints; a path or loop crossing the face's edges becomes `split_face` cuts (one per crossing piece), so a dado strip across a board is one op; a stroke that stops inside the face is refused as `Dangling` (the UI keeps it as a preview). On a plane: a new sketch, or the existing sketch on that plane. Outcome `Drawn { sketch, regions, faces, inside }` names what to push next |
+| Push/pull with a new face | `Op::PushPullNewFace`, `push::push_pull_with`, `topological_with(allow_slide)` | Ctrl: the old face stays as a seam, new walls rise from it instead of the old walls stretching |
+| Annotations | `Guide`, `Dimension`; `AddGuide` / `EraseGuide` / `DeleteGuides` / `AddDimension` / `EraseDimension` | Guide lines (point + direction) and guide points; linear dimensions (a, b, offset). Part of the document, undoable, hashed only when present (older goldens keep their hashes); typed `BadAnnotation`, `NoSuchAnnotation`, `NoGuides` |
+| Inference | `crates/inference` (`geom`, `bvh`, `scene`, `pick`, `infer`) | **Own BVH** (median split over segment and face boxes) instead of `rstar` / `parry3d`: the candidate set is small per frame and one structure serves picking and snapping, so no extra crate. Picking with pixel tolerance at depth and occlusion (an edge of the face under the cursor stays visible at oblique angles). Inference kinds with explicit ranks (points > lines > faces): endpoint, midpoint, intersection (edges, guides, edge x guide), centre, on-edge, on-face, axis X/Y/Z from the start point, parallel / perpendicular to a remembered edge, from-point (alignment with a hovered point), on-guide, guide point, grid; axis and direction locks; length snapping to grid steps along a line inference |
+| WASM | `crates/wasm-api` | `pick`, `infer`, `outline`, `faces_json`, `edge_owners_json`; `DocState` carries sketches, groups, guides and dimensions. Release build 2,899,563 bytes (861,439 at gzip -9) |
+| Tests | `kernel/tests/{face_ids,erase,draw,annotations}.rs`, `inference/tests/infer.rs` | plus the fuzzer over every lane-3 op (50,000 sequences clean, `docs/DEVELOPMENT.md`) |
+
 ### Deliberate gaps (owned by later lanes)
 
-- Inference (BVH + rstar, pixel tolerance) and the draw tools' UI beyond Rect and Push/Pull: lane 3. A rectangle started on a face that crosses the face's edges is refused (imprint needs it strictly inside); lane 3 turns such strokes into `split_face` calls.
+- ~~Inference and the draw tools' UI~~ (closed in lane 3, above). Strokes crossing a face's edges are `split_face` cuts (lane-2 open question 1: yes).
+- Move / Copy / arrays, Rotate, Scale, Offset, Follow Me: lane 4. The VCB already parses angles and `x3` / `3x` / `*3` / `/4` and refuses them with a message until then.
+- Groups and components in the UI (enter / exit, outliner, tags pane): lane 5. The kernel has groups and tags; double-click calls the `enterGroup` hook.
 - Booleans on sliver geometry: Manifold's simplification can leave a triangle off its source plane; the kernel relabels it from a neighbour or refuses the op (typed). Differential tests run against npm `manifold-3d` (the C++ engine compiled to WASM); a native `manifold-csg` CI job is still open.
 - Tilted planes: positions are f64, so faces that should be coincident after a push on an off-axis plane can miss by 1e-16 m; the kernel snaps where it can (exact edge splits, prism base = the face's own vertices, push-through reach) and otherwise refuses rather than commit a sliver.
 - The `i_triangle` triangulation fallback, offsets (cavalier_contours), explicit boolean ops between objects in the UI, .shz save/load of the op log: their lanes.

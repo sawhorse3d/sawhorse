@@ -57,5 +57,9 @@ web-test:
 e2e:
     PW_CHANNEL="${PW_CHANNEL:-msedge}" REQUIRE_KERNEL=1 npx playwright test
 
+# The Phase-2 exit test alone (prints its time, volume and refusal tally).
+bookshelf:
+    PW_CHANNEL="${PW_CHANNEL:-msedge}" REQUIRE_KERNEL=1 npm run e2e:bookshelf
+
 # What CI runs, in order.
 ci: fmt-check clippy test check-wasm wasm build web-test

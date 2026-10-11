@@ -39,3 +39,9 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Who:** the lane-2 builder (Claude, Opus), kernel-core lane.
 - **What changed:** `PushPullError` -> `PushError`, `StickyError` -> `SketchError`, `RenderMesh` -> `ViewMesh`, `loop_half_edges` -> `half_edges_of_loop`; for consistency also `PushPullOutcome` -> `PushOutcome`, `render_mesh` -> `view_mesh`, and the `KernelError` variants `Sticky`/`PushPull` -> `Sketch`/`Push`. `git grep -E 'PushPullError|StickyError|RenderMesh|loop_half_edges'` now matches only this log.
 - **Read:** nothing from hew3d/hew or hew3d/openskp (source, docs or issues) was opened for the rename or for any lane-2 work.
+
+### 2026-10-11 — lane 3 (feel): nothing read
+- **Who:** the lane-3 builder (Claude), interaction lane: face ids, camera, selection and erase, inference, the Value Control Box, the draw tools, push/pull feel, tape, guides and dimensions.
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No design question needed them.
+- **SketchUp:** its public behaviour (keys, the push/pull gesture, typing mid-gesture, inference kinds, window vs crossing selection, guide lines from the tape) was described from memory as a user knows it. No SketchUp icon, UI string or layout was copied; the glyphs, wording and layout are the approved Sawhorse mock's, and the inference colours are ours (endpoint lime, midpoint teal, on-edge amber, on-face violet; the added kinds in magenta, blue, indigo, grey, tan and sage; see `docs/USER-GUIDE.md`).
+- **Check:** `git grep -i -E 'hew3d|\bhew\b|openskp'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002 (the MIT npm package and the rule itself).

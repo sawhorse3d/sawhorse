@@ -45,10 +45,27 @@ npx vitest run              # unit + component tests (jsdom)
 npm run build               # tsc + vite production build into dist/
 npm run build:all           # wasm + build (what Tauri's beforeBuildCommand runs)
 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test   # e2e on the installed Edge, no browser download
+PW_CHANNEL=msedge REQUIRE_KERNEL=1 npm run e2e:bookshelf # the Phase-2 exit test alone (`just bookshelf`)
 npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 ```
 
 `?theme=light` or `?theme=dark` on the URL forces a theme.
+
+### The e2e suites (lane 3)
+
+| Spec | What it drives |
+|---|---|
+| `e2e/shell.spec.ts` | lane-1/2 shell: Rect + Push/Pull through the kernel, undo/redo |
+| `e2e/navigation.spec.ts` | orbit/pan/zoom, standard views, projection toggle, Shift+Z, unit-aware grid |
+| `e2e/selection.spec.ts` | click, window vs crossing boxes, double-click, Delete and Erase through the kernel, Ctrl+A |
+| `e2e/inference.spec.ts` | our colours and tips (endpoint, midpoint, on-edge, on-face, grid), axis inference, arrow-key locks, exact values from inferred clicks (intersection, guide-point and the rest are hit in `tape` and `bookshelf`; every kind has a Rust test in `crates/inference/tests/infer.rs`) |
+| `e2e/vcb.spec.ts` | the typed-value grammar per tool, Esc, Ctrl+Z mid-entry, arrays refused until lane 4 |
+| `e2e/draw.spec.ts` | Line, Rect, Rotated Rect, Circle, Polygon, Arc, 3-Point Arc; a stroke across a face becomes `split_face` |
+| `e2e/push.spec.ts` | press-drag-release, click-move-click, typed mid-gesture, double-click repeat, Ctrl new face, push-through, typed refusals |
+| `e2e/tape.spec.ts` | Tape measure, guides from an edge, guide crossings as snaps, Dimension, erasing a guide |
+| `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, and prints its time and the refusal tally |
+
+The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
 
 Lane-end capture (every lane ends with one, saved beside the repo in `../_captures/`), with `npm run dev` running:
 
@@ -98,6 +115,7 @@ cd .. && wasm-pack build crates/wasm-api --target web --out-dir ../../src/wasm/p
 | Boolean differential | `crates/kernel/tests/booleans/cases.json` (26 cases) via `tests/booleans.rs` (hand-computed volume, area, shells, genus, faces) and `scripts/boolean-diff.mjs` (same cases, WASM kernel vs npm `manifold-3d` on identical operand meshes) | `cargo test`, `npm run boolean:diff` (CI) |
 | Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, undo/redo interleaved); every op checked for validity, typed refusals, unchanged state on refusal, undo/redo round trip, log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
 | Repro replay | `crates/kernel/tests/repro/*.json` via `tests/repro.rs` | `cargo test` |
+| Inference | `crates/inference/tests/infer.rs` (every inference kind, ranks, pixel tolerance at depth, occlusion incl. oblique views of the face under the cursor, locks, length snapping, from-point memory, guides) and the TS tool tests in `src/tools/*.test.ts` (each tool against a fake host) | `cargo test`, `npx vitest run` |
 | Golden hashes | `crates/kernel/tests/golden/*.json` (document op logs, undo/redo included) via `tests/golden.rs` and `scripts/golden-wasm.mjs` | `cargo test`, `npm run golden:wasm` |
 | cargo-fuzz | `crates/kernel/fuzz` (own workspace, nightly + libFuzzer) | `cd crates/kernel && cargo +nightly fuzz run op_sequence` (Linux/WSL) |
 
@@ -109,10 +127,13 @@ Fuzzer knobs (all forwarded into WSL by `scripts/cargo.sh`): `FUZZ_CASES` (count
 wsl.exe bash -lc 'cd /mnt$HOME/Desktop/sawhorse/app/crates && . ../scripts/env.sh && for s in 1 2 3 4 5 6 7 8; do FUZZ_CASES=6250 FUZZ_SEED=$s cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture > /tmp/fuzz$s.log 2>&1 & done; wait; grep -h long_fuzz_seed /tmp/fuzz*.log'
 ```
 
+Run that from PowerShell or cmd. From Git Bash, put the loop in a script file and run `MSYS_NO_PATHCONV=1 wsl.exe bash /mnt/c/.../fuzz8.sh`: Git Bash rewrites `/mnt/...` arguments into Windows paths and can mangle `$s` in an inline `bash -lc` string, which silently runs all eight shards on one seed into one log (seen in lane 3). With `FUZZ_REPORT=1` the report also prints `boolean-path refusals (not a valid solid): N`, the typed refusal the lane reports quote.
+
 ### Fuzz record
 
 | Date | Run | Result |
 |---|---|---|
+| 2026-10-11 (lane 3) | eight shards of `FUZZ_CASES=6250`, `FUZZ_SEED=20261012..20261019`, debug build, WSL Ubuntu 24.04, parallel | **50,000 sequences clean** in 64 s wall: 720,677 ops accepted, 604,336 refused (typed), 32,268 solids at the end. The fuzzer now also drives lane 3's ops: draw (29,858 accepted), push_pull_new_face (14,938), add_guide / erase_guide / delete_guides, add_dimension / erase_dimension, erase_edge (2,022), erase_face (2,439), erase_region (9,247), batch (4,247). Boolean-path refusals (`not a valid solid`, near-coincident geometry on tilted planes): 291 of 61,102 accepted push/pulls, about 0.5%, unchanged from lane 2. |
 | 2026-10-11 (lane 2) | `FUZZ_CASES=50000 FUZZ_SEED=20261011`, debug build (validator after every mutation), WSL Ubuntu 24.04, one process | **50,000 sequences clean** in 266.7 s: 803,893 ops accepted, 517,228 refused (typed), 40,677 solids at the end. Accepted per kind: add_rectangle 147,426; insert_segment 118,657; undo 90,323; extrude 79,612; push_pull 66,949; split_face 48,214; imprint 37,363; set_tag_visible 30,960; erase_segment 29,362; new_sketch 26,676; add_polyline 25,785; set_tag 16,537; delete_object 16,408; create_group 10,951; redo 8,670. |
 | 2026-10-11 (lane 2) | `FUZZ_CASES=20000 FUZZ_SEED=7`, second shard after the fixes | **20,000 sequences clean** in 111.0 s: 322,825 ops accepted, 207,562 refused. 128 push/pulls were typed boolean-path refusals (`the result is not a valid solid`: near-coincident geometry on tilted planes), about 0.5% of accepted push/pulls. |
 | 2026-10-11 (lane 2) | seed 20261011, earlier attempts | Five kernel bugs found and fixed before the clean run, each kept as a repro in `crates/kernel/tests/repro/`: an inside-out solid accepted from the topological push path (`2026-10-11-push-inverts-thin-wedge`); duplicate sketch edges when two crossings merged next to a shared vertex (`-sketch-near-coincident-crossings`); a zero-thickness fin from a boolean on a split vertex 1e-17 m off its plane (`-split-vertex-off-plane-fin`); a cut grazing a hole corner by 1e-16 m (`-split-grazes-hole-corner`); a crossing landing within the merge distance of an unrelated short edge (`-sketch-crossing-cluster`). |

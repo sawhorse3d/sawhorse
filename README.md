@@ -2,7 +2,7 @@
 
 A free, local-first, open-source push/pull 3D modeler for woodworkers and makers. Draw a rectangle, push it up, type `3/4` and press Enter. Sawhorse keeps the keys your hands already know, adds a built-in cut list, exports watertight files for printing and CNC, and runs in a browser tab with nothing to install, or as a desktop app.
 
-**Status: pre-alpha.** Lane 1 (foundations) is done: the app shell from the approved design, the geometry kernel's data model and test machinery, and an end-to-end path from a typed value through the Rust kernel (compiled to WebAssembly) to the 3D view. Drawing tools, real push/pull on any face, inference snapping, groups, the cut list and file import/export land over the next lanes.
+**Status: pre-alpha.** Lanes 1 to 3 are done: the app shell from the approved design; a robust geometry kernel (sketches, push/pull on any face, booleans, undo) compiled to WebAssembly; and the feel: navigation, selection, inference snapping, typed values, Line / Rectangle / Circle / Polygon / Arc, Push/Pull, Tape with guides, and Dimension. You can model a bookshelf with dados by hand. Move / Rotate / Scale / Offset / Follow Me, groups and components, the cut list and file import/export land over the next lanes.
 
 ## Run the browser build
 
@@ -14,7 +14,7 @@ npm run wasm      # build the kernel to WebAssembly
 npm run dev       # open http://localhost:5173
 ```
 
-Try it: press `P` (Push/Pull), type `3/4`, press Enter, and the kernel rebuilds the board 3/4 in thick. Press `R`, type `36,12`, Enter, and the rectangle changes. Click the unit label in the bottom bar to switch between fractional inches, decimal inches, ft-in, mm, cm and m; a typed suffix (`19mm`, `2'6"`) always wins. Middle-drag orbits, right-drag pans, the wheel zooms.
+Try it: press `R` (Rectangle), type `36, 12` and press Enter; press `P` (Push/Pull), type `3/4` and press Enter: a board. Click the unit label in the bottom bar to switch between fractional inches, decimal inches, ft-in, mm, cm and m; a typed suffix (`19mm`, `2'6"`) always wins. Middle-drag orbits, right-drag pans, the wheel zooms. The ten-minute tour, every key and the inference colours: [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
 
 A production build: `npm run build:all` (kernel + site into `dist/`, servable from any static host).
 
@@ -25,11 +25,11 @@ A production build: `npm run build:all` (kernel + site into `dist/`, servable fr
 | `src/` | React 18 + TypeScript + three.js front end (the same build runs in the browser and in Tauri) |
 | `crates/kernel` | Half-edge B-rep with hole loops, sketches, extrude, push/pull, topology validator, transactional ops |
 | `crates/tessellate` | Triangulation with holes (earcut) and 2D polygon booleans (i_overlay) |
-| `crates/inference` | Inference vocabulary and snapping (grows in the inference lane) |
+| `crates/inference` | Picking and inference snapping: own BVH, pixel tolerance at depth, occlusion, ranked inference kinds, locks |
 | `crates/export` | Watertight-only binary STL and 3MF |
 | `crates/wasm-api` | wasm-bindgen surface the front end's kernel worker loads |
 | `src-tauri/` | Tauri 2 desktop shell |
-| `docs/` | `DECISIONS.md` (index) and `adr/`, `DEVELOPMENT.md`, `CLEANROOM.md`, the approved UI mock |
+| `docs/` | `USER-GUIDE.md`, `DECISIONS.md` (index) and `adr/`, `DEVELOPMENT.md`, `CLEANROOM.md`, the approved UI mock |
 
 ## Tests
 

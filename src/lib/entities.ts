@@ -153,7 +153,7 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
         if (!s) return "That sketch no longer exists.";
         return { op: "erase_segment", sketch: s.id, a: toSketch(s, e.a), b: toSketch(s, e.b) };
       }
-      return "Guides are erased from the Tape tool's guide list.";
+      return "Erase the guide itself, or use Edit > Delete Guides.";
     }
     case "vertex":
       return "A point goes with its edges: erase an edge instead.";

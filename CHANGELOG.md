@@ -25,3 +25,61 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 - Persistent document in the kernel worker: op log, undo/redo (200 steps), groups, tags, delete; Ctrl+Z / Ctrl+Y in the app; Rect draws on the ground or imprints on a face; Push/Pull acts on the clicked face or region. OBJ export.
 - Tests: sketch / face / push property tests, 26-case boolean differential (kernel vs npm manifold-3d vs hand-computed, `npm run boolean:diff`), 13 golden logs (WASM == native), an op-sequence fuzzer over every op with undo/redo interleaved (50,000 sequences clean in WSL), lane-end captures in `../_captures/2026-10-11-lane02-*.png`.
 - Renamed identifiers that sat close to a copyleft project's names (see `docs/CLEANROOM.md`).
+
+### Added (lane 3, feel, 2026-10-11)
+
+- Persistent face ids. They survive push/pull, split, merge and booleans, and ops, view-mesh parts and the model hash (format v3) use them. Golden and repro logs were migrated.
+- Navigation:
+  - Middle-drag orbits, Shift+middle or right drag pans, and the wheel zooms to the cursor.
+  - The Iso / Top / Front / Right / Persp views and a parallel / perspective toggle.
+  - Shift+Z zooms to the extents. Auto-fit only ever zooms out.
+  - The grid follows the units (1 in and 1 ft, or 10 mm and 100 mm). The negative axes are dashed.
+- Selection and erasing:
+  - Select: hover highlight; click, Shift adds, Ctrl toggles; window and crossing boxes; double-click selects the solid; Ctrl+A.
+  - Delete and the Erase tool go through the kernel. Edges drawn on a face, imprinted faces, sketch regions, guides and dimensions erase. Structural edges are refused with the reason. A multi-erase is one undo step.
+- The inference engine, in Rust (`crates/inference`):
+  - Our own BVH for picking.
+  - Pixel tolerance at depth, and occlusion.
+  - Ranked inference kinds: endpoint, midpoint, intersection, centre, on edge, on face, the three axes, parallel and perpendicular, from point, on guide, guide point, and grid.
+  - Locks with the arrow keys and Shift. Length snapping to grid steps.
+  - Our colours (lime, teal, amber, violet, plus magenta, blue, indigo, grey, tan and sage).
+- The Value Control Box has one grammar for every tool:
+  - Fractions, ft-in and metric.
+  - `w, d` for sizes, `24s` for segments and `12r` for radii.
+  - Angles and the array forms are reserved for lane 4.
+  - Focus rules, Esc, and Ctrl+Z mid-entry.
+- Draw tools, all on sketch planes and on solids' faces:
+  - Line, Rectangle, Rotated Rectangle, Circle, Polygon, Arc and 3-Point Arc.
+  - A closed shape inside a face imprints.
+  - A stroke crossing a face's edges becomes `split_face` cuts, so a dado strip across a board is one step.
+  - A shape reaching off a solid starts a new sketch on that plane.
+  - A Rectangle started on a corner, an edge or the grid takes its plane from the cursor.
+- Push/Pull:
+  - Press-drag-release with a live preview, or click-move-click.
+  - Typed distances mid-gesture or after the gesture.
+  - Double-click repeats the last distance.
+  - Ctrl pulls out a new face and leaves a seam.
+  - Snaps to other geometry's points along the face normal.
+  - Refusals show typed in the status line.
+- Tape and Dimension:
+  - Tape measures between points, places guide lines parallel to an edge at a typed or clicked offset, and drops guide points.
+  - Guides snap, including where they cross edges. Edit > Delete Guides clears them.
+  - The Dimension tool adds linear dimensions.
+  - Guides and dimensions are kernel annotations, so undo covers them.
+- Tests:
+  - Rust inference tests.
+  - Kernel tests for face ids, erase, draw and annotations.
+  - Vitest suites for each tool against a fake host.
+  - Eight new Playwright specs.
+  - The Phase-2 exit test, `e2e/bookshelf.spec.ts`: a 36 x 72 x 11 1/4 in bookshelf with dados, 8 watertight solids, 2,761.03125 in^3, 0 refusals, about 10 s. It runs alone with `npm run e2e:bookshelf`.
+  - The op-sequence fuzzer covers every new op: 50,000 sequences clean, with boolean-path refusals now counted in the report.
+- Docs: `docs/USER-GUIDE.md`, a first-ten-minutes tour with every key and the inference colours.
+
+### Changed (lane 3)
+
+- CI: `actions/checkout@v5` and `actions/setup-node@v5`. The `rust` and `web` jobs are pinned to `ubuntu-24.04`; `tauri-check` stays on 22.04.
+- The coarse lane-1 hover inference was removed; the viewport asks the kernel.
+
+### Fixed (lane 3)
+
+- An edge of the face under the cursor was hidden by that same face at oblique view angles, so a corner could not be snapped there. Found during the bookshelf built by hand.

@@ -4,9 +4,9 @@ The seed record of 2026-10-11 has been split into one file per decision under `d
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](adr/0001-kernel.md) | Geometry kernel: pure-Rust half-edge B-rep with hole loops, sketch + object tiers, compiled to WASM, robustness machinery first | Accepted; lane 1 built the data model, validator, transactions, extrude, push/pull "extend", tests; day-1 spike passed with nothing dropped |
+| [0001](adr/0001-kernel.md) | Geometry kernel: pure-Rust half-edge B-rep with hole loops, sketch + object tiers, compiled to WASM, robustness machinery first | Accepted; lane 1 built the data model, validator, transactions, extrude, push/pull "extend", tests; day-1 spike passed with nothing dropped; lane 2 the kernel core; lane 3 face ids, erase, draw-on-anything, annotations and the inference crate (own BVH) |
 | [0002](adr/0002-formats.md) | File formats: open `.shz`, `.skp` via npm `openskp` (MIT), watertight STL/3MF/GLB/DXF/SVG | Accepted; STL and 3MF exporters exist; `.skp` export pending the attorney read |
-| [0003](adr/0003-ui-shell.md) | UI shell: exactly the approved mock, SketchUp-2017 keys, our glyphs and inference colours, Tauri 2 + Vite + React + three.js | Accepted; shell built in lane 1 |
+| [0003](adr/0003-ui-shell.md) | UI shell: exactly the approved mock, SketchUp-2017 keys, our glyphs and inference colours, Tauri 2 + Vite + React + three.js | Accepted; shell built in lane 1; navigation, selection, inference, VCB grammar and the draw / push / tape tools in lane 3 |
 | [0004](adr/0004-credits.md) | Credits and render service: no accounts, device keys, Stripe packs, server-side keys only | Accepted; not started (credit-store lane) |
 
 New decisions get the next number (`docs/adr/0005-*.md`) with Status, Context, Decision, Consequences.
@@ -32,7 +32,7 @@ Findings that change how we work (details in `docs/DEVELOPMENT.md`):
 - **On Windows without MSVC, `cargo check` itself fails**, not just linking final binaries: build scripts and proc-macros (serde_derive, thiserror, wasm-bindgen-macro) are host executables that need `link.exe`. Git Bash's `/usr/bin/link` shadows the name and fails with "extra operand". So every Rust command (check, test, clippy, fmt, wasm-pack) runs in WSL Ubuntu; `scripts/cargo.sh` and `scripts/build-wasm.mjs` forward automatically.
 - The `crates/` workspace excludes `src-tauri/` (it has its own `[workspace]`), so the wasm32 check never sees Tauri.
 - `manifold-rust` imports a MeshGL64 with per-triangle `face_id` and returns it through booleans, which is the hook ADR-0001's re-polygonise step needs. Verified by `kernel::boolean` tests (difference / union / intersection volumes and face-id provenance).
-- Native and WASM kernels hash every golden op sequence identically (`npm run golden:wasm`; six in lane 1, 13 after lane 2).
+- Native and WASM kernels hash every golden op sequence identically (`npm run golden:wasm`; six in lane 1, 13 after lane 2, hash format v3 since lane 3's face ids).
 
 ## Build rules (from CLAUDE.md, applied here)
 

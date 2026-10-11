@@ -546,6 +546,18 @@ impl Tally {
 "
             );
         }
+        // The boolean path's typed refusal (near-coincident geometry, mostly on tilted
+        // planes) is tracked by name: the lane reports quote it.
+        let boolean: usize = self
+            .reasons
+            .iter()
+            .filter(|(r, _)| r.contains("not a valid solid"))
+            .map(|(_, n)| n)
+            .sum();
+        out += &format!(
+            "  boolean-path refusals (not a valid solid): {boolean}
+"
+        );
         let mut top: Vec<(&String, &usize)> = self.reasons.iter().collect();
         top.sort_by(|a, b| b.1.cmp(a.1));
         out += "  top refusals:

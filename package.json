@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:bookshelf": "playwright test e2e/bookshelf.spec.ts --reporter=line",
     "tauri": "tauri",
     "check:tauri": "node scripts/check-tauri-version.mjs",
     "boolean:diff": "node scripts/boolean-diff.mjs"

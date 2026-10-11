@@ -5,7 +5,7 @@
 //   24,12   24, 12   600mm,300mm             two lengths (rectangles: width, depth)
 //   48s                                      a count: circle / arc segments, polygon sides
 //   12r                                      an arc radius
-//   30°   30deg                              an angle (rotated rectangle)
+//   30°   30deg                              an angle, reserved for Rotate (lane 4)
 //   x3   3x   *3                             copies: an array, reserved for Move (lane 4)
 //   /4                                       divide: an array, reserved for Move (lane 4)
 //
