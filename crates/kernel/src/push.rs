@@ -62,7 +62,7 @@ fn face_area(p: &Polys, fi: usize, plane: &Plane) -> f64 {
 
 /// The prism swept by face `fi` over `d` along its normal, as a closed `Polys` whose base
 /// vertices are exactly the face's vertices (so the engine sees exact coincidence).
-pub(crate) fn prism(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Polys {
+pub fn prism(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Polys {
     let rings = face_rings(p, fi);
     let mut points = Vec::new();
     let mut base: Vec<Vec<usize>> = Vec::new();
@@ -141,7 +141,7 @@ fn collapses(p: &Polys, fi: usize, plane: &Plane, d: f64) -> bool {
 
 /// The topological push/pull candidate (see the module docs), or `None` when the face's
 /// neighbourhood cannot take it (the caller then uses the boolean path).
-pub(crate) fn topological(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Option<Polys> {
+pub fn topological(p: &Polys, fi: usize, plane: &Plane, d: f64) -> Option<Polys> {
     let n = plane.normal;
     let rings = face_rings(p, fi);
     let fverts: BTreeSet<usize> = rings.iter().flatten().copied().collect();
@@ -322,7 +322,7 @@ pub(crate) fn push_pull(
         && let Ok(cand) = accept(&q, Some(1))
     {
         let expect = obj.volume() + face_area(&p, fi, &plane) * d;
-        if (cand.volume() - expect).abs() <= 1e-9 * expect.abs().max(1.0) {
+        if expect > 0.0 && (cand.volume() - expect).abs() <= 1e-9 * expect.abs().max(1.0) {
             return Ok((PushOutcome::Moved, Some(cand)));
         }
     }

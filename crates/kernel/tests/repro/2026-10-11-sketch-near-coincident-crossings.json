@@ -1,0 +1,54 @@
+{
+  "name": "2026-10-11-sketch-near-coincident-crossings",
+  "error": "fuzz (lane 2): a stroke 1.6e-5 m from a crossing vertex cut two of its edges within POINT_MERGE of each other; merging both crossings into one vertex duplicated the edge back to the crossing vertex. Fixed in Sketch::add_segment (re-route, keep one copy). Original: op 2 AddPolyline { sketch: 1, points: [[1.0, -1.25], [-0.25, 1.0], [0.25, 0.250004], [0.0, 0.25]], closed: false } panicked: sketch invalid after insert: duplicate sketch edge",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "insert_segment",
+      "sketch": 1,
+      "a": [
+        0.250004,
+        0
+      ],
+      "b": [
+        0.000001,
+        0.75
+      ]
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          1,
+          -1.25
+        ],
+        [
+          -0.25,
+          1
+        ],
+        [
+          0.25,
+          0.250004
+        ],
+        [
+          0,
+          0.25
+        ]
+      ],
+      "closed": false
+    }
+  ]
+}

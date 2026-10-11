@@ -1,0 +1,190 @@
+{
+  "name": "2026-10-11-split-vertex-off-plane-fin",
+  "error": "fuzz (lane 2, 50k run): glam lerp (a(1-t)+bt) put a split vertex 1e-17 m off an axis plane; a later push-through met that face near-coincidentally and the boolean left a zero-thickness fin that every per-feature check missed (all its vertices were shared). Fixed: exact edge splits (a+(b-a)t), plus chord and coplanar-overlap checks in intersect.rs. Original: op 12 SplitFace { object: 1, face: 2, path: [[0.350004, 0.19482421875, 0.0], [0.350004, 0.25, 0.0890625]] }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(EdgeThroughFace { edge: (19, 20), face: 5 })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.250004,
+      "y": 0,
+      "w": 0.1,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.1
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 4,
+      "path": [
+        [
+          0.350004,
+          0.25,
+          0.08750000000000001
+        ],
+        [
+          0.250004,
+          0.25,
+          0.037500000000000006
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 6,
+      "distance": -0.25
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 0,
+      "path": [
+        [
+          0.350004,
+          0.21875,
+          0
+        ],
+        [
+          0.33750399999999997,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 0,
+      "path": [
+        [
+          0.350004,
+          0.19140625,
+          0
+        ],
+        [
+          0.34844149999999996,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 2,
+      "points": [
+        [
+          0.350004,
+          0.03749999999999999,
+          0.015
+        ],
+        [
+          0.350004,
+          0.04999999999999999,
+          0.015
+        ],
+        [
+          0.350004,
+          0.04999999999999999,
+          0.02
+        ],
+        [
+          0.350004,
+          0.03749999999999999,
+          0.02
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 4,
+      "path": [
+        [
+          0.250004,
+          0,
+          0.004687500000000001
+        ],
+        [
+          0.250004,
+          0.03125,
+          0.037500000000000006
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 2,
+      "path": [
+        [
+          0.350004,
+          0.19482421875,
+          0
+        ],
+        [
+          0.350004,
+          0.25,
+          0.0890625
+        ]
+      ]
+    }
+  ]
+}

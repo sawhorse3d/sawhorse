@@ -65,6 +65,8 @@ pub enum Violation {
     SelfIntersectingFace(FaceId),
     /// The solid's boundary crosses or touches itself away from shared edges/vertices.
     SelfIntersectingSolid(crate::intersect::SelfHit),
+    /// The solid encloses no positive volume (it is inside out, or flat).
+    NonPositiveVolume(f64),
     SketchInvalid(String),
     EulerOdd {
         shell: usize,

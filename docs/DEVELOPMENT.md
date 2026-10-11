@@ -67,9 +67,10 @@ bash scripts/cargo.sh check --workspace --target wasm32-unknown-unknown   # day-
 bash scripts/cargo.sh test --workspace                                     # all tests (debug: validator after every mutation)
 bash scripts/cargo.sh clippy --workspace --all-targets -- -D warnings
 bash scripts/cargo.sh fmt --all                                            # rustfmt (not installed on Windows)
-FUZZ_CASES=50000 bash scripts/cargo.sh test -p sawhorse-kernel --test sequences -- --ignored long_fuzz
+FUZZ_CASES=50000 FUZZ_SEED=20261011 FUZZ_REPORT=1 bash scripts/cargo.sh test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture
 UPDATE_GOLDEN=1 bash scripts/cargo.sh test -p sawhorse-kernel --test golden # accept an intended hash change; review the diff
 npm run golden:wasm                                                        # after npm run wasm: WASM hashes == native goldens
+npm run boolean:diff                                                       # after npm run wasm: 26 boolean cases, kernel == npm manifold-3d == hand-computed
 ```
 
 The same through `just`: `just check-wasm`, `just test`, `just clippy`, `just fmt`, `just fuzz-long`, `just golden-update`, `just wasm`, `just e2e`, `just ci`.
@@ -92,13 +93,30 @@ cd .. && wasm-pack build crates/wasm-api --target web --out-dir ../../src/wasm/p
 |---|---|---|
 | Validator after every B-rep and sketch mutation | `Brep::debug_validate`, `Sketch::check` | every debug build (tests) |
 | Validate before commit | `Model::apply` (clone, mutate, validate, commit) | always |
-| Property invariants | `crates/kernel/tests/invariants.rs` | `cargo test` |
-| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs` (`quick_fuzz` 384 sequences; `long_fuzz` ignored) | `cargo test`; CI runs 10,000 |
+| Global self-intersection (edges through faces, chords, vertex/edge contact, coplanar overlap) and positive volume | `kernel/src/intersect.rs`, `Object::validate` | every commit |
+| Property invariants | `crates/kernel/tests/invariants.rs` (extrude, push/pull inverse), `sketch_props.rs` (insertion order independence, simple region boundaries, split-then-erase identity), `face_props.rs` (split/imprint then merge identity, transactional refusals), `push.rs` (every push/pull path, volume/area/Euler) | `cargo test` |
+| Boolean differential | `crates/kernel/tests/booleans/cases.json` (26 cases) via `tests/booleans.rs` (hand-computed volume, area, shells, genus, faces) and `scripts/boolean-diff.mjs` (same cases, WASM kernel vs npm `manifold-3d` on identical operand meshes) | `cargo test`, `npm run boolean:diff` (CI) |
+| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, undo/redo interleaved); every op checked for validity, typed refusals, unchanged state on refusal, undo/redo round trip, log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
 | Repro replay | `crates/kernel/tests/repro/*.json` via `tests/repro.rs` | `cargo test` |
-| Golden hashes | `crates/kernel/tests/golden/*.json` via `tests/golden.rs` and `scripts/golden-wasm.mjs` | `cargo test`, `npm run golden:wasm` |
+| Golden hashes | `crates/kernel/tests/golden/*.json` (document op logs, undo/redo included) via `tests/golden.rs` and `scripts/golden-wasm.mjs` | `cargo test`, `npm run golden:wasm` |
 | cargo-fuzz | `crates/kernel/fuzz` (own workspace, nightly + libFuzzer) | `cd crates/kernel && cargo +nightly fuzz run op_sequence` (Linux/WSL) |
 
-When the fuzzer fails it writes the shrunk sequence to `crates/kernel/tests/repro/pending-<test>.json`. Rename it, fix the kernel, commit both; see `crates/kernel/tests/repro/README.md`.
+When the fuzzer fails it writes the shrunk sequence to `crates/kernel/tests/repro/pending-<test>.json` (a panic while resolving intents is captured too). Rename it, fix the kernel, commit both; see `crates/kernel/tests/repro/README.md`.
+
+Fuzzer knobs (all forwarded into WSL by `scripts/cargo.sh`): `FUZZ_CASES` (count), `FUZZ_SEED` (deterministic shard seed; the repro is then `pending-long_fuzz_seed<N>.json`), `FUZZ_REPORT=1` (per-op accepted/refused table and the top refusal reasons). Shards run in parallel from WSL, e.g. eight of 6,250:
+
+```bash
+wsl.exe bash -lc 'cd /mnt$HOME/Desktop/sawhorse/app/crates && . ../scripts/env.sh && for s in 1 2 3 4 5 6 7 8; do FUZZ_CASES=6250 FUZZ_SEED=$s cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture > /tmp/fuzz$s.log 2>&1 & done; wait; grep -h long_fuzz_seed /tmp/fuzz*.log'
+```
+
+### Fuzz record
+
+| Date | Run | Result |
+|---|---|---|
+| 2026-10-11 (lane 2) | `FUZZ_CASES=50000 FUZZ_SEED=20261011`, debug build (validator after every mutation), WSL Ubuntu 24.04, one process | **50,000 sequences clean** in 266.7 s: 803,893 ops accepted, 517,228 refused (typed), 40,677 solids at the end. Accepted per kind: add_rectangle 147,426; insert_segment 118,657; undo 90,323; extrude 79,612; push_pull 66,949; split_face 48,214; imprint 37,363; set_tag_visible 30,960; erase_segment 29,362; new_sketch 26,676; add_polyline 25,785; set_tag 16,537; delete_object 16,408; create_group 10,951; redo 8,670. |
+| 2026-10-11 (lane 2) | `FUZZ_CASES=20000 FUZZ_SEED=7`, second shard after the fixes | **20,000 sequences clean** in 111.0 s: 322,825 ops accepted, 207,562 refused. 128 push/pulls were typed boolean-path refusals (`the result is not a valid solid`: near-coincident geometry on tilted planes), about 0.5% of accepted push/pulls. |
+| 2026-10-11 (lane 2) | seed 20261011, earlier attempts | Five kernel bugs found and fixed before the clean run, each kept as a repro in `crates/kernel/tests/repro/`: an inside-out solid accepted from the topological push path (`2026-10-11-push-inverts-thin-wedge`); duplicate sketch edges when two crossings merged next to a shared vertex (`-sketch-near-coincident-crossings`); a zero-thickness fin from a boolean on a split vertex 1e-17 m off its plane (`-split-vertex-off-plane-fin`); a cut grazing a hole corner by 1e-16 m (`-split-grazes-hole-corner`); a crossing landing within the merge distance of an unrelated short edge (`-sketch-crossing-cluster`). |
+
 
 ## Desktop (Tauri 2)
 

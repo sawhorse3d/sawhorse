@@ -15,6 +15,11 @@
 //!    face it does not belong to.
 //! 3. **Edge on edge** (tolerance): edges that share no vertex must stay more than
 //!    `POINT_MERGE` apart.
+//! 4. **Face on face**: two faces in one plane must not overlap in area (a zero-thickness
+//!    fin can share every vertex and edge with its twin, so 1 to 3 cannot see it).
+//!
+//! An edge with both ends on a face that is not one of the face's edges (a chord) is tested
+//! along its interior in check 1.
 //!
 //! Exact predicates alone would flag the 1e-16 m wobble of a vertex inserted on an edge
 //! (an f64 point is rarely exactly on a tilted line); working on B-rep features with the
@@ -165,12 +170,21 @@ pub enum SelfHit {
         a: (usize, usize),
         b: (usize, usize),
     },
+    /// Two faces lie in one plane and overlap (a zero-thickness fin, or a double cover).
+    FacesOverlap {
+        a: usize,
+        b: usize,
+    },
 }
 
 struct FaceData {
     verts: BTreeSet<usize>,
+    /// The face's own edges (sorted vertex pairs).
+    edges: BTreeSet<(usize, usize)>,
     tris: Vec<[DVec3; 3]>,
     rings2: Vec<Vec<DVec2>>,
+    /// Rings as vertex ordinals.
+    rings3: Vec<Vec<usize>>,
     plane: crate::plane::Plane,
     lo: DVec3,
     hi: DVec3,
@@ -214,8 +228,21 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
         let hi = flat
             .iter()
             .fold(DVec3::splat(f64::NEG_INFINITY), |m, &i| m.max(pos[i]));
+        let own_edges = loops
+            .iter()
+            .flat_map(|l| {
+                (0..l.len()).map(move |k| {
+                    (
+                        l[k].min(l[(k + 1) % l.len()]),
+                        l[k].max(l[(k + 1) % l.len()]),
+                    )
+                })
+            })
+            .collect();
         faces.push(FaceData {
             verts: flat.iter().copied().collect(),
+            edges: own_edges,
+            rings3: loops.clone(),
             tris,
             rings2,
             plane: f.plane,
@@ -242,7 +269,17 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
             }
             let (si, sj) = (f.verts.contains(&i), f.verts.contains(&j));
             let (a, z) = match (si, sj) {
-                (true, true) => continue,
+                // One of the face's own edges.
+                (true, true) if f.edges.contains(&(i.min(j), i.max(j))) => continue,
+                // Both ends on the face but not its edge: a chord. Only its interior counts.
+                (true, true) => {
+                    let len = p.distance(q);
+                    if len <= 2.0 * POINT_MERGE {
+                        continue;
+                    }
+                    let step = (q - p) * (POINT_MERGE / len);
+                    (p + step, q - step)
+                }
                 (false, false) => (p, q),
                 (true, false) | (false, true) => {
                     let (from, to) = if si { (p, q) } else { (q, p) };
@@ -291,6 +328,37 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
                     vertex: vi,
                     face: fi,
                 });
+            }
+        }
+    }
+
+    // 4. Faces in one plane must not overlap (their own vertices and edges can all be
+    //    shared, so checks 1 to 3 cannot see a zero-thickness fin).
+    for a in 0..faces.len() {
+        for b in a + 1..faces.len() {
+            let (fa, fb) = (&faces[a], &faces[b]);
+            if !overlap(fa.lo, fa.hi, fb.lo, fb.hi, POINT_MERGE)
+                || fa.plane.normal.dot(fb.plane.normal).abs() < 1.0 - 1e-9
+                || fb
+                    .verts
+                    .iter()
+                    .any(|&v| fa.plane.signed_distance(pos[v]).abs() > POINT_MERGE)
+            {
+                continue;
+            }
+            let contours = |f: &FaceData| -> Vec<Vec<[f64; 2]>> {
+                f.rings3
+                    .iter()
+                    .map(|r| {
+                        r.iter()
+                            .map(|&v| fa.plane.to_local(pos[v]).to_array())
+                            .collect()
+                    })
+                    .collect()
+            };
+            let shared = sawhorse_tessellate::overlay::intersection(&contours(fa), &contours(fb));
+            if sawhorse_tessellate::overlay::area(&shared) > crate::tolerance::AREA_EPS {
+                return Some(SelfHit::FacesOverlap { a, b });
             }
         }
     }
@@ -422,6 +490,52 @@ mod tests {
             None,
             "containment is not a boundary contact"
         );
+    }
+
+    #[test]
+    fn a_zero_thickness_fin_is_caught() {
+        // The wedge a near-coincident boolean once produced (fuzz, 2026-10-11): the +x wall
+        // (face 2) still covers a triangle that face 5 covers again, facing -x. Every vertex
+        // of face 5 is a vertex of face 2, so checks 1 to 3 as first written missed it; the
+        // chord rule (edge 4-6 runs across face 2) catches it, and the coplanar-overlap
+        // check is the backstop for fins whose edges are all shared.
+        let p = |x: f64, y: f64, z: f64| v(x, y, z);
+        let points = vec![
+            p(0.25, 0.0, 0.0),
+            p(0.25, 0.25, 0.0),
+            p(0.35, 0.25, 0.0),
+            p(0.35, 0.0, 0.0),
+            p(0.35, 0.0, 0.0875),
+            p(0.25, 0.0, 0.0375),
+            p(0.35, 0.25, 0.0875),
+            p(0.35, 0.25, 0.1),
+            p(0.25, 0.25, 0.0375),
+        ];
+        let f = |r: &[usize]| PolyFace::new(r.to_vec(), vec![]);
+        let polys = Polys {
+            points,
+            faces: vec![
+                f(&[0, 1, 2, 3]),
+                f(&[0, 3, 4, 5]),
+                f(&[3, 2, 6, 7, 4]),
+                f(&[1, 8, 6, 2]),
+                f(&[0, 5, 8, 1]),
+                f(&[4, 7, 6]),
+                f(&[5, 4, 6, 8]),
+            ],
+            user_edges: Default::default(),
+        };
+        let b = Brep::build(&polys).expect("the fin is a closed half-edge structure");
+        assert!(crate::validate::validate(&b).unwrap().watertight);
+        assert!(matches!(
+            self_intersection_detail(&b),
+            Some(
+                SelfHit::EdgeThroughFace {
+                    edge: (4, 6),
+                    face: 2
+                } | SelfHit::FacesOverlap { .. }
+            )
+        ));
     }
 
     #[test]

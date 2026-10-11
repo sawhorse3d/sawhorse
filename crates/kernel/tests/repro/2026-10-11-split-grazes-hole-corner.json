@@ -1,0 +1,156 @@
+{
+  "name": "2026-10-11-split-grazes-hole-corner",
+  "error": "fuzz (lane 2, 50k run): a split_face cut passed within 1e-16 m of an imprinted hole corner; the exact crossing tests said no contact and the validator then caught a vertex on the new face (bug, rolled back). Fixed: split_face and imprint keep every other boundary vertex more than POINT_MERGE from the path (typed CrossesBoundary). Original: op 9 SplitFace { object: 1, face: 4, path: [[-0.5, 1.0, -0.23971508262411798], [0.0, 1.25, -1.678005578368826]] }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(VertexOnFace { vertex: 7, face: 7 })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          -0.5,
+          1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          1.25
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "insert_segment",
+      "sketch": 1,
+      "a": [
+        1,
+        0
+      ],
+      "b": [
+        0,
+        0
+      ]
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": -1.9177206609929438
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 4,
+      "points": [
+        [
+          -0.275,
+          1.1125,
+          -0.6712022313475302
+        ],
+        [
+          -0.35000000000000003,
+          1.075,
+          -0.6712022313475302
+        ],
+        [
+          -0.35000000000000003,
+          1.075,
+          -0.5753161982978829
+        ],
+        [
+          -0.275,
+          1.1125,
+          -0.5753161982978829
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 3,
+      "path": [
+        [
+          0,
+          1,
+          -0.23971508262411798
+        ],
+        [
+          0,
+          1.21875,
+          0
+        ]
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 4,
+      "path": [
+        [
+          -0.5,
+          1,
+          -0.23971508262411798
+        ],
+        [
+          0,
+          1.25,
+          -1.678005578368826
+        ]
+      ]
+    }
+  ]
+}

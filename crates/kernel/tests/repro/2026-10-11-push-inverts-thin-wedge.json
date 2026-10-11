@@ -1,0 +1,86 @@
+{
+  "name": "2026-10-11-push-inverts-thin-wedge",
+  "error": "fuzz (lane 2): pushing a face of a thin wedge back through itself passed the per-face checks as an inside-out solid (volume -0.83); fixed: Object::validate requires positive volume, the topological path requires a positive expected volume, and boolean output triangles that stray off their source plane are relabelled or refused. Original: op 8 PushPull { object: 1, face: 5, distance: -1.1670848203903263 }: object 1 has non-positive volume -0.8284264232400355",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        1,
+        1.3876262854762238,
+        0.000001
+      ],
+      "normal": [
+        -0.353587968550765,
+        0.1545034346364008,
+        0
+      ]
+    },
+    {
+      "op": "insert_segment",
+      "sketch": 1,
+      "a": [
+        1.75,
+        0.250004
+      ],
+      "b": [
+        0.250004,
+        0.5
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.000001,
+      "y": 0.5,
+      "w": 0.75,
+      "h": -2
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 2,
+      "distance": 0.25
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 5,
+      "distance": -3
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 5,
+      "distance": -1.1670848203903263
+    }
+  ]
+}

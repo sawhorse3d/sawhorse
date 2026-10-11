@@ -164,6 +164,12 @@ impl Object {
         if let Some(hit) = crate::intersect::self_intersection(&self.brep) {
             v.push(Violation::SelfIntersectingSolid(hit));
         }
+        // Every face can be locally consistent while the whole solid is inside out (a face
+        // pushed backwards through itself): the enclosed volume must be positive.
+        let volume = self.volume();
+        if volume.is_nan() || volume <= 0.0 {
+            v.push(Violation::NonPositiveVolume(volume));
+        }
         if v.is_empty() {
             Ok(report)
         } else {

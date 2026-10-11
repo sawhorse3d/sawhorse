@@ -217,10 +217,15 @@ pub fn repolygonise(
 ) -> Result<Polys, BooleanError> {
     let pos = &out.positions;
     let nt = out.triangles.len();
-    let label = |t: usize| out.face_ids[t] as usize;
     if out.face_ids.iter().any(|&f| f as usize >= planes.len()) {
         return Err(BooleanError::Degenerate("unknown face id".into()));
     }
+    // The engine's simplification can leave a triangle carrying a neighbour's face id
+    // after an edge collapse on sliver geometry. A triangle must lie on its source plane
+    // (either orientation); otherwise it takes the id of an adjacent triangle whose plane
+    // it does lie on, and failing that the result is refused rather than guessed at.
+    let labels = relabel(out, planes)?;
+    let label = |t: usize| labels[t];
     let mut dir: BTreeMap<(u32, u32), usize> = BTreeMap::new();
     for (t, tri) in out.triangles.iter().enumerate() {
         for k in 0..3 {
@@ -238,20 +243,13 @@ pub fn repolygonise(
         })
     };
     // A source face can come out flipped (the second operand of a difference): orient each
-    // label's plane the way its output triangles actually face.
-    let mut flip: Vec<Option<bool>> = vec![None; planes.len()];
+    // label's plane the way its output triangles actually face (area-weighted vote).
+    let mut vote: Vec<f64> = vec![0.0; planes.len()];
     for (t, tri) in out.triangles.iter().enumerate() {
-        let l = label(t);
-        if flip[l].is_some() {
-            continue;
-        }
         let [a, b, c] = tri.map(|i| pos[i as usize]);
-        let n = (b - a).cross(c - a);
-        let d = n.dot(planes[l].normal);
-        if d.abs() > 1e-12 * n.length().max(1e-300) && n.length() > 0.0 {
-            flip[l] = Some(d < 0.0);
-        }
+        vote[label(t)] += (b - a).cross(c - a).dot(planes[label(t)].normal);
     }
+    let flip: Vec<Option<bool>> = vote.iter().map(|&v| Some(v < 0.0)).collect();
     let planes: Vec<Plane> = planes
         .iter()
         .zip(&flip)
@@ -398,6 +396,42 @@ pub fn repolygonise(
     heal_vertices(&mut p, &every);
     p.compact();
     Ok(p)
+}
+
+/// Per-triangle source label, corrected where the engine left a triangle off its plane.
+fn relabel(out: &TriSolid, planes: &[Plane]) -> Result<Vec<usize>, BooleanError> {
+    let pos = &out.positions;
+    let tol = POINT_MERGE;
+    let on = |t: usize, l: usize| {
+        out.triangles[t]
+            .iter()
+            .all(|&i| planes[l].signed_distance(pos[i as usize]).abs() <= tol)
+    };
+    let mut labels: Vec<usize> = out.face_ids.iter().map(|&f| f as usize).collect();
+    let mut by_edge: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for (t, tri) in out.triangles.iter().enumerate() {
+        for k in 0..3 {
+            by_edge.insert((tri[k], tri[(k + 1) % 3]), t);
+        }
+    }
+    for t in 0..out.triangles.len() {
+        if on(t, labels[t]) {
+            continue;
+        }
+        let tri = out.triangles[t];
+        let neighbours: Vec<usize> = (0..3)
+            .filter_map(|k| by_edge.get(&(tri[(k + 1) % 3], tri[k])).map(|&s| labels[s]))
+            .collect();
+        match neighbours.into_iter().find(|&l| on(t, l)) {
+            Some(l) => labels[t] = l,
+            None => {
+                return Err(BooleanError::Degenerate(
+                    "the engine's result left a triangle off every neighbouring source face".into(),
+                ));
+            }
+        }
+    }
+    Ok(labels)
 }
 
 /// `a op b` for two closed polygon B-reps (see [`repolygonise`]). `Ok(None)` when the

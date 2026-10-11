@@ -1,6 +1,6 @@
 # ADR-0001: Geometry kernel
 
-- Status: Accepted, 2026-10-11 (seed decisions); implementation started in lane 1 (foundations), 2026-10-11
+- Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations) and lane 2 (kernel core) implemented, 2026-10-11
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed, vault note `the maintainer's notes`
 
@@ -50,10 +50,27 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 | Booleans | `kernel/src/boolean.rs` | trait + Manifold adapter with face-id provenance; re-polygonise is the push/pull lane |
 | Tests | `kernel/tests/` | proptest invariants, sequence fuzzer + repro replay, golden hashes (also replayed in WASM: identical) |
 
+### Built in lane 2 (kernel core, 2026-10-11)
+
+| Area | Where | Notes |
+|---|---|---|
+| Sketch insertion | `kernel/src/sketch.rs` | Segments insert with the sticky rules: endpoint within POINT_MERGE of a vertex merges; on an edge interior splits it (T-junction); existing vertices on the new segment split it; proper crossings split both; collinear overlaps normalise (duplicate pieces skipped). Only zero-length / NaN / out-of-range input is refused. Ops: `insert_segment`, `add_polyline`, `add_rectangle` (four segments, one transaction), `erase_segment` (heals the T-junctions and crossings it leaves) |
+| Regions | `sketch.rs` | Angular face walk; bridges and dangling strokes ignored; circuits split at repeated vertices (pinched regions render but refuse to extrude); clockwise rings become holes of the smallest containing region. **Stable ids**: regions live in a slotmap; re-detection keeps an id by same boundary, same outer ring, or the new region containing the old anchor point (a golden-section interior point). Public ids (slot + reuse count, first key is 1) address sketches, regions, objects and groups in ops |
+| Extrude semantics (decided) | `sketch.rs`, `model.rs` | Extruding **consumes** the region: edges no live region needs leave the sketch; a region enclosed entirely by live neighbours stays as a hidden consumed region (so it keeps its id and does not reappear). The resulting face belongs to the Object; drawing on it goes through the Object tier. A solid that collapses flat onto its source sketch releases its footprint back as regions |
+| Object-tier drawing | `kernel/src/faceops.rs` | `split_face` (cut path, ends on one boundary loop, interior strictly inside, coplanar; an end on an edge splits it in both faces) and `imprint` (closed loop strictly inside becomes a coplanar sub-face twinned with a hole loop; enclosed holes move in). Typed `FaceEditError` refusals; new edges are flagged **user-drawn** |
+| Plain-data B-rep | `brep.rs` (`Polys`, `Brep::build`, `Brep::to_polys`) | Every topology edit is to_polys -> edit -> build -> validate; faces keep stored planes; `Edge.user` survives edits and booleans |
+| Coplanar merge | `faceops::merge_coplanar`, `heal_vertices` | Dissolves edges between coplanar same-facing faces except user-drawn ones; heals pass-through vertices |
+| General push/pull | `kernel/src/push.rs` | Collapse check; topological path (vertices whose other faces contain the push direction slide, others get rails and side walls; collapsed rails weld so a pocket pulled back flush closes exactly; accepted only if valid, one shell, positive volume and volume change = area x distance); boolean path for everything else (union or difference with the exactly-coincident swept prism; a push landing on a far face reaches 0.5 x POINT_MERGE past it) |
+| Booleans | `boolean.rs` | `polys_tri_solid` -> `BooleanEngine` (manifold-rust) -> `repolygonise`: triangles relabelled if the engine leaves one off its source plane, grouped by face id plus coplanar neighbours not split by a user-drawn source edge, loops chained into n-gons with holes (pinches refused), planes kept (flipped where the engine flipped a face), pass-through vertices healed, user edges re-flagged. `combine` is the round trip; `Object::combine` validates |
+| Global self-intersection | `kernel/src/intersect.rs` | Part of `Object::validate`: edges through non-incident faces (exact orient3d), chords across a face, vertices within POINT_MERGE of a non-incident face, edges within POINT_MERGE of each other, coplanar faces overlapping; plus positive enclosed volume |
+| Document | `kernel/src/document.rs` | Model + op log (undo/redo included) + undo ring of 200 snapshots; replaying the log reproduces the state and the log hash; groups, tags (visibility), delete |
+| WASM | `crates/wasm-api` | `document_new()` -> `Doc` with `apply_op(json)`, `undo`, `redo`, `get_view_mesh(object_id)`, `get_scene_mesh`, `document_hash`, `export_stl(object_id)`, `export_obj(object_id)`; the worker holds one persistent document |
+| Tests | `kernel/tests/` | sketch_props (order independence, simple boundaries, split-then-erase identity), face_props (split/imprint then merge identity, transactional refusals), push.rs (every push path, volume/area/Euler), booleans.rs (26 hand-computed cases; `npm run boolean:diff` runs them against npm manifold-3d), document unit tests, 14 goldens (WASM == native), op-sequence fuzzer over every op with undo/redo interleaved |
+
 ### Deliberate gaps (owned by later lanes)
 
-- Sketch insertion refuses (typed `SketchError::IntersectionUnsupported`) instead of splitting at T-junctions and crossings and normalising collinear overlaps: draw-tools lane.
-- Push/pull refuses (typed) when a neighbouring face is not parallel to the push, when edges would collapse, or when the face would pass through the opposite face or another part of the solid: push/pull lane (side-wall creation and the boolean path).
-- `split_face`, `imprint`, coplanar merge, re-polygonising boolean output, differential tests against manifold-csg, the `i_triangle` fallback, BVH/rstar inference, offsets: their lanes.
-- The kernel runs in a Web Worker today but rebuilds the spike scene per request; a persistent worker-side document with undo arrives with the tools.
-- Extruding marks the sketch region consumed (the solid's base face replaces it); collapsing the solid unmarks it. An edit that would change a consumed region is refused. Revisit when drawing on faces lands.
+- Inference (BVH + rstar, pixel tolerance) and the draw tools' UI beyond Rect and Push/Pull: lane 3. A rectangle started on a face that crosses the face's edges is refused (imprint needs it strictly inside); lane 3 turns such strokes into `split_face` calls.
+- Booleans on sliver geometry: Manifold's simplification can leave a triangle off its source plane; the kernel relabels it from a neighbour or refuses the op (typed). Differential tests run against npm `manifold-3d` (the C++ engine compiled to WASM); a native `manifold-csg` CI job is still open.
+- Tilted planes: positions are f64, so faces that should be coincident after a push on an off-axis plane can miss by 1e-16 m; the kernel snaps where it can (exact edge splits, prism base = the face's own vertices, push-through reach) and otherwise refuses rather than commit a sliver.
+- The `i_triangle` triangulation fallback, offsets (cavalier_contours), explicit boolean ops between objects in the UI, .shz save/load of the op log: their lanes.
+- Object ids are public ids; faces are addressed by ordinal, which the topological push path keeps stable (moved face keeps its index, walls append) but the boolean path may renumber. The UI re-reads parts after every op.

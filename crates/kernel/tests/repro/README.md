@@ -7,5 +7,5 @@
 3. Commit the file with the fix. `tests/repro.rs` replays every `*.json` here on every run,
    so the bug can never come back silently.
 
-Format: `{ "name", "error", "ops": [ { "op": "new_sketch" | "add_rectangle" | "extrude" | "push_pull", ... } ] }`,
-lengths in metres. The same files load into the WASM kernel (`Scene.replay`) for debugging in the browser.
+Format: `{ "name", "error", "ops": [ ...document op log, any op including "undo" and "redo"... ] }`,
+lengths in metres. The same files load into the WASM kernel (`document_replay(JSON.stringify(ops))`) for debugging in the browser.

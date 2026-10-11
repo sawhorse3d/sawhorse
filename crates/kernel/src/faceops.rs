@@ -307,6 +307,17 @@ pub fn split_face(
                 return Err(FaceEditError::NotInside); // runs along the boundary
             }
         }
+        // Exact tests miss a cut that grazes a boundary vertex by 1e-16 m: every boundary
+        // vertex but the cut's own end vertex keeps the merge distance from the cut.
+        for (r, ring) in view.rings2.iter().enumerate() {
+            for (m, &q) in ring.iter().enumerate() {
+                let own = (k == 0 && s == Loc::Vertex { ring: r, pos: m })
+                    || (k == last - 1 && e == Loc::Vertex { ring: r, pos: m });
+                if !own && point_segment_distance(q, a, b) <= POINT_MERGE {
+                    return Err(FaceEditError::CrossesBoundary);
+                }
+            }
+        }
     }
 
     // Build on a copy.
@@ -335,7 +346,10 @@ pub fn split_face(
         let (a, b) = (ring[pos], ring[(pos + 1) % n]);
         let (a3, b3) = (p.points[a], p.points[b]);
         let x = q.points.len();
-        q.points.push(a3.lerp(b3, t));
+        // a + (b - a) t, not glam's a (1 - t) + b t: it is exact in every coordinate where
+        // the edge does not move (a split on an axis-aligned edge stays on its planes), so
+        // later booleans see exact coincidence instead of 1e-17 m near misses.
+        q.points.push(a3 + (b3 - a3) * t);
         let from = match prev_split {
             Some((pp, xp)) if pp == pos => xp,
             _ => a,
@@ -461,6 +475,11 @@ pub fn imprint(p: &mut Polys, fi: usize, pts: &[DVec3]) -> Result<usize, FaceEdi
         if view
             .segments()
             .any(|(_, _, c, d)| segments_intersect(a, b, c, d))
+            || view
+                .rings2
+                .iter()
+                .flatten()
+                .any(|&q| point_segment_distance(q, a, b) <= POINT_MERGE)
         {
             return Err(FaceEditError::CrossesBoundary);
         }
@@ -856,6 +875,45 @@ mod tests {
             "the hole grew to include the cap"
         );
         assert!(p.faces[cap].holes.is_empty());
+    }
+
+    #[test]
+    fn a_cut_grazing_a_hole_corner_is_refused() {
+        // Fuzz find (2026-10-11): a diagonal cut passing within 1e-16 m of an imprinted
+        // hole corner slipped past the exact crossing tests.
+        let mut p = boxy();
+        imprint(
+            &mut p,
+            TOP,
+            &[
+                v3(0.5, 0.25, 1.0),
+                v3(1.5, 0.25, 1.0),
+                v3(1.5, 0.75, 1.0),
+                v3(0.5, 0.75, 1.0),
+            ],
+        )
+        .unwrap();
+        let before = p.clone();
+        // From the front edge to the left edge, missing the hole corner (0.5, 0.25) by a
+        // hair: exact predicates say "no contact".
+        let r = split_face(
+            &mut p,
+            TOP,
+            &[v3(0.75, 0.0, 1.0), v3(0.0, 0.75 + 1e-15, 1.0)],
+        );
+        assert_eq!(r, Err(FaceEditError::CrossesBoundary));
+        assert_eq!(p, before);
+        // An imprint whose edge passes 5 um from that corner is refused too.
+        let r = imprint(
+            &mut p,
+            TOP,
+            &[
+                v3(0.1, 0.1, 1.0),
+                v3(0.5 + 5e-6, 0.25 - 5e-6, 1.0),
+                v3(0.1, 0.4, 1.0),
+            ],
+        );
+        assert!(r.is_err());
     }
 
     #[test]

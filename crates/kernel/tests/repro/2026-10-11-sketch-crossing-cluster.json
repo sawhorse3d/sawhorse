@@ -1,0 +1,96 @@
+{
+  "name": "2026-10-11-sketch-crossing-cluster",
+  "error": "fuzz (lane 2, 50k run): a stroke ending at a vertex 3.6e-5 m from a self-crossing vertex created a crossing vertex within POINT_MERGE of an unrelated short edge (sketch invariant panic). Fixed: crossings within POINT_MERGE of the crossed edge end use that end, and Sketch::repair settles remaining tolerance clusters (merge, split, re-cross) or refuses as degenerate. Original: op 6 AddPolyline { sketch: 1, points: [[-2.224823054476681, -0.25], [1e-6, 1.25], [0.0, 0.0]], closed: false } panicked: sketch invalid after insert: sketch vertex lies on another edge",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0,
+      "y": 0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          1.25
+        ],
+        [
+          -0.5,
+          2.707424327303603
+        ],
+        [
+          1.25,
+          -2.3936860005670186
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          -2.224823054476681,
+          -0.25
+        ],
+        [
+          0.000001,
+          1.25
+        ],
+        [
+          0,
+          0
+        ]
+      ],
+      "closed": false
+    }
+  ]
+}

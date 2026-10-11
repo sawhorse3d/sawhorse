@@ -503,6 +503,8 @@ impl Sketch {
         for i in 0..segs {
             new_edges.extend(next.add_segment(points[i], points[(i + 1) % n])?);
         }
+        next.repair()?;
+        new_edges.retain(|&(a, b)| next.edge_between(a, b).is_some());
         next.recompute_regions();
         next.debug_check("insert");
         Ok((next, new_edges))
@@ -641,11 +643,33 @@ impl Sketch {
         // Crossings within the merge distance of each other share one vertex.
         let mut last: Option<(DVec2, SVertexId)> = None;
         for (t, e, x) in crossings {
+            // A crossing within the merge distance of the crossed edge's end is that end:
+            // the new segment passes through the existing vertex (bending by less than the
+            // merge distance) instead of leaving a sliver piece next to it.
+            let [c, dd] = self.edges[e];
+            if let Some(end) = [c, dd]
+                .into_iter()
+                .find(|&w| self.vertices[w].distance(x) <= POINT_MERGE)
+            {
+                cuts.push((param(self.vertices[end]), end));
+                last = Some((self.vertices[end], end));
+                continue;
+            }
+            if x.distance(pp) <= POINT_MERGE || x.distance(qq) <= POINT_MERGE {
+                continue;
+            }
             let v = match last {
                 Some((lx, lv)) if lx.distance(x) <= POINT_MERGE => {
+                    // Re-route this edge through the shared vertex. A half that already
+                    // exists (two crossed edges sharing an end) is the same edge now:
+                    // keep one, so near-coincident pieces normalise like overlaps.
                     let [c, dd] = self.edges[e];
-                    self.edges[e] = [c, lv];
-                    self.edges.insert([lv, dd]);
+                    self.edges.remove(e);
+                    for (u, w) in [(c, lv), (lv, dd)] {
+                        if u != w && self.edge_between(u, w).is_none() {
+                            self.edges.insert([u, w]);
+                        }
+                    }
                     lv
                 }
                 _ => {
@@ -672,6 +696,93 @@ impl Sketch {
             created.push((u, v));
         }
         Ok(created)
+    }
+
+    /// Settle tolerance clusters the per-segment rules leave behind (a crossing that lands
+    /// within the merge distance of an unrelated edge, two new vertices closer than the merge
+    /// distance): merge vertices closer than `POINT_MERGE`, split an edge at a vertex
+    /// within `POINT_MERGE` of it, split proper crossings, repeat until the graph satisfies
+    /// [`Sketch::check`]'s edge rules. Each step moves geometry by less than the merge
+    /// distance. A cluster that does not settle is refused as degenerate input.
+    fn repair(&mut self) -> Result<(), SketchError> {
+        for _ in 0..64 {
+            if !self.repair_step() {
+                return Ok(());
+            }
+        }
+        Err(SketchError::Degenerate)
+    }
+
+    fn repair_step(&mut self) -> bool {
+        let verts: Vec<(SVertexId, DVec2)> = self.vertices.iter().map(|(k, p)| (k, *p)).collect();
+        for i in 0..verts.len() {
+            for j in i + 1..verts.len() {
+                if verts[i].1.distance(verts[j].1) <= POINT_MERGE {
+                    self.merge_vertex(verts[j].0, verts[i].0);
+                    return true;
+                }
+            }
+        }
+        let edges: Vec<(SEdgeId, [SVertexId; 2])> =
+            self.edges.iter().map(|(e, ab)| (e, *ab)).collect();
+        for &(e, [a, b]) in &edges {
+            let (pa, pb) = (self.vertices[a], self.vertices[b]);
+            for &(w, pw) in &verts {
+                if w != a && w != b && point_segment_distance(pw, pa, pb) <= POINT_MERGE {
+                    self.edges.remove(e);
+                    for (u, x) in [(a, w), (w, b)] {
+                        if self.edge_between(u, x).is_none() {
+                            self.edges.insert([u, x]);
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        for i in 0..edges.len() {
+            for j in i + 1..edges.len() {
+                let (e1, [a, b]) = edges[i];
+                let (e2, [c, d]) = edges[j];
+                let (pa, pb, pc, pd) = (
+                    self.vertices[a],
+                    self.vertices[b],
+                    self.vertices[c],
+                    self.vertices[d],
+                );
+                if proper_cross(pa, pb, pc, pd) {
+                    let x = self.split_edge(e1, line_intersection(pa, pb, pc, pd));
+                    self.edges.remove(e2);
+                    for (u, w) in [(c, x), (x, d)] {
+                        if self.edge_between(u, w).is_none() {
+                            self.edges.insert([u, w]);
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Re-point `from`'s edges to `into` and drop `from` (self-loops and duplicates go).
+    fn merge_vertex(&mut self, from: SVertexId, into: SVertexId) {
+        let touched: Vec<(SEdgeId, [SVertexId; 2])> = self
+            .edges
+            .iter()
+            .filter(|(_, ab)| ab.contains(&from))
+            .map(|(e, ab)| (e, *ab))
+            .collect();
+        for (e, [a, b]) in touched {
+            self.edges.remove(e);
+            let (a, b) = (
+                if a == from { into } else { a },
+                if b == from { into } else { b },
+            );
+            if a != b && self.edge_between(a, b).is_none() {
+                self.edges.insert([a, b]);
+            }
+        }
+        self.vertices.remove(from);
     }
 
     // ---- invariants --------------------------------------------------------------------
@@ -722,7 +833,10 @@ impl Sketch {
                         && point_segment_distance(px, self.vertices[seg.0], self.vertices[seg.1])
                             <= POINT_MERGE
                     {
-                        return Err("sketch vertex lies on another edge".into());
+                        return Err(format!(
+                            "sketch vertex {px} lies on another edge {} - {}",
+                            self.vertices[seg.0], self.vertices[seg.1]
+                        ));
                     }
                 }
             }
@@ -1126,6 +1240,47 @@ mod tests {
         s.insert_segment(v(-1.0, -1.0), v(3.0, 3.0)).unwrap();
         assert_eq!(s.vertex_count(), 6);
         assert_eq!(s.edge_count(), 7);
+    }
+
+    #[test]
+    fn near_coincident_crossings_next_to_a_shared_vertex() {
+        // Fuzz find (2026-10-11): a stroke passing 1.6e-5 m from a crossing vertex cuts two
+        // of its edges within the merge distance of each other; both crossings share one
+        // vertex, and the two pieces back to the crossing vertex become one edge.
+        let mut s = sketch();
+        s.insert_segment(v(0.250004, 0.0), v(0.000001, 0.75))
+            .unwrap();
+        s.insert_polyline(
+            &[
+                v(1.0, -1.25),
+                v(-0.25, 1.0),
+                v(0.25, 0.250004),
+                v(0.0, 0.25),
+            ],
+            false,
+        )
+        .unwrap();
+        s.check().unwrap();
+    }
+
+    #[test]
+    fn crossing_next_to_an_edge_end_uses_the_end() {
+        // Fuzz find (2026-10-11): a stroke ending at a vertex 3.6e-5 m from another vertex
+        // crossed one of that vertex's edges within the merge distance of it.
+        let mut s = sketch();
+        s.insert_polyline(
+            &[
+                v(0.0, 0.0),
+                v(0.0, 1.25),
+                v(-0.5, 2.707424327303603),
+                v(1.25, -2.3936860005670186),
+            ],
+            true,
+        )
+        .unwrap();
+        s.insert_segment(v(-2.224823054476681, -0.25), v(0.000001, 1.25))
+            .unwrap();
+        s.check().unwrap();
     }
 
     #[test]
