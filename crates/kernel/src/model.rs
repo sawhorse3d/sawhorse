@@ -88,6 +88,21 @@ pub enum Op {
         face: u64,
         points: Vec<[f64; 3]>,
     },
+    /// Erase the edge of `object` from `a` to `b` (world points at its two ends). Only a
+    /// line drawn on a face can go: its two coplanar faces merge (with every other edge they
+    /// share). Anything else would open the solid and is refused.
+    EraseEdge {
+        object: u64,
+        a: [f64; 3],
+        b: [f64; 3],
+    },
+    /// Erase face `face` (persistent id) of `object` into a coplanar neighbour across a drawn
+    /// line (an imprint, one side of a cut). Refused where it would open the solid.
+    EraseFace { object: u64, face: u64 },
+    /// Erase a sketch region: its edges that bound no other region leave the sketch.
+    EraseRegion { sketch: u64, region: u64 },
+    /// Several ops as one transaction and one undo step (no undo, redo or batch inside).
+    Batch { ops: Vec<Op> },
     /// Delete an object (it also leaves any group).
     DeleteObject { object: u64 },
     /// Group objects under a name.
@@ -128,6 +143,14 @@ pub enum OpOutcome {
         face: u64,
     },
     ObjectDeleted,
+    /// An edge or face was erased; the merged face's persistent id.
+    FacesMerged {
+        face: u64,
+    },
+    /// What each op of a batch did, in order.
+    Batch {
+        outcomes: Vec<OpOutcome>,
+    },
     GroupCreated {
         group: u64,
     },
@@ -400,6 +423,37 @@ impl Model {
                 let (o, fi) = self.face_edit_target(*object, *face)?;
                 let sub = o.imprint(fi, &pts)?;
                 Ok(OpOutcome::Imprinted { face: sub })
+            }
+            Op::EraseEdge { object, a, b } => {
+                let o = self
+                    .objects
+                    .get_mut(from_public::<ObjectId>(*object))
+                    .ok_or(FaceEditError::NoSuchObject(*object))?;
+                let face = o.erase_edge(DVec3::from_array(*a), DVec3::from_array(*b))?;
+                Ok(OpOutcome::FacesMerged { face })
+            }
+            Op::EraseFace { object, face } => {
+                let (o, fi) = self.face_edit_target(*object, *face)?;
+                let face = o.erase_face(fi)?;
+                Ok(OpOutcome::FacesMerged { face })
+            }
+            Op::EraseRegion { sketch, region } => {
+                let sid = self.sketch_key(*sketch)?;
+                let r = self.sketches[sid].erase_region(from_public::<RegionId>(*region))?;
+                Ok(Self::edited(r))
+            }
+            Op::Batch { ops } => {
+                if ops.is_empty() {
+                    return Err(DocumentError::EmptyBatch.into());
+                }
+                let mut outcomes = Vec::with_capacity(ops.len());
+                for op in ops {
+                    if matches!(op, Op::Undo | Op::Redo | Op::Batch { .. }) {
+                        return Err(DocumentError::NotInBatch.into());
+                    }
+                    outcomes.push(self.apply_in_place(op)?);
+                }
+                Ok(OpOutcome::Batch { outcomes })
             }
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);

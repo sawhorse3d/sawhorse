@@ -120,3 +120,5 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .menu .drop kbd{font:11px var(--mono);color:var(--muted)}
 .menu .drop hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .menu button[aria-expanded="true"]{background:var(--rail);color:var(--fg)}
+/* Viewport overlays never swallow pointer events meant for the canvas (window selection can start under them). */
+.vp .hud,.vp .legend,.vp .axes{pointer-events:none}

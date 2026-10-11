@@ -1,13 +1,21 @@
-//! Inference (snapping) for Sawhorse: a global, read-only query over the model (ADR-0001).
+//! Inference (snapping) and picking for Sawhorse: a global, read-only query over the model
+//! (ADR-0001).
 //!
-//! This lane ships the vocabulary and a brute-force world-space snapper; the inference
-//! lane replaces the brute force with a BVH over faces-with-holes, edges and vertices plus
-//! `rstar` for snap candidates, and converts a pixel tolerance into a world tolerance.
+//! - [`scene::Scene`]: triangles of every visible face and sketch region, every edge, the
+//!   arcs and circles among them and the guides, with a BVH over triangles and one over
+//!   edges ([`bvh`], our own; no `bvh` crate).
+//! - [`pick::pick`]: the entity under the cursor (vertex, edge, face, region, guide) with
+//!   pixel radii converted to world units at each candidate's depth, occlusion-tested.
 //!
 //! Colours are OURS (ADR-0003), never SketchUp's: endpoint lime, midpoint teal,
 //! on-edge amber, on-face violet. The UI reads them from CSS tokens named here.
 
 use glam::DVec3;
+
+pub mod bvh;
+pub mod geom;
+pub mod pick;
+pub mod scene;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,

@@ -539,7 +539,9 @@ version = "0.0.1"
 dependencies = [
  "glam",
  "sawhorse-kernel",
+ "sawhorse-tessellate",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -576,6 +578,7 @@ dependencies = [
  "console_error_panic_hook",
  "glam",
  "sawhorse-export",
+ "sawhorse-inference",
  "sawhorse-kernel",
  "serde",
  "serde_json",

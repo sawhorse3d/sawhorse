@@ -528,6 +528,101 @@ pub fn imprint(p: &mut Polys, fi: usize, pts: &[DVec3]) -> Result<usize, FaceEdi
     Ok(sub)
 }
 
+/// The vertex at `q` (within `POINT_MERGE`), if any.
+fn vertex_at(p: &Polys, q: DVec3) -> Option<usize> {
+    let mut best: Option<(f64, usize)> = None;
+    for (i, &x) in p.points.iter().enumerate() {
+        let d = x.distance(q);
+        if d <= POINT_MERGE && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
+/// Merge faces `fa` and `fb` (coplanar, same facing): every edge they share stops being
+/// user-drawn and is dissolved. Returns the surviving face's index.
+fn dissolve_between(p: &mut Polys, fa: usize, fb: usize) -> Result<usize, FaceEditError> {
+    if !(coplanar(p, fa, fb) && coplanar(p, fb, fa)) {
+        return Err(FaceEditError::WouldOpenSolid);
+    }
+    let directed = p.directed_edges();
+    let shared: Vec<(usize, usize)> = directed
+        .iter()
+        .filter(|&(&(u, v), &(f, _))| {
+            f == fa && directed.get(&(v, u)).is_some_and(|&(g, _)| g == fb)
+        })
+        .map(|(&(u, v), _)| Polys::key(u, v))
+        .collect();
+    if shared.is_empty() {
+        return Err(FaceEditError::NoSuchEdge);
+    }
+    let mut q = p.clone();
+    for k in &shared {
+        q.user_edges.remove(k);
+    }
+    let before = q.faces.len();
+    let keep = fa.min(fb);
+    let id = q.faces[keep].id;
+    merge_coplanar(&mut q, true);
+    if q.faces.len() >= before {
+        return Err(FaceEditError::WouldPinch);
+    }
+    let survivor = q
+        .faces
+        .iter()
+        .position(|f| f.id.is_some() && f.id == id)
+        .unwrap_or(keep.min(q.faces.len() - 1));
+    *p = q;
+    Ok(survivor)
+}
+
+/// Erase the edge from `a` to `b` (world points within `POINT_MERGE` of its two ends). Only
+/// an edge between two coplanar faces can go (a line drawn on a face, part of an imprint):
+/// the two faces merge, and every other edge they share goes with it, because a face can
+/// not hold a dangling line. Anything else is refused ([`FaceEditError::WouldOpenSolid`]).
+/// Returns the index of the merged face.
+pub fn erase_edge(p: &mut Polys, a: DVec3, b: DVec3) -> Result<usize, FaceEditError> {
+    let (Some(ia), Some(ib)) = (vertex_at(p, a), vertex_at(p, b)) else {
+        return Err(FaceEditError::NoSuchEdge);
+    };
+    let directed = p.directed_edges();
+    let (Some(&(fa, _)), Some(&(fb, _))) = (directed.get(&(ia, ib)), directed.get(&(ib, ia)))
+    else {
+        return Err(FaceEditError::NoSuchEdge);
+    };
+    if fa == fb {
+        return Err(FaceEditError::WouldOpenSolid);
+    }
+    dissolve_between(p, fa, fb)
+}
+
+/// Erase face `fi`: allowed when it lies on the same plane as a neighbour across a drawn
+/// line (an imprint, one side of a split), which then absorbs it. Returns the index of the
+/// face that absorbed it.
+pub fn erase_face(p: &mut Polys, fi: usize) -> Result<usize, FaceEditError> {
+    if fi >= p.faces.len() {
+        return Err(FaceEditError::NoSuchFace(fi as u64));
+    }
+    let directed = p.directed_edges();
+    let mut neighbours: BTreeSet<usize> = BTreeSet::new();
+    for (&(u, v), &(f, _)) in &directed {
+        if f == fi
+            && let Some(&(g, _)) = directed.get(&(v, u))
+            && g != fi
+            && coplanar(p, fi, g)
+            && coplanar(p, g, fi)
+        {
+            neighbours.insert(g);
+        }
+    }
+    // The smallest coplanar neighbour (the parent of an imprint has the lower index).
+    let Some(&g) = neighbours.iter().next() else {
+        return Err(FaceEditError::WouldOpenSolid);
+    };
+    dissolve_between(p, g, fi)
+}
+
 /// Two faces' planes are the same plane with the same orientation.
 pub fn coplanar(p: &Polys, a: usize, b: usize) -> bool {
     let (Some(pa), Some(pb)) = (p.plane(a), p.plane(b)) else {

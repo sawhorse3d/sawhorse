@@ -362,6 +362,35 @@ impl Object {
         Ok(id)
     }
 
+    /// Erase the edge between `a` and `b` (a line drawn on a face): its two coplanar faces
+    /// merge. Returns the merged face's persistent id. See [`crate::faceops::erase_edge`].
+    pub fn erase_edge(&mut self, a: DVec3, b: DVec3) -> Result<u64, FaceEditError> {
+        let mut p = self.brep.to_polys();
+        let fi = crate::faceops::erase_edge(&mut p, a, b)?;
+        self.finish_face_edit(p, fi, "erase_edge")
+    }
+
+    /// Erase face `face` (ordinal) into a coplanar neighbour across drawn lines. Returns
+    /// the absorbing face's persistent id. See [`crate::faceops::erase_face`].
+    pub fn erase_face(&mut self, face: usize) -> Result<u64, FaceEditError> {
+        let mut p = self.brep.to_polys();
+        let fi = crate::faceops::erase_face(&mut p, face)?;
+        self.finish_face_edit(p, fi, "erase_face")
+    }
+
+    fn finish_face_edit(
+        &mut self,
+        mut p: Polys,
+        fi: usize,
+        what: &str,
+    ) -> Result<u64, FaceEditError> {
+        assign_face_ids(&mut p, &mut self.next_face_id);
+        let id = p.faces.get(fi).and_then(|f| f.id).unwrap_or(0);
+        self.brep = Brep::build(&p)?;
+        self.brep.debug_validate(what);
+        Ok(id)
+    }
+
     /// Indexed triangle solid (shared vertices in slotmap order, face ordinal per triangle),
     /// the form booleans and exporters consume.
     pub fn tri_solid(&self) -> Result<TriSolid, TessellateError> {

@@ -62,6 +62,10 @@ export interface ViewportProps {
   labels?: Label[];
   box?: SelectionBox | null;
   cursor?: string;
+  /** Number of selected entities (a data attribute for tests). */
+  selectionCount?: number;
+  /** Kind of the entity under the cursor (a data attribute for tests). */
+  hoverKind?: string;
   onPointer?: (p: ViewportPointer) => void;
   /** The camera left the standard view (orbit) or changed projection. */
   onCamera?: (view: ViewId | null, projection: Projection) => void;
@@ -84,7 +88,7 @@ export interface SawhorseHooks {
 }
 
 export function Viewport(props: ViewportProps) {
-  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, onPointer, onCamera, onEngine } = props;
+  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, selectionCount, hoverKind, onPointer, onCamera, onEngine } = props;
   const hostRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
@@ -225,6 +229,8 @@ export function Viewport(props: ViewportProps) {
       data-projection={camAttr.projection}
       data-camera={camAttr.eye}
       data-inference={marker?.kind ?? ""}
+      data-selection={selectionCount ?? 0}
+      data-hover={hoverKind ?? ""}
     >
       <canvas
         id="cv"

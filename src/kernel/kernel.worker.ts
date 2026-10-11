@@ -5,7 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
-import type { KernelOp, MeshData, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+import type { KernelOp, MeshData, Picked, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -43,6 +43,8 @@ function scene(d: WasmDoc): SceneData {
       indices: m.indices(),
       faceIds: m.face_ids(),
       edges: m.edges(),
+      edgeOwner: m.edge_owner(),
+      edgeOwners: JSON.parse(m.edge_owners_json()),
       parts: JSON.parse(m.parts_json()),
     };
     return { mesh, state: JSON.parse(d.state_json()) };
@@ -84,6 +86,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, outcome, scene: scene(d) };
         break;
       }
+      case "pick":
+        res = { id: req.id, ok: true, picked: JSON.parse(document(mod).pick(JSON.stringify(req.query))) as Picked | null };
+        break;
       case "log":
         res = { id: req.id, ok: true, log: JSON.parse(document(mod).op_log_json()) as KernelOp[] };
         break;
@@ -100,7 +105,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const transfer: Transferable[] = [];
   if (res.ok && res.scene) {
     const m = res.scene.mesh;
-    transfer.push(m.positions.buffer, m.indices.buffer, m.faceIds.buffer, m.edges.buffer);
+    transfer.push(m.positions.buffer, m.indices.buffer, m.faceIds.buffer, m.edges.buffer, m.edgeOwner.buffer);
   }
   if (res.ok && res.file instanceof Uint8Array) transfer.push(res.file.buffer);
   ctx.postMessage(res, transfer);

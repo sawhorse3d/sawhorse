@@ -11,8 +11,10 @@ publish.workspace = true
 
 [dependencies]
 sawhorse-kernel.workspace = true
+sawhorse-tessellate.workspace = true
 glam.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

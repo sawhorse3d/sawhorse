@@ -1,7 +1,8 @@
 //! Op-sequence fuzzer (proptest-driven) over the whole document: sketch strokes with
 //! merging / T-junctions / crossings / overlaps / erasing, rectangles, polylines, extrude,
-//! general push/pull (both ways, through the far side), split_face, imprint, delete,
-//! groups, tags, and undo / redo interleaved anywhere.
+//! general push/pull (both ways, through the far side), split_face, imprint, erasing
+//! (object edges and faces, sketch regions), batches, delete, groups, tags, and undo / redo
+//! interleaved anywhere.
 //!
 //! Generated ops are *intents* ([`Fuzz`]) resolved against the live document as the
 //! sequence runs: "an edge of some face of some solid", "a region of some sketch", "a
@@ -87,6 +88,12 @@ enum Fuzz {
         size: [f64; 2],
         triangle: bool,
     },
+    /// Erase edge `edge` of face `face` of an object (mostly refused unless it was drawn).
+    EraseEdge(u8, u8, u8),
+    EraseFace(u8, u8),
+    EraseRegion(u8, u8),
+    /// Two simple intents resolved against the same state, applied as one batch.
+    Batch(Vec<Fuzz>),
     Delete(u8),
     Group(Vec<u8>),
     Tag(u8, Option<u8>),
@@ -112,6 +119,18 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
             .prop_map(|(object, face, e1, t1, e2, t2, bend)| Fuzz::Split { object, face, e1, t1, e2, t2, bend }),
         3 => (any::<u8>(), any::<u8>(), (frac(), frac()), (frac(), frac()), any::<bool>())
             .prop_map(|(object, face, at, size, triangle)| Fuzz::Imprint { object, face, at: [at.0, at.1], size: [size.0, size.1], triangle }),
+        2 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(o, f, e)| Fuzz::EraseEdge(o, f, e)),
+        1 => (any::<u8>(), any::<u8>()).prop_map(|(o, f)| Fuzz::EraseFace(o, f)),
+        1 => (any::<u8>(), any::<u8>()).prop_map(|(s, r)| Fuzz::EraseRegion(s, r)),
+        1 => prop::collection::vec(
+                prop_oneof![
+                    (any::<u8>(), grid(), grid(), grid(), grid()).prop_map(|(s, x, y, w, h)| Fuzz::Rect(s, x, y, w, h)),
+                    (any::<u8>(), any::<u8>(), distance()).prop_map(|(o, f, d)| Fuzz::Push(o, f, d)),
+                    (any::<u8>(), any::<u8>()).prop_map(|(o, f)| Fuzz::EraseFace(o, f)),
+                ],
+                0..3,
+            )
+            .prop_map(Fuzz::Batch),
         1 => any::<u8>().prop_map(Fuzz::Delete),
         1 => prop::collection::vec(any::<u8>(), 0..3).prop_map(Fuzz::Group),
         1 => (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(o, t)| Fuzz::Tag(o, t)),
@@ -283,6 +302,49 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     .collect(),
             }
         }
+        Fuzz::EraseEdge(o, k, e) => {
+            let oid = object(*o);
+            match face(oid, *k) {
+                Some((_, ring, _)) => {
+                    let i = *e as usize % ring.len();
+                    Op::EraseEdge {
+                        object: oid,
+                        a: ring[i].to_array(),
+                        b: ring[(i + 1) % ring.len()].to_array(),
+                    }
+                }
+                None => Op::EraseEdge {
+                    object: oid,
+                    a: [0.0; 3],
+                    b: [1.0, 0.0, 0.0],
+                },
+            }
+        }
+        Fuzz::EraseFace(o, k) => {
+            let oid = object(*o);
+            Op::EraseFace {
+                object: oid,
+                face: face(oid, *k).map_or(0, |(id, _, _)| id),
+            }
+        }
+        Fuzz::EraseRegion(s, r) => {
+            let sid = sketch(*s);
+            let regions: Vec<u64> = m
+                .sketch(sid)
+                .map(|sk| {
+                    sk.regions()
+                        .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Op::EraseRegion {
+                sketch: sid,
+                region: pick(&regions, *r).unwrap_or(1),
+            }
+        }
+        Fuzz::Batch(fs) => Op::Batch {
+            ops: fs.iter().map(|f| resolve(f, d)).collect(),
+        },
         Fuzz::Delete(o) => Op::DeleteObject { object: object(*o) },
         Fuzz::Group(ks) => Op::CreateGroup {
             name: "Fuzz".into(),

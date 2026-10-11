@@ -39,14 +39,24 @@ pub fn start() {
 #[derive(Debug, Clone)]
 pub struct DocCore {
     doc: Document,
+    /// Picking / inference picture of the current state, rebuilt lazily after edits.
+    scene: std::cell::RefCell<Option<std::rc::Rc<sawhorse_inference::scene::Scene>>>,
 }
 
 impl Default for DocCore {
     fn default() -> Self {
-        DocCore {
-            doc: Document::with_ground_sketch(),
-        }
+        DocCore::from_document(Document::with_ground_sketch())
     }
+}
+
+/// A sketch's plane frame, for the UI to convert world points to sketch coordinates.
+#[derive(Debug, serde::Serialize)]
+struct SketchInfo {
+    id: u64,
+    origin: [f64; 3],
+    normal: [f64; 3],
+    u: [f64; 3],
+    v: [f64; 3],
 }
 
 /// Summary the UI shows after every op.
@@ -60,10 +70,26 @@ struct DocState<'a> {
     log_len: usize,
     log_hash: String,
     objects: Vec<u64>,
+    sketches: Vec<SketchInfo>,
+    groups: Vec<GroupInfo<'a>>,
     tags: &'a std::collections::BTreeMap<String, bool>,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct GroupInfo<'a> {
+    id: u64,
+    name: &'a str,
+    objects: &'a [u64],
+}
+
 impl DocCore {
+    pub fn from_document(doc: Document) -> DocCore {
+        DocCore {
+            doc,
+            scene: std::cell::RefCell::new(None),
+        }
+    }
+
     pub fn document(&self) -> &Document {
         &self.doc
     }
@@ -72,7 +98,26 @@ impl DocCore {
     pub fn apply_json(&mut self, op_json: &str) -> Result<String, String> {
         let op: Op = serde_json::from_str(op_json).map_err(|e| format!("bad op: {e}"))?;
         let out = self.doc.apply(&op).map_err(|e| e.to_string())?;
+        self.scene.replace(None);
         serde_json::to_string(&out).map_err(|e| e.to_string())
+    }
+
+    /// The picking / inference scene for the current state (cached until the next edit).
+    pub fn scene(&self) -> std::rc::Rc<sawhorse_inference::scene::Scene> {
+        if let Some(s) = self.scene.borrow().as_ref() {
+            return s.clone();
+        }
+        let s = std::rc::Rc::new(sawhorse_inference::scene::Scene::build(self.doc.model()));
+        self.scene.replace(Some(s.clone()));
+        s
+    }
+
+    /// What is under the cursor (see `sawhorse_inference::pick`): JSON in, JSON (or null) out.
+    pub fn pick_json(&self, query_json: &str) -> Result<String, String> {
+        let q: sawhorse_inference::pick::PickQuery =
+            serde_json::from_str(query_json).map_err(|e| format!("bad pick query: {e}"))?;
+        let r = sawhorse_inference::pick::pick(&self.scene(), &q);
+        serde_json::to_string(&r).map_err(|e| e.to_string())
     }
 
     pub fn undo(&mut self) -> Result<String, String> {
@@ -105,6 +150,29 @@ impl DocCore {
             log_len: self.doc.log().len(),
             log_hash: self.doc.log_hash_hex(),
             objects: m.object_ids(),
+            sketches: m
+                .sketches()
+                .into_iter()
+                .map(|(id, s)| {
+                    let p = s.plane();
+                    SketchInfo {
+                        id,
+                        origin: p.origin.to_array(),
+                        normal: p.normal.to_array(),
+                        u: p.u.to_array(),
+                        v: p.v.to_array(),
+                    }
+                })
+                .collect(),
+            groups: m
+                .groups()
+                .into_iter()
+                .map(|(id, g)| GroupInfo {
+                    id,
+                    name: &g.name,
+                    objects: &g.objects,
+                })
+                .collect(),
             tags: m.tags(),
         };
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
@@ -208,7 +276,7 @@ pub fn document_replay(ops_json: &str) -> Result<Doc, JsError> {
     let ops: Vec<Op> = serde_json::from_str(ops_json).map_err(|e| JsError::new(&e.to_string()))?;
     let doc = Document::replay(&ops).map_err(|(i, e)| JsError::new(&format!("op {i}: {e}")))?;
     Ok(Doc {
-        core: DocCore { doc },
+        core: DocCore::from_document(doc),
     })
 }
 
@@ -239,6 +307,12 @@ impl Doc {
 
     pub fn undo(&mut self) -> Result<String, JsError> {
         self.core.undo().map_err(js)
+    }
+
+    /// What is under the cursor: query `{origin, dir, px, point_px?, edge_px?}` as JSON;
+    /// returns `{entity, point, surface}` as JSON, or `null`.
+    pub fn pick(&self, query_json: &str) -> Result<String, JsError> {
+        self.core.pick_json(query_json).map_err(js)
     }
 
     pub fn redo(&mut self) -> Result<String, JsError> {
@@ -319,6 +393,14 @@ impl Mesh {
     }
     pub fn edges(&self) -> Vec<f32> {
         self.inner.edges.clone()
+    }
+    /// One per edge segment: index into `edge_owners_json`.
+    pub fn edge_owner(&self) -> Vec<u32> {
+        self.inner.edge_owner.clone()
+    }
+    /// `[{kind: "object" | "sketch", id}]`.
+    pub fn edge_owners_json(&self) -> String {
+        serde_json::to_string(&self.inner.edge_owners).unwrap_or_else(|_| "[]".to_string())
     }
     /// The pickable parts (object faces, sketch regions) with their plane frames, as JSON.
     pub fn parts_json(&self) -> String {
@@ -406,6 +488,22 @@ mod tests {
         assert!(d.stl(1).unwrap().len() > 84);
         assert!(d.obj(1).unwrap().starts_with("# Sawhorse OBJ"));
         assert!(d.object_mesh(9).is_err());
+        // Picking: straight down onto the middle of the cap, 1 mm per pixel.
+        let hit: serde_json::Value = serde_json::from_str(
+            &d.pick_json(r#"{"origin":[0.3,0.2,5],"dir":[0,0,-1],"px":{"ortho":true,"scale":0.001,"eye":[0.3,0.2,5],"forward":[0,0,-1]}}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(hit["entity"]["kind"], "face");
+        assert_eq!(hit["entity"]["object"], 1);
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!(
+            st["sketches"][0]["normal"],
+            serde_json::json!([0.0, 0.0, 1.0])
+        );
+        let m = d.scene_mesh().unwrap();
+        assert_eq!(m.edge_owner.len() * 6, m.edges.len());
+        assert_eq!(m.edge_owners[0].kind, "object");
     }
 
     #[test]

@@ -13,6 +13,10 @@ export type KernelOp =
   | { op: "push_pull"; object: number; face: number; distance: number }
   | { op: "split_face"; object: number; face: number; path: [number, number, number][] }
   | { op: "imprint"; object: number; face: number; points: [number, number, number][] }
+  | { op: "erase_edge"; object: number; a: [number, number, number]; b: [number, number, number] }
+  | { op: "erase_face"; object: number; face: number }
+  | { op: "erase_region"; sketch: number; region: number }
+  | { op: "batch"; ops: KernelOp[] }
   | { op: "delete_object"; object: number }
   | { op: "create_group"; name: string; objects: number[] }
   | { op: "delete_group"; group: number }
@@ -31,6 +35,8 @@ export type OpOutcome =
   | { kind: "face_split"; faces: number[] }
   | { kind: "imprinted"; face: number }
   | { kind: "object_deleted" }
+  | { kind: "faces_merged"; face: number }
+  | { kind: "batch"; outcomes: OpOutcome[] }
   | { kind: "group_created"; group: number }
   | { kind: "group_deleted" }
   | { kind: "tag_set" }
@@ -65,7 +71,73 @@ export interface DocState {
   log_len: number;
   log_hash: string;
   objects: number[];
+  /** Every sketch with its plane frame (world <-> sketch coordinates). */
+  sketches: SketchInfo[];
+  groups: { id: number; name: string; objects: number[] }[];
   tags: Record<string, boolean>;
+}
+
+export type V3 = [number, number, number];
+
+export interface SketchInfo {
+  id: number;
+  origin: V3;
+  normal: V3;
+  u: V3;
+  v: V3;
+}
+
+/** What an edge, vertex or guide belongs to (crates/inference scene::Owner). */
+export interface Owner {
+  kind: "object" | "sketch" | "guide";
+  id: number;
+}
+
+/** Something the user can point at (crates/inference pick::Entity), plus whole objects. */
+export type Entity =
+  | { kind: "vertex"; owner: Owner; at: V3 }
+  | { kind: "edge"; owner: Owner; a: V3; b: V3; drawn: boolean }
+  | { kind: "face"; object: number; face: number }
+  | { kind: "region"; sketch: number; region: number }
+  | { kind: "guide"; guide: number }
+  | { kind: "object"; object: number };
+
+/** A plane frame (u x v = normal). */
+export interface FrameData {
+  origin: V3;
+  normal: V3;
+  u: V3;
+  v: V3;
+}
+
+export interface SurfaceHit {
+  at: { kind: "face"; object: number; face: number } | { kind: "region"; sketch: number; region: number };
+  frame: FrameData;
+  point: V3;
+  t: number;
+}
+
+/** Result of a pick (crates/inference pick::Picked). */
+export interface Picked {
+  entity: Entity;
+  point: V3;
+  surface: SurfaceHit | null;
+}
+
+/** World size of a screen pixel (crates/inference geom::PixelModel). */
+export interface PixelModel {
+  ortho: boolean;
+  scale: number;
+  eye: V3;
+  forward: V3;
+}
+
+export interface PickQuery {
+  origin: V3;
+  dir: V3;
+  px: PixelModel;
+  point_px?: number;
+  edge_px?: number;
 }
 
 /** A pickable part: an object's face (index = persistent face id) or a sketch region (index = region id). */
@@ -88,6 +160,9 @@ export interface MeshData {
   faceIds: Uint32Array;
   /** Edge segments as xyz pairs (6 floats per edge), metres. */
   edges: Float32Array;
+  /** One per edge segment: index into `edgeOwners`. */
+  edgeOwner: Uint32Array;
+  edgeOwners: { kind: "object" | "sketch"; id: number }[];
   parts: MeshPart[];
 }
 
@@ -102,6 +177,8 @@ export interface WasmMesh {
   indices(): Uint32Array;
   face_ids(): Uint32Array;
   edges(): Float32Array;
+  edge_owner(): Uint32Array;
+  edge_owners_json(): string;
   parts_json(): string;
   free(): void;
 }
@@ -116,6 +193,8 @@ export interface WasmDoc {
   log_hash(): string;
   op_log_json(): string;
   state_json(): string;
+  pick(query: string): string;
+  faces_json(object: number): string;
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
   free(): void;
@@ -135,6 +214,7 @@ export type RequestBody =
   | { kind: "undo" }
   | { kind: "redo" }
   | { kind: "log" }
+  | { kind: "pick"; query: PickQuery }
   | { kind: "export"; format: "stl" | "obj"; object: number };
 export type WorkerRequest = RequestBody & { id: number };
 
@@ -146,6 +226,7 @@ export type WorkerResponse =
       outcome?: OpOutcome;
       scene?: SceneData;
       log?: KernelOp[];
+      picked?: Picked | null;
       file?: Uint8Array | string;
     }
   | { id: number; ok: false; error: string; missing?: boolean };

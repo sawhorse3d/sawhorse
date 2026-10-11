@@ -381,7 +381,7 @@ export class ViewportEngine {
     this.requestRender();
   }
 
-  private fatLines(pairs: Vec3[][], color: string, width: number, dashed = false, depthTest = true): LineSegments2 {
+  private fatLines(pairs: Vec3[][], color: string, width: number, dashed = false, depthTest = true, opacity = 1): LineSegments2 {
     const flat: number[] = [];
     for (const [a, b] of pairs) flat.push(...a, ...b);
     const g = new LineSegmentsGeometry();
@@ -394,6 +394,7 @@ export class ViewportEngine {
       gapSize: 4,
       depthTest,
       transparent: true,
+      opacity,
       worldUnits: false,
     });
     mat.resolution.set(this.size.w, this.size.h);
@@ -413,7 +414,7 @@ export class ViewportEngine {
     for (const c of [...this.highlightGroup.children]) disposeObject(c);
     const h = this.highlight;
     if (h.hoverEdges.length) {
-      const l = this.fatLines(h.hoverEdges, this.theme.hover, 2.5, false, true);
+      const l = this.fatLines(h.hoverEdges, this.theme.hover, 2.5, false, true, 0.55);
       l.renderOrder = 4;
       this.highlightGroup.add(l);
     }

@@ -58,7 +58,19 @@ pub struct ViewMesh {
     pub face_ids: Vec<u32>,
     /// Edge segments as xyz pairs.
     pub edges: Vec<f32>,
+    /// One per edge segment: index into `edge_owners` (what the edge belongs to).
+    pub edge_owner: Vec<u32>,
+    /// Owners of edges: an object (edges of its solid) or a sketch (its strokes).
+    pub edge_owners: Vec<EdgeOwner>,
     pub parts: Vec<MeshPart>,
+}
+
+/// What a run of view-mesh edges belongs to (for window / crossing selection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct EdgeOwner {
+    /// "object" or "sketch".
+    pub kind: &'static str,
+    pub id: u64,
 }
 
 impl ViewMesh {
@@ -92,6 +104,12 @@ impl ViewMesh {
         self.edges.extend([
             a.x as f32, a.y as f32, a.z as f32, b.x as f32, b.y as f32, b.z as f32,
         ]);
+        self.edge_owner
+            .push(self.edge_owners.len().saturating_sub(1) as u32);
+    }
+
+    fn begin_owner(&mut self, kind: &'static str, id: u64) {
+        self.edge_owners.push(EdgeOwner { kind, id });
     }
 
     pub fn triangle_count(&self) -> usize {
@@ -99,6 +117,7 @@ impl ViewMesh {
     }
 
     fn push_object(&mut self, id: u64, o: &Object) -> Result<(), TessellateError> {
+        self.begin_owner("object", id);
         let b = o.brep();
         for (_, f) in b.faces() {
             let outer = b.loop_points(f.outer);
@@ -135,6 +154,7 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
             let part = MeshPart::new(PartKind::Region, sid, to_public(rid), &plane);
             m.push_face(part, &outer, &holes, |p| plane.to_local(p))?;
         }
+        m.begin_owner("sketch", sid);
         for (_, [a, b]) in s.edges() {
             if let (Some(p), Some(q)) = (s.vertex(a), s.vertex(b)) {
                 m.push_edge(plane.to_world(p), plane.to_world(q));

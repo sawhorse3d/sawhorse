@@ -390,6 +390,58 @@ impl Sketch {
         Ok(inside)
     }
 
+    /// Erase a region: every edge of its rings leaves the sketch unless it is on another
+    /// region's outer ring (live or consumed), healing the junctions it leaves. So erasing
+    /// one of two touching rectangles keeps the other whole, erasing a region that sits in
+    /// a hole of another fills that hole, and a region inside this one's hole survives.
+    /// Returns the live regions that are new or changed.
+    pub fn erase_region(&mut self, id: RegionId) -> Result<Vec<RegionId>, SketchError> {
+        let r = self
+            .regions
+            .get(id)
+            .ok_or(SketchError::NoSuchRegion(crate::ids::to_public(id)))?;
+        if r.consumed {
+            return Err(SketchError::RegionConsumed(crate::ids::to_public(id)));
+        }
+        let mine = r.boundary_edges();
+        let others: BTreeSet<(SVertexId, SVertexId)> = self
+            .regions
+            .iter()
+            .filter(|(k, _)| *k != id)
+            .flat_map(|(_, o)| {
+                (0..o.outer.len()).map(|i| {
+                    let (a, b) = (o.outer[i], o.outer[(i + 1) % o.outer.len()]);
+                    (a.min(b), a.max(b))
+                })
+            })
+            .collect();
+        let doomed: Vec<(SVertexId, SVertexId)> =
+            mine.into_iter().filter(|e| !others.contains(e)).collect();
+        if doomed.is_empty() {
+            return Err(SketchError::NothingToErase);
+        }
+        // Remove them all at once (erasing one at a time could heal a junction and fuse a
+        // doomed edge with a kept one before its turn came).
+        let mut next = self.clone();
+        let mut ends: BTreeSet<SVertexId> = BTreeSet::new();
+        for (u, w) in doomed {
+            if let Some(e) = next.edge_between(u, w) {
+                next.edges.remove(e);
+                ends.insert(u);
+                ends.insert(w);
+            }
+        }
+        next.remove_isolated_vertices();
+        for v in ends {
+            next.heal_vertex(v);
+        }
+        next.recompute_regions();
+        next.debug_check("erase_region");
+        let changed = next.changed_regions(self);
+        *self = next;
+        Ok(changed)
+    }
+
     /// Erase every edge lying along segment `a`-`b` (both ends within `POINT_MERGE` of it),
     /// drop vertices left without edges, and heal vertices the erase left joining exactly two
     /// collinear edges (a T-junction or crossing whose other stroke is gone), so splitting

@@ -21,6 +21,8 @@ pub enum SketchError {
     OutOfBounds,
     #[error("region #{0} touches itself at a point; a solid made from it would not be manifold")]
     PinchedRegion(u64),
+    #[error("every edge of that region also bounds another region; nothing to erase")]
+    NothingToErase,
     #[error("bad sketch plane: {0}")]
     Plane(#[from] PlaneError),
 }
@@ -85,6 +87,16 @@ pub enum FaceEditError {
     SelfIntersecting,
     #[error("that cut joins two different loops, so it does not split the face")]
     DoesNotSplit,
+    #[error("there is no edge there")]
+    NoSuchEdge,
+    /// Erasing an edge or face of a solid is allowed only where it joins two coplanar
+    /// faces (a line drawn on a face, an imprint): anything else would open the solid.
+    #[error(
+        "erasing that would open the solid (only lines drawn on a face can be erased; delete the whole solid instead)"
+    )]
+    WouldOpenSolid,
+    #[error("erasing that would leave a face touching itself at a point")]
+    WouldPinch,
     #[error("could not rebuild the face: {0}")]
     Build(#[from] BuildError),
 }
@@ -106,6 +118,10 @@ pub enum DocumentError {
     EmptyGroup,
     #[error("a name must be 1 to 64 characters")]
     BadName,
+    #[error("a batch needs at least one op")]
+    EmptyBatch,
+    #[error("undo, redo and batches cannot be nested inside a batch")]
+    NotInBatch,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
