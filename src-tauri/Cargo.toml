@@ -1,0 +1,33 @@
+[package]
+name = "sawhorse-desktop"
+version = "0.0.1"
+description = "Sawhorse desktop shell (Tauri 2). The geometry kernel runs as WASM in the webview, not here."
+authors = ["the maintainer"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# Stand-alone: kept out of the kernel workspace (crates/) so that
+# `cargo check --workspace --target wasm32-unknown-unknown` never sees Tauri.
+[workspace]
+
+[lib]
+name = "sawhorse_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+# Stay on Tauri 2.x stable. Never 3.0 alpha (ADR-0003); scripts/check-tauri-version.mjs enforces it.
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

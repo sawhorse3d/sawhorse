@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "check:tauri": "node scripts/check-tauri-version.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.3.0",
