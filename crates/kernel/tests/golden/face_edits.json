@@ -1,0 +1,113 @@
+{
+  "name": "face_edits",
+  "description": "Lane 2 Object tier: box, imprint a rectangle on the cap (sub-face + twin hole), split the sub-face, then cut a notch into the cap from its front edge.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 0.6
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.3
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.4,
+          0.2,
+          0.3
+        ],
+        [
+          0.8,
+          0.2,
+          0.3
+        ],
+        [
+          0.8,
+          0.4,
+          0.3
+        ],
+        [
+          0.4,
+          0.4,
+          0.3
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 6,
+      "path": [
+        [
+          0.6,
+          0.2,
+          0.3
+        ],
+        [
+          0.6,
+          0.4,
+          0.3
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.1,
+          0.0,
+          0.3
+        ],
+        [
+          0.1,
+          0.1,
+          0.3
+        ],
+        [
+          0.3,
+          0.1,
+          0.3
+        ],
+        [
+          0.3,
+          0.0,
+          0.3
+        ]
+      ]
+    }
+  ],
+  "hash": "e1666d0a81fb926c",
+  "stats": {
+    "objects": 1,
+    "faces": 9,
+    "edges": 24,
+    "vertices": 18,
+    "genus": 0,
+    "watertight": true
+  }
+}

@@ -41,6 +41,10 @@ pub struct HalfEdge {
 pub struct Edge {
     pub he: HalfEdgeId,
     pub twin: Option<HalfEdgeId>,
+    /// Drawn by the user (split_face / imprint), as opposed to made by the kernel (extrude
+    /// side walls, push/pull rails). Coplanar merge never dissolves a user edge, so an
+    /// imprint survives being pushed in and pulled back flush.
+    pub user: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,10 +68,106 @@ impl Face {
 }
 
 /// Input to [`Brep::from_polygons`]: vertex indices into a point list.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PolyFace {
     pub outer: Vec<usize>,
     pub holes: Vec<Vec<usize>>,
+    /// The face's stored plane; `None` fits one from the outer loop (Newell). Edits keep
+    /// the original plane of a face they reshape, so its frame never drifts.
+    pub plane: Option<Plane>,
+}
+
+impl PolyFace {
+    pub fn new(outer: Vec<usize>, holes: Vec<Vec<usize>>) -> PolyFace {
+        PolyFace {
+            outer,
+            holes,
+            plane: None,
+        }
+    }
+
+    /// Outer ring first, then holes.
+    pub fn rings(&self) -> impl Iterator<Item = &Vec<usize>> {
+        std::iter::once(&self.outer).chain(self.holes.iter())
+    }
+}
+
+/// A B-rep as plain data: points, indexed faces with holes and planes, and the user-drawn
+/// edges (as sorted index pairs). Every topology edit in the kernel is
+/// `to_polys` -> edit the data -> `Brep::build` -> validate, which keeps the half-edge
+/// surgery in one audited place (`build`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Polys {
+    pub points: Vec<DVec3>,
+    pub faces: Vec<PolyFace>,
+    pub user_edges: BTreeSet<(usize, usize)>,
+}
+
+impl Polys {
+    /// Undirected edge key.
+    pub fn key(a: usize, b: usize) -> (usize, usize) {
+        (a.min(b), a.max(b))
+    }
+
+    pub fn is_user(&self, a: usize, b: usize) -> bool {
+        self.user_edges.contains(&Self::key(a, b))
+    }
+
+    /// Plane of face `i` (stored, or fitted from its outer loop).
+    pub fn plane(&self, i: usize) -> Option<Plane> {
+        let f = &self.faces[i];
+        f.plane.or_else(|| {
+            let pts: Vec<DVec3> = f.outer.iter().map(|&k| self.points[k]).collect();
+            Plane::fit(&pts).ok()
+        })
+    }
+
+    /// Directed edge (a, b) -> (face index, ring index).
+    pub fn directed_edges(&self) -> BTreeMap<(usize, usize), (usize, usize)> {
+        let mut m = BTreeMap::new();
+        for (fi, f) in self.faces.iter().enumerate() {
+            for (ri, r) in f.rings().enumerate() {
+                for k in 0..r.len() {
+                    m.insert((r[k], r[(k + 1) % r.len()]), (fi, ri));
+                }
+            }
+        }
+        m
+    }
+
+    /// Drop points no face uses and renumber (keeps order). Returns old -> new index.
+    pub fn compact(&mut self) -> Vec<Option<usize>> {
+        let mut used = vec![false; self.points.len()];
+        for f in &self.faces {
+            for r in f.rings() {
+                for &i in r {
+                    used[i] = true;
+                }
+            }
+        }
+        let mut map = vec![None; self.points.len()];
+        let mut pts = Vec::new();
+        for (i, p) in self.points.iter().enumerate() {
+            if used[i] {
+                map[i] = Some(pts.len());
+                pts.push(*p);
+            }
+        }
+        for f in &mut self.faces {
+            for r in std::iter::once(&mut f.outer).chain(f.holes.iter_mut()) {
+                for i in r.iter_mut() {
+                    *i = map[*i].expect("used point");
+                }
+            }
+        }
+        self.user_edges = self
+            .user_edges
+            .iter()
+            .filter_map(|&(a, b)| Some(Self::key(map[a]?, map[b]?)))
+            .collect();
+        self.points = pts;
+        map
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,6 +184,20 @@ impl Brep {
     /// (a->b with b->a); a directed edge used twice is a typed error. Face planes are fitted
     /// from the outer loop.
     pub fn from_polygons(points: &[DVec3], faces: &[PolyFace]) -> Result<Brep, BuildError> {
+        let b = Self::build(&Polys {
+            points: points.to_vec(),
+            faces: faces.to_vec(),
+            user_edges: BTreeSet::new(),
+        })?;
+        b.debug_validate("from_polygons");
+        Ok(b)
+    }
+
+    /// Build from plain data without validating (callers validate; speculative edits use
+    /// this so a bad candidate is a value, not a debug panic). Vertex order follows
+    /// `points`, face order follows `faces`.
+    pub fn build(polys: &Polys) -> Result<Brep, BuildError> {
+        let (points, faces) = (&polys.points, &polys.faces);
         let mut b = Brep::default();
         let vids: Vec<VertexId> = points
             .iter()
@@ -112,9 +226,13 @@ impl Brep {
                     return Err(BuildError::RepeatedVertex { face: fi });
                 }
             }
-            let outer_pts: Vec<DVec3> = pf.outer.iter().map(|&i| points[i]).collect();
-            let plane =
-                Plane::fit(&outer_pts).map_err(|_| BuildError::DegenerateFace { face: fi })?;
+            let plane = match pf.plane {
+                Some(p) => p,
+                None => {
+                    let outer_pts: Vec<DVec3> = pf.outer.iter().map(|&i| points[i]).collect();
+                    Plane::fit(&outer_pts).map_err(|_| BuildError::DegenerateFace { face: fi })?
+                }
+            };
             let fid = b.faces.insert(Face {
                 outer: LoopId::null(),
                 holes: Vec::new(),
@@ -166,7 +284,8 @@ impl Brep {
                 continue;
             }
             let twin = directed.get(&(to, from)).copied();
-            let eid = b.edges.insert(Edge { he, twin });
+            let user = polys.user_edges.contains(&Polys::key(from, to));
+            let eid = b.edges.insert(Edge { he, twin, user });
             b.half_edges[he].edge = eid;
             b.half_edges[he].twin = twin;
             if let Some(t) = twin {
@@ -181,8 +300,43 @@ impl Brep {
                 b.vertices[v].out = he;
             }
         }
-        b.debug_validate("from_polygons");
         Ok(b)
+    }
+
+    /// Plain-data copy: points in vertex order, faces in face order with their stored
+    /// planes, user edges.
+    pub fn to_polys(&self) -> Polys {
+        let vindex: BTreeMap<VertexId, usize> = self
+            .vertices
+            .keys()
+            .enumerate()
+            .map(|(i, k)| (k, i))
+            .collect();
+        let ring =
+            |l: LoopId| -> Vec<usize> { self.loop_vertices(l).iter().map(|v| vindex[v]).collect() };
+        let faces = self
+            .faces
+            .values()
+            .map(|f| PolyFace {
+                outer: ring(f.outer),
+                holes: f.holes.iter().map(|&h| ring(h)).collect(),
+                plane: Some(f.plane),
+            })
+            .collect();
+        let user_edges = self
+            .edges
+            .values()
+            .filter(|e| e.user)
+            .map(|e| {
+                let h = &self.half_edges[e.he];
+                Polys::key(vindex[&h.origin], vindex[&self.dest(e.he)])
+            })
+            .collect();
+        Polys {
+            points: self.vertices.values().map(|v| v.pos).collect(),
+            faces,
+            user_edges,
+        }
     }
 
     // ---- queries -------------------------------------------------------------------
@@ -349,10 +503,7 @@ mod tests {
             p(1., 1., 1.),
             p(0., 1., 1.),
         ];
-        let f = |v: [usize; 4]| PolyFace {
-            outer: v.to_vec(),
-            holes: vec![],
-        };
+        let f = |v: [usize; 4]| PolyFace::new(v.to_vec(), vec![]);
         let faces = vec![
             f([0, 3, 2, 1]),
             f([4, 5, 6, 7]),

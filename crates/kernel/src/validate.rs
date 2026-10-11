@@ -142,7 +142,7 @@ fn on_segment(a: DVec2, b: DVec2, p: DVec2) -> bool {
 }
 
 /// Closed segments ab and cd intersect (crossing, touching or collinear overlap).
-fn segments_intersect(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
+pub(crate) fn segments_intersect(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
     let (o1, o2, o3, o4) = (
         orient(a, b, c),
         orient(a, b, d),
@@ -518,10 +518,7 @@ mod tests {
             p(1., 1., 1.),
             p(0., 1., 1.),
         ];
-        let f = |v: [usize; 4]| PolyFace {
-            outer: v.to_vec(),
-            holes: vec![],
-        };
+        let f = |v: [usize; 4]| PolyFace::new(v.to_vec(), vec![]);
         Brep::from_polygons(
             &pts,
             &[
@@ -558,10 +555,7 @@ mod tests {
             p(1., 1., 1.),
             p(0., 1., 1.),
         ];
-        let f = |v: [usize; 4]| PolyFace {
-            outer: v.to_vec(),
-            holes: vec![],
-        };
+        let f = |v: [usize; 4]| PolyFace::new(v.to_vec(), vec![]);
         let b = Brep::from_polygons(
             &pts,
             &[

@@ -17,6 +17,7 @@
 pub mod boolean;
 pub mod brep;
 pub mod error;
+pub mod faceops;
 pub mod hash;
 pub mod ids;
 pub mod mesh;
@@ -29,7 +30,7 @@ pub mod testing;
 pub mod tolerance;
 pub mod validate;
 
-pub use error::{BuildError, KernelError, PushError, SketchError};
+pub use error::{BuildError, FaceEditError, KernelError, PushError, SketchError};
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};
 

@@ -14,7 +14,7 @@
 use glam::{DVec2, DVec3};
 use slotmap::SlotMap;
 
-use crate::error::{KernelError, PushError, SketchError};
+use crate::error::{FaceEditError, KernelError, PushError, SketchError};
 use crate::ids::{ObjectId, RegionId, SketchId, from_public, to_public};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::plane::Plane;
@@ -69,6 +69,20 @@ pub enum Op {
         face: u32,
         distance: f64,
     },
+    /// Cut face `face` of `object` in two along `path` (world points on the face's plane;
+    /// ends on the face's boundary, interior strictly inside).
+    SplitFace {
+        object: u64,
+        face: u32,
+        path: Vec<[f64; 3]>,
+    },
+    /// Imprint the closed loop `points` (strictly inside face `face`) as a coplanar
+    /// sub-face twinned with a new hole in the face.
+    Imprint {
+        object: u64,
+        face: u32,
+        points: Vec<[f64; 3]>,
+    },
 }
 
 /// What an op did, with the ids the UI needs next.
@@ -86,6 +100,14 @@ pub enum OpOutcome {
         object: u64,
     },
     FaceMoved,
+    /// A face was split; the two pieces' ordinals (the first keeps the old ordinal).
+    FaceSplit {
+        faces: Vec<u32>,
+    },
+    /// A loop was imprinted; the new sub-face's ordinal.
+    Imprinted {
+        face: u32,
+    },
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -301,7 +323,37 @@ impl Model {
                     }
                 }
             }
+            Op::SplitFace { object, face, path } => {
+                let pts: Vec<DVec3> = path.iter().map(|p| DVec3::from_array(*p)).collect();
+                let o = self.face_edit_target(*object, *face)?;
+                let faces = o.split_face(*face as usize, &pts)?;
+                Ok(OpOutcome::FaceSplit {
+                    faces: faces.to_vec(),
+                })
+            }
+            Op::Imprint {
+                object,
+                face,
+                points,
+            } => {
+                let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                let o = self.face_edit_target(*object, *face)?;
+                let sub = o.imprint(*face as usize, &pts)?;
+                Ok(OpOutcome::Imprinted { face: sub })
+            }
         }
+    }
+
+    fn face_edit_target(&mut self, object: u64, face: u32) -> Result<&mut Object, FaceEditError> {
+        let k = from_public::<ObjectId>(object);
+        let o = self
+            .objects
+            .get_mut(k)
+            .ok_or(FaceEditError::NoSuchObject(object))?;
+        if face as usize >= o.brep().face_count() {
+            return Err(FaceEditError::NoSuchFace(face));
+        }
+        Ok(o)
     }
 
     /// A collapsed solid's flat footprint goes back to its source sketch when it lies on

@@ -174,6 +174,21 @@ pub fn model_hash(m: &Model) -> u64 {
                 }
             }
         }
+        let mut user: Vec<(usize, usize)> = b
+            .edges
+            .values()
+            .filter(|e| e.user)
+            .map(|e| {
+                let (x, y) = (vord[&b.half_edges[e.he].origin], vord[&b.dest(e.he)]);
+                (x.min(y), x.max(y))
+            })
+            .collect();
+        user.sort();
+        h.usize(user.len());
+        for (x, y) in user {
+            h.usize(x);
+            h.usize(y);
+        }
         h.u64(u64::from(o.is_watertight()));
     }
     h.finish()

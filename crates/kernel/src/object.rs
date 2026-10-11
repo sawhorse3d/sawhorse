@@ -18,7 +18,7 @@ use sawhorse_tessellate::{TessellateError, signed_area, triangulate};
 
 use crate::boolean::TriSolid;
 use crate::brep::{Brep, PolyFace};
-use crate::error::PushError;
+use crate::error::{FaceEditError, PushError};
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
 use crate::tolerance::{MIN_EXTRUDE, PARALLEL_EPS, POINT_MERGE, in_bounds};
@@ -105,22 +105,16 @@ impl Object {
         let rev = |r: &Vec<usize>| r.iter().rev().copied().collect::<Vec<_>>();
         let mut faces = Vec::new();
         // Built for distance > 0; mirrored below when negative.
-        faces.push(PolyFace {
-            outer: rev(&base_idx[0]),
-            holes: base_idx[1..].iter().map(rev).collect(),
-        });
-        faces.push(PolyFace {
-            outer: cap_idx[0].clone(),
-            holes: cap_idx[1..].to_vec(),
-        });
+        faces.push(PolyFace::new(
+            rev(&base_idx[0]),
+            base_idx[1..].iter().map(rev).collect(),
+        ));
+        faces.push(PolyFace::new(cap_idx[0].clone(), cap_idx[1..].to_vec()));
         for (b, c) in base_idx.iter().zip(&cap_idx) {
             let n = b.len();
             for k in 0..n {
                 let j = (k + 1) % n;
-                faces.push(PolyFace {
-                    outer: vec![b[k], b[j], c[j], c[k]],
-                    holes: vec![],
-                });
+                faces.push(PolyFace::new(vec![b[k], b[j], c[j], c[k]], vec![]));
             }
         }
         if distance < 0.0 {
@@ -291,6 +285,34 @@ impl Object {
         }
         self.brep.translate_vertices(&moved, n * distance);
         Ok(PushOutcome::Moved)
+    }
+
+    /// Split face `face` (ordinal) along `path` (world points on the face's plane): ends on
+    /// the boundary, interior strictly inside. Returns the two faces' ordinals (the first
+    /// keeps `face`). See [`crate::faceops::split_face`].
+    pub fn split_face(&mut self, face: usize, path: &[DVec3]) -> Result<[u32; 2], FaceEditError> {
+        let mut p = self.brep.to_polys();
+        if face >= p.faces.len() {
+            return Err(FaceEditError::NoSuchFace(face as u32));
+        }
+        let (a, b) = crate::faceops::split_face(&mut p, face, path)?;
+        self.brep = Brep::build(&p)?;
+        self.brep.debug_validate("split_face");
+        Ok([a as u32, b as u32])
+    }
+
+    /// Imprint the closed loop `points` (strictly inside face `face`) as a coplanar
+    /// sub-face; the face gains the twin hole. Returns the sub-face's ordinal. See
+    /// [`crate::faceops::imprint`].
+    pub fn imprint(&mut self, face: usize, points: &[DVec3]) -> Result<u32, FaceEditError> {
+        let mut p = self.brep.to_polys();
+        if face >= p.faces.len() {
+            return Err(FaceEditError::NoSuchFace(face as u32));
+        }
+        let sub = crate::faceops::imprint(&mut p, face, points)?;
+        self.brep = Brep::build(&p)?;
+        self.brep.debug_validate("imprint");
+        Ok(sub as u32)
     }
 
     /// Indexed triangle solid (shared vertices in slotmap order, face ordinal per triangle),

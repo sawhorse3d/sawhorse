@@ -61,12 +61,44 @@ pub enum PushError {
     Build(#[from] BuildError),
 }
 
+/// Errors from drawing on an object's face (split_face, imprint). Refusals of bad input;
+/// the face is left as it was.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum FaceEditError {
+    #[error("no object #{0}")]
+    NoSuchObject(u64),
+    #[error("no face #{0} on this object")]
+    NoSuchFace(u32),
+    #[error("a path needs at least {0} points")]
+    TooFewPoints(usize),
+    #[error("a coordinate is not finite or is beyond 10 km")]
+    OutOfBounds,
+    #[error("a point is off the face's plane")]
+    NotOnPlane,
+    #[error("that shape is too small (under 0.01 mm)")]
+    Degenerate,
+    #[error("a cut must start and end on the face's boundary")]
+    NotOnBoundary,
+    #[error("the path must run strictly inside the face")]
+    NotInside,
+    #[error("the path crosses the face's boundary")]
+    CrossesBoundary,
+    #[error("the path crosses itself")]
+    SelfIntersecting,
+    #[error("that cut joins two different loops, so it does not split the face")]
+    DoesNotSplit,
+    #[error("could not rebuild the face: {0}")]
+    Build(#[from] BuildError),
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
     Sketch(#[from] SketchError),
     #[error(transparent)]
     Push(#[from] PushError),
+    #[error(transparent)]
+    FaceEdit(#[from] FaceEditError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]
