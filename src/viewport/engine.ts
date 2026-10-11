@@ -363,10 +363,13 @@ export class ViewportEngine {
       this.rebuildGrid();
       this.buildAxes();
     }
-    // Refit only when the model outgrows what the camera was framed for, so editing does
-    // not make the view jump.
+    // Refit only when the model outgrows what the camera was framed for, and then only
+    // outward (the working area and what was framed before stay in view), so drawing a
+    // small shape never zooms the camera in on it.
     if (!this.fitted || !this.fitted.containsBox(box)) {
-      this.fit();
+      const grow = this.workingBox();
+      if (this.fitted) grow.union(this.fitted);
+      this.fit(undefined, grow);
     } else {
       this.requestRender();
     }
@@ -492,12 +495,20 @@ export class ViewportEngine {
     return this.toScreen(new THREE.Vector3(p[0], p[1], p[2]));
   }
 
-  /** Bounding box of everything worth framing: the model, or a default 2 ft working area. */
+  /** The default working area: about 2 ft around the origin. */
+  static readonly WORKING_AREA = new THREE.Box3(new THREE.Vector3(-0.15, -0.15, 0), new THREE.Vector3(0.6, 0.45, 0.3));
+
+  /** The model plus the default working area (what standard views frame). */
+  workingBox(): THREE.Box3 {
+    return this.contentBox().union(ViewportEngine.WORKING_AREA);
+  }
+
+  /** Bounding box of the model, or the default working area when it is empty (Zoom Extents). */
   contentBox(): THREE.Box3 {
     const box = new THREE.Box3();
     if (this.faces?.geometry.boundingBox) box.union(this.faces.geometry.boundingBox);
     if (this.edges?.geometry.boundingBox) box.union(this.edges.geometry.boundingBox);
-    if (box.isEmpty()) return new THREE.Box3(new THREE.Vector3(-0.15, -0.15, 0), new THREE.Vector3(0.6, 0.45, 0.3));
+    if (box.isEmpty()) return ViewportEngine.WORKING_AREA.clone();
     return box;
   }
 
@@ -514,7 +525,7 @@ export class ViewportEngine {
   setView(view: ViewId): void {
     this.view = view;
     this.useProjection(projectionForView(view));
-    this.fit(view);
+    this.fit(view, this.workingBox());
   }
 
   /** Switch parallel / perspective keeping the target, direction and on-screen size. */
@@ -560,9 +571,9 @@ export class ViewportEngine {
     this.controls.object = this.camera;
   }
 
-  /** Zoom extents: frame everything, keeping the current direction (or a view's). */
-  fit(view?: ViewId): void {
-    const box = this.contentBox();
+  /** Zoom extents: frame `box` (default: the model), keeping the current direction (or a view's). */
+  fit(view?: ViewId, frame?: THREE.Box3): void {
+    const box = frame ?? this.contentBox();
     this.fitted = box.clone().expandByScalar(box.getSize(new THREE.Vector3()).length() * 0.15);
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     let dir: THREE.Vector3;

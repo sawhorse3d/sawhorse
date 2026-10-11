@@ -88,6 +88,14 @@ pub enum Op {
         face: u64,
         points: Vec<[f64; 3]>,
     },
+    /// Draw a stroke (world points; `closed` joins the last to the first) as one undoable
+    /// edit: into a sketch, onto a plane (the sketch already on that plane, or a new one),
+    /// or onto a solid's face plane (cuts and imprints; see [`crate::draw`]).
+    Draw {
+        target: DrawTarget,
+        points: Vec<[f64; 3]>,
+        closed: bool,
+    },
     /// Erase the edge of `object` from `a` to `b` (world points at its two ends). Only a
     /// line drawn on a face can go: its two coplanar faces merge (with every other edge they
     /// share). Anything else would open the solid and is refused.
@@ -119,6 +127,19 @@ pub enum Op {
     Redo,
 }
 
+/// Where a stroke goes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[serde(tag = "on", rename_all = "snake_case")]
+pub enum DrawTarget {
+    /// Into this sketch (points must lie on its plane).
+    Sketch { sketch: u64 },
+    /// Onto this plane: into the sketch already lying on it (either facing), or a new one.
+    Plane { origin: [f64; 3], normal: [f64; 3] },
+    /// Onto the plane of this face of a solid (persistent face id).
+    Face { object: u64, face: u64 },
+}
+
 /// What an op did, with the ids the UI needs next.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -143,6 +164,15 @@ pub enum OpOutcome {
         face: u64,
     },
     ObjectDeleted,
+    /// A stroke was drawn: into `sketch` (the regions it bounds), or on a solid (the
+    /// persistent ids of the faces it cut or made).
+    Drawn {
+        sketch: Option<u64>,
+        regions: Vec<u64>,
+        faces: Vec<u64>,
+        /// A closed stroke: the region or face it now encloses (what Push/Pull acts on next).
+        inside: Option<u64>,
+    },
     /// An edge or face was erased; the merged face's persistent id.
     FacesMerged {
         face: u64,
@@ -424,6 +454,48 @@ impl Model {
                 let sub = o.imprint(fi, &pts)?;
                 Ok(OpOutcome::Imprinted { face: sub })
             }
+            Op::Draw {
+                target,
+                points,
+                closed,
+            } => {
+                let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                match target {
+                    DrawTarget::Face { object, face } => {
+                        let (o, fi) = self.face_edit_target(*object, *face)?;
+                        let (faces, inside) = o.draw(fi, &pts, *closed)?;
+                        Ok(OpOutcome::Drawn {
+                            sketch: None,
+                            regions: Vec::new(),
+                            faces,
+                            inside,
+                        })
+                    }
+                    DrawTarget::Sketch { sketch } => {
+                        let sid = self.sketch_key(*sketch)?;
+                        let regions = self.draw_in_sketch(sid, &pts, *closed)?;
+                        Ok(OpOutcome::Drawn {
+                            sketch: Some(*sketch),
+                            regions: regions.into_iter().map(to_public).collect(),
+                            faces: Vec::new(),
+                            inside: self.region_inside(sid, &pts, *closed),
+                        })
+                    }
+                    DrawTarget::Plane { origin, normal } => {
+                        let plane =
+                            Plane::new(DVec3::from_array(*origin), DVec3::from_array(*normal))
+                                .map_err(SketchError::from)?;
+                        let sid = self.sketch_on(&plane);
+                        let regions = self.draw_in_sketch(sid, &pts, *closed)?;
+                        Ok(OpOutcome::Drawn {
+                            sketch: Some(to_public(sid)),
+                            regions: regions.into_iter().map(to_public).collect(),
+                            faces: Vec::new(),
+                            inside: self.region_inside(sid, &pts, *closed),
+                        })
+                    }
+                }
+            }
             Op::EraseEdge { object, a, b } => {
                 let o = self
                     .objects
@@ -513,6 +585,57 @@ impl Model {
             }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
+    }
+
+    /// The sketch lying on `plane` (either facing, within the planarity tolerance), or a
+    /// new one on it.
+    fn sketch_on(&mut self, plane: &Plane) -> SketchId {
+        let found = self.sketch_order.iter().copied().find(|&k| {
+            let sp = self.sketches[k].plane();
+            sp.normal.dot(plane.normal).abs() >= 1.0 - 1e-12
+                && sp.signed_distance(plane.origin).abs() <= PLANARITY
+        });
+        found.unwrap_or_else(|| {
+            let id = self.sketches.insert(Sketch::new(*plane));
+            self.sketch_order.push(id);
+            id
+        })
+    }
+
+    /// The region a closed stroke encloses (holding an interior point of it), if any.
+    fn region_inside(&self, sid: SketchId, pts: &[DVec3], closed: bool) -> Option<u64> {
+        if !closed {
+            return None;
+        }
+        let s = &self.sketches[sid];
+        let ring: Vec<DVec2> = pts.iter().map(|&p| s.plane().to_local(p)).collect();
+        let q = sawhorse_tessellate::interior_point(&ring, &[])?;
+        s.region_at(q).map(to_public)
+    }
+
+    /// Insert a world-space stroke into a sketch (every point on its plane).
+    fn draw_in_sketch(
+        &mut self,
+        sid: SketchId,
+        pts: &[DVec3],
+        closed: bool,
+    ) -> Result<Vec<RegionId>, SketchError> {
+        let s = &mut self.sketches[sid];
+        let plane = *s.plane();
+        let mut local = Vec::with_capacity(pts.len());
+        for p in pts {
+            if !p.is_finite() {
+                return Err(SketchError::OutOfBounds);
+            }
+            if plane.signed_distance(*p).abs() > PLANARITY {
+                return Err(SketchError::OffPlane);
+            }
+            local.push(plane.to_local(*p));
+        }
+        if local.len() < 2 {
+            return Err(SketchError::Degenerate);
+        }
+        s.insert_polyline(&local, closed)
     }
 
     /// Drop a removed object from every group (and empty groups with it).

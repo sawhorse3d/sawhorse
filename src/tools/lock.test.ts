@@ -63,6 +63,7 @@ describe("inference memory", () => {
     lines: [],
     edge,
     picked: null,
+    adjacent: null,
   });
 
   it("keeps the two most recent snapped points as from-point anchors and the last edge as a reference", () => {

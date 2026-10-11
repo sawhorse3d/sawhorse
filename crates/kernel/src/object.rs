@@ -362,6 +362,42 @@ impl Object {
         Ok(id)
     }
 
+    /// Draw stroke `points` on the plane of face `face` (ordinal): cuts where it runs from
+    /// edge to edge, an imprint when it closes inside one face (see [`crate::draw`]).
+    /// Returns the persistent ids of the faces it cut or made, sorted, and for a closed
+    /// stroke the id of the face it now encloses (the strip of a dado, an imprint).
+    pub fn draw(
+        &mut self,
+        face: usize,
+        points: &[DVec3],
+        closed: bool,
+    ) -> Result<(Vec<u64>, Option<u64>), FaceEditError> {
+        let mut p = self.brep.to_polys();
+        if face >= p.faces.len() {
+            return Err(FaceEditError::NoSuchFace(face as u64));
+        }
+        let plane = p.plane(face).ok_or(FaceEditError::Degenerate)?;
+        let touched = crate::draw::draw_on_faces(&mut p, face, points, closed)?;
+        let inside = if closed {
+            let ring: Vec<DVec2> = points.iter().map(|&q| plane.to_local(q)).collect();
+            sawhorse_tessellate::interior_point(&ring, &[])
+                .and_then(|q| crate::draw::face_containing(&p, &plane, q))
+        } else {
+            None
+        };
+        assign_face_ids(&mut p, &mut self.next_face_id);
+        let mut ids: Vec<u64> = touched
+            .iter()
+            .filter_map(|&i| p.faces.get(i).and_then(|f| f.id))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let inside = inside.and_then(|i| p.faces.get(i).and_then(|f| f.id));
+        self.brep = Brep::build(&p)?;
+        self.brep.debug_validate("draw");
+        Ok((ids, inside))
+    }
+
     /// Erase the edge between `a` and `b` (a line drawn on a face): its two coplanar faces
     /// merge. Returns the merged face's persistent id. See [`crate::faceops::erase_edge`].
     pub fn erase_edge(&mut self, a: DVec3, b: DVec3) -> Result<u64, FaceEditError> {

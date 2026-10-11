@@ -110,7 +110,7 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 /* ---- Lane 3 additions: labels pinned to the model, selection box, menus ---- */
 .vp .vlabel{position:absolute;transform:translate(-50%,-50%);pointer-events:none;font:11px var(--mono);padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);color:var(--fg);white-space:nowrap}
 .vp .vlabel.dim{border-color:var(--accent);color:var(--accent)}
-.vp .vlabel.live{border-color:var(--sel);font-weight:500}
+.vp .vlabel.live{border-color:var(--sel);font-weight:500;transform:translate(14px,12px)}
 .vp .selbox{position:absolute;pointer-events:none;border:1px solid var(--sel);background:color-mix(in srgb,var(--sel) 8%,transparent)}
 .vp .selbox.crossing{border-style:dashed;background:color-mix(in srgb,var(--sel) 4%,transparent)}
 .menu{position:relative}

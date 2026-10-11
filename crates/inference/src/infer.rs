@@ -106,6 +106,9 @@ pub struct Inference {
     pub edge: Option<[[f64; 3]; 2]>,
     /// What a plain pick returns here (hover highlight, selection).
     pub picked: Option<Picked>,
+    /// For a snap on a solid's edge or corner: the face beside it that faces the eye most
+    /// (where a shape started there is drawn when the ray itself misses the solid).
+    pub adjacent: Option<SurfaceHit>,
 }
 
 #[derive(Debug, Clone)]
@@ -673,6 +676,38 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
         lines: chosen.lines,
         edge: near_edge.map(|(_, e)| e),
         picked,
+        adjacent: adjacent_surface(scene, &ray, chosen.point),
+    })
+}
+
+/// The face beside a snapped solid edge or corner that faces the eye most, if the point
+/// lies on it.
+fn adjacent_surface(scene: &Scene, ray: &Ray, p: DVec3) -> Option<SurfaceHit> {
+    let mut best: Option<(f64, usize)> = None;
+    for s in scene
+        .segs
+        .iter()
+        .filter(|s| s.owner.kind == OwnerKind::Object && crate::pick::seg_contains(s.a, s.b, p))
+    {
+        for &f in s.faces.iter().flatten() {
+            let pl = &scene.surfaces[f].plane;
+            if pl.signed_distance(p).abs() > 1e-7 {
+                continue;
+            }
+            let facing = -pl.normal.dot(ray.dir);
+            if facing > 0.0 && best.is_none_or(|(b, _)| facing > b) {
+                best = Some((facing, f));
+            }
+        }
+    }
+    best.map(|(_, f)| {
+        let sf = &scene.surfaces[f];
+        SurfaceHit {
+            at: sf.at,
+            frame: crate::pick::Frame::from(&sf.plane),
+            point: p.to_array(),
+            t: ray.param(p),
+        }
     })
 }
 

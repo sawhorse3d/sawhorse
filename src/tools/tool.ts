@@ -23,6 +23,8 @@ export interface Snap {
   tip: string;
   /** The surface under the cursor, if any. */
   surface: SurfaceHit | null;
+  /** On a solid's edge or corner: the face beside it facing the eye (when the ray misses). */
+  adjacent?: SurfaceHit | null;
   /** The entity the snap came from (edge, vertex, face ...), if any. */
   entity: Entity | null;
   /** Lines to draw for the inference (axis from the start, dotted from-point alignment). */
@@ -85,6 +87,8 @@ export interface ToolHost {
   state(): DocState | null;
   /** Apply one op (a batch for several). Resolves to the result, or null when refused. */
   apply(op: KernelOp, describe?: (r: EditResult) => string): Promise<EditResult | null>;
+  /** The kernel's message for the last refused op (null after a success). */
+  lastError(): string | null;
   /** Status line text (null restores the tool hint). */
   status(text: string | null, error?: boolean): void;
   /** Show a value in the Value Control Box (live measurement or the default). */
@@ -147,6 +151,15 @@ export abstract class Tool {
   }
   /** The Value Control Box label while this tool is active (null: read-only). */
   valueLabel(): string | null {
+    return null;
+  }
+  /** The tool's key pressed again: switch to its next variant (Rect -> Rotated Rect,
+   * Circle -> Polygon, Arc -> 3-Point Arc). Returns the new variant's hint, or null. */
+  cycleVariant(): string | null {
+    return null;
+  }
+  /** The current variant's name and hint, for the status line (null: the rail's hint). */
+  variantHint(): string | null {
     return null;
   }
 }

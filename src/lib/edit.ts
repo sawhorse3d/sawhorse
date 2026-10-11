@@ -128,6 +128,16 @@ export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | 
       return op.op === "push_pull" ? { kind: "face", object: op.object, face: op.face } : previous;
     case "object_collapsed":
       return null;
+    case "drawn": {
+      // A closed stroke: what it encloses. An open one that formed a region: that region.
+      if (op.op !== "draw") return previous;
+      if (outcome.sketch !== null) {
+        const region = outcome.inside ?? outcome.regions[0];
+        return region !== undefined ? { kind: "region", sketch: outcome.sketch, region } : previous;
+      }
+      if (op.target.on === "face" && outcome.inside !== null) return { kind: "face", object: op.target.object, face: outcome.inside };
+      return previous;
+    }
     default:
       return previous;
   }

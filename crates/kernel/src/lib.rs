@@ -17,6 +17,7 @@
 pub mod boolean;
 pub mod brep;
 pub mod document;
+pub mod draw;
 pub mod error;
 pub mod faceops;
 pub mod hash;

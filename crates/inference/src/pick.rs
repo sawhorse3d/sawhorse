@@ -94,6 +94,17 @@ pub struct Picked {
     pub surface: Option<SurfaceHit>,
 }
 
+/// Point `p` lies on segment `a`-`b` (within a nanometre).
+pub fn seg_contains(a: DVec3, b: DVec3, p: DVec3) -> bool {
+    let ab = b - a;
+    let l2 = ab.length_squared();
+    if l2 == 0.0 {
+        return a.distance(p) <= 1e-9;
+    }
+    let t = ((p - a).dot(ab) / l2).clamp(0.0, 1.0);
+    (a + ab * t).distance(p) <= 1e-9
+}
+
 /// Nearest surface hit along the ray.
 pub fn surface_hit(scene: &Scene, ray: &Ray) -> Option<SurfaceHit> {
     let mut best: Option<(f64, usize)> = None;

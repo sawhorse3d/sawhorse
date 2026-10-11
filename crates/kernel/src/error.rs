@@ -23,6 +23,8 @@ pub enum SketchError {
     PinchedRegion(u64),
     #[error("every edge of that region also bounds another region; nothing to erase")]
     NothingToErase,
+    #[error("a point is off the sketch's plane")]
+    OffPlane,
     #[error("bad sketch plane: {0}")]
     Plane(#[from] PlaneError),
 }
@@ -97,6 +99,10 @@ pub enum FaceEditError {
     WouldOpenSolid,
     #[error("erasing that would leave a face touching itself at a point")]
     WouldPinch,
+    /// A stroke on a face ends inside it. Faces of a solid cannot carry loose lines; the
+    /// draw tools keep such a stroke as a preview until it reaches an edge or closes.
+    #[error("a line on a face must start and end on its edges, or close into a loop")]
+    Dangling,
     #[error("could not rebuild the face: {0}")]
     Build(#[from] BuildError),
 }

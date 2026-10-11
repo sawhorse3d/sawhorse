@@ -60,6 +60,8 @@ pub struct Seg {
     pub owner: Owner,
     /// Drawn by the user (sketch strokes, lines drawn on faces): erasable.
     pub drawn: bool,
+    /// The surfaces on either side (indices into [`Scene::surfaces`]; object edges only).
+    pub faces: [Option<usize>; 2],
 }
 
 /// A run of equal segments turning by equal angles (an arc, a circle, a regular polygon):
@@ -114,7 +116,9 @@ impl Scene {
                 kind: OwnerKind::Object,
                 id: oid,
             };
-            for (_, f) in b.faces() {
+            let mut surface_of = std::collections::BTreeMap::new();
+            for (fid, f) in b.faces() {
+                surface_of.insert(fid, s.surfaces.len());
                 let outer = b.loop_points(f.outer);
                 let holes: Vec<Vec<DVec3>> = f.holes.iter().map(|&h| b.loop_points(h)).collect();
                 s.add_surface(
@@ -132,11 +136,17 @@ impl Scene {
             }
             for (e, edge) in b.edges() {
                 let (a, bb) = b.edge_points(e);
+                let side = |h: Option<sawhorse_kernel::ids::HalfEdgeId>| {
+                    let he = b.half_edge(h?)?;
+                    let face = b.lp(he.lp)?.face;
+                    surface_of.get(&face).copied()
+                };
                 s.segs.push(Seg {
                     a,
                     b: bb,
                     owner,
                     drawn: edge.user,
+                    faces: [side(Some(edge.he)), side(edge.twin)],
                 });
             }
         }
@@ -174,6 +184,7 @@ impl Scene {
                         b: plane.to_world(q),
                         owner,
                         drawn: true,
+                        faces: [None, None],
                     });
                 }
             }
@@ -244,6 +255,10 @@ impl Scene {
                 .collect::<Vec<DVec2>>()
         };
         let h2: Vec<Vec<DVec2>> = holes.iter().map(|h| to2(h)).collect();
+        // Every face gets a surface (edges refer to them by index), triangles when it
+        // tessellates.
+        let surface = self.surfaces.len();
+        self.surfaces.push(Surface { at, plane });
         let Ok(tris) = triangulate(&to2(outer), &h2) else {
             return;
         };
@@ -252,8 +267,6 @@ impl Scene {
             .chain(holes.iter().flatten())
             .copied()
             .collect();
-        let surface = self.surfaces.len();
-        self.surfaces.push(Surface { at, plane });
         for t in tris {
             self.tris.push(Tri {
                 p: t.map(|i| flat[i as usize]),

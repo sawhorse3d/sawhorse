@@ -17,6 +17,9 @@ import { SelectTool } from "./tools/select";
 import { EraseTool } from "./tools/erase";
 import { RectTool } from "./tools/rect";
 import { PushTool } from "./tools/push";
+import { LineTool } from "./tools/line";
+import { CircleTool } from "./tools/circle";
+import { ArcTool } from "./tools/arc";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
@@ -82,10 +85,11 @@ export function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
   // Latest state for the tool host (tools live outside React).
-  const live = useRef({ scene, units, selection, target, groupContext, vcbEditing: false });
+  const live = useRef({ scene, units, selection, target, groupContext, vcbEditing: false, lastError: null as string | null });
   live.current = { ...live.current, scene, units, selection, target, groupContext };
   // Edits run one at a time, in order.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const editsPending = useRef(0);
 
   const fail = useCallback((err: unknown) => {
     const text = err instanceof Error ? err.message : String(err);
@@ -100,28 +104,39 @@ export function App() {
   /** Run one kernel request (an op, undo or redo); the scene and push target follow. */
   const run = useCallback(
     (request: (k: KernelClient) => Promise<EditResult>, op: KernelOp | null, describe?: (r: EditResult) => string): Promise<EditResult | null> => {
+      editsPending.current++;
       const next = queue.current.then(async () => {
         const kernel = kernelRef.current;
         if (!kernel) return null;
         try {
           const r = await request(kernel);
+          // Tools read the host synchronously right after this resolves (a key waiting on
+          // the edit), so the live copy is updated here, not on the next render.
+          live.current.scene = r.scene;
           setScene(r.scene);
           setKernelState("ready");
           const parts = r.scene.mesh.parts;
           const exists = (t: Target | null) =>
             !!t && parts.some((p) => (t.kind === "face" ? p.kind === "face" && p.owner === t.object && p.index === t.face : p.kind === "region" && p.owner === t.sketch && p.index === t.region));
-          if (op) setTarget((t) => nextTarget(op, r.outcome, t));
-          else setTarget((t) => (exists(t) ? t : null));
+          const prev = live.current.target;
+          const t = op ? nextTarget(op, r.outcome, prev) : exists(prev) ? prev : null;
+          live.current.target = t;
+          setTarget(t);
           // Drop selected entities that no longer exist (faces and regions by id).
-          setSelection((sel) => sel.filter((e) => (e.kind === "face" || e.kind === "region" || e.kind === "object" ? partsOf(e, r.scene.mesh).length > 0 : true)));
+          const sel = live.current.selection.filter((e) => (e.kind === "face" || e.kind === "region" || e.kind === "object" ? partsOf(e, r.scene.mesh).length > 0 : true));
+          live.current.selection = sel;
+          setSelection(sel);
           setHover(null);
           if (describe) setMessage({ text: describe(r), error: false });
+          live.current.lastError = null;
           return r;
         } catch (err) {
+          live.current.lastError = err instanceof Error ? err.message : String(err);
           fail(err);
           return null;
         }
       });
+      void next.finally(() => editsPending.current--);
       queue.current = next;
       return next;
     },
@@ -178,6 +193,7 @@ export function App() {
       mesh: () => live.current.scene?.mesh ?? null,
       state: () => live.current.scene?.state ?? null,
       apply: (op, describe) => apply(op, describe),
+      lastError: () => live.current.lastError,
       status: (text, error = false) => setMessage(text === null ? null : { text, error }),
       showValue: (text) => {
         if (!live.current.vcbEditing) setVcb(text);
@@ -208,7 +224,10 @@ export function App() {
     toolsRef.current = new Map<ToolId, Tool>([
       ["select", new SelectTool(host)],
       ["erase", new EraseTool(host)],
+      ["line", new LineTool(host)],
       ["rect", new RectTool(host)],
+      ["circle", new CircleTool(host)],
+      ["arc", new ArcTool(host)],
       ["pushpull", new PushTool(host)],
     ]);
   }
@@ -274,6 +293,8 @@ export function App() {
       const next = toolFor(id);
       activeRef.current = next;
       next?.activate();
+      const hint = next?.variantHint();
+      if (hint) setMessage({ text: hint, error: false });
       setToolView(next?.view() ?? EMPTY_VIEW);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -281,13 +302,21 @@ export function App() {
   );
 
   /**
-   * Run a keyboard action after every pointer event already on its way to the tool: a fast
-   * click-then-key (select, then Delete; click a face, then type a distance) must see the
-   * click's result.
+   * Run a keyboard action after every pointer event already on its way to the tool and
+   * every edit already sent to the kernel: a fast click-then-key (select, then Delete;
+   * draw a rectangle, then type a Push/Pull distance) must see their results.
    */
   const afterPointer = useCallback((action: () => void): Promise<void> => {
     const d = driverRef.current;
-    if (d?.pending()) return d.idle().then(action);
+    if (d?.pending() || editsPending.current > 0) {
+      // Clicks first, then the edits they started (a rectangle, then Push on what it drew);
+      // later clicks wait for this action in turn.
+      if (d) return d.run(async () => {
+        await queue.current;
+        action();
+      });
+      return queue.current.then(() => action());
+    }
     action();
     return Promise.resolve();
   }, []);
@@ -325,13 +354,16 @@ export function App() {
     (text: string) => {
       live.current.vcbEditing = false;
       vcbRef.current?.blur();
-      if (activeRef.current?.valueLabel()) {
-        // After any click still on its way to the tool (click a face, type, Enter).
+      // After any click or tool switch still on its way (click a face, press P, type, Enter):
+      // the value goes to whichever tool is active by then.
+      void afterPointer(() => {
         const t = activeRef.current;
-        void afterPointer(() => t.onValue(text));
-        return;
-      }
-      if (tool.vcb) setMessage({ text: `${tool.label} arrives in a later lane.`, error: false });
+        if (t?.valueLabel()) t.onValue(text);
+        else {
+          const def = toolById(toolIdRef.current);
+          if (def.vcb) setMessage({ text: `${def.label} arrives in a later lane.`, error: false });
+        }
+      });
     },
     [tool, afterPointer],
   );
@@ -408,7 +440,18 @@ export function App() {
       const t = toolForKey(e.key);
       if (t) {
         e.preventDefault();
-        void afterPointer(() => selectTool(t.id));
+        void afterPointer(() => {
+          // The active tool's key again switches its variant (Rect / Rotated Rect, ...).
+          if (t.id === toolIdRef.current && activeRef.current) {
+            const hint = activeRef.current.cycleVariant();
+            if (hint) {
+              setMessage({ text: hint, error: false });
+              setToolView(activeRef.current.view());
+              return;
+            }
+          }
+          selectTool(t.id);
+        });
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {

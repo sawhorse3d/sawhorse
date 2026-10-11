@@ -37,7 +37,7 @@ export function snapFromPick(picked: Picked | null, ray: { origin: V3; dir: V3 }
 
 /** A snap from the inference engine's answer. */
 export function snapOf(inf: Inference): Snap {
-  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface: inf.surface, entity: inf.entity, lines: inf.lines };
+  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface: inf.surface, entity: inf.entity, lines: inf.lines, adjacent: inf.adjacent };
 }
 
 const ANCHOR_KINDS = new Set(["endpoint", "midpoint", "intersection", "centre", "guide-point"]);
@@ -200,6 +200,25 @@ export class ToolDriver {
     const e: ToolEvent = { type, x: p.x, y: p.y, start, shift: p.shift, ctrl: p.ctrl, alt: p.alt, ray: r.ray, picked: r.picked, snap: r.snap };
     // The tool may have changed while the query was in flight.
     if (this.tool() === tool) tool.onEvent(e);
+  }
+
+  /**
+   * Run a keyboard action in order with the pointer events: after everything already
+   * queued, and before anything that arrives later (a click right after a key press sees
+   * the key's effect).
+   */
+  run(action: () => unknown): Promise<void> {
+    this.queued++;
+    const next = this.chain.then(async () => {
+      try {
+        await action();
+      } finally {
+        this.queued--;
+        if (this.queued === 0 && this.pendingMove) this.pump();
+      }
+    });
+    this.chain = next.catch(() => undefined);
+    return this.chain;
   }
 
   /** Events are queued or being resolved. */

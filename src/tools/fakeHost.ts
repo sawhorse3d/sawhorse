@@ -48,6 +48,7 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
       return r;
     },
     status: (text, error = false) => h.statuses.push({ text, error }),
+    lastError: () => (h.outcome ? null : "refused"),
     showValue: (t) => h.values.push(t),
     selection: () => h.sel,
     setSelection: (es) => {

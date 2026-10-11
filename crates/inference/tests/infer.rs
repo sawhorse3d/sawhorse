@@ -475,3 +475,21 @@ fn lengths_along_an_axis_snap_to_whole_grid_steps() {
     q.grid = false;
     assert!((run(&m, &q).point[0] - 7.2 * IN).abs() < 1e-9);
 }
+
+#[test]
+fn an_edge_snap_names_the_face_beside_it_that_faces_the_eye() {
+    // Looking down just outside the box's top front edge: the ray misses the box, but the
+    // snap on the edge reports the top face (facing the eye), not the front face.
+    let m = unit_box();
+    let r = run(&m, &down(0.5, -0.003, 0.001));
+    assert_eq!(r.kind, K::Midpoint);
+    assert!(r.surface.is_none());
+    let adj = r.adjacent.expect("a face beside the edge");
+    assert_eq!(adj.frame.normal, [0.0, 0.0, 1.0]);
+    assert!(matches!(
+        adj.at,
+        sawhorse_inference::scene::SurfaceRef::Face { object: 1, face: 2 }
+    ));
+    // On the ground away from everything: none.
+    assert!(run(&m, &down(3.0, 3.0, 0.001)).adjacent.is_none());
+}

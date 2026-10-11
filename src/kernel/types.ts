@@ -13,6 +13,12 @@ export type KernelOp =
   | { op: "push_pull"; object: number; face: number; distance: number }
   | { op: "split_face"; object: number; face: number; path: [number, number, number][] }
   | { op: "imprint"; object: number; face: number; points: [number, number, number][] }
+  | {
+      op: "draw";
+      target: { on: "sketch"; sketch: number } | { on: "plane"; origin: [number, number, number]; normal: [number, number, number] } | { on: "face"; object: number; face: number };
+      points: [number, number, number][];
+      closed: boolean;
+    }
   | { op: "erase_edge"; object: number; a: [number, number, number]; b: [number, number, number] }
   | { op: "erase_face"; object: number; face: number }
   | { op: "erase_region"; sketch: number; region: number }
@@ -36,6 +42,7 @@ export type OpOutcome =
   | { kind: "imprinted"; face: number }
   | { kind: "object_deleted" }
   | { kind: "faces_merged"; face: number }
+  | { kind: "drawn"; sketch: number | null; regions: number[]; faces: number[]; inside: number | null }
   | { kind: "batch"; outcomes: OpOutcome[] }
   | { kind: "group_created"; group: number }
   | { kind: "group_deleted" }
@@ -150,6 +157,8 @@ export interface Inference {
   /** The nearest edge under the cursor (kept as a parallel reference). */
   edge: [V3, V3] | null;
   picked: Picked | null;
+  /** For a snap on a solid's edge or corner: the face beside it facing the eye most. */
+  adjacent: SurfaceHit | null;
 }
 
 /** An inference request (crates/inference infer::InferQuery). */

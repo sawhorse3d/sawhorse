@@ -92,6 +92,17 @@ enum Fuzz {
     EraseEdge(u8, u8, u8),
     EraseFace(u8, u8),
     EraseRegion(u8, u8),
+    /// A stroke over a face's plane, possibly crossing its edges or hanging off it: corners
+    /// at fractions of the face's bounding box (outside 0..1 means past the edge).
+    DrawFace {
+        object: u8,
+        face: u8,
+        at: [f64; 2],
+        size: [f64; 2],
+        closed: bool,
+    },
+    /// A stroke on a horizontal plane at height `z` (find-or-create its sketch).
+    DrawPlane(f64, Vec<[f64; 2]>, bool),
     /// Two simple intents resolved against the same state, applied as one batch.
     Batch(Vec<Fuzz>),
     Delete(u8),
@@ -119,6 +130,9 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
             .prop_map(|(object, face, e1, t1, e2, t2, bend)| Fuzz::Split { object, face, e1, t1, e2, t2, bend }),
         3 => (any::<u8>(), any::<u8>(), (frac(), frac()), (frac(), frac()), any::<bool>())
             .prop_map(|(object, face, at, size, triangle)| Fuzz::Imprint { object, face, at: [at.0, at.1], size: [size.0, size.1], triangle }),
+        3 => (any::<u8>(), any::<u8>(), (-0.25..1.25f64, -0.25..1.25f64), (frac(), frac()), any::<bool>())
+            .prop_map(|(object, face, at, size, closed)| Fuzz::DrawFace { object, face, at: [at.0, at.1], size: [size.0, size.1], closed }),
+        1 => (grid(), prop::collection::vec(pt(), 2..5), any::<bool>()).prop_map(|(z, p, c)| Fuzz::DrawPlane(z, p, c)),
         2 => (any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(o, f, e)| Fuzz::EraseEdge(o, f, e)),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(o, f)| Fuzz::EraseFace(o, f)),
         1 => (any::<u8>(), any::<u8>()).prop_map(|(s, r)| Fuzz::EraseRegion(s, r)),
@@ -320,6 +334,62 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 },
             }
         }
+        Fuzz::DrawFace {
+            object: o,
+            face: k,
+            at,
+            size,
+            closed,
+        } => {
+            let oid = object(*o);
+            let target = sawhorse_kernel::model::DrawTarget::Face {
+                object: oid,
+                face: 0,
+            };
+            let Some((fi, ring, plane)) = face(oid, *k) else {
+                return Op::Draw {
+                    target,
+                    points: vec![],
+                    closed: *closed,
+                };
+            };
+            let q: Vec<DVec2> = ring.iter().map(|&p| plane.to_local(p)).collect();
+            let lo = q
+                .iter()
+                .copied()
+                .fold(DVec2::splat(f64::INFINITY), DVec2::min);
+            let hi = q
+                .iter()
+                .copied()
+                .fold(DVec2::splat(f64::NEG_INFINITY), DVec2::max);
+            let span = hi - lo;
+            let p0 = lo + span * DVec2::new(at[0], at[1]);
+            let p1 = p0 + span * DVec2::new(size[0], size[1]) * 0.6;
+            let corners = if *closed {
+                vec![p0, DVec2::new(p1.x, p0.y), p1, DVec2::new(p0.x, p1.y)]
+            } else {
+                vec![p0, DVec2::new(p1.x, p0.y), p1]
+            };
+            Op::Draw {
+                target: sawhorse_kernel::model::DrawTarget::Face {
+                    object: oid,
+                    face: fi,
+                },
+                points: corners
+                    .iter()
+                    .map(|&c| plane.to_world(c).to_array())
+                    .collect(),
+                closed: *closed,
+            }
+        }
+        Fuzz::DrawPlane(z, pts, closed) => Op::Draw {
+            target: sawhorse_kernel::model::DrawTarget::Plane {
+                origin: [0.0, 0.0, *z],
+                normal: [0.0, 0.0, 1.0],
+            },
+            points: pts.iter().map(|p| [p[0], p[1], *z]).collect(),
+            closed: *closed,
+        },
         Fuzz::EraseFace(o, k) => {
             let oid = object(*o);
             Op::EraseFace {
