@@ -51,10 +51,10 @@ describe("App shell", () => {
     expect(pressed("select")).toBe(true);
   });
 
-  it("has the four right-panel tabs: a live Outliner, Tags and Cut list", () => {
+  it("has the right-panel tabs: a live Outliner, Tags, Cut list, Materials and Styles", () => {
     render(<App />);
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Render"]);
+    expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render"]);
     // No example content: an empty model has an empty Outliner, and Tags has its default.
     expect(screen.queryByText("Side L")).toBeNull();
     expect(screen.getByText(/Nothing yet/)).toBeTruthy();
@@ -110,5 +110,25 @@ describe("App shell", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(document.getElementById("hint")?.className).toContain("err");
     expect(document.getElementById("hint")?.textContent).toMatch(/banana/);
+  });
+
+  it("has the Materials and Styles panes (lane 10)", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "Materials" }));
+    expect(document.getElementById("pane-materials")?.hidden).toBe(false);
+    expect(screen.getByTestId("materials")).toBeTruthy();
+    expect(screen.getByText("No material")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Styles" }));
+    expect(screen.getAllByRole("button", { name: /Sawhorse|Shop drawing|Shaded|X-ray|Clay|Outdoors/ })).toHaveLength(6);
+    expect(screen.getByLabelText("Time")).toBeTruthy();
+  });
+
+  it("Paint with no material brings the Materials pane forward", () => {
+    render(<App />);
+    act(() => {
+      fireEvent.keyDown(window, { key: "b" });
+    });
+    expect(pressed("paint")).toBe(true);
+    expect(document.getElementById("pane-materials")?.hidden).toBe(false);
   });
 });

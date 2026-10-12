@@ -64,6 +64,10 @@ import type { Item, SceneDef } from "./kernel/types";
 import { useCredits } from "./credits/useCredits";
 import { storageNote } from "./credits/device";
 import { NothingToRenderError, renderPasses } from "./render/passes";
+import { PaintTool, type PaintContext } from "./tools/paint";
+import type { ActiveRef } from "./components/MaterialsPane";
+import type { LibraryEntry, MaterialInfo, Shadows } from "./kernel/types";
+import { materialNameFor, sniffImage, texturePathFor, toBase64 } from "./lib/looks";
 
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
@@ -252,6 +256,21 @@ export function App() {
   const [importUnits, setImportUnits] = useState<ImportUnit>(loadImportUnits);
   // The cut list (lane 7): worked out by the kernel while its pane is open.
   const [pane, setPane] = useState<PaneId>("outliner");
+  // Materials and styles (lane 10): the library, the active material, swatch images, a live
+  // shadows preview while a slider moves.
+  const [library, setLibrary] = useState<LibraryEntry[]>([]);
+  const libraryRef = useRef<LibraryEntry[]>([]);
+  libraryRef.current = library;
+  const [activeMat, setActiveMatState] = useState<ActiveRef>(null);
+  const activeMatRef = useRef<ActiveRef>(null);
+  const setActiveMat = useCallback((a: ActiveRef) => {
+    activeMatRef.current = a;
+    setActiveMatState(a);
+  }, []);
+  const [swatches, setSwatches] = useState<Record<string, string>>({});
+  const [shadowPreview, setShadowPreview] = useState<Shadows | null>(null);
+  const [focusMaterials, setFocusMaterials] = useState(0);
+  const [engineObj, setEngineObj] = useState<ViewportEngine | null>(null);
   const cutOpen = pane === "cutlist";
   const [cutStart] = useState(loadCutRounding);
   const [cutPick, setCutPick] = useState<RoundingChoice>(cutStart.choice);
@@ -861,6 +880,58 @@ export function App() {
     }),
     [apply],
   );
+  /** The active material as the Paint tool and the preview see it (a library material
+   * before its first use looks like one without its image). */
+  const activeInfo = (): MaterialInfo | null => {
+    const a = activeMatRef.current;
+    if (!a) return null;
+    const inModel = live.current.scene?.state.materials.find((m) => m.name === a.name);
+    if (inModel) return inModel;
+    if (a.from === "library") {
+      const e = libraryRef.current.find((x) => x.name === a.name);
+      if (e) return { name: e.name, color: e.color, texture: e.texture, held: false, size: e.size ?? undefined, stock: e.stock };
+    }
+    return null;
+  };
+  const paintCtx = useMemo<PaintContext>(
+    () => ({
+      active: activeInfo,
+      paint: async (target, what) => {
+        const m = activeInfo();
+        const k = kernelRef.current;
+        if (!m || !k) return false;
+        const paintOp: KernelOp = { op: "paint", target, material: m.name };
+        const inModel = live.current.scene?.state.materials.some((x) => x.name === m.name);
+        // A library material goes into the model with the first coat: one undo step.
+        let op: KernelOp = paintOp;
+        if (!inModel && activeMatRef.current?.from === "library") {
+          try {
+            op = { op: "batch", ops: [...(await k.libraryOps(m.name)), paintOp] };
+          } catch (err) {
+            setMessage({ text: friendlyError(err instanceof Error ? err.message : String(err)), error: true });
+            return false;
+          }
+        }
+        const r = await apply(op, () => `Painted ${what} ${m.name}.`);
+        if (r && activeMatRef.current?.from === "library") setActiveMat({ from: "model", name: m.name });
+        return !!r;
+      },
+      sample: async (object, face) => {
+        const k = kernelRef.current;
+        if (!k) return null;
+        await queue.current;
+        const name = await k.sample(object, face).catch(() => null);
+        if (name) setActiveMat({ from: "model", name });
+        return name;
+      },
+      preview: (p) => engineRef.current?.setPaintPreview(p),
+      faceUvs: async (object, face, uv) => (await kernelRef.current?.faceUvs(object, face, uv)) ?? new Float32Array(),
+      setPartUvs: (part, uvs) => engineRef.current?.setPartUvs(part, uvs),
+      materialOf: (part) => (part.material ? (live.current.scene?.state.materials.find((m) => m.name === part.material) ?? null) : null),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [apply],
+  );
   if (!toolsRef.current) {
     toolsRef.current = new Map<ToolId, Tool>([
       ["select", new SelectTool(host)],
@@ -877,9 +948,11 @@ export function App() {
       ["scale", new ScaleTool(host)],
       ["offset", new OffsetTool(host)],
       ["follow", new FollowTool(host)],
+      ["paint", new PaintTool(host, paintCtx)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;
+  const paintTool = toolsRef.current.get("paint") as PaintTool;
   const active = toolFor(toolId);
   activeRef.current = active;
 
@@ -955,6 +1028,8 @@ export function App() {
       const next = toolFor(id);
       activeRef.current = next;
       next?.activate();
+      // Paint with nothing chosen: the Materials pane comes forward.
+      if (id === "paint" && !activeMatRef.current) setFocusMaterials((n) => n + 1);
       const hint = next?.variantHint();
       if (hint) setMessage({ text: hint, error: false });
       setToolView(next?.view() ?? EMPTY_VIEW);
@@ -962,6 +1037,124 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [defaultValue],
   );
+
+
+  /** A swatch image: a library texture (fetched when the Materials pane first shows it) or
+   * an image the model holds (sent once by the worker). */
+  const swatchFor = useCallback(
+    (s: { library?: string; texture?: string | null }): string | null => {
+      if (s.library) return swatches[`lib:${s.library}`] ?? null;
+      if (!s.texture) return null;
+      const digest = live.current.scene?.state.textures?.find((t) => t.path === s.texture)?.digest;
+      return digest ? (swatches[`tex:${digest}`] ?? null) : null;
+    },
+    [swatches],
+  );
+
+  /** Make a material from a PNG or JPEG and make it the active one (one undo step). */
+  const importImage = useCallback(
+    async (file: File) => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const mime = sniffImage(bytes);
+      if (!mime) {
+        setMessage({ text: `${file.name} is not a PNG or JPEG image.`, error: true });
+        return;
+      }
+      const st = live.current.scene?.state;
+      const name = materialNameFor(file.name, (st?.materials ?? []).map((m) => m.name));
+      const path = texturePathFor(file.name, mime, (st?.textures ?? []).map((t) => t.path));
+      const r = await apply(
+        {
+          op: "batch",
+          ops: [
+            { op: "add_texture", path, mime, data: toBase64(bytes) },
+            { op: "define_material", name, color: [200, 200, 200, 255], texture: path },
+          ],
+        },
+        () => `Material ${quoted(name)} made from ${file.name}: one foot across. Set its real size in the Materials pane.`,
+      );
+      if (r) setActiveMat({ from: "model", name });
+    },
+    [apply, setActiveMat],
+  );
+
+  /** Position the texture on the one selected face (the Materials pane's button). */
+  const selected = selection.length === 1 && selection[0].kind === "face" ? selection[0] : null;
+  const positionSelected = selected
+    ? () => {
+        selectTool("paint");
+        void paintTool.startPositioning(selected.object, selected.face);
+      }
+    : null;
+
+  // The library, once the kernel is there.
+  useEffect(() => {
+    if (kernelState !== "ready" || libraryRef.current.length) return;
+    void kernelRef.current
+      ?.library()
+      .then(setLibrary)
+      .catch(() => undefined);
+  }, [kernelState]);
+
+  // Library swatches, fetched while the Materials pane is open (each once).
+  useEffect(() => {
+    if (pane !== "materials") return;
+    const k = kernelRef.current;
+    const want = library.filter((e) => e.texture && !swatches[`lib:${e.name}`]);
+    if (!k || !want.length) return;
+    let stale = false;
+    void (async () => {
+      const got: Record<string, string> = {};
+      for (const e of want) {
+        if (stale) return;
+        try {
+          const png = await k.libraryTexture(e.name);
+          got[`lib:${e.name}`] = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
+        } catch {
+          // A missing swatch shows the flat colour.
+        }
+      }
+      if (!stale) setSwatches((s) => ({ ...s, ...got }));
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [pane, library, swatches]);
+
+  // Materials, images, the style and the sun to the viewport; images the worker just sent
+  // become swatches too.
+  useEffect(() => {
+    const st = scene?.state;
+    if (!st) return;
+    const blobs = scene?.textures ?? [];
+    engineObj?.setLooks({ materials: st.materials, textures: st.textures, style: st.style ?? null, shadows: shadowPreview ?? st.shadows ?? null, blobs });
+    const fresh = blobs.filter((b) => !swatches[`tex:${b.digest}`]);
+    if (fresh.length) {
+      const add: Record<string, string> = {};
+      for (const b of fresh) add[`tex:${b.digest}`] = URL.createObjectURL(new Blob([b.bytes as BlobPart], { type: b.mime }));
+      setSwatches((s) => ({ ...s, ...add }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, shadowPreview, engineObj]);
+
+  // Read-only hooks for tests and captures: what the viewport draws, the texture handles.
+  useEffect(() => {
+    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+    w.__sawhorse = {
+      ...(w.__sawhorse ?? {}),
+      looks: () => engineRef.current?.looksState() ?? null,
+      paint: {
+        active: () => activeMatRef.current,
+        positioning: () => paintTool.positioningFace(),
+        handles: () => paintTool.handleScreen(),
+        handlesWorld: () => paintTool.handleWorld(),
+        position: (object: number, face: number) => {
+          selectTool("paint");
+          return paintTool.startPositioning(object, face);
+        },
+      },
+    };
+  }, [paintTool, selectTool]);
 
   /**
    * Run a keyboard action after every pointer event already on its way to the tool and
@@ -1196,6 +1389,9 @@ export function App() {
         .filter(([, vis]) => !vis)
         .map(([t]) => t),
       context: st.graph?.context ?? null,
+      // The style and the sun go with the scene (lane 10).
+      style: st.style ?? null,
+      shadows: st.shadows ?? null,
     };
   }, []);
 
@@ -1920,6 +2116,7 @@ export function App() {
         }}
         onEngine={(e) => {
           engineRef.current = e;
+          setEngineObj(e);
         }}
       />
       <SidePanel
@@ -1965,6 +2162,39 @@ export function App() {
               lit={nestLit}
             />
           ) : null,
+        }}
+        focusMaterials={focusMaterials}
+        materials={{
+          state: st ?? null,
+          library,
+          swatch: swatchFor,
+          active: activeMat,
+          onActive: (a) => {
+            setActiveMat(a);
+            if (a) {
+              selectTool("paint");
+              setMessage({ text: `Paint with ${a.name}: click a face. Alt+click picks a material up.`, error: false });
+            }
+          },
+          onDefine: (def) => void apply({ op: "define_material", ...def }, () => `Material ${quoted(def.name)} changed.`),
+          onRename: (name, to) =>
+            void apply({ op: "rename_material", name, to }, () => `Material ${quoted(name)} renamed to ${quoted(to)}.`).then((r) => {
+              if (r && activeMatRef.current?.name === name) setActiveMat({ from: "model", name: to });
+            }),
+          onDelete: (name) =>
+            void apply({ op: "delete_material", name }, () => `Material ${quoted(name)} deleted: what was painted with it shows what is around it now.`).then((r) => {
+              if (r && activeMatRef.current?.name === name) setActiveMat(null);
+            }),
+          onImport: (file) => void importImage(file),
+          onPosition: positionSelected,
+          units,
+        }}
+        styles={{
+          style: st?.style ?? null,
+          shadows: st?.shadows ?? null,
+          onStyle: (style) => void apply({ op: "set_style", style }, () => `Style: ${style?.preset ?? "custom"}.`),
+          onShadows: (shadows) => void apply({ op: "set_shadows", shadows }, () => (shadows.on ? "Shadows on." : "Shadows off.")),
+          onPreviewShadows: setShadowPreview,
         }}
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{
