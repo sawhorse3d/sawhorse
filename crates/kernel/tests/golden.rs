@@ -24,6 +24,10 @@ struct Golden {
     /// parts (`scripts/golden-wasm.mjs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cut_list: Option<String>,
+    /// The nesting's hash (the document's own stock and settings, everything counted): the
+    /// WASM build must lay out the same stock (lane 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nesting: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -70,21 +74,31 @@ fn golden_hashes() {
         let cut = m
             .cut_list(&sawhorse_kernel::cutlist::CutOptions::default())
             .hash;
+        let nest = m
+            .nest(&sawhorse_kernel::nesting::NestOptions::default())
+            .hash;
         if update {
             g.hash = hash;
             g.stats = stats;
             g.cut_list = Some(cut);
+            g.nesting = Some(nest);
             std::fs::write(&f, serde_json::to_string_pretty(&g).unwrap() + "\n").unwrap();
-        } else if g.hash != hash || g.stats != stats || g.cut_list.as_ref() != Some(&cut) {
+        } else if g.hash != hash
+            || g.stats != stats
+            || g.cut_list.as_ref() != Some(&cut)
+            || g.nesting.as_ref() != Some(&nest)
+        {
             mismatches.push(format!(
-                "{}: hash {} (golden {}), stats {:?} (golden {:?}), cut list {} (golden {:?})",
+                "{}: hash {} (golden {}), stats {:?} (golden {:?}), cut list {} (golden {:?}), nesting {} (golden {:?})",
                 f.display(),
                 hash,
                 g.hash,
                 stats,
                 g.stats,
                 cut,
-                g.cut_list
+                g.cut_list,
+                nest,
+                g.nesting
             ));
         }
     }

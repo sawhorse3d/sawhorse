@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { CutList, CutOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { CutList, CutOptions, Nesting, NestOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -160,6 +160,13 @@ export class KernelClient {
     const c = (await this.call({ kind: "cutList", options })).cutList;
     if (!c) throw new Error("kernel returned no cut list");
     return c;
+  }
+
+  /** The nesting (read-only): the cut list's parts laid out on the document's stock. */
+  async nest(options: NestOptions): Promise<Nesting> {
+    const n = (await this.call({ kind: "nest", options })).nesting;
+    if (!n) throw new Error("kernel returned no nesting");
+    return n;
   }
 
   /** A fresh document (ground sketch only), as an edit result. */

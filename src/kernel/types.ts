@@ -70,6 +70,13 @@ export type KernelOp =
   | { op: "set_grain"; part: PartRef; grain: Grain }
   /** Cut list: the stock a part is cut from (null: its material's name) and sheet or lumber (null: decide). */
   | { op: "set_stock"; part: PartRef; stock: string | null; sheet: boolean | null }
+  /** Nesting (lane 9): add a stock, or replace the stock named `replace` (a rename carries the defaults). */
+  | { op: "define_stock"; stock: StockDef; replace?: string | null }
+  | { op: "delete_stock"; name: string }
+  /** Which stock a material's parts come from (null: chosen automatically). */
+  | { op: "set_material_stock"; material: string; stock: string | null }
+  | { op: "set_nest_settings"; settings: NestSettings }
+  | { op: "reset_stock_library" }
   | { op: "undo" }
   | { op: "redo" };
 
@@ -190,6 +197,7 @@ export type OpOutcome =
   | { kind: "renamed" }
   | { kind: "mesh_deleted" }
   | { kind: "part_set" }
+  | { kind: "stock_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "undone" }
   | { kind: "redone" };
@@ -480,6 +488,8 @@ export interface WasmDoc {
   export_file(format: string, options: string): Uint8Array;
   /** The cut list (lane 7) for CutOptions JSON, as JSON (crates/kernel/src/cutlist.rs). */
   cut_list(options: string): string;
+  /** The nesting (lane 9) for NestOptions JSON, as JSON (crates/kernel/src/nesting.rs). */
+  nest(options: string): string;
   import_file(name: string, bytes: Uint8Array, options: string): string;
   save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
   open_shz(bytes: Uint8Array): string;
@@ -514,7 +524,8 @@ export type RequestBody =
   | { kind: "importSkp"; name: string; bytes: Uint8Array }
   | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
   | { kind: "openShz"; bytes: Uint8Array }
-  | { kind: "cutList"; options: CutOptions };
+  | { kind: "cutList"; options: CutOptions }
+  | { kind: "nest"; options: NestOptions };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -567,6 +578,7 @@ export type WorkerResponse =
       /** What opening a .shz found: the unit system it was saved in, who wrote it. */
       opened?: { display_units: string | null; generator: string };
       cutList?: CutList;
+      nesting?: Nesting;
     }
   | { id: number; ok: false; error: string; missing?: boolean };
 
@@ -648,4 +660,150 @@ export interface CutList {
   /** How the app writes the sizes (set by the app from the display units, never by the
    * kernel; absent: fractions for inch roundings). Display only, like the rounding. */
   style?: "fraction" | "decimal" | "mm";
+}
+
+// ---- nesting (lane 9; crates/kernel/src/stock.rs, nesting.rs) -------------------------------
+
+export type StockKind = "sheet" | "board";
+export type StockGrain = "length" | "none";
+export type NestAlgorithm = "guillotine" | "maxrects";
+
+/** One kind of stock (metres; `length` runs along the grain). */
+export interface StockDef {
+  name: string;
+  kind: StockKind;
+  length: number;
+  width: number;
+  thickness: number;
+  /** A board's nominal thickness ("4/4"). */
+  nominal?: string | null;
+  grain: StockGrain;
+}
+
+export interface NestSettings {
+  /** Width of every cut (metres). */
+  kerf: number;
+  /** Taken off each edge of a sheet, each end of a board (metres). */
+  trim: number;
+  algorithm: NestAlgorithm;
+}
+
+export interface StockLibrary {
+  stocks: StockDef[];
+  /** Material -> stock name. */
+  defaults?: Record<string, string>;
+  settings: NestSettings;
+}
+
+export interface NestOptions {
+  visible_only?: boolean;
+  algorithm?: NestAlgorithm;
+}
+
+export type CutDir = "rip" | "crosscut";
+
+export interface NestCut {
+  n: number;
+  dir: CutDir;
+  /** Where the kerf starts (y for a rip, x for a crosscut), metres from the corner. */
+  at: number;
+  from: number;
+  to: number;
+  /** The fence setting: the width (rip) or length (crosscut) left on the near side; the trim for a trim cut. */
+  size: number;
+  trim: boolean;
+}
+
+export interface Placement {
+  row: number;
+  copy: number;
+  tag: string;
+  name: string;
+  item: Item;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  turned: boolean;
+  grain: Grain;
+  size: V3;
+}
+
+export interface StockPiece {
+  index: number;
+  group: number;
+  seq: number;
+  count: number;
+  stock: string;
+  kind: StockKind;
+  nominal?: string;
+  material: string | null;
+  length: number;
+  width: number;
+  thickness: number;
+  grain: StockGrain;
+  trim: number;
+  kerf: number;
+  /** x0, y0, x1, y1 inside the trim. */
+  usable: [number, number, number, number];
+  placements: Placement[];
+  cuts: NestCut[];
+  guillotine: boolean;
+  parts_area: number;
+  stock_area: number;
+  waste_area: number;
+  efficiency: number;
+}
+
+export type UnplacedReason = "no_stock" | "thickness" | "too_large" | "grain";
+
+export interface Unplaced {
+  row: number;
+  copy: number;
+  tag: string;
+  name: string;
+  item: Item;
+  size: V3;
+  material: string | null;
+  stock: string | null;
+  sheet: boolean;
+  reason: UnplacedReason;
+}
+
+export interface NestGroup {
+  stock: string;
+  kind: StockKind;
+  nominal?: string;
+  material: string | null;
+  length: number;
+  width: number;
+  thickness: number;
+  count: number;
+  parts: number;
+  parts_area: number;
+  stock_area: number;
+  efficiency: number;
+  board_feet: number;
+}
+
+export interface Nesting {
+  algorithm: NestAlgorithm;
+  settings: NestSettings;
+  visible_only: boolean;
+  library: StockLibrary;
+  pieces: StockPiece[];
+  unplaced: Unplaced[];
+  totals: {
+    sheets: number;
+    boards: number;
+    parts_in: number;
+    placed: number;
+    unplaced: number;
+    parts_area: number;
+    stock_area: number;
+    efficiency: number;
+    groups: NestGroup[];
+    by_nominal: { nominal: string; count: number; board_feet: number }[];
+  };
+  hash: string;
 }

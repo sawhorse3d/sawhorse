@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Replays every crates/kernel/tests/golden/*.json through the WASM kernel (src/wasm/pkg)
-// and compares hashes (and cut list hashes) with the natively computed goldens. Passing proves the browser
+// and compares hashes (and cut list and nesting hashes) with the natively computed goldens. Passing proves the browser
 // kernel and the native kernel agree bit for bit. Run after `npm run wasm`.
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -23,9 +23,13 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
   const got = mod.replay_hash(ops);
   // The cut list too (lane 7): the same parts, sizes and counts, hash for hash.
   const cut = g.cut_list ? JSON.parse(mod.replay_cut_list(ops, "{}")).hash : null;
-  const ok = got === g.hash && cut === (g.cut_list ?? null);
+  // And the nesting (lane 9): the same sheets and boards, placements and cuts.
+  const nest = g.nesting ? JSON.parse(mod.replay_nesting(ops, "{}")).hash : null;
+  const ok = got === g.hash && cut === (g.cut_list ?? null) && nest === (g.nesting ?? null);
   if (!ok) bad++;
-  console.log(`${ok ? "ok  " : "FAIL"} ${f.padEnd(24)} wasm ${got}  native ${g.hash}${g.cut_list ? `  cut list ${cut}${cut === g.cut_list ? "" : ` (native ${g.cut_list})`}` : ""}`);
+  console.log(
+    `${ok ? "ok  " : "FAIL"} ${f.padEnd(24)} wasm ${got}  native ${g.hash}${g.cut_list ? `  cut list ${cut}${cut === g.cut_list ? "" : ` (native ${g.cut_list})`}` : ""}${g.nesting ? `  nesting ${nest}${nest === g.nesting ? "" : ` (native ${g.nesting})`}` : ""}`,
+  );
 }
 console.log(`kernel ${mod.kernel_version()}: ${bad === 0 ? "WASM matches native goldens" : `${bad} mismatch(es)`}`);
 // exitCode, not process.exit(): avoids a libuv teardown assertion seen with Node 24 on Windows.

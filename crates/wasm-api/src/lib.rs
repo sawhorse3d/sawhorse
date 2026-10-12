@@ -380,6 +380,15 @@ impl DocCore {
         serde_json::to_string(&self.doc.model().cut_list(&opts)).map_err(|e| e.to_string())
     }
 
+    /// The nesting (see `sawhorse_kernel::nesting`) for JSON options `{visible_only?,
+    /// algorithm?}` (empty: everything, the document's own algorithm), as JSON: every
+    /// stock piece with its placements and cuts, the parts no stock takes, the totals, the
+    /// stock library it used and a hash. Read-only.
+    pub fn nest_json(&self, options_json: &str) -> Result<String, String> {
+        let opts = nest_options(options_json)?;
+        serde_json::to_string(&self.doc.model().nest(&opts)).map_err(|e| e.to_string())
+    }
+
     /// The model's tree on its own (what the Outliner shows), as JSON.
     pub fn scene_graph_json(&self) -> String {
         serde_json::to_string(&self.doc.model().graph()).unwrap_or_else(|_| "{}".to_string())
@@ -620,6 +629,22 @@ pub fn replay_cut_list_core(ops_json: &str, options_json: &str) -> Result<String
     serde_json::to_string(&d.model().cut_list(&opts)).map_err(|e| e.to_string())
 }
 
+fn nest_options(json: &str) -> Result<sawhorse_kernel::nesting::NestOptions, String> {
+    if json.trim().is_empty() {
+        return Ok(Default::default());
+    }
+    serde_json::from_str(json).map_err(|e| format!("bad nesting options: {e}"))
+}
+
+/// The nesting of the document produced by replaying a JSON op log, as JSON (the golden
+/// cross-check: its `hash` must match the native one).
+pub fn replay_nesting_core(ops_json: &str, options_json: &str) -> Result<String, String> {
+    let ops: Vec<Op> = serde_json::from_str(ops_json).map_err(|e| e.to_string())?;
+    let opts = nest_options(options_json)?;
+    let d = Document::replay(&ops).map_err(|(i, e)| format!("op {i}: {e}"))?;
+    serde_json::to_string(&d.model().nest(&opts)).map_err(|e| e.to_string())
+}
+
 /// Run one boolean differential case (tests/booleans/cases.json format) through the kernel
 /// and return its result plus both operand meshes, as JSON, for scripts/boolean-diff.mjs.
 pub fn boolean_case_core(case_json: &str) -> Result<String, String> {
@@ -682,6 +707,12 @@ pub fn replay_hash(ops_json: &str) -> Result<String, JsError> {
 #[wasm_bindgen]
 pub fn replay_cut_list(ops_json: &str, options_json: &str) -> Result<String, JsError> {
     replay_cut_list_core(ops_json, options_json).map_err(js)
+}
+
+/// See [`replay_nesting_core`].
+#[wasm_bindgen]
+pub fn replay_nesting(ops_json: &str, options_json: &str) -> Result<String, JsError> {
+    replay_nesting_core(ops_json, options_json).map_err(js)
 }
 
 /// See [`boolean_case_core`].
@@ -809,6 +840,11 @@ impl Doc {
     /// The cut list for JSON options `{rounding?, visible_only?}`, as JSON (read-only).
     pub fn cut_list(&self, options_json: &str) -> Result<String, JsError> {
         self.core.cut_list_json(options_json).map_err(js)
+    }
+
+    /// The nesting for JSON options `{visible_only?, algorithm?}`, as JSON (read-only).
+    pub fn nest(&self, options_json: &str) -> Result<String, JsError> {
+        self.core.nest_json(options_json).map_err(js)
     }
 
     /// Import a file into the document as one undoable step (see [`DocCore::import`]).
@@ -1340,6 +1376,82 @@ mod tests {
         let here: serde_json::Value =
             serde_json::from_str(&d.cut_list_json("{}").unwrap()).unwrap();
         assert_eq!(again["hash"], here["hash"]);
+    }
+
+    #[test]
+    fn nesting_and_the_stock_ops_through_json() {
+        let mut d = DocCore::default();
+        // Four 3/4 x 11 x 34 1/2 in shelves of 3/4 ply (sheet goods by the name).
+        op(
+            &mut d,
+            r#"{"op":"draw","target":{"on":"plane","origin":[0,0,0],"normal":[0,0,1]},"points":[[0,0,0],[0.8763,0,0],[0.8763,0.2794,0],[0,0.2794,0]],"closed":true}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.01905}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"make_component","items":[{"object":1}],"name":"Shelf"}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"array","objects":[],"nodes":[1],"xform":{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[0,0,0.4572]},"count":3}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"set_stock","part":{"definition":1},"stock":"3/4 birch ply","sheet":null}"#,
+        );
+        let n: serde_json::Value = serde_json::from_str(&d.nest_json("").unwrap()).unwrap();
+        assert_eq!(n["algorithm"], "guillotine");
+        assert_eq!(n["totals"]["sheets"], 1);
+        assert_eq!(n["totals"]["placed"], 4);
+        let p = &n["pieces"][0];
+        assert_eq!(p["stock"], "4 x 8 sheet, 3/4");
+        assert_eq!(p["kind"], "sheet");
+        assert_eq!(p["placements"].as_array().unwrap().len(), 4);
+        assert_eq!(p["placements"][0]["tag"], "1a");
+        assert_eq!(p["placements"][0]["item"], serde_json::json!({ "node": 1 }));
+        assert!(p["cuts"][0]["dir"] == "rip" || p["cuts"][0]["dir"] == "crosscut");
+        assert_eq!(n["library"]["stocks"].as_array().unwrap().len(), 14);
+        // The stock ops through the op log's JSON.
+        let out = op(
+            &mut d,
+            r#"{"op":"set_nest_settings","settings":{"kerf":0.0023812,"trim":0,"algorithm":"maxrects"}}"#,
+        );
+        assert_eq!(out["kind"], "stock_set");
+        op(
+            &mut d,
+            r#"{"op":"define_stock","stock":{"name":"Shop 3/4","kind":"sheet","length":1.2,"width":0.6,"thickness":0.01905,"grain":"none"}}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"set_material_stock","material":"3/4 birch ply","stock":"shop 3/4"}"#,
+        );
+        let n: serde_json::Value =
+            serde_json::from_str(&d.nest_json(r#"{"visible_only":true}"#).unwrap()).unwrap();
+        assert_eq!(n["algorithm"], "maxrects");
+        assert_eq!(n["pieces"][0]["stock"], "Shop 3/4");
+        assert!(d.nest_json(r#"{"algorithm":"zigzag"}"#).is_err());
+        assert!(
+            d.apply_json(r#"{"op":"delete_stock","name":"nothing"}"#)
+                .is_err()
+        );
+        // Replayed and reopened: the same layout.
+        let log = d.log_json();
+        let again: serde_json::Value =
+            serde_json::from_str(&replay_nesting_core(&log, "{}").unwrap()).unwrap();
+        let here: serde_json::Value = serde_json::from_str(&d.nest_json("{}").unwrap()).unwrap();
+        assert_eq!(again["hash"], here["hash"]);
+        let bytes = d.save_shz("frac-in", b"").unwrap();
+        let mut fresh = DocCore::default();
+        fresh.open_shz(&bytes).unwrap();
+        let opened: serde_json::Value =
+            serde_json::from_str(&fresh.nest_json("{}").unwrap()).unwrap();
+        assert_eq!(opened["hash"], here["hash"]);
+        op(&mut d, r#"{"op":"reset_stock_library"}"#);
+        let n: serde_json::Value = serde_json::from_str(&d.nest_json("").unwrap()).unwrap();
+        assert_eq!(n["algorithm"], "guillotine");
     }
 
     #[test]
