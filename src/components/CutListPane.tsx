@@ -4,8 +4,9 @@
 // controls, Print, a grain mark beside the size the grain runs along, and notes under a
 // part's name (shaped, handed, hidden, sheet). A click on a row selects its pieces in the
 // model (Shift picks a range of rows, Ctrl toggles one); right-click sets the grain or the
-// stock of the row, or of every picked row at once. Nesting is not built: its button says so.
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+// stock of the row, or of every picked row at once. The Nesting button opens the Nesting
+// section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
 import { formatSteps, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
 
@@ -36,6 +37,11 @@ export interface CutListPaneProps {
   onPdf: () => void;
   onPrint: () => void;
   onLabels: () => void;
+  /** The Nesting section is open (lane 9). */
+  nestOpen?: boolean;
+  onNest?: () => void;
+  /** The Nesting section itself, drawn under the cut list while open. */
+  nesting?: ReactNode;
 }
 
 /** A stable key for a row (its part and its size). */
@@ -272,13 +278,21 @@ export function CutListPane(p: CutListPaneProps) {
         <button type="button" className="btn" disabled={!list || empty} onClick={p.onLabels} title="Save a sheet of part labels (Avery 5160 size) as a PDF">
           Labels
         </button>
-        <button type="button" className="btn" disabled title="Nesting and cutting diagrams arrive in a later lane">
-          Nesting ›
+        <button
+          type="button"
+          className="btn"
+          aria-pressed={!!p.nestOpen}
+          disabled={!p.onNest || (!p.nestOpen && (!list || empty))}
+          onClick={p.onNest}
+          title="Lay the parts out on sheets and boards: cutting diagrams, the cut order, SVG, DXF and a PDF booklet"
+        >
+          {p.nestOpen ? "Nesting ‹" : "Nesting ›"}
         </button>
       </div>
       <p className="note" data-testid="cutlist-note">
         {scopeNote(r)} Sizes in {sizeUnit(r)}.
       </p>
+      {p.nesting}
       {menu ? (
         <div className="ctxmenu" ref={menuRef} role="menu" aria-label={`Cut list: ${partsLabel(menu.rows)}`} style={{ left: menu.x, top: menu.y }}>
           <div className="ctxtitle" title={menu.rows.map((r) => r.name).join(", ")}>

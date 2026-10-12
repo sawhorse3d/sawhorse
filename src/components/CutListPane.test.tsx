@@ -80,7 +80,7 @@ describe("Cut list pane", () => {
     expect(screen.getByTestId("tile-board-feet").textContent).toBe("18.99board feet, Oak");
     expect(screen.getByTestId("tile-sheets").textContent).toBe("1sheet 4×8 1/4 birch ply, 1/4");
     expect((screen.getByRole("button", { name: /Nesting/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("cutlist-note").textContent).toMatch(/Kerf, edge banding and nesting \(cutting diagrams\) are not included yet/);
+    expect(screen.getByTestId("cutlist-note").textContent).toMatch(/Edge banding is not included; the sheet count here is a rough area estimate \(Nesting lays/);
   });
 
   it("clicks select a row's pieces; right-click sets the grain, the stock, sheet or lumber", () => {
@@ -243,7 +243,7 @@ describe("Printable report", () => {
     expect(rows[4][5]).toBe("1/4 birch ply (sheet)");
     expect(rows[4][7]).toBe("17.07 sq ft");
     expect(report.querySelector(".totals")?.textContent).toContain("18.99 board feet, Oak");
-    expect(report.querySelector("footer")?.textContent).toMatch(/nesting/);
+    expect(report.querySelector("footer")?.textContent).toMatch(/Nesting lays the parts out on real sheets/);
   });
 });
 

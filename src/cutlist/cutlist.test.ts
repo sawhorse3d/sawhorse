@@ -117,7 +117,7 @@ describe("PDF writer", () => {
     expect(text[0]).toBe("Cut list: Bookshelf");
     for (const want of ["Side", "Shelf", "Top", "Toe kick", "Back panel", "71 1/4", "34 1/2", "18.99 board feet, Oak"]) expect(text.some((t) => t.includes(want)), want).toBe(true);
     expect(text.some((t) => t.startsWith("1 sheet 4x8, 1/4 birch ply"))).toBe(true);
-    expect(text.join(" ")).toContain("nesting");
+    expect(text.join(" ")).toContain("Nesting lays the parts out");
   });
 
   it("a long list runs onto more pages", () => {

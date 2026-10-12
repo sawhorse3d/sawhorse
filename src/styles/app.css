@@ -271,3 +271,52 @@ button.chip:hover{border-color:var(--accent)}
   .print-report footer{margin-top:14pt;font-size:8.5pt;color:#555}
   @page{size:letter;margin:0.6in}
 }
+
+/* ---- Lane 9: the Nesting section (cutting diagrams) and the Stock dialog ---- */
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.nesting{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+.nest-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.nest-head h4{margin:0;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.03em;text-transform:uppercase}
+.nest-head .btn{padding:3px 8px;font-size:12px}
+.nest-controls input{width:62px;font:12px var(--mono);padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);text-align:right}
+.nest-controls label.err input{border-color:var(--warn);outline:1px solid var(--warn)}
+.nest-body.busy{opacity:.6;transition:opacity .15s .1s}
+.nest-sum{grid-template-columns:1fr 1fr}
+.nest-sum .wide{grid-column:1 / -1}
+.nest-unplaced{margin-top:10px;padding:7px 9px;border:1px solid var(--warn);border-radius:6px;background:color-mix(in srgb,var(--warn) 9%,transparent);font-size:11.5px}
+.nest-unplaced ul{margin:4px 0 0;padding-left:16px}
+.nesting .tag{font-family:var(--mono);font-weight:600;color:var(--accent)}
+.nest-piece{margin:12px 0 0;padding:0}
+.nest-piece figcaption{font-size:11.5px;margin-bottom:4px;line-height:1.3}
+.nest-piece figcaption .stock{font-family:var(--mono);font-size:11px}
+.nest-piece figcaption small{display:block;color:var(--muted);font-size:10.5px}
+.nest-diagram{display:block;width:100%;height:auto;max-height:260px;border-radius:2px}
+.nest-diagram .stock{fill:color-mix(in srgb,var(--grain) 16%,var(--bg));stroke:var(--fg);stroke-width:1.2px;vector-effect:non-scaling-stroke}
+.nest-diagram .trim{fill:none;stroke:var(--muted);stroke-dasharray:4 3;stroke-width:1px;vector-effect:non-scaling-stroke}
+.nest-diagram .part{cursor:pointer}
+.nest-diagram .part rect{fill:var(--panel);stroke:var(--accent);stroke-width:1px;vector-effect:non-scaling-stroke}
+.nest-diagram .part text{fill:var(--fg);font-family:var(--mono);font-weight:600;text-anchor:middle;pointer-events:none}
+.nest-diagram .part:hover rect,.nest-diagram .part.on rect{fill:color-mix(in srgb,var(--sel) 28%,var(--panel));stroke-width:2px}
+.nest-diagram .cut{stroke:var(--warn);stroke-width:1px;stroke-dasharray:3 2;vector-effect:non-scaling-stroke;pointer-events:none;opacity:.8}
+.nest-diagram .cut.trimcut{stroke:var(--muted)}
+.nest-piece details{margin-top:4px;font-size:11.5px}
+.nest-piece summary{cursor:pointer;color:var(--muted);display:flex;align-items:center;gap:8px}
+.nest-piece summary .linkish{margin-left:auto}
+.nest-cuts{margin:4px 0;padding-left:22px}
+.nest-cuts li{margin:1px 0}
+.nest-parts{list-style:none;margin:4px 0;padding:0;font-family:var(--mono);font-size:11px}
+.linkish{border:0;background:none;padding:0 2px;color:var(--accent);font:inherit;font-size:11.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.stock-dialog{width:min(560px,calc(100vw - 32px));top:50%;max-height:calc(100vh - 48px);overflow:auto}
+.stock-dialog header small{color:var(--muted)}
+.stock-dialog h5{margin:10px 0 4px;font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+.stock-dialog table{font-family:var(--body);font-size:12px}
+.stock-dialog td{white-space:normal;padding:4px 4px}
+.stock-dialog td small{display:block;color:var(--muted);font-size:10.5px;font-family:var(--mono)}
+.stock-dialog td.act{text-align:right;white-space:nowrap}
+.stock-dialog tr.sel td{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.stock-dialog .stock-list{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+.stock-dialog .stock-form{display:flex;flex-wrap:wrap;gap:8px}
+.stock-dialog .stock-form label + label{margin-top:0}
+.stock-dialog .stock-form input{width:84px}
+.stock-dialog .stock-form input[aria-label="Name"]{width:200px}
+.stock-dialog select{font:12px var(--body);padding:3px 5px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);max-width:100%}

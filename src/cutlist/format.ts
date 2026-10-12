@@ -176,5 +176,5 @@ export function reportCells(row: CutRow, list: CutList): string[] {
 /** The footer every output carries. */
 export function scopeNote(r: Rounding): string {
   const step = r === "sixteenth" ? "1/16 in" : r === "thirty_second" ? "1/32 in" : "0.5 mm";
-  return `Finished sizes, rounded to the nearest ${step}. Grain runs along L unless noted. Kerf, edge banding and nesting (cutting diagrams) are not included yet; sheet counts are a rough area estimate.`;
+  return `Finished sizes, rounded to the nearest ${step}. Grain runs along L unless noted. Edge banding is not included; the sheet count here is a rough area estimate (Nesting lays the parts out on real sheets and boards, kerf included).`;
 }

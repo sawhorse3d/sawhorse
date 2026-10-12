@@ -71,7 +71,7 @@ describe("App shell", () => {
     expect(screen.queryByText("board feet, solid oak")).toBeNull();
     expect((screen.getByRole("button", { name: "CSV" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: /Nesting/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("cutlist-note").textContent).toMatch(/edge banding and nesting/);
+    expect(screen.getByTestId("cutlist-note").textContent).toContain("rough area estimate (Nesting lays the parts out");
     fireEvent.click(screen.getByRole("tab", { name: "Render" }));
     fireEvent.click(screen.getByRole("button", { name: /Kitchen/ }));
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toMatch(/warm kitchen/);

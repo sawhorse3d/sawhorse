@@ -5,13 +5,15 @@ import { Viewport, type KernelState, type ViewportPointer } from "./components/V
 import { SidePanel, type PaneId } from "./components/SidePanel";
 import { CutListReport } from "./components/CutListReport";
 import { rowKey } from "./components/CutListPane";
+import { NestingSection } from "./components/NestingSection";
+import { StockDialog } from "./components/StockDialog";
 import { grainOverlay } from "./cutlist/arrows";
 import { csvBytes, CSV_TYPE } from "./cutlist/csv";
 import { labelsPdf, reportPdf } from "./cutlist/documents";
 import { followRounding, GRAIN_WORDS, resolveRounding, sizeStyle, type RoundingChoice } from "./cutlist/format";
 import { loadCutRounding, saveCutRounding } from "./cutlist/rounding-store";
 import { PDF_TYPE } from "./cutlist/pdf";
-import type { CutList, CutRow, Grain, Rounding } from "./kernel/types";
+import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
@@ -107,6 +109,28 @@ export const DEFAULT_DISTANCE = 12 * M_PER_IN;
 export const DEFAULT_RECT: [number, number] = [24 * M_PER_IN, 16 * M_PER_IN];
 
 const UNITS_KEY = "sawhorse.units";
+/** The Cut list pane's Nesting section was left open (lane 9). */
+const NEST_OPEN_KEY = "sawhorse.nestingOpen";
+/** Wait this long after the last edit before nesting again (typing a kerf, dragging). */
+const NEST_DEBOUNCE_MS = 200;
+
+function loadNestOpen(): boolean {
+  try {
+    return localStorage.getItem(NEST_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** What selecting a nested piece selects. */
+function entityOfItem(item: Item): Entity {
+  return "node" in item ? { kind: "node", node: item.node } : { kind: "object", object: item.object };
+}
+
+function sameItem(a: Item, b: Item): boolean {
+  return "node" in a ? "node" in b && a.node === b.node : "object" in b && a.object === b.object;
+}
+
 const IMPORT_UNITS_KEY = "sawhorse.importUnits";
 const IMPORT_UNITS: { id: ImportUnit; label: string }[] = [
   { id: "mm", label: "Millimetres" },
@@ -228,9 +252,19 @@ export function App() {
   const [cutPinned, setCutPinned] = useState(cutStart.pinned);
   const cutRounding = resolveRounding(cutPick, units);
   const cutStyle = sizeStyle(cutRounding, units);
+  // The nesting writes lengths as the cut list does (lane 9).
+  const nestUnits = useMemo(() => ({ r: cutRounding, style: cutStyle }), [cutRounding, cutStyle]);
   const [cutVisibleOnly, setCutVisibleOnly] = useState(false);
   const [cutList, setCutList] = useState<CutList | null>(null);
   const [cutProblem, setCutProblem] = useState<string | null>(null);
+  // Nesting (lane 9): the parts laid out on stock by the kernel while its section is open.
+  const [nestOpen, setNestOpen] = useState<boolean>(loadNestOpen);
+  const nestShown = cutOpen && nestOpen;
+  const [nesting, setNesting] = useState<Nesting | null>(null);
+  const [nestProblem, setNestProblem] = useState<string | null>(null);
+  const [nestBusy, setNestBusy] = useState(false);
+  const [nestHover, setNestHover] = useState<Entity | null>(null);
+  const [stockOpen, setStockOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Camera: the requested standard view (re-applied when viewSeq changes), the projection,
@@ -694,7 +728,37 @@ export function App() {
     };
   }, [cutOpen, scene, cutRounding, cutVisibleOnly, cutStyle]);
 
-  // Read-only hook for tests: the cut list for any options, straight from the kernel.
+  // The nesting: worked out again a moment after the last edit while its section is open
+  // (read-only; kerf, trim and the algorithm are document settings, so they are edits too).
+  useEffect(() => {
+    if (!nestShown || !scene) return;
+    const k = kernelRef.current;
+    if (!k) return;
+    let stale = false;
+    setNestBusy(true);
+    const t = window.setTimeout(() => {
+      void queue.current
+        .then(() => k.nest({ visible_only: cutVisibleOnly }))
+        .then((n) => {
+          if (stale) return;
+          setNesting(n);
+          setNestProblem(null);
+          setNestBusy(false);
+        })
+        .catch((e) => {
+          if (stale) return;
+          setNestBusy(false);
+          setNestProblem(`The nesting could not be worked out: ${friendlyError(e instanceof Error ? e.message : String(e))}`);
+        });
+    }, NEST_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      window.clearTimeout(t);
+    };
+  }, [nestShown, scene, cutVisibleOnly]);
+
+  // Read-only hooks for tests: the cut list and the nesting for any options, straight from
+  // the kernel.
   useEffect(() => {
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = {
@@ -702,6 +766,10 @@ export function App() {
       cutList: async (o?: { rounding?: Rounding; visible_only?: boolean }) => {
         await queue.current;
         return kernelRef.current?.cutList({ rounding: o?.rounding ?? "sixteenth", visible_only: !!o?.visible_only }) ?? null;
+      },
+      nest: async (o?: { visible_only?: boolean; algorithm?: "guillotine" | "maxrects" }) => {
+        await queue.current;
+        return kernelRef.current?.nest(o ?? {}) ?? null;
       },
     };
   }, []);
@@ -1261,6 +1329,74 @@ export function App() {
     [apply],
   );
 
+  // ---- nesting (lane 9) -------------------------------------------------------------------
+
+  const toggleNest = useCallback(() => {
+    const next = !nestOpen;
+    setNestOpen(next);
+    if (!next) {
+      setNestHover(null);
+      setNestBusy(false);
+    }
+    try {
+      localStorage.setItem(NEST_OPEN_KEY, next ? "1" : "0");
+    } catch {
+      /* per-viewer convenience only */
+    }
+  }, [nestOpen]);
+  const setNestSettings = useCallback(
+    (s: NestSettings) =>
+      void apply({ op: "set_nest_settings", settings: s }, () => `Nesting: kerf ${fmt(s.kerf)}, trim ${s.trim > 0 ? `${fmt(s.trim)} per edge` : "none"}, ${s.algorithm === "guillotine" ? "table saw (straight cuts edge to edge)" : "tightest layout"}.`),
+    [apply, fmt],
+  );
+  const defineStock = useCallback(
+    (stock: StockDef, replace: string | null) =>
+      void apply({ op: "define_stock", stock, replace }, () => (replace ? `Stock ${quoted(replace)} saved${replace !== stock.name ? ` as ${quoted(stock.name)}` : ""}.` : `Stock ${quoted(stock.name)} added.`)),
+    [apply],
+  );
+  const deleteStock = useCallback((name: string) => void apply({ op: "delete_stock", name }, () => `Stock ${quoted(name)} deleted.`), [apply]);
+  const setMaterialStock = useCallback(
+    (material: string, stock: string | null) =>
+      void apply({ op: "set_material_stock", material, stock }, () => (stock ? `${quoted(material)} parts come from ${quoted(stock)}.` : `${quoted(material)} parts: stock chosen automatically.`)),
+    [apply],
+  );
+  const resetStock = useCallback(() => void apply({ op: "reset_stock_library" }, () => "Stock back to the built-in sheets and boards (kerf 1/8 in, no trim, table saw)."), [apply]);
+  const hoverPlacement = useCallback((p: Placement | null) => setNestHover(p ? entityOfItem(p.item) : null), []);
+  /** A nested piece clicked: select it in the model (as its cut list row would, one piece). */
+  const selectPlacement = useCallback(
+    (p: Placement) => {
+      const row = cutList?.rows.find((r) => r.occurrences.some((o) => sameItem(o.item, p.item)));
+      if (row) selectCutRows([{ ...row, occurrences: row.occurrences.filter((o) => sameItem(o.item, p.item)) }]);
+      else select([entityOfItem(p.item)]);
+    },
+    [cutList, selectCutRows, select],
+  );
+  // The part under the pointer in the viewport lights up in its diagram.
+  const nestLit = useMemo(() => {
+    if (!nesting || !hover || !nestShown) return null;
+    const g = graphOf(scene?.state);
+    const object = hover.kind === "face" || hover.kind === "object" ? hover.object : null;
+    const ancestors = new Set<number>();
+    if (hover.kind === "node") ancestors.add(hover.node);
+    let at = object !== null ? (g.objects.find((o) => o.id === object)?.parent ?? null) : hover.kind === "node" ? (g.nodes.find((x) => x.id === hover.node)?.parent ?? null) : null;
+    for (let guard = 0; at !== null && guard < 64; guard++) {
+      ancestors.add(at);
+      const here: number = at;
+      at = g.nodes.find((x) => x.id === here)?.parent ?? null;
+    }
+    for (const piece of nesting.pieces)
+      for (const q of piece.placements) {
+        if ("object" in q.item ? q.item.object === object : ancestors.has(q.item.node)) return q.tag;
+      }
+    return null;
+  }, [nesting, hover, nestShown, scene]);
+  const nestMaterials = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of cutList?.rows ?? []) if (r.material && !seen.has(r.material.toLowerCase())) seen.set(r.material.toLowerCase(), r.material);
+    for (const m of Object.keys(nesting?.library.defaults ?? {})) if (!seen.has(m.toLowerCase())) seen.set(m.toLowerCase(), m);
+    return [...seen.values()];
+  }, [cutList, nesting]);
+
   const cutTitle = docName ? stem(docName) : "Untitled";
   const saveCut = useCallback(
     async (make: (l: CutList) => Uint8Array, suffix: string, type: typeof PDF_TYPE, what: string) => {
@@ -1516,7 +1652,8 @@ export function App() {
     if (selection.length || toolId !== "pushpull" || !target) return selection;
     return [target.kind === "face" ? { kind: "face", object: target.object, face: target.face } : { kind: "region", sketch: target.sketch, region: target.region }];
   }, [selection, toolId, target]);
-  const highlight = useMemo(() => highlightFor(highlightEntities, hover, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, hover, scene]);
+  // A part hovered in a nesting diagram lights up in the model.
+  const highlight = useMemo(() => highlightFor(highlightEntities, nestHover ?? hover, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, nestHover, hover, scene]);
 
   // Guides and dimensions draw under the tool's own overlay.
   const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);
@@ -1672,6 +1809,19 @@ export function App() {
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
       <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
+      {stockOpen && nesting ? (
+        <StockDialog
+          library={nesting.library}
+          materials={nestMaterials}
+          rounding={nestUnits}
+          units={units}
+          onDefine={defineStock}
+          onDelete={deleteStock}
+          onDefault={setMaterialStock}
+          onReset={resetStock}
+          onClose={() => setStockOpen(false)}
+        />
+      ) : null}
       <TopBar
         view={camView}
         onView={setView}
@@ -1734,6 +1884,22 @@ export function App() {
           onPdf: () => void saveCut((l) => reportPdf(l, cutTitle), "cut list.pdf", PDF_TYPE, "the cut list report"),
           onPrint: printCut,
           onLabels: () => void saveCut((l) => labelsPdf(l, cutTitle), "labels.pdf", PDF_TYPE, `${plural(cutList?.rows.length ?? 0, "label")} on Avery 5160-size sheets`),
+          nestOpen,
+          onNest: toggleNest,
+          nesting: nestShown ? (
+            <NestingSection
+              nesting={nesting}
+              problem={nestProblem ?? (kernelState === "missing" || kernelState === "error" ? "Nesting is worked out by the kernel, which is not loaded." : null)}
+              busy={nestBusy}
+              rounding={nestUnits}
+              units={units}
+              onSettings={setNestSettings}
+              onStock={() => setStockOpen(true)}
+              onHover={hoverPlacement}
+              onSelect={selectPlacement}
+              lit={nestLit}
+            />
+          ) : null,
         }}
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{
