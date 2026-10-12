@@ -1,0 +1,18 @@
+{
+  "name": "sawhorse-plugin-api",
+  "version": "1.0.0",
+  "description": "Types, manifest schema and runtime shim for Sawhorse plugins (plugin API 1).",
+  "license": "MIT OR Apache-2.0",
+  "author": "Sawhorse contributors",
+  "type": "module",
+  "types": "index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./sawhorse.js" },
+    "./manifest.schema.json": "./manifest.schema.json",
+    "./manifest": "./src/manifest.ts",
+    "./source": "./src/source.ts"
+  },
+  "files": ["index.d.ts", "sawhorse.js", "manifest.schema.json", "src/", "README.md"],
+  "repository": { "type": "git", "url": "https://github.com/sawhorse3d/sawhorse.git", "directory": "packages/plugin-api" },
+  "private": true
+}

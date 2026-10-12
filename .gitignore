@@ -4,6 +4,8 @@ target/
 dist/
 # assembled public site (npm run site)
 dist-site/
+# packed plugins (npm run plugin:pack)
+dist-plugins/
 .env
 src-tauri/target/
 src-tauri/gen/schemas/
