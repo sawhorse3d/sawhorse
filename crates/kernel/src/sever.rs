@@ -64,7 +64,7 @@ fn volume(p: &Polys) -> f64 {
 }
 
 /// Point-in-solid by ray parity (a fixed, generic direction so the ray misses edges).
-fn contains(p: &Polys, q: DVec3) -> bool {
+pub(crate) fn contains(p: &Polys, q: DVec3) -> bool {
     let Ok(t) = polys_tri_solid(p, 0) else {
         return false;
     };

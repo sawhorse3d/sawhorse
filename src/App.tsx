@@ -21,6 +21,7 @@ import { MoveTool } from "./tools/move";
 import { RotateTool } from "./tools/rotate";
 import { ScaleTool } from "./tools/scale";
 import { OffsetTool } from "./tools/offset";
+import { FollowTool } from "./tools/follow";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
@@ -360,6 +361,7 @@ export function App() {
       ["rotate", new RotateTool(host)],
       ["scale", new ScaleTool(host)],
       ["offset", new OffsetTool(host)],
+      ["follow", new FollowTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;

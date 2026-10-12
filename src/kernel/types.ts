@@ -34,6 +34,7 @@ export type KernelOp =
   | { op: "array"; objects: number[]; xform: Xform; count: number }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
   | { op: "offset"; source: OffsetSource; distance: number }
+  | { op: "follow_me"; profile: Profile; path: V3[]; closed: boolean }
   | { op: "delete_object"; object: number }
   | { op: "create_group"; name: string; objects: number[] }
   | { op: "delete_group"; group: number }
@@ -47,6 +48,9 @@ export type OffsetSource =
   | { of: "face"; object: number; face: number }
   | { of: "region"; sketch: number; region: number }
   | { of: "edges"; points: V3[]; closed: boolean; normal: V3; object: number | null };
+
+/** What Follow Me sweeps (crates/kernel/src/sweep.rs `Profile`). */
+export type Profile = { of: "face"; object: number; face: number } | { of: "region"; sketch: number; region: number };
 
 /** What an offset would draw (Doc.offset_preview). */
 export interface OffsetPreview {
@@ -83,6 +87,7 @@ export type OpOutcome =
   | { kind: "copied"; objects: number[] }
   | { kind: "geometry_moved"; faces: number[] }
   | { kind: "severed"; objects: number[] }
+  | { kind: "swept"; objects: number[]; cut: boolean }
   | { kind: "undone" }
   | { kind: "redone" };
 

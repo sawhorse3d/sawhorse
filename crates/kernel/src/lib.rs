@@ -32,6 +32,7 @@ pub mod push;
 pub mod sever;
 pub mod sketch;
 pub mod snap;
+pub mod sweep;
 #[doc(hidden)]
 pub mod testing;
 pub mod tolerance;
@@ -41,7 +42,7 @@ pub mod validate;
 pub use document::Document;
 pub use error::{
     BuildError, DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError,
-    TransformError,
+    SweepError, TransformError,
 };
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};

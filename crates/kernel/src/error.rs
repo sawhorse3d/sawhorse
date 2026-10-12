@@ -142,6 +142,27 @@ pub enum TransformError {
     InvalidResult(String),
 }
 
+/// Errors from Follow Me (lane 4). Nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum SweepError {
+    #[error("a path point is not finite or is beyond 10 km")]
+    OutOfBounds,
+    #[error("the path needs at least one segment (or three corners to close)")]
+    PathTooShort,
+    #[error("the path doubles back on itself")]
+    PathFoldsBack,
+    #[error("the profile lies along the path; it must face along the path's first segment")]
+    ProfileAlongPath,
+    #[error("the sweep would have a flat or zero-size wall")]
+    Degenerate,
+    #[error("the path turns too tightly for this profile: the sweep would pass through itself")]
+    SelfIntersects,
+    #[error("the sweep would cut the whole solid away")]
+    RemovesEverything,
+    #[error("that region cannot be swept: {0}")]
+    BadProfile(String),
+}
+
 /// Errors from the Offset tool (lane 4). Nothing changed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum OffsetError {
@@ -200,6 +221,8 @@ pub enum KernelError {
     Transform(#[from] TransformError),
     #[error(transparent)]
     Offset(#[from] OffsetError),
+    #[error(transparent)]
+    Sweep(#[from] SweepError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]

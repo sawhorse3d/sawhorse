@@ -28,6 +28,7 @@ use crate::object::{Object, Provenance, PushOutcome};
 use crate::offset::OffsetSource;
 use crate::plane::Plane;
 use crate::sketch::Sketch;
+use crate::sweep::Profile;
 use crate::tolerance::PLANARITY;
 use crate::transform::Xform;
 use crate::validate::{TopologyError, Violation};
@@ -177,6 +178,15 @@ pub enum Op {
     /// the solid when it lies on its faces (imprints, cuts), else into a sketch on the plane
     /// (see [`crate::offset`]).
     Offset { source: OffsetSource, distance: f64 },
+    /// Follow Me: sweep a profile along a path of straight segments (world points; `closed`
+    /// joins the last to the first). A region profile becomes a new solid; a face profile
+    /// adds to its solid (path leaving the face) or cuts it (path running into it). See
+    /// [`crate::sweep`].
+    FollowMe {
+        profile: Profile,
+        path: Vec<[f64; 3]>,
+        closed: bool,
+    },
     /// Delete an object (it also leaves any group).
     DeleteObject { object: u64 },
     /// Group objects under a name.
@@ -261,6 +271,12 @@ pub enum OpOutcome {
     TagSet,
     Undone,
     Redone,
+    /// Follow Me on a face: the solid grew along the path, or (`cut`) the sweep was cut out
+    /// of it; `objects` is the solid, then any pieces it came apart into.
+    Swept {
+        objects: Vec<u64>,
+        cut: bool,
+    },
     /// Solids were moved, turned or scaled (the same ids).
     Transformed {
         objects: Vec<u64>,
@@ -772,6 +788,11 @@ impl Model {
                 Ok(OpOutcome::GeometryMoved { faces })
             }
             Op::Offset { source, distance } => self.offset(source, *distance),
+            Op::FollowMe {
+                profile,
+                path,
+                closed,
+            } => self.follow_me(profile, path, *closed),
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);
                 if self.objects.remove(k).is_none() {
@@ -908,6 +929,102 @@ impl Model {
             .map(|r| r.iter().map(|&q| plane.to_world(q)).collect())
             .collect();
         Ok((world, closed, plane))
+    }
+
+    /// Apply Follow Me (see [`Op::FollowMe`]).
+    fn follow_me(
+        &mut self,
+        profile: &Profile,
+        path: &[[f64; 3]],
+        closed: bool,
+    ) -> Result<OpOutcome, KernelError> {
+        use crate::sweep::{sweep_with_direction, swept_object, wound};
+        let path: Vec<DVec3> = path.iter().map(|p| DVec3::from_array(*p)).collect();
+        match profile {
+            Profile::Region { sketch, region } => {
+                let sid = self.sketch_key(*sketch)?;
+                let rid = from_public::<RegionId>(*region);
+                let s = &self.sketches[sid];
+                let r = s.region(rid).ok_or(SketchError::NoSuchRegion(*region))?;
+                if r.consumed {
+                    return Err(SketchError::RegionConsumed(*region).into());
+                }
+                if r.pinched {
+                    return Err(SketchError::PinchedRegion(*region).into());
+                }
+                let plane = *s.plane();
+                let (o, h) = s.region_rings(r);
+                let rings: Vec<Vec<DVec3>> = std::iter::once(o)
+                    .chain(h)
+                    .map(|ring| ring.iter().map(|&q| plane.to_world(q)).collect())
+                    .collect();
+                let (p, _) =
+                    sweep_with_direction(&wound(&plane, &rings), plane.normal, &path, closed)?;
+                let obj = swept_object(&p)?;
+                self.sketches[sid].consume_region(rid)?;
+                let id = self.insert_object(obj);
+                Ok(OpOutcome::ObjectCreated {
+                    object: to_public(id),
+                })
+            }
+            Profile::Face { object, face } => {
+                let k = from_public::<ObjectId>(*object);
+                let o = self
+                    .objects
+                    .get(k)
+                    .ok_or(FaceEditError::NoSuchObject(*object))?;
+                let fi = o
+                    .face_ordinal(*face)
+                    .ok_or(FaceEditError::NoSuchFace(*face))?;
+                let p = o.brep().to_polys();
+                let plane = p.plane(fi).ok_or(crate::error::SweepError::Degenerate)?;
+                let rings: Vec<Vec<DVec3>> = p.faces[fi]
+                    .rings()
+                    .map(|r| r.iter().map(|&i| p.points[i]).collect())
+                    .collect();
+                let (sw, leaves) = sweep_with_direction(&rings, plane.normal, &path, closed)?;
+                swept_object(&sw)?;
+                // Add or cut: where the sweep is just beside the profile. Material on the
+                // face's outer side means it grows the solid; on its inner side, it cuts.
+                // (A closed path passes through its profile, so its first segment's way
+                // says nothing; an open one agrees with the first segment.)
+                let outward = {
+                    let q2: Vec<Vec<DVec2>> = rings
+                        .iter()
+                        .map(|r| r.iter().map(|&q| plane.to_local(q)).collect())
+                        .collect();
+                    let eps = 10.0 * crate::tolerance::POINT_MERGE;
+                    match sawhorse_tessellate::interior_point(&q2[0], &q2[1..]) {
+                        Some(c) => {
+                            let q = plane.to_world(c);
+                            let ahead = crate::sever::contains(&sw, q + plane.normal * eps);
+                            let behind = crate::sever::contains(&sw, q - plane.normal * eps);
+                            if ahead != behind { ahead } else { leaves }
+                        }
+                        None => leaves,
+                    }
+                };
+                let engine = crate::boolean::default_engine()?;
+                let op = if outward {
+                    crate::boolean::BoolOp::Union
+                } else {
+                    crate::boolean::BoolOp::Difference
+                };
+                let q = crate::boolean::combine(&p, &sw, op, engine.as_ref())?
+                    .ok_or(crate::error::SweepError::RemovesEverything)?;
+                let next = o
+                    .rebuilt(q)
+                    .map_err(|e| crate::boolean::BooleanError::InvalidResult(e.to_string()))?;
+                next.validate()
+                    .map_err(|e| crate::boolean::BooleanError::InvalidResult(e.to_string()))?;
+                self.objects[k] = next;
+                let pieces = self.sever(k);
+                Ok(OpOutcome::Swept {
+                    objects: pieces.into_iter().map(to_public).collect(),
+                    cut: !outward,
+                })
+            }
+        }
     }
 
     /// Apply an offset (see [`Op::Offset`]).

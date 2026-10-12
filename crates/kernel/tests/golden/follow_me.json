@@ -1,0 +1,147 @@
+{
+  "name": "follow_me",
+  "description": "Lane 4: a square region on an upright sketch swept along an L (mitered, a new solid), and a chamfer cut on a box's end face swept round its top edge (a closed path, a boolean cut with plane snapping).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        2.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 2,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.1,
+      "h": 0.1
+    },
+    {
+      "op": "follow_me",
+      "profile": {
+        "of": "region",
+        "sketch": 2,
+        "region": 1
+      },
+      "path": [
+        [
+          2.0,
+          0.0,
+          0.0
+        ],
+        [
+          3.0,
+          0.0,
+          0.0
+        ],
+        [
+          3.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.0,
+      "h": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.3
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 2,
+        "face": 6
+      },
+      "points": [
+        [
+          0.0,
+          0.05,
+          0.3
+        ],
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "follow_me",
+      "profile": {
+        "of": "face",
+        "object": 2,
+        "face": 7
+      },
+      "path": [
+        [
+          0.0,
+          0.0,
+          0.3
+        ],
+        [
+          1.0,
+          0.0,
+          0.3
+        ],
+        [
+          1.0,
+          0.5,
+          0.3
+        ],
+        [
+          0.0,
+          0.5,
+          0.3
+        ]
+      ],
+      "closed": true
+    }
+  ],
+  "hash": "b841f3825efc8b77",
+  "stats": {
+    "objects": 2,
+    "faces": 18,
+    "edges": 38,
+    "vertices": 24,
+    "genus": 0,
+    "watertight": true
+  }
+}
