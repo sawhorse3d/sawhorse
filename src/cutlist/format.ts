@@ -44,6 +44,14 @@ export function formatSteps(steps: number, r: Rounding): string {
   return neg ? `-${text}` : text;
 }
 
+/** A size in rounding steps as a plain decimal number in the size unit: "0.75", "11.25",
+ * "0.0625" (inches; exact, since sixteenths and thirty-seconds end within five places);
+ * "19.5" (mm). For spreadsheets and anyone who wants numbers, not fractions. */
+export function decimalSteps(steps: number, r: Rounding): string {
+  const v = r === "half_mm" ? steps / 2 : steps / (r === "sixteenth" ? 16 : 32);
+  return String(Number(v.toFixed(5)));
+}
+
 /** The unit the sizes are in: "in" or "mm". */
 export function sizeUnit(r: Rounding): string {
   return isMetric(r) ? "mm" : "in";

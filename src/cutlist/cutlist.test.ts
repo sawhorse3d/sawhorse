@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { csvBytes, cutListCsv, parseCsv } from "./csv";
+import { csvBytes, csvCellText, cutListCsv, parseCsv, textCell } from "./csv";
 import { labelSlot, labelsPdf, LABEL_SHEET, reportPdf } from "./documents";
-import { defaultRounding, formatSteps, rowNotes, summary } from "./format";
+import { decimalSteps, defaultRounding, formatSteps, GRAIN_WORDS, rowNotes, summary } from "./format";
+import { parseNumber } from "../lib/units";
 import { fit, PdfDoc, readPdf, textWidth, winAnsi } from "./pdf";
 import { bookshelf, row } from "./fixture";
 
@@ -28,28 +29,50 @@ describe("cut list formatting", () => {
 });
 
 describe("CSV", () => {
-  it("round-trips: every row and the totals read back", () => {
+  it("round-trips: every row and the totals read back, fractions as text, decimals as numbers", () => {
     const list = bookshelf();
     list.rows[0].name = 'Side, "left"';
+    list.rows[1].material = null;
     const text = cutListCsv(list);
     expect(text.endsWith("\r\n")).toBe(true);
     const rows = parseCsv(text);
-    expect(rows[0]).toEqual(["Part", "Qty", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes"]);
-    expect(rows.slice(1, 6).map((r) => r.slice(0, 7))).toEqual([
-      ['Side, "left"', "2", "3/4", "11 1/4", "71 1/4", "Oak", "along L"],
-      ["Shelf", "4", "3/4", "11", "34 1/2", "Oak", "along L"],
-      ["Top", "1", "3/4", "11 1/4", "36", "Oak", "along W (across)"],
-      ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "Oak", "along L"],
-      ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "1/4 birch ply", "along L"],
+    expect(rows[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary"]);
+    // Every line has every column.
+    for (const r of rows) expect(r).toHaveLength(15);
+    // Fractions are text formulas, so spreadsheets do not read 3/4 as a date or 11 1/4 as a number.
+    expect(rows[1].slice(2, 5)).toEqual(['="3/4"', '="11 1/4"', '="71 1/4"']);
+    expect(rows[2][3]).toBe("11");
+    expect(text).toContain('"=""3/4"""');
+    const read = rows.map((r) => r.map(csvCellText));
+    expect(read.slice(1, 6).map((r) => r.slice(0, 10))).toEqual([
+      ['Side, "left"', "2", "3/4", "11 1/4", "71 1/4", "0.75", "11.25", "71.25", "Oak", "along L"],
+      ["Shelf", "4", "3/4", "11", "34 1/2", "0.75", "11", "34.5", "", "along L"],
+      ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "Oak", GRAIN_WORDS.width],
+      ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "0.75", "3.5", "34.5", "Oak", "along L"],
+      ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "0.25", "34.5", "71.25", "1/4 birch ply", "along L"],
     ]);
-    expect(rows[1][8]).toBe("8.35");
-    expect(rows[5].slice(7, 10)).toEqual(["Sheet", "", "17.07"]);
-    expect(rows[6].slice(0, 2)).toEqual(["Total", "9"]);
-    expect(rows[6][8]).toBe("18.99");
+    // No dash placeholders anywhere.
+    expect(text).not.toContain("—");
+    // The decimals are the shown sizes, exactly.
+    for (const r of read.slice(1, 6)) for (let k = 0; k < 3; k++) expect(parseNumber(r[2 + k])).toBe(Number(r[5 + k]));
+    expect(read[1][11]).toBe("8.35");
+    expect(read[5].slice(10, 13)).toEqual(["Sheet", "", "17.07"]);
+    // The Total row: pieces, board feet, sheet area; the sheet count in Summary, not Stock.
+    expect(read[6]).toEqual(["Total", "9", "", "", "", "", "", "", "", "", "", "18.99", "17.07", "", "1 sheet 4x8"]);
     expect(rows).toHaveLength(7);
     const bytes = csvBytes(list);
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     expect(parseCsv(new TextDecoder().decode(bytes.slice(3)))).toEqual(rows);
+  });
+
+  it("text cells unwrap and quote safely", () => {
+    expect(textCell("3/4")).toBe('="3/4"');
+    expect(textCell("72")).toBe("72");
+    expect(csvCellText('="11 1/4"')).toBe("11 1/4");
+    expect(csvCellText("plain")).toBe("plain");
+    expect(decimalSteps(1, "sixteenth")).toBe("0.0625");
+    expect(decimalSteps(1, "thirty_second")).toBe("0.03125");
+    expect(decimalSteps(39, "half_mm")).toBe("19.5");
   });
 
   it("metric lists say mm and square metres", () => {
@@ -57,10 +80,10 @@ describe("CSV", () => {
     list.rounding = "half_mm";
     list.rows = list.rows.map((r) => ({ ...r, steps: r.steps.map((s) => Math.round((s / 16) * 50.8)) as [number, number, number] }));
     const rows = parseCsv(cutListCsv(list));
-    expect(rows[0][2]).toBe("T (mm)");
-    expect(rows[0][9]).toBe("Area (m²)");
+    expect(rows[0].slice(5, 8)).toEqual(["T (mm)", "W (mm)", "L (mm)"]);
+    expect(rows[0][12]).toBe("Area (m²)");
     // 19.05, 285.75 and 1809.75 mm to the nearest 0.5 mm (halves up).
-    expect(rows[1].slice(2, 5)).toEqual(["19", "286", "1810"]);
+    expect(rows[1].slice(2, 8)).toEqual(["19", "286", "1810", "19", "286", "1810"]);
   });
 });
 

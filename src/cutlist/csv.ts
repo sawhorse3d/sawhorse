@@ -1,7 +1,17 @@
 // The cut list as CSV (RFC 4180: comma separated, CRLF line ends, fields with commas,
 // quotes or line breaks quoted, quotes doubled). One row per part, then a Total row.
+//
+// Columns: Part, Qty; T, W, L as shown (the shop's fractions, "11 1/4", or mm); T, W, L as
+// decimal numbers in the size unit (inches or mm) for formulas; Material, Grain, Stock
+// (Lumber / Sheet), Board feet, Area, Notes; and Summary, filled only on the Total row
+// (the rough 4 x 8 sheet count). Empty cells are empty: no dash placeholders.
+//
+// Spreadsheet programs read "3/4" as a date and "11 1/4" as a number, so a shown size that
+// holds a fraction is written as the text formula ="3/4" (Excel, LibreOffice Calc and
+// Google Sheets all show it as the text 3/4). A plain CSV reader sees ="3/4";
+// `csvCellText` unwraps it. The decimal columns are plain numbers.
 import type { CutList } from "../kernel/types";
-import { formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, materialText, rowNotes, SQ_FT, sizeUnit } from "./format";
+import { decimalSteps, formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, rowNotes, SQ_FT, sizeUnit } from "./format";
 
 export const CSV_TYPE = { description: "Cut list (CSV)", mime: "text/csv", extensions: [".csv"] };
 
@@ -10,10 +20,21 @@ function field(v: string | number): string {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+/** A shown size as a spreadsheet keeps it: text when it holds a fraction. */
+export function textCell(s: string): string {
+  return s.includes("/") ? `="${s.replace(/"/g, '""')}"` : s;
+}
+
+/** A cell as the person reads it: `="3/4"` (a text formula) is 3/4. */
+export function csvCellText(s: string): string {
+  const m = /^="(.*)"$/s.exec(s);
+  return m ? m[1].replace(/""/g, '"') : s;
+}
+
 export function csvHeader(list: CutList): string[] {
   const u = sizeUnit(list.rounding);
   const area = isMetric(list.rounding) ? "Area (m²)" : "Area (sq ft)";
-  return ["Part", "Qty", `T (${u})`, `W (${u})`, `L (${u})`, "Material", "Grain", "Stock", "Board feet", area, "Notes"];
+  return ["Part", "Qty", "T", "W", "L", `T (${u})`, `W (${u})`, `L (${u})`, "Material", "Grain", "Stock", "Board feet", area, "Notes", "Summary"];
 }
 
 export function cutListCsv(list: CutList): string {
@@ -24,17 +45,21 @@ export function cutListCsv(list: CutList): string {
     lines.push([
       row.name,
       String(row.qty),
-      ...row.steps.map((s) => formatSteps(s, r)),
-      materialText(row),
+      ...row.steps.map((s) => textCell(formatSteps(s, r))),
+      ...row.steps.map((s) => decimalSteps(s, r)),
+      row.material ?? "",
       GRAIN_WORDS[row.grain],
       row.sheet ? "Sheet" : "Lumber",
       row.sheet ? "" : formatBoardFeet(row.board_feet),
       area(row.area_m2),
       rowNotes(row).join("; "),
+      "",
     ]);
   }
-  const totalArea = list.totals.sheets.reduce((s, x) => s + x.area_m2, 0);
-  lines.push(["Total", String(list.totals.pieces), "", "", "", "", "", `${list.totals.sheet_count} sheet${list.totals.sheet_count === 1 ? "" : "s"} 4x8`, formatBoardFeet(list.totals.board_feet), area(totalArea), ""]);
+  const t = list.totals;
+  const totalArea = t.sheets.reduce((s, x) => s + x.area_m2, 0);
+  const sheets = t.sheet_count ? `${t.sheet_count} sheet${t.sheet_count === 1 ? "" : "s"} 4x8` : "";
+  lines.push(["Total", String(t.pieces), "", "", "", "", "", "", "", "", "", formatBoardFeet(t.board_feet), area(totalArea), "", sheets]);
   return lines.map((l) => l.map(field).join(",")).join("\r\n") + "\r\n";
 }
 

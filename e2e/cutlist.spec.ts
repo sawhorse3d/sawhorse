@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 // row by row, grain and stock set from its right-click menu, a hidden shelf and Visible
 // only, a row clicked to select its pieces, and every export saved and read back.
 import { at, clickAt, IN, point, selectAt, solids, type, type V3 } from "./helpers";
+import { csvCellText, parseCsv } from "../src/cutlist/csv";
 
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 const hint = (page: Page) => page.locator("#hint");
@@ -256,15 +257,17 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   const csv = await save(page, "CSV");
   expect(csv.name).toBe("Untitled cut list.csv");
   const text = csv.bytes.toString("utf8").replace(/^﻿/, "");
-  const lines = text.trimEnd().split("\r\n").map((l) => l.split(","));
-  expect(lines[0]).toEqual(["Part", "Qty", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes"]);
-  expect(lines.slice(1).map((l) => l.slice(0, 10))).toEqual([
-    ["Side", "2", "3/4", "11 1/4", "71 1/4", "White oak", "along L", "Lumber", "8.35", ""],
-    ["Top", "1", "3/4", "11 1/4", "36", "White oak", "along W (across)", "Lumber", "2.11", ""],
-    ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "White oak", "along L", "Lumber", "0.63", ""],
-    ["Shelf", "4", "3/4", "11", "34 1/2", "White oak", "along L", "Lumber", "7.91", ""],
-    ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "1/4 birch ply", "along L", "Sheet", "", "17.07"],
-    ["Total", "9", "", "", "", "", "", "1 sheet 4x8", "18.99", "17.07"],
+  const lines = parseCsv(text).map((l) => l.map(csvCellText));
+  expect(lines[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary"]);
+  // Fractions reach a spreadsheet as text (="3/4"), never as a date.
+  expect(text).toContain('"=""3/4"""');
+  expect(lines.slice(1).map((l) => [...l.slice(0, 13), l[14]])).toEqual([
+    ["Side", "2", "3/4", "11 1/4", "71 1/4", "0.75", "11.25", "71.25", "White oak", "along L", "Lumber", "8.35", "", ""],
+    ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "White oak", "along W (across)", "Lumber", "2.11", "", ""],
+    ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "0.75", "3.5", "34.5", "White oak", "along L", "Lumber", "0.63", "", ""],
+    ["Shelf", "4", "3/4", "11", "34 1/2", "0.75", "11", "34.5", "White oak", "along L", "Lumber", "7.91", "", ""],
+    ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "0.25", "34.5", "71.25", "1/4 birch ply", "along L", "Sheet", "", "17.07", ""],
+    ["Total", "9", "", "", "", "", "", "", "", "", "", "18.99", "17.07", "1 sheet 4x8"],
   ]);
 
   // The report and the labels are PDFs.
