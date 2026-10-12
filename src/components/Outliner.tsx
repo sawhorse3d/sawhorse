@@ -246,6 +246,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
                     aria-label={`New name for ${r.label}`}
                     autoFocus
                     defaultValue={r.label}
+                    onFocus={(e) => e.currentTarget.select()}
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
                       e.stopPropagation();

@@ -61,7 +61,8 @@ test("Ctrl copies; x3 makes an array; /2 divides it; copies are separate solids"
   await clickAt(page, [0, 0, 0], "endpoint", 1, 1);
   // Lock the green axis with the arrow key, then show the way with the cursor.
   await page.keyboard.press("ArrowLeft");
-  await expect(page.locator("#hint")).toContainText("Moving along the green axis");
+  // Ctrl was tapped: the status line says it is copying, not moving.
+  await expect(page.locator("#hint")).toContainText("Copying along the green axis");
   await point(page, [0, 10, 0]);
   await type(page, "18");
   const hint = page.locator("#hint");

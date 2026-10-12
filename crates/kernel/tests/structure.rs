@@ -1124,3 +1124,107 @@ fn make_group_inside_a_component_reaches_every_copy() {
     ok(&mut d, Op::LeaveContext);
     assert_eq!(d.model().objects().len(), 2);
 }
+
+#[test]
+fn make_component_on_a_group_makes_the_group_itself_the_instance() {
+    // Model › Side › Solid, never Model › Side › Group › Solid.
+    let mut d = Document::with_ground_sketch();
+    let a = board(&mut d, 0.0, 0.0, 0.0, 0.75 * IN, 11.25 * IN, 72.0 * IN);
+    let b = board(&mut d, 5.0 * IN, 0.0, 0.0, 0.75 * IN, 11.25 * IN, 72.0 * IN);
+    let OpOutcome::GroupCreated { group } = ok(
+        &mut d,
+        Op::MakeGroup {
+            items: vec![Item::Object(a), Item::Object(b)],
+            name: Some("Sides".into()),
+        },
+    ) else {
+        panic!()
+    };
+    ok(
+        &mut d,
+        Op::TagItems {
+            items: vec![Item::Node(group)],
+            tag: Some("Carcass".into()),
+        },
+    );
+    // Move the group so its axes are not the world's: the definition is in the group's axes.
+    ok(
+        &mut d,
+        Op::Transform {
+            objects: vec![],
+            nodes: vec![group],
+            xform: move_by(10.0 * IN, 0.0, 0.0),
+        },
+    );
+    let before: Vec<DVec3> = [a, b].iter().map(|&o| min(d.model(), o)).collect();
+    let OpOutcome::ComponentCreated {
+        instance,
+        definition,
+    } = ok(
+        &mut d,
+        Op::MakeComponent {
+            items: vec![Item::Node(group)],
+            name: "Side pair".into(),
+        },
+    )
+    else {
+        panic!()
+    };
+    assert_eq!(instance, group, "the group itself became the instance");
+    let m = d.model();
+    assert_eq!(m.nodes().len(), 1, "no wrapper node: {:?}", m.nodes());
+    let n = m.node(instance).unwrap();
+    assert!(matches!(n.kind, NodeKind::Instance(_)));
+    assert_eq!(n.name, None, "it shows its definition's name");
+    assert_eq!(n.tag.as_deref(), Some("Carcass"), "it keeps its tag");
+    assert_eq!(m.definition(definition).unwrap().name, "Side pair");
+    let g = m.graph();
+    for o in [a, b] {
+        let leaf = g.objects.iter().find(|x| x.id == o).unwrap();
+        assert_eq!(
+            leaf.parent,
+            Some(instance),
+            "solids sit directly in the instance"
+        );
+        assert!(leaf.in_component);
+    }
+    for (o, was) in [a, b].iter().zip(&before) {
+        near(min(m, *o), *was);
+    }
+    // The definition is in the group's axes (moved 10 in along red with it): in its own
+    // axes the left solid starts at 0, not at 10 in.
+    let def = g.definitions.iter().find(|x| x.id == definition).unwrap();
+    assert!(def.min[0].abs() < 1e-12, "{:?}", def.min);
+    assert!((n.xform.translation[0] - 10.0 * IN).abs() < 1e-12);
+    // A copy of it is another instance of the same definition.
+    let OpOutcome::Copied { nodes, .. } = ok(
+        &mut d,
+        Op::Copy {
+            objects: vec![],
+            nodes: vec![instance],
+            xform: move_by(0.0, 20.0 * IN, 0.0),
+        },
+    ) else {
+        panic!()
+    };
+    assert_eq!(
+        d.model().node(nodes[0]).unwrap().kind,
+        d.model().node(instance).unwrap().kind
+    );
+    // Several items (or a mix) still go into a new instance around them.
+    let c = board(&mut d, 40.0 * IN, 0.0, 0.0, IN, IN, IN);
+    let OpOutcome::ComponentCreated { instance: wrap, .. } = ok(
+        &mut d,
+        Op::MakeComponent {
+            items: vec![Item::Node(instance), Item::Object(c)],
+            name: "Assembly".into(),
+        },
+    ) else {
+        panic!()
+    };
+    assert_ne!(wrap, instance);
+    assert_eq!(
+        d.model().node(instance).unwrap().member.parent(),
+        Some(wrap)
+    );
+}

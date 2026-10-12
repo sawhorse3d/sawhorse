@@ -53,7 +53,7 @@ describe("Select tool", () => {
     expect(h.hovered).toEqual({ kind: "node", node: 3 });
     t.onEvent(ev("click", [0.5, 0.5, 1], { picked: pickOf(face) }));
     expect(h.sel).toEqual([{ kind: "node", node: 3 }]);
-    expect(h.statuses.at(-1)?.text).toContain("group Carcass");
+    expect(h.statuses.at(-1)?.text).toContain("group 'Carcass'");
     t.onEvent(ev("dblclick", [0.5, 0.5, 1], { picked: pickOf(face) }));
     expect(entered).toBe(3);
   });

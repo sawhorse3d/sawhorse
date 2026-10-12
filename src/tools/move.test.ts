@@ -107,7 +107,10 @@ describe("Move tool", () => {
     const t = new MoveTool(h);
     t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
     await tick();
+    expect(h.statuses.at(-1)?.text).toMatch(/^Moving /);
     t.onModifier("ctrl");
+    // The status line says it is copying now, not moving.
+    expect(h.statuses.at(-1)?.text).toMatch(/^Copying .*the original stays/);
     t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
     t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
     t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
@@ -123,6 +126,18 @@ describe("Move tool", () => {
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 4 }]);
     // The divide spans the whole array (3 m): four steps of 0.75 m.
     close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [0.75, 0, 0]);
+  });
+
+  it("Ctrl tapped before the click: the gesture starts as a copy and says so", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
+    const t = new MoveTool(h);
+    t.onModifier("ctrl");
+    expect(h.statuses.at(-1)?.text).toMatch(/^Copying:/);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    expect(h.statuses.at(-1)?.text).toMatch(/^Copying .*Tap Ctrl to move it instead/);
+    t.onModifier("ctrl");
+    expect(h.statuses.at(-1)?.text).toMatch(/^Moving /);
   });
 
   it("a distance typed after the move changes it; arrays need a copy", async () => {

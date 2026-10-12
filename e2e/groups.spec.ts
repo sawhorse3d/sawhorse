@@ -69,7 +69,7 @@ test("a component's copies are instances: an edit inside one changes them all; M
   const name = page.getByRole("dialog", { name: "Make Component" }).getByLabel("Name");
   await name.fill("Side");
   await name.press("Enter");
-  await expect(hint(page)).toContainText("Made component Side");
+  await expect(hint(page)).toContainText("Made component 'Side'");
   await expect(row(page, "n:1")).toContainText("Side");
   // Ctrl+Move a copy 30 in along red: an instance of the same component.
   await page.keyboard.press("m");
@@ -78,7 +78,7 @@ test("a component's copies are instances: an edit inside one changes them all; M
   await page.keyboard.press("ArrowRight");
   await point(page, [10, 0, 0]);
   await type(page, "30");
-  await expect(hint(page)).toContainText("Copied component Side");
+  await expect(hint(page)).toContainText("Copied component 'Side'");
   await expect(vp).toHaveAttribute("data-objects", "2");
   await expect(row(page, "n:1")).toContainText("component · 1 of 2");
   await expect(row(page, "n:2")).toContainText("component · 2 of 2");
@@ -128,7 +128,7 @@ test("tags hide and show; scenes save the view and the tags; the Outliner's eye 
   await page.keyboard.press("Space");
   await selectAt(page, [6, 6, 6], "face");
   await page.getByRole("button", { name: "Put the selection on Carcass" }).click();
-  await expect(hint(page)).toContainText("1 item on Carcass");
+  await expect(hint(page)).toContainText("1 item on tag 'Carcass'");
   // A scene with everything shown; hide the tag; a second scene.
   await page.getByRole("button", { name: /Add a scene/ }).click();
   await expect(page.getByRole("tab", { name: "Scene 1" })).toHaveAttribute("aria-selected", "true");
@@ -163,4 +163,36 @@ test("tags hide and show; scenes save the view and the tags; the Outliner's eye 
   await type(page, "6");
   await expect(hint(page)).toContainText("locked");
   await page.screenshot({ path: test.info().outputPath("tags-scenes.png") });
+});
+
+test("hiding what is selected drops it from the selection, so Delete cannot erase it; renaming starts with the name selected", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  await page.keyboard.press("Space");
+  await selectAt(page, [6, 6, 6], "face");
+  await expect(hud(page)).toContainText("Selection: 1");
+  // Edit > Hide: the solid is hidden and no longer selected; Delete then erases nothing.
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+  await expect(hint(page)).toContainText("Hid 1 item");
+  await expect(hud(page)).not.toContainText("Selection:");
+  await page.keyboard.press("Delete");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(row(page, "o:1")).toBeVisible();
+  // Selected in the Outliner, then hidden by its eye: the same.
+  await page.getByRole("button", { name: "Show Solid 1" }).click();
+  await row(page, "o:1").click();
+  await expect(row(page, "o:1")).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Hide Solid 1" }).click();
+  await expect(row(page, "o:1")).toHaveAttribute("aria-selected", "false");
+  await page.keyboard.press("Delete");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  // Rename: the old name is selected, so typing replaces it.
+  await row(page, "o:1").locator(".label").dblclick();
+  const input = page.getByLabel("New name for Solid 1");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("Jig");
+  await page.keyboard.press("Enter");
+  await expect(row(page, "o:1")).toContainText("Jig");
+  await expect(hint(page)).toContainText("Renamed to 'Jig'");
 });

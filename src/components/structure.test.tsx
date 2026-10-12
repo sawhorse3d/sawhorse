@@ -8,6 +8,7 @@ import { NameDialog } from "./NameDialog";
 import { Outliner, outlineRows } from "./Outliner";
 import { SceneTabs } from "./SceneTabs";
 import { TagsPane, hexToRgb, tagCounts } from "./TagsPane";
+import { entityShown } from "../lib/scope";
 
 const I = { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [0, 0, 0] } as GraphNode["xform"];
 const node = (id: number, kind: "group" | "instance", parent: number | null, label: string, definition: number | null = null, extra: Partial<GraphNode> = {}): GraphNode => ({
@@ -100,9 +101,11 @@ describe("Outliner", () => {
     // Unfold the carcass: its sides show.
     fireEvent.click(screen.getByRole("button", { name: "Unfold Carcass" }));
     expect(screen.getAllByText("Side")).toHaveLength(2);
-    // Rename on double-click.
+    // Rename on double-click: the old name starts selected, so typing replaces it.
     fireEvent.doubleClick(screen.getByText("Back"));
-    const input = screen.getByLabelText("New name for Back");
+    const input = screen.getByLabelText("New name for Back") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, "Back".length]);
     fireEvent.change(input, { target: { value: "Back panel" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRename).toHaveBeenLastCalledWith(expect.objectContaining({ key: "o:16" }), "Back panel");
@@ -203,5 +206,19 @@ describe("helpers", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onOk).toHaveBeenCalledWith("Shelf");
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("Selection and visibility", () => {
+  it("what is hidden (itself, by a tag or a hidden parent) is not shown, so it leaves the selection", () => {
+    const st = state();
+    expect(entityShown({ kind: "node", node: 4 }, st)).toBe(true);
+    expect(entityShown({ kind: "node", node: 7 }, st)).toBe(false);
+    const hidden = { ...st, graph: { ...st.graph, objects: st.graph.objects.map((o) => (o.id === 15 ? { ...o, visible: false } : o)) } } as DocState;
+    expect(entityShown({ kind: "object", object: 15 }, hidden)).toBe(false);
+    expect(entityShown({ kind: "face", object: 15, face: 2 }, hidden)).toBe(false);
+    expect(entityShown({ kind: "edge", owner: { kind: "object", id: 15 }, a: [0, 0, 0], b: [1, 0, 0], drawn: false }, hidden)).toBe(false);
+    expect(entityShown({ kind: "face", object: 16, face: 2 }, hidden)).toBe(true);
+    expect(entityShown({ kind: "node", node: 99 }, st)).toBe(false);
   });
 });

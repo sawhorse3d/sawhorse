@@ -95,8 +95,8 @@ describe("the editing context", () => {
 
   it("names nodes and the trail", () => {
     const g = graph(2);
-    expect(describeNode(g, 1)).toBe("group Carcass");
-    expect(describeNode(g, 3)).toBe("component Side (2 of 2)");
+    expect(describeNode(g, 1)).toBe("group 'Carcass'");
+    expect(describeNode(g, 3)).toBe("component 'Side' (2 of 2)");
     expect(contextTrail(g)).toBe("Model › Carcass › Side");
     expect(contextTrail(graph())).toBe("Model");
     expect(solidsIn(g, 1)).toEqual([10, 11]);

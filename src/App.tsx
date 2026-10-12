@@ -8,7 +8,7 @@ import { createKernel, KernelUnavailableError, type EditResult, type KernelClien
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
-import { contextTrail, describeNode, graphOf, scopeEntity, solidsIn } from "./lib/scope";
+import { contextTrail, describeNode, entityShown, graphOf, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
@@ -285,9 +285,12 @@ export function App() {
           live.current.target = t;
           setTarget(t);
           // Drop selected entities that no longer exist (faces and regions by id, groups and
-          // components by node) or that the editing context no longer offers.
+          // components by node), that the editing context no longer offers, or that are no
+          // longer drawn (hidden, by the eye, a tag or a scene): Delete must never erase what
+          // nobody can see.
           const g = r.scene.state.graph;
           const sel = live.current.selection.filter((e) => {
+            if (!entityShown(e, r.scene.state)) return false;
             if (e.kind === "node") {
               if (!g?.nodes.some((n) => n.id === e.node)) return false;
             } else if ((e.kind === "face" || e.kind === "region" || e.kind === "object") && partsOf(e, r.scene.mesh).length === 0) return false;
@@ -874,16 +877,20 @@ export function App() {
   const makeComponent = useCallback(
     (items: Item[]) => {
       if (!items.length) return void setMessage({ text: "Select the solids, groups or components to make a component of first.", error: true });
-      const taken = (live.current.scene?.state.graph?.definitions ?? []).map((d) => d.name);
+      const g = graphOf(live.current.scene?.state);
+      const taken = g.definitions.map((d) => d.name);
+      // A named group made a component keeps its name (the group itself becomes the instance).
+      const only = items.length === 1 && "node" in items[0] ? g.nodes.find((n) => n.id === (items[0] as { node: number }).node) : undefined;
+      const fromGroup = only?.kind === "group" && only.name && !taken.includes(only.name) ? only.name : null;
       setNameRequest({
         title: "Make Component",
         label: "Name",
-        value: nextName("Component", taken),
+        value: fromGroup ?? nextName("Component", taken),
         ok: "Make Component",
         onOk: (name) =>
           void (async () => {
             if (!(await inContext(parentOfItem(items[0])))) return;
-            const r = await apply({ op: "make_component", items, name }, () => `Made component ${name}. Copies of it (Move with Ctrl) are instances: edit one, they all change.`);
+            const r = await apply({ op: "make_component", items, name }, () => `Made component ${quoted(name)}. Copies of it (Move with Ctrl) are instances: edit one, they all change.`);
             if (r?.outcome.kind === "component_created") select([{ kind: "node", node: r.outcome.instance }]);
           })(),
       });
@@ -980,23 +987,26 @@ export function App() {
         const n = g.nodes.find((x) => x.id === e.node);
         // A component is renamed as a whole (every copy shows the new name); a group by itself.
         if (n?.kind === "instance" && n.definition !== null && name) {
-          void apply({ op: "rename_definition", definition: n.definition, name }, () => `Renamed the component to ${name}.`);
+          void apply({ op: "rename_definition", definition: n.definition, name }, () => `Renamed the component to ${quoted(name)}.`);
           return;
         }
-        void apply({ op: "rename", item: { node: e.node }, name }, () => (name ? `Renamed to ${name}.` : "Name cleared."));
+        void apply({ op: "rename", item: { node: e.node }, name }, () => (name ? `Renamed to ${quoted(name)}.` : "Name cleared."));
         return;
       }
-      if (e.kind === "object") void apply({ op: "rename", item: { object: e.object }, name }, () => (name ? `Renamed to ${name}.` : "Name cleared."));
+      if (e.kind === "object") void apply({ op: "rename", item: { object: e.object }, name }, () => (name ? `Renamed to ${quoted(name)}.` : "Name cleared."));
     },
     [apply],
   );
 
+  /** The tag just made with New tag, while its name is being typed: naming it reads "created". */
+  const createdTagRef = useRef<string | null>(null);
   const createTag = useCallback(async () => {
     const tags = Object.keys(live.current.scene?.state.tags ?? {});
     const name = nextName("Tag", tags);
     const color = hexToRgb(TAG_PALETTE[tags.length % TAG_PALETTE.length]);
-    const r = await apply({ op: "create_tag", name, color }, () => `Tag ${name} created: type its name.`);
+    const r = await apply({ op: "create_tag", name, color }, () => `New tag ${quoted(name)}: type its name.`);
     if (r) {
+      createdTagRef.current = name;
       setEditingTag(name);
       setFocusTags((n) => n + 1);
     }
@@ -1035,7 +1045,7 @@ export function App() {
       setProjection(p);
       setCamView(null);
       setActiveScene(name);
-      void apply({ op: "activate_scene", name }, () => `Scene ${name}${sc.hidden_tags?.length ? `: hides ${sc.hidden_tags.join(", ")}` : ""}.`);
+      void apply({ op: "activate_scene", name }, () => `Scene ${quoted(name)}${sc.hidden_tags?.length ? `: hides ${sc.hidden_tags.map(quoted).join(", ")}` : ""}.`);
     },
     [apply],
   );
@@ -1044,13 +1054,13 @@ export function App() {
     const taken = (live.current.scene?.state.scenes ?? []).map((s) => s.name);
     const sc = sceneHere(nextName("Scene", taken));
     if (!sc) return;
-    void apply({ op: "add_scene", scene: sc }, () => `Saved scene ${sc.name}: this view, ${sc.hidden_tags?.length ? `hiding ${sc.hidden_tags.join(", ")}` : "every tag shown"}. Right-click its tab to update it.`).then((r) => r && setActiveScene(sc.name));
+    void apply({ op: "add_scene", scene: sc }, () => `Saved scene ${quoted(sc.name)}: this view, ${sc.hidden_tags?.length ? `hiding ${sc.hidden_tags.map(quoted).join(", ")}` : "every tag shown"}. Right-click its tab to update it.`).then((r) => r && setActiveScene(sc.name));
   }, [apply, sceneHere]);
 
   const updateScene = useCallback(
     (name: string) => {
       const sc = sceneHere(name);
-      if (sc) void apply({ op: "update_scene", name, scene: sc }, () => `Scene ${name} updated to this view.`).then((r) => r && setActiveScene(name));
+      if (sc) void apply({ op: "update_scene", name, scene: sc }, () => `Scene ${quoted(name)} updated to this view.`).then((r) => r && setActiveScene(name));
     },
     [apply, sceneHere],
   );
@@ -1058,14 +1068,14 @@ export function App() {
   const renameScene = useCallback(
     (name: string, next: string) => {
       const sc = live.current.scene?.state.scenes.find((s) => s.name === name);
-      if (sc) void apply({ op: "update_scene", name, scene: { ...sc, name: next } }, () => `Scene renamed to ${next}.`).then((r) => r && activeScene === name && setActiveScene(next));
+      if (sc) void apply({ op: "update_scene", name, scene: { ...sc, name: next } }, () => `Scene ${quoted(name)} renamed to ${quoted(next)}.`).then((r) => r && activeScene === name && setActiveScene(next));
     },
     [apply, activeScene],
   );
 
   const deleteScene = useCallback(
     (name: string) => {
-      void apply({ op: "delete_scene", name }, () => `Scene ${name} deleted.`).then((r) => r && activeScene === name && setActiveScene(null));
+      void apply({ op: "delete_scene", name }, () => `Scene ${quoted(name)} deleted.`).then((r) => r && activeScene === name && setActiveScene(null));
     },
     [apply, activeScene],
   );
@@ -1498,16 +1508,25 @@ export function App() {
           state: st ?? null,
           canTag: itemsOf(selection).length > 0,
           onCreate: () => void createTag(),
-          onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${tag} ${visible ? "shown" : "hidden"}.`),
+          onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
           onColor: (tag, color) => void apply({ op: "set_tag_color", tag, color: hexToRgb(color) }),
-          onRename: (tag, name) => void apply({ op: "rename_tag", tag, name }, () => `Tag renamed to ${name}.`),
-          onDelete: (tag) => void apply({ op: "delete_tag", tag }, () => `Tag ${tag} deleted: what was on it is untagged now.`),
+          onRename: (tag, name) => {
+            const created = createdTagRef.current === tag;
+            createdTagRef.current = null;
+            void apply({ op: "rename_tag", tag, name }, () => (created ? `Tag ${quoted(name)} created.` : `Tag ${quoted(tag)} renamed to ${quoted(name)}.`));
+          },
+          onDelete: (tag) => void apply({ op: "delete_tag", tag }, () => `Tag ${quoted(tag)} deleted: what was on it is untagged now.`),
           onAssign: (tag) => {
             const items = itemsOf(live.current.selection);
-            void apply({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ?? "Untagged"}.`);
+            void apply({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ? `tag ${quoted(tag)}` : "Untagged"}.`);
           },
           editing: editingTag,
-          onEdited: () => setEditingTag(null),
+          onEdited: () => {
+            setEditingTag(null);
+            // Naming a new tag reads "created" only straight after New tag (onRename runs right
+            // after this, synchronously); later renames read "renamed".
+            setTimeout(() => (createdTagRef.current = null), 0);
+          },
         }}
       />
       <ValueBar

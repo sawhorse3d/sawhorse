@@ -120,15 +120,32 @@ export function sketchEditable(state: DocState | null | undefined, sketch: numbe
   return sketchParent(g, sketch) === g.context;
 }
 
-/** "component Shelf (2 of 4)", "group Lower", "a group". */
+/** A name as the status line quotes it: "'Shelf'". Names follow their noun in quotes, so a
+ * default name never doubles it ("scene 'Scene 1'", not "scene Scene 1"). */
+export function quoted(name: string): string {
+  return `'${name}'`;
+}
+
+/** "component 'Shelf' (2 of 4)", "group 'Lower'", "a group". */
 export function describeNode(g: SceneGraph, id: number): string {
   const n = nodeById(g, id);
   if (!n) return "a group";
-  if (n.kind === "group") return n.name ? `group ${n.name}` : "a group";
+  if (n.kind === "group") return n.name ? `group ${quoted(n.name)}` : "a group";
   const d = g.definitions.find((x) => x.id === n.definition);
   const siblings = g.nodes.filter((x) => x.definition === n.definition).map((x) => x.id);
   const k = siblings.indexOf(id) + 1;
-  return `component ${n.label}${d && d.instances > 1 ? ` (${k} of ${d.instances})` : ""}`;
+  return `component ${quoted(n.label)}${d && d.instances > 1 ? ` (${k} of ${d.instances})` : ""}`;
+}
+
+/** Drawn now: a node, or the solid a face, edge or point belongs to, is not hidden (itself, by
+ * a tag or by a hidden group around it). What is not drawn must not stay selected: Delete
+ * would erase what nobody can see. */
+export function entityShown(e: Entity, state: DocState | null | undefined): boolean {
+  const g = graphOf(state);
+  if (e.kind === "node") return g.nodes.find((n) => n.id === e.node)?.visible ?? false;
+  const object = e.kind === "object" || e.kind === "face" ? e.object : (e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object" ? e.owner.id : null;
+  if (object !== null) return g.objects.find((o) => o.id === object)?.visible ?? true;
+  return true;
 }
 
 /** "Model › Lower › Shelf": where editing happens. */

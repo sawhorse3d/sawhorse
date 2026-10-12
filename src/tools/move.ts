@@ -99,7 +99,7 @@ export class MoveTool extends Tool {
   onKey(e: KeyboardEvent): boolean {
     if (this.lock.onKey(e.key, this.snap, this.g?.from ?? null)) {
       const names: Record<string, string> = { "axis-x": "the red axis", "axis-y": "the green axis", "axis-z": "the blue axis", parallel: "the parallel direction", perpendicular: "the perpendicular direction" };
-      this.host.status(this.lock.lock ? `Moving along ${names[this.lock.lock.kind] ?? this.lock.lock.kind}. Press the same arrow to unlock.` : "Unlocked.");
+      this.host.status(this.lock.lock ? `${this.copy ? "Copying" : "Moving"} along ${names[this.lock.lock.kind] ?? this.lock.lock.kind}. Press the same arrow to unlock.` : "Unlocked.");
       return true;
     }
     return false;
@@ -112,7 +112,9 @@ export class MoveTool extends Tool {
   onModifier(key: "ctrl" | "alt"): void {
     if (key === "ctrl") {
       this.copy = !this.copy;
-      this.host.status(this.copy ? "Copy: the original stays, a copy moves. Tap Ctrl again to move instead." : "Move (not copying).");
+      const g = this.g;
+      if (g) this.host.status(this.gestureStatus(g.subject));
+      else this.host.status(this.copy ? "Copying: the original stays, a copy moves. Tap Ctrl again to move instead." : "Moving (not copying).");
     } else {
       this.autofold = !this.autofold;
       this.host.status(this.autofold ? "Autofold on: faces that would bend fold along new edges." : "Autofold off: a move that would bend a face is refused.");
@@ -193,8 +195,14 @@ export class MoveTool extends Tool {
     this.copy = this.copy || e.ctrl;
     this.g = { subject, from: e.snap.point, to: null, edges: subjectEdges(subject, h.mesh()), dragging: false };
     h.hover(null);
-    h.status(`Moving ${describeSubject(subject)}: move and click (or drag), or type a distance. ${subject.kind === "objects" ? "Ctrl copies." : "Alt toggles autofold."}`);
+    h.status(this.gestureStatus(subject));
     h.changed();
+  }
+
+  /** The status line during a gesture: says plainly whether it moves or copies. */
+  gestureStatus(subject: Subject): string {
+    if (this.copy && subject.kind === "objects") return `Copying ${describeSubject(subject)}: the original stays. Move and click (or drag), or type a distance. Tap Ctrl to move it instead.`;
+    return `Moving ${describeSubject(subject)}: move and click (or drag), or type a distance. ${subject.kind === "objects" ? "Ctrl copies." : "Alt toggles autofold."}`;
   }
 
   onValue(text: string): void {

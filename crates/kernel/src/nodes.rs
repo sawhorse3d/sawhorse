@@ -867,6 +867,10 @@ impl Model {
 
     /// Make Component: the items go into a new definition with one instance (placed with
     /// the identity, so the definition's axes are the world's and nothing moves).
+    ///
+    /// A single group becomes the instance itself (Model › Side › Solid, never Model › Side ›
+    /// Group › Solid): it keeps its id, tag and flags, its axes become the placement (so the
+    /// definition is in the group's own axes), and its contents become the definition.
     pub(crate) fn make_component(
         &mut self,
         items: &[Item],
@@ -879,19 +883,31 @@ impl Model {
             members: BTreeMap::new(),
             next_slot: 1,
         });
-        let i = self.nodes.insert(Node {
-            name: None,
-            kind: NodeKind::Instance(d),
-            xform: Xform::IDENTITY,
-            tag: None,
-            member: Membership {
-                parent: self.context,
-                ..Default::default()
-            },
-        });
-        for &t in &things {
-            self.membership_mut(t).expect("resolved").parent = Some(i);
-        }
+        let i = match things.as_slice() {
+            [Thing::Node(g)] if self.nodes[*g].kind == NodeKind::Group => {
+                let g = *g;
+                let node = &mut self.nodes[g];
+                node.kind = NodeKind::Instance(d);
+                node.name = None;
+                g
+            }
+            _ => {
+                let i = self.nodes.insert(Node {
+                    name: None,
+                    kind: NodeKind::Instance(d),
+                    xform: Xform::IDENTITY,
+                    tag: None,
+                    member: Membership {
+                        parent: self.context,
+                        ..Default::default()
+                    },
+                });
+                for &t in &things {
+                    self.membership_mut(t).expect("resolved").parent = Some(i);
+                }
+                i
+            }
+        };
         // They leave whatever definition they were part of and join the new one.
         let kids = self.kids();
         for t in self.scope_in(&kids, i) {

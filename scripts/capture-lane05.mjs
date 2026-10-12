@@ -118,7 +118,7 @@ try {
     const field = page.getByRole("dialog", { name: "Make Component" }).getByLabel("Name");
     await field.fill(name);
     await field.press("Enter");
-    await expectHint(`Made component ${name}`);
+    await expectHint(`Made component '${name}'`);
   };
   const escapeAll = async () => {
     for (let k = 0; k < 4; k++) await page.keyboard.press("Escape");
@@ -139,7 +139,7 @@ try {
   await page.keyboard.press("ArrowRight");
   await point([10, 0, 0]);
   await type("35.25");
-  await expectHint("Copied component Side");
+  await expectHint("Copied component 'Side'");
   await page.keyboard.press("Shift+Z");
   if ((await solids()).length !== 2) fail("two sides expected");
   await shot("1-sides");
@@ -171,9 +171,9 @@ try {
   await page.keyboard.press("ArrowUp");
   await point([0.75, 0, 10]);
   await type("23.75");
-  await expectHint("Copied component Shelf");
+  await expectHint("Copied component 'Shelf'");
   await type("x3");
-  await expectHint("Array: 3 copies of component Shelf");
+  await expectHint("Array: 3 copies of component 'Shelf'");
   await page.keyboard.press("Shift+Z");
   if ((await solids()).length !== 6) fail(`six solids expected, ${(await solids()).length}`);
   await shot("2-shelves");
@@ -182,7 +182,7 @@ try {
   await page.keyboard.press("Space");
   await escapeAll();
   await dblAt([18, 6, 24.5], "node");
-  await expectHint("Editing component Shelf");
+  await expectHint("Editing component 'Shelf'");
   await selectAt([18, 6, 24.5], "face");
   await page.keyboard.press("p");
   await type("1/4");
@@ -220,12 +220,12 @@ try {
   await selectAt([0.4, 0, 36], "node");
   await selectAt([35.6, 0, 36], "node", true);
   await page.getByRole("button", { name: "Put the selection on Carcass" }).click();
-  await expectHint("2 items on Carcass");
+  await expectHint("2 items on tag 'Carcass'");
   await escapeAll();
   await selectAt([18, 0, 0.5], "node");
   for (const z of [24.25, 48, 71.6]) await selectAt([18, 0, z], "node", true);
   await page.getByRole("button", { name: "Put the selection on Shelves" }).click();
-  await expectHint("4 items on Shelves");
+  await expectHint("4 items on tag 'Shelves'");
   await escapeAll();
   await shot("5-tags");
 
@@ -247,11 +247,11 @@ try {
   await field.fill("Iso");
   await field.press("Enter");
   await page.getByRole("tab", { name: "Front" }).click();
-  await expectHint("Scene Front: hides Shelves");
+  await expectHint("Scene 'Front': hides 'Shelves'");
   const front = await vp.getAttribute("data-triangles");
   await shot("6-scene-front");
   await page.getByRole("tab", { name: "Iso" }).click();
-  await expectHint("Scene Iso");
+  await expectHint("Scene 'Iso'");
   const iso = await vp.getAttribute("data-triangles");
   if (Number(front) >= Number(iso)) fail(`Front should hide the shelves (${front} vs ${iso} triangles)`);
   await page.getByRole("tab", { name: "Outliner" }).click();
