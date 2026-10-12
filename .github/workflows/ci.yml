@@ -40,9 +40,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: "test (debug build: validator runs after every mutation)"
         run: cargo test --workspace
-      - name: sequence fuzzer, longer run
+      # Fixed seed: main stays deterministic (a red run is a real regression, reproducible
+      # with the same two variables). Random seeds run nightly (nightly-fuzz.yml).
+      - name: sequence fuzzer, longer run (fixed seed)
         env:
           FUZZ_CASES: "10000"
+          FUZZ_SEED: "20261011"
         run: cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz
       - name: "day-1 spike: every crate builds for wasm32"
         run: cargo check --workspace --target wasm32-unknown-unknown
@@ -55,7 +58,7 @@ jobs:
           if-no-files-found: ignore
 
   web:
-    name: Web (wasm-pack, build, vitest, golden, e2e)
+    name: Web (wasm-pack, build, vitest, golden, boolean diff, corpus, e2e)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -84,12 +87,23 @@ jobs:
         run: npm run build
       - name: vitest
         run: npx vitest run
+      - name: generate the .skp corpus (200 files, byte for byte against tests/corpus/manifest.json)
+        run: npm run corpus:skp
       - name: install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - name: e2e
+      # One Playwright run covers every spec, the 200-file corpus import and its golden
+      # images included (REQUIRE_CORPUS makes a missing corpus a failure, not a skip).
+      - name: e2e (all specs, corpus included)
         env:
           REQUIRE_KERNEL: "1"
+          REQUIRE_CORPUS: "1"
         run: npx playwright test
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: corpus-renders
+          path: test-results/corpus/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v5
         if: failure()
         with:
@@ -97,44 +111,6 @@ jobs:
           path: |
             playwright-report/
             test-results/
-          if-no-files-found: ignore
-
-  corpus:
-    name: SKP corpus (generate, import all 200, golden images)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates
-      - name: install wasm-pack
-        run: npm install -g wasm-pack@0.15.0
-      - run: npm ci
-      - name: wasm-pack build
-        run: npm run wasm
-      - name: build (tsc + vite)
-        run: npm run build
-      - name: generate the corpus (200 .skp files, byte for byte against tests/corpus/manifest.json)
-        run: npm run corpus:skp
-      - name: install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-      - name: import and render every file; perceptual diff of the 20-file sample
-        env:
-          REQUIRE_KERNEL: "1"
-          REQUIRE_CORPUS: "1"
-        run: npm run e2e:corpus
-      - uses: actions/upload-artifact@v5
-        if: always()
-        with:
-          name: corpus-renders
-          path: test-results/corpus/
           if-no-files-found: ignore
 
   tauri-check:
@@ -154,14 +130,13 @@ jobs:
           workspaces: src-tauri
       - name: placeholder frontendDist (generate_context! needs the folder)
         run: mkdir -p dist && echo '<!doctype html><title>Sawhorse</title>' > dist/index.html
-      - name: cargo check
+      - name: fmt (shell + device key)
         working-directory: src-tauri
-        run: cargo check --locked
+        run: cargo fmt --all --check
+      # clippy type-checks every target, so it is also the "shell compiles" check.
+      - name: clippy (shell + device key; compiles the shell)
+        working-directory: src-tauri
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: device key tests (ADR-0004; the OS keychain test is ignored on runners)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-device-key
-      - name: clippy and fmt (shell + device key)
-        working-directory: src-tauri
-        run: |
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo fmt --all --check

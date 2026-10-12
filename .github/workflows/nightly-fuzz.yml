@@ -1,0 +1,88 @@
+name: Nightly fuzz
+
+# The op-sequence fuzzer with fresh random seeds, eight shards in parallel (50,000
+# sequences at the default size). main's CI runs it with one fixed seed so a red main is
+# always a real, reproducible regression; this workflow goes looking for new bugs instead.
+# A failing shard does not fail the workflow (continue-on-error): it uploads its shrunk
+# sequence as an artifact and names its seed in the run summary. To keep a find, copy the
+# artifact's JSON into crates/kernel/tests/repro/ under a descriptive name, fix the kernel,
+# and commit both (tests/repro.rs replays it forever). See docs/DEVELOPMENT.md.
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # daily, 09:17 UTC
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Sequences per shard (8 shards)"
+        required: false
+        default: "6250"
+      seed_base:
+        description: "Seed base (empty = derived from the run id); shard k uses base + k"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-fuzz
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SAWHORSE_NO_WSL: "1"
+
+jobs:
+  fuzz:
+    name: fuzz shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - name: pick the seed
+        id: seed
+        env:
+          BASE: ${{ github.event.inputs.seed_base }}
+        run: |
+          base="${BASE:-$(( (${{ github.run_id }} % 100000000) * 10 ))}"
+          seed=$(( base + ${{ matrix.shard }} ))
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "shard ${{ matrix.shard }}: FUZZ_SEED=$seed"
+      - name: build the fuzzer
+        run: cargo test -p sawhorse-kernel --test sequences --no-run
+      - name: "fuzz (debug build: validator runs after every mutation)"
+        env:
+          FUZZ_CASES: ${{ github.event.inputs.cases || '6250' }}
+          FUZZ_SEED: ${{ steps.seed.outputs.seed }}
+          FUZZ_REPORT: "1"
+        run: cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture
+      - name: summary
+        if: always()
+        env:
+          SEED: ${{ steps.seed.outputs.seed }}
+        run: |
+          if ls kernel/tests/repro/pending-*.json >/dev/null 2>&1; then
+            echo "### Shard ${{ matrix.shard }}: FAILED (FUZZ_SEED=$SEED), repro uploaded as fuzz-repro-seed$SEED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Shard ${{ matrix.shard }}: clean (FUZZ_SEED=$SEED)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: upload the repro
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fuzz-repro-seed${{ steps.seed.outputs.seed }}
+          path: crates/kernel/tests/repro/pending-*.json
+          if-no-files-found: ignore
