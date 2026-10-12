@@ -75,6 +75,31 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
   - The op-sequence fuzzer covers every new op: 50,000 sequences clean, with boolean-path refusals now counted in the report.
 - Docs: `docs/USER-GUIDE.md`, a first-ten-minutes tour with every key and the inference colours.
 
+### Added (lane 6, file import/export, 2026-10-11)
+
+- File menu: New, Open, Save, Save As, Import, Import units, and an Export submenu; Ctrl+O, Ctrl+S, Ctrl+Shift+S and Ctrl+I.
+  - Drag and drop a file onto the window: a `.shz` opens, anything else is imported.
+  - Browsers with the File System Access API use native pickers, and Save writes back to the same file. Other browsers (or `?io=basic`) use a file input and downloads. The desktop app uses Tauri's dialog and fs plugins, limited to the paths the user picked or dropped.
+  - An import report lists what became solids, what stayed a mesh and why, and what was healed or skipped.
+- Exports, over everything visible or the selected solids:
+  - STL (binary, mm, Z up) and 3MF (one named object per solid, mm, colours). Both refuse anything that is not a watertight solid, naming it.
+  - glTF binary (Y up, metres, a node per object, face ids as `_FACE_ID`), OBJ (an object and group per part, with a material library), DXF (3D faces and edges, a layer per object).
+  - SVG: a hidden-line drawing of the current view (to scale in mm for parallel views), and the outline of a selected face for laser cutting and CNC, also as DXF.
+- Imports, each one undo step:
+  - STL, OBJ, glTF/GLB, 3MF, DXF (3D faces, lines, polylines with arcs, circles) and SVG (paths and shapes as sketch strokes on the ground).
+  - Closed shells become solids, including parts that touch each other. Open, non-manifold or self-intersecting geometry comes in as a visible, amber-tinted mesh with a note; it is never silently repaired.
+  - Units for STL, OBJ and unitless DXF: millimetres by default, chosen under File > Import units.
+- SketchUp `.skp` import through the npm `openskp` package (MIT), parsed in the kernel worker: groups, each component placement, nested and mirrored placements, materials as colours, layers as tags (hidden ones hidden), hidden objects on a hidden tag, scenes. What is and is not supported: `docs/skp-compat.md`.
+- The native `.shz` document, an open format (`docs/format.md`): `scene.json` with exact geometry and persistent face ids, `geometry.glb` for any glTF viewer, and a thumbnail. Opening a saved file gives the same model, hash for hash.
+- Materials (colour, texture file name), object names, saved scenes and imported meshes in the kernel; faces drawn in their material colour; the View menu lists saved scenes; Edit > Delete Imported Meshes.
+- Tests: a writer and reader test for every format, including round trips through our own readers; every export read by an independent reader (`dxf-parser`, three.js GLTFLoader, fflate); `.shz` round trips of every golden document; a 200-file `.skp` corpus with a golden-image harness and a CI job; `e2e/files.spec.ts` for the menus, export, save, open and drag and drop.
+
+### Changed (lane 6)
+
+- `scripts/env.sh`: a lane working in a git worktree gets its own cargo target directory.
+- `playwright.config.ts`: `PW_PORT` picks the preview port, so parallel lanes never reuse another lane's server.
+- `serde_json` parses floats exactly (`float_roundtrip`), so saved files read back bit for bit.
+
 ### Changed (lane 3)
 
 - CI: `actions/checkout@v5` and `actions/setup-node@v5`. The `rust` and `web` jobs are pinned to `ubuntu-24.04`; `tauri-check` stays on 22.04.

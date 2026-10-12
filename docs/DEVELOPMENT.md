@@ -63,6 +63,8 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 | `e2e/draw.spec.ts` | Line, Rect, Rotated Rect, Circle, Polygon, Arc, 3-Point Arc; a stroke across a face becomes `split_face` |
 | `e2e/push.spec.ts` | press-drag-release, click-move-click, typed mid-gesture, double-click repeat, Ctrl new face, push-through, typed refusals |
 | `e2e/tape.spec.ts` | Tape measure, guides from an edge, guide crossings as snaps, Dimension, erasing a guide |
+| `e2e/files.spec.ts` | lane 6: the File menu and Export submenu, STL import, STL and 3MF export and re-import, an open mesh refused by STL export by name, `.shz` save, New and open with the same hash, SVG drag and drop, a `.skp` through openskp |
+| `e2e/corpus.spec.ts` | lane 6: all 200 corpus `.skp` files imported and rendered, the 20-file sample diffed against `tests/corpus/golden/` (skips without the corpus unless `REQUIRE_CORPUS=1`) |
 | `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, and prints its time and the refusal tally |
 
 The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
@@ -74,6 +76,36 @@ node scripts/capture.mjs --out ../_captures/2026-10-11-lane01-shell.png --theme 
 ```
 
 It drives the installed Edge through Playwright, waits for the kernel, applies the typed value, hovers a visible corner (via the read-only `window.__sawhorse.visibleEndpoints()` hook) and prints the kernel state it captured.
+
+### Files, formats and the .skp corpus (lane 6)
+
+| What | Where |
+|---|---|
+| Exporters (STL, 3MF, GLB, OBJ, DXF, SVG) | `crates/export` |
+| Importers (STL, OBJ, glTF/GLB, 3MF, DXF, SVG) | `crates/import` |
+| How imported geometry becomes solids (or noted meshes) | `crates/kernel/src/meshbuild.rs` |
+| The `.shz` format | `crates/shz`, `crates/kernel/src/snapshot.rs`, spec in `docs/format.md` |
+| `.skp` import (openskp, in the kernel worker) | `src/io/skp.ts`, support table in `docs/skp-compat.md` |
+| Opening and saving files in each host | `src/io/files.ts` (Tauri plugins, File System Access API, input and download) |
+
+```bash
+npx vitest run src/io                     # every export read by an independent reader; .skp mapping (needs npm run wasm)
+npm run corpus:skp                        # write the 200-file .skp corpus to tests/corpus/skp/ and check its manifest
+PW_CHANNEL=msedge REQUIRE_KERNEL=1 npm run e2e:corpus   # import and render all 200; diff the 20-file sample
+UPDATE_GOLDEN=1 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npm run e2e:corpus   # after an intended rendering change
+node scripts/capture-lane06.mjs --url http://localhost:5176 --out ../_captures --files ../_scratch/2026-10-11-lane06
+```
+
+`?io=basic` on the URL forces the file input and downloads instead of the native pickers (the e2e specs use it: Playwright cannot drive native dialogs). `e2e/files.spec.ts` covers the File menu, STL/3MF export and re-import, an open mesh refused by STL export, `.shz` save and open, and drag and drop. See `tests/corpus/README.md` for the corpus and its golden images.
+
+### Parallel lanes in worktrees
+
+Each lane works in `.worktrees/<slug>`. `scripts/env.sh` gives it its own cargo target directory (`/mnt/d/build-cache/sawhorse/wsl-<slug>`), so lanes never wait on each other's cargo lock; the first build in a new worktree is a full one. Run the dev server and the e2e preview on the lane's own ports:
+
+```bash
+npx vite --port 5176 --strictPort
+PW_PORT=4176 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test
+```
 
 ## Rust (from Git Bash on Windows, forwarded to WSL)
 
@@ -149,7 +181,8 @@ Stay on Tauri 2.x stable. 3.0 is alpha; `npm run check:tauri` fails on anything 
 
 - `rust` (ubuntu-24.04): `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace`, 10,000-sequence fuzz, wasm32 check.
 - `web` (ubuntu-24.04): `npm ci`, Tauri guard, `wasm-pack` build, golden cross-check, `npm run build`, Vitest, Playwright Chromium e2e with `REQUIRE_KERNEL=1`.
-- `tauri-check` (ubuntu-22.04, kept on the older glibc the Linux release build targets): `cargo check --locked` in `src-tauri` with webkit2gtk.
+- `corpus` (ubuntu-24.04): wasm-pack build, `npm run build`, `npm run corpus:skp` (regenerates the 200 `.skp` files and fails on any byte difference from `tests/corpus/manifest.json`), then `npm run e2e:corpus` on Chromium with `REQUIRE_CORPUS=1`; the renders are uploaded as the `corpus-renders` artifact.
+- `tauri-check` (ubuntu-22.04, kept on the older glibc the Linux release build targets): `cargo check --locked` in `src-tauri` with webkit2gtk. Lane 6 added `tauri-plugin-dialog` and `tauri-plugin-fs` (lockfile resolved in WSL; not compiled locally, which needs webkit2gtk).
 
 Runners are pinned (never `ubuntu-latest`, which moves to a new Ubuntu on 2026-10-19 without notice in the logs); actions are `actions/checkout@v5` and `actions/setup-node@v5` (Node 24 runtime).
 

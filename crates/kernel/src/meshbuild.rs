@@ -12,7 +12,9 @@
 //! made to the input are the ones the item's notes list: welding coincident vertices
 //! (within [`POINT_MERGE`]), dropping degenerate and exactly repeated faces, turning a
 //! closed shell that is inside out the right way round, turning reversed faces of a closed
-//! shell to match their neighbours, and merging coplanar triangles.
+//! shell to match their neighbours, merging coplanar triangles, and separating closed
+//! solids that touch along an edge or a face (each face pairs with the face across its own
+//! material, going round the shared edge).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -260,6 +262,82 @@ fn triangulate_faces(
         }
     }
     Some((tris, from))
+}
+
+/// At an edge `lo`-`hi` used by more than two faces, pair each face with the one across its
+/// solid's material: faces sorted by angle round the edge, each paired with its neighbour
+/// on the side its inward normal points to. `None` unless every face finds exactly one
+/// partner that uses the edge the other way and picks it back.
+fn radial_pairs(
+    lo: u32,
+    hi: u32,
+    list: &[(usize, bool)],
+    faces: &[Vec<Vec<u32>>],
+    pts: &[DVec3],
+) -> Option<Vec<(usize, usize)>> {
+    let fwd = list.iter().filter(|u| u.1).count();
+    if fwd * 2 != list.len()
+        || list.iter().map(|u| u.0).collect::<BTreeSet<_>>().len() != list.len()
+    {
+        return None;
+    }
+    let d = (pts[hi as usize] - pts[lo as usize]).normalize_or_zero();
+    if d == DVec3::ZERO {
+        return None;
+    }
+    // Per use: angle of the face's interior direction round d, and which way its material is.
+    let mut around: Vec<(f64, usize, bool, f64)> = Vec::with_capacity(list.len());
+    let mut reference: Option<DVec3> = None;
+    for &(fi, forward) in list {
+        let ring: Vec<DVec3> = faces[fi][0].iter().map(|&v| pts[v as usize]).collect();
+        let c = ring.iter().copied().sum::<DVec3>() / ring.len() as f64;
+        let n = crate::plane::newell(&ring, c).normalize_or_zero();
+        if n == DVec3::ZERO {
+            return None;
+        }
+        let df = if forward { d } else { -d };
+        let w = n.cross(df);
+        let r = *reference.get_or_insert(w);
+        // Angle in [0, 2 pi), quantised so coincident faces (two solids touching face to
+        // face) tie exactly; within a tie, a face whose material lies behind comes first.
+        let mut theta = d
+            .dot(r.cross(w))
+            .atan2(r.dot(w))
+            .rem_euclid(std::f64::consts::TAU);
+        if theta > std::f64::consts::TAU - 1e-9 {
+            theta = 0.0;
+        }
+        let theta = (theta * 1e9).round();
+        let side = d.dot(w.cross(-n));
+        if side.abs() < 1e-12 {
+            return None;
+        }
+        around.push((theta, fi, forward, side.signum()));
+    }
+    around.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then(a.3.total_cmp(&b.3))
+            .then(a.1.cmp(&b.1))
+    });
+    let k = around.len();
+    let partner = |i: usize| -> usize {
+        if around[i].3 > 0.0 {
+            (i + 1) % k
+        } else {
+            (i + k - 1) % k
+        }
+    };
+    let mut pairs = Vec::new();
+    for i in 0..k {
+        let j = partner(i);
+        if partner(j) != i || around[i].2 == around[j].2 {
+            return None;
+        }
+        if i < j {
+            pairs.push((around[i].1, around[j].1));
+        }
+    }
+    Some(pairs)
 }
 
 /// Which faces of a closed manifold shell to turn over so every edge is used once in each
@@ -575,12 +653,35 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             }
         }
     }
+    // Faces join a shell across each edge. Where solids touch along an edge (more than two
+    // faces on it, as in an STL of parts that touch), each face joins only the face across
+    // its own solid's material, found by going round the edge; if the uses do not pair up
+    // that way, all of them join (and the shell is reported as non-manifold).
     let mut parent: Vec<usize> = (0..faces.len()).collect();
-    for list in uses.values() {
-        for w in list.windows(2) {
-            let (a, b) = (find(&mut parent, w[0].0), find(&mut parent, w[1].0));
-            if a != b {
-                parent[a.max(b)] = a.min(b);
+    let join = |parent: &mut Vec<usize>, x: usize, y: usize| {
+        let (a, b) = (find(parent, x), find(parent, y));
+        if a != b {
+            parent[a.max(b)] = a.min(b);
+        }
+    };
+    let mut separated_edges = 0usize;
+    for (&(lo, hi), list) in &uses {
+        let pairs = if list.len() > 2 {
+            radial_pairs(lo, hi, list, &faces, &pts)
+        } else {
+            None
+        };
+        match pairs {
+            Some(pairs) => {
+                separated_edges += 1;
+                for (x, y) in pairs {
+                    join(&mut parent, x, y);
+                }
+            }
+            None => {
+                for w in list.windows(2) {
+                    join(&mut parent, w[0].0, w[1].0);
+                }
             }
         }
     }
@@ -606,12 +707,12 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
         let in_shell: BTreeSet<usize> = members.iter().copied().collect();
         let (mut open, mut over, mut orient) = (0usize, 0usize, 0usize);
         for list in uses.values() {
-            if !in_shell.contains(&list[0].0) {
-                continue;
-            }
-            match list.len() {
+            let mine: Vec<&(usize, bool)> =
+                list.iter().filter(|(f, _)| in_shell.contains(f)).collect();
+            match mine.len() {
+                0 => {}
                 1 => open += 1,
-                2 if list[0].1 == list[1].1 => orient += 1,
+                2 if mine[0].1 == mine[1].1 => orient += 1,
                 2 => {}
                 _ => over += 1,
             }
@@ -740,6 +841,12 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
                 loose_faces.extend(shell_faces);
             }
         }
+    }
+    if separated_edges > 0 && solids.len() > 1 {
+        notes.push(format!(
+            "{name}: separated solids that touch along {separated_edges} edge{}",
+            plural(separated_edges)
+        ));
     }
     if turned > 0 {
         notes.push(format!(
@@ -1044,6 +1151,43 @@ mod tests {
             b.notes
         );
         assert!((b.solids[0].volume() - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn solids_touching_along_an_edge_or_a_face_come_apart() {
+        // Two unit boxes sharing one edge (diagonal neighbours), as one triangle soup.
+        let join = |a: ImportItem, b: ImportItem| {
+            let mut a = a;
+            let off = a.positions.len() as u32;
+            a.positions.extend(b.positions);
+            a.faces.extend(
+                b.faces
+                    .into_iter()
+                    .map(|f| vec![f[0].iter().map(|i| i + off).collect()]),
+            );
+            a
+        };
+        let edge = join(
+            stl_box([0.0; 3], [1.0, 1.0, 1.0]),
+            stl_box([1.0, 1.0, 0.0], [1.0, 1.0, 1.0]),
+        );
+        let b = build_item(&edge).unwrap();
+        assert_eq!(b.solids.len(), 2, "{:?}", b.notes);
+        assert!(b.loose.is_none());
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.contains("separated solids that touch"))
+        );
+        // Two boxes face to face (a shelf sitting on a side), sharing the whole contact face.
+        let face = join(
+            stl_box([0.0; 3], [1.0, 1.0, 1.0]),
+            stl_box([1.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
+        );
+        let b = build_item(&face).unwrap();
+        assert_eq!(b.solids.len(), 2, "{:?}", b.notes);
+        let v: f64 = b.solids.iter().map(|o| o.volume()).sum();
+        assert!((v - 2.0).abs() < 1e-12);
     }
 
     #[test]

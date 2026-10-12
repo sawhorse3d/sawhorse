@@ -127,6 +127,8 @@ export class ViewportEngine {
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
   private faces: THREE.Mesh | null = null;
+  /** Back sides of imported non-solid meshes, drawn in their own tone so an open shell reads as open. */
+  private backs: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
   private meshData: MeshData | null = null;
   private highlight: Highlight = NO_HIGHLIGHT;
@@ -335,6 +337,8 @@ export class ViewportEngine {
 
   setMesh(mesh: MeshData | null): void {
     disposeObject(this.faces);
+    disposeObject(this.backs);
+    this.backs = null;
     disposeObject(this.edges);
     this.faces = null;
     this.edges = null;
@@ -356,6 +360,38 @@ export class ViewportEngine {
       this.faces = new THREE.Mesh(g, mat);
       this.faces.renderOrder = 2;
       this.scene.add(this.faces);
+      // A solid only ever shows its outsides; an imported mesh may be open, so its inner sides
+      // get their own tone (drawn as reversed triangles just in front of the faces).
+      const back: number[] = [];
+      for (let t = 0; t < mesh.faceIds.length; t++) {
+        if (mesh.parts[mesh.faceIds[t]]?.kind !== "mesh") continue;
+        back.push(mesh.indices[t * 3], mesh.indices[t * 3 + 2], mesh.indices[t * 3 + 1]);
+      }
+      if (back.length) {
+        const bg = new THREE.BufferGeometry();
+        const pos = g.getAttribute("position") as THREE.BufferAttribute;
+        bg.setAttribute("position", pos);
+        bg.setIndex(back);
+        // The inner tone, shaded by which way each inner side faces, like the outer faces.
+        const tone = new THREE.Color("#7f93ad");
+        const colors = new Float32Array(pos.count * 3);
+        const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+        for (let t = 0; t < back.length; t += 3) {
+          a.fromBufferAttribute(pos, back[t]);
+          b.fromBufferAttribute(pos, back[t + 1]);
+          c.fromBufferAttribute(pos, back[t + 2]);
+          n.subVectors(b, a).cross(c.sub(a)).normalize();
+          const k = n.z > 0.5 ? 1 : n.z < -0.5 ? 0.72 : Math.abs(n.y) >= Math.abs(n.x) ? 0.86 : 0.72;
+          const col = tone.clone().multiplyScalar(k);
+          for (const i of [back[t], back[t + 1], back[t + 2]]) col.toArray(colors, i * 3);
+        }
+        bg.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        // No depth offset: the faces are pushed back by theirs, so these win where an inner
+        // side faces the camera, and edges (drawn later) still show on top.
+        this.backs = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }));
+        this.backs.renderOrder = 2;
+        this.scene.add(this.backs);
+      }
     }
     if (mesh && mesh.edges.length > 0) {
       const eg = new THREE.BufferGeometry();
