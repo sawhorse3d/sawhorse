@@ -15,6 +15,15 @@ import { describeTarget, pushOp, type Target } from "../lib/edit";
 import { INFERENCE_STYLES, type InferenceKind } from "../lib/inferenceStyle";
 import { notHere, parseVcb } from "../lib/vcb";
 import { add, dot, mul, sub } from "./draw";
+import { objectEditable, sketchEditable } from "../lib/scope";
+import type { DocState } from "../kernel/types";
+
+/** A face or region the open editing context lets Push/Pull act on. */
+export function pushable(t: Target, state: DocState | null): boolean {
+  return t.kind === "face" ? objectEditable(state, t.object) : sketchEditable(state, t.sketch);
+}
+
+const CLOSED = "That is inside a group or component that is not open: double-click it (Select) to edit inside it.";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 
 export function targetOf(e: { kind: string; object?: number; face?: number; sketch?: number; region?: number } | null): Target | null {
@@ -100,7 +109,8 @@ export class PushTool extends Tool {
           h.showValue(h.fmt(Math.abs(g.d)));
         } else {
           const s = e.picked?.surface;
-          h.hover(s ? (s.at.kind === "face" ? { kind: "face", object: s.at.object, face: s.at.face } : { kind: "region", sketch: s.at.sketch, region: s.at.region }) : null);
+          const t = s ? targetOf(s.at) : null;
+          h.hover(s && t && pushable(t, h.state()) ? (s.at.kind === "face" ? { kind: "face", object: s.at.object, face: s.at.face } : { kind: "region", sketch: s.at.sketch, region: s.at.region }) : null);
         }
         h.changed();
         return;
@@ -114,6 +124,11 @@ export class PushTool extends Tool {
         const t = s ? targetOf(s.at) : null;
         if (!s || !t) {
           this.fresh = false;
+          return;
+        }
+        if (!pushable(t, h.state())) {
+          this.fresh = false;
+          h.status(CLOSED, true);
           return;
         }
         this.fresh = true;

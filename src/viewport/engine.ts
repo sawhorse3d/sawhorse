@@ -75,6 +75,8 @@ export interface Highlight {
   hoverEdges: [Vec3, Vec3][];
   selectedEdges: [Vec3, Vec3][];
   selectedPoints: Vec3[];
+  /** Parts outside the open group or component, drawn faded (lane 5). */
+  fadedParts?: number[];
 }
 
 export const NO_HIGHLIGHT: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [] };
@@ -304,6 +306,8 @@ export class ViewportEngine {
     const tint = (c: THREE.Color, k: number) => c.clone().lerp(sel, k);
     const selected = new Set(this.highlight.selectedParts);
     const hovered = new Set(this.highlight.hoverParts);
+    const faded = new Set(this.highlight.fadedParts ?? []);
+    const paper = new THREE.Color(this.theme.vp);
     const ids = this.meshData?.faceIds;
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
@@ -330,6 +334,8 @@ export class ViewportEngine {
       if (info?.kind === "mesh") col = col.clone().lerp(warn, 0.3);
       if (selected.has(part)) col = tint(col, 0.45);
       else if (hovered.has(part)) col = tint(col, 0.2);
+      // Outside the open group or component: faded towards the background.
+      if (faded.has(part)) col = col.clone().lerp(paper, 0.6);
       for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
     }
     geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));

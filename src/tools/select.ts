@@ -1,10 +1,16 @@
 // Select (Space). Hover highlights what is under the cursor; a click selects it (face, edge,
-// vertex, sketch region); a double-click selects the whole solid, or enters its group (the
-// lane-5 hook); dragging draws a window (left to right: what is wholly inside) or a
-// crossing box (right to left: what it touches). Shift adds, Ctrl toggles, Esc clears.
-import type { Entity } from "../kernel/types";
-import { applySelection, boxSelect, modeFor, objectOf } from "../lib/entities";
+// vertex, sketch region); a double-click selects the whole solid. Dragging draws a window
+// (left to right: what is wholly inside) or a crossing box (right to left: what it
+// touches). Shift adds, Ctrl toggles, Esc clears.
+//
+// Groups and components (lane 5): a click on anything inside a group or component that is
+// not open selects the whole group or component; a double-click opens it for editing (Esc
+// closes it). Clicking something outside the open one closes it (back up to where that
+// thing is) and selects it.
+import type { DocState, Entity } from "../kernel/types";
+import { applySelection, boxSelect, entityKey, modeFor, objectOf } from "../lib/entities";
 import { faceOf, regionName, solidName } from "../lib/names";
+import { describeNode, graphOf, reachableContext, scopeEntity } from "../lib/scope";
 import { EMPTY_VIEW, Tool, type ToolEvent, type ToolView } from "./tool";
 
 /** Pixels the pointer must travel with the button down before a click becomes a box. */
@@ -26,33 +32,43 @@ export class SelectTool extends Tool {
     const h = this.host;
     switch (e.type) {
       case "move":
-        h.hover(this.scoped(e.picked?.entity ?? null));
+        h.hover(scopeEntity(e.picked?.entity ?? null, h.state()));
         return;
       case "leave":
         h.hover(null);
         return;
       case "click": {
-        const ent = this.scoped(e.picked?.entity ?? null);
+        const raw = e.picked?.entity ?? null;
+        const ent = scopeEntity(raw, h.state());
         const mode = modeFor(e);
+        if (!ent && raw) {
+          // Outside the open group or component: close back to where it is, select it.
+          const target = reachableContext(raw, h.state());
+          void h.apply({ op: "set_context", node: target }).then((r) => {
+            if (!r) return;
+            const again = scopeEntity(raw, h.state());
+            h.setSelection(again ? [again] : []);
+            if (again) h.status(describe(again, h.state()));
+          });
+          return;
+        }
         if (!ent) {
           if (mode === "replace") h.setSelection([]);
           return;
         }
         h.setSelection(applySelection(h.selection(), [ent], mode));
-        h.status(describe(ent));
+        h.status(describe(ent, h.state()));
         return;
       }
       case "dblclick": {
-        const ent = e.picked?.entity ?? null;
-        const object = ent ? objectOf(ent) : null;
-        if (object === null) return;
-        const group = h.state()?.groups.find((g) => g.objects.includes(object));
-        if (group && h.context() !== group.id) {
-          // Lane 5 hook: groups are edited in place. For now this sets the editing context.
-          h.enterGroup(group.id);
-          h.status(`Editing group "${group.name}". Esc leaves it.`);
+        const ent = scopeEntity(e.picked?.entity ?? null, h.state());
+        if (!ent) return;
+        if (ent.kind === "node") {
+          h.enterGroup(ent.node);
           return;
         }
+        const object = objectOf(ent);
+        if (object === null) return;
         h.setSelection(applySelection(h.selection(), [{ kind: "object", object }], modeFor(e)));
         h.status(`Selected ${solidName(object)}.`);
         return;
@@ -70,7 +86,16 @@ export class SelectTool extends Tool {
         h.changed();
         if (!b) return;
         const crossing = b.x1 < b.x0;
-        const found = boxSelect(h.mesh(), (p) => h.toScreen(p), b, crossing);
+        // Solids inside closed groups and components come back as those (once each);
+        // anything outside the open one is left out.
+        const seen = new Set<string>();
+        const found: Entity[] = [];
+        for (const raw of boxSelect(h.mesh(), (p) => h.toScreen(p), b, crossing)) {
+          const ent = scopeEntity(raw, h.state());
+          if (!ent || seen.has(entityKey(ent))) continue;
+          seen.add(entityKey(ent));
+          found.push(ent);
+        }
         h.setSelection(applySelection(h.selection(), found, modeFor(e)));
         h.status(`${crossing ? "Crossing" : "Window"} selection: ${found.length} item${found.length === 1 ? "" : "s"}.`);
         return;
@@ -80,22 +105,13 @@ export class SelectTool extends Tool {
     }
   }
 
-  /** Inside a group's editing context, only that group's solids respond. */
-  private scoped(e: Entity | null): Entity | null {
-    const ctx = this.host.context();
-    if (!e || ctx === null) return e;
-    const o = objectOf(e);
-    const g = this.host.state()?.groups.find((x) => x.id === ctx);
-    return o !== null && g?.objects.includes(o) ? e : null;
-  }
-
   view(): ToolView {
     if (!this.box) return EMPTY_VIEW;
     return { ...EMPTY_VIEW, box: { ...this.box, crossing: this.box.x1 < this.box.x0 } };
   }
 }
 
-export function describe(e: Entity): string {
+export function describe(e: Entity, state?: DocState | null): string {
   switch (e.kind) {
     case "face":
       return `Selected ${faceOf(e.object, e.face)}. Delete erases it if it was drawn on a face.`;
@@ -115,5 +131,7 @@ export function describe(e: Entity): string {
       return "Selected a guide. Delete erases it.";
     case "dimension":
       return "Selected a dimension. Delete erases it.";
+    case "node":
+      return `Selected ${describeNode(graphOf(state), e.node)}. Double-click to edit inside it.`;
   }
 }

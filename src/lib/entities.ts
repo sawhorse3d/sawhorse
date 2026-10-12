@@ -1,8 +1,9 @@
 // Entities the user points at (faces, edges, vertices, regions, whole objects): identity,
 // selection sets, highlights, window / crossing selection and the ops that erase them.
 // Pure (no DOM, no three.js), so all of it is unit-tested.
-import type { DocState, Entity, KernelOp, MeshData, SketchInfo, V3 } from "../kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
+import { meshesIn, solidsIn } from "./scope";
 
 const r9 = (x: number) => Math.round(x * 1e9) / 1e9;
 const pkey = (p: V3) => p.map(r9).join(",");
@@ -26,6 +27,8 @@ export function entityKey(e: Entity): string {
       return `d:${e.dimension}`;
     case "object":
       return `o:${e.object}`;
+    case "node":
+      return `n:${e.node}`;
   }
 }
 
@@ -37,6 +40,8 @@ export function sameEntity(a: Entity | null, b: Entity | null): boolean {
 /** The object an entity belongs to, if any. */
 export function objectOf(e: Entity): number | null {
   switch (e.kind) {
+    case "node":
+      return null;
     case "face":
     case "object":
       return e.object;
@@ -80,16 +85,29 @@ function dedupe(es: Entity[]): Entity[] {
   return out;
 }
 
-/** Mesh part indices an entity covers (a face, a region, or every face of an object). */
-export function partsOf(e: Entity, mesh: MeshData | null): number[] {
+/**
+ * Mesh part indices an entity covers (a face, a region, every face of an object, or every
+ * face of every solid and mesh in a group or component, which needs the scene graph).
+ */
+export function partsOf(e: Entity, mesh: MeshData | null, graph?: SceneGraph | null): number[] {
   if (!mesh) return [];
   const out: number[] = [];
+  const inNode = e.kind === "node" && graph ? new Set(solidsIn(graph, e.node)) : null;
+  const meshesInNode = e.kind === "node" && graph ? new Set(meshesIn(graph, e.node)) : null;
   mesh.parts.forEach((p, i) => {
     if (e.kind === "face" && p.kind === "face" && p.owner === e.object && p.index === e.face) out.push(i);
     else if (e.kind === "region" && p.kind === "region" && p.owner === e.sketch && p.index === e.region) out.push(i);
     else if (e.kind === "object" && p.kind === "face" && p.owner === e.object) out.push(i);
+    else if (inNode && p.kind === "face" && inNode.has(p.owner)) out.push(i);
+    else if (meshesInNode && p.kind === "mesh" && meshesInNode.has(p.owner)) out.push(i);
   });
   return out;
+}
+
+/** Edge segments of every solid in a node. */
+function nodeEdges(node: number, mesh: MeshData | null, graph: SceneGraph | null | undefined): [V3, V3][] {
+  if (!graph) return [];
+  return solidsIn(graph, node).flatMap((o) => objectEdges(o, mesh));
 }
 
 /** Edge segments of an object in the view mesh. */
@@ -109,21 +127,49 @@ export function objectEdges(object: number, mesh: MeshData | null): [V3, V3][] {
   return out;
 }
 
-/** The viewport highlight for a selection plus the entity under the cursor. */
-export function highlightFor(selection: Entity[], hover: Entity | null, mesh: MeshData | null): Highlight {
-  const h: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [] };
+/**
+ * The viewport highlight for a selection plus the entity under the cursor. With the scene
+ * graph, a group or component highlights as a whole, and while one is open everything
+ * outside it is faded.
+ */
+export function highlightFor(selection: Entity[], hover: Entity | null, mesh: MeshData | null, graph?: SceneGraph | null): Highlight {
+  const h: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [], fadedParts: [] };
   for (const e of selection) {
-    h.selectedParts.push(...partsOf(e, mesh));
+    h.selectedParts.push(...partsOf(e, mesh, graph));
     if (e.kind === "edge") h.selectedEdges.push([e.a, e.b]);
     if (e.kind === "vertex") h.selectedPoints.push(e.at);
     if (e.kind === "object") h.selectedEdges.push(...objectEdges(e.object, mesh));
+    if (e.kind === "node") h.selectedEdges.push(...nodeEdges(e.node, mesh, graph));
   }
   if (hover && !selection.some((s) => sameEntity(s, hover))) {
-    h.hoverParts.push(...partsOf(hover, mesh));
+    h.hoverParts.push(...partsOf(hover, mesh, graph));
     if (hover.kind === "edge") h.hoverEdges.push([hover.a, hover.b]);
     if (hover.kind === "object") h.hoverEdges.push(...objectEdges(hover.object, mesh));
+    if (hover.kind === "node") h.hoverEdges.push(...nodeEdges(hover.node, mesh, graph));
+  }
+  const ctx = graph?.context ?? null;
+  if (graph && ctx !== null && mesh) {
+    const inside = new Set(solidsIn(graph, ctx));
+    const insideMeshes = new Set(meshesIn(graph, ctx));
+    const sketches = new Set(graph.sketches.filter(([, p]) => p !== null && solidsInChain(graph, p, ctx)).map(([s]) => s));
+    mesh.parts.forEach((p, i) => {
+      const keep = p.kind === "face" ? inside.has(p.owner) : p.kind === "mesh" ? insideMeshes.has(p.owner) : sketches.has(p.owner);
+      if (!keep) h.fadedParts!.push(i);
+    });
   }
   return h;
+}
+
+/** True when node `n` is `ancestor` or inside it. */
+function solidsInChain(graph: SceneGraph, n: number, ancestor: number): boolean {
+  let at: number | null = n;
+  const seen = new Set<number>();
+  while (at !== null && !seen.has(at)) {
+    if (at === ancestor) return true;
+    seen.add(at);
+    at = graph.nodes.find((x) => x.id === at)?.parent ?? null;
+  }
+  return false;
 }
 
 /** World point to a sketch's 2D frame. */
@@ -161,6 +207,8 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
       return { op: "erase_guide", guide: e.guide };
     case "dimension":
       return { op: "erase_dimension", dimension: e.dimension };
+    case "node":
+      return { op: "delete_node", node: e.node };
   }
 }
 
@@ -172,7 +220,7 @@ export function eraseOps(sel: Entity[], state: DocState | null): { ops: KernelOp
   const deleted = new Set(sel.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object));
   const ops: KernelOp[] = [];
   const skipped: string[] = [];
-  const order = (e: Entity) => ({ object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, vertex: 5 })[e.kind];
+  const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, vertex: 5 })[e.kind];
   for (const e of [...sel].sort((a, b) => order(a) - order(b))) {
     const o = objectOf(e);
     if (e.kind !== "object" && o !== null && deleted.has(o)) continue;

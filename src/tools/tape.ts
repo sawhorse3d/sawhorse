@@ -8,7 +8,6 @@
 //
 // Dimension: click two points (or one edge), then click where the dimension line goes.
 // The text is the length in the display units.
-import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
 import { add, dist, dot, len, mul, sub, unit } from "./draw";
@@ -96,7 +95,7 @@ export class TapeTool extends StrokeTool {
     const dir = unit(sub(e[1], e[0]));
     this.reset();
     h.changed();
-    await h.apply({ op: "add_guide", point: add(e[0], offset), dir }, (r: EditResult) => `Guide ${h.fmt(len(offset))} ${h.unitLabel()} from the edge${r.outcome.kind === "guide_added" ? ` (guide ${r.outcome.guide})` : ""}. Shapes snap to it and to where it crosses edges.`);
+    await h.apply({ op: "add_guide", point: add(e[0], offset), dir }, () => `Guide ${h.fmt(len(offset))} ${h.unitLabel()} from the edge. Shapes snap to it and to where it crosses edges.`);
   }
 
   onValue(text: string): void {

@@ -1228,7 +1228,11 @@ mod tests {
         assert_eq!(st["graph"]["tag_colors"]["Shelves"], "#6a9b5a");
         assert_eq!(st["graph"]["nodes"][0]["visible"], false);
         assert_eq!(st["tags"]["Shelves"], false);
-        assert_eq!(d.scene_mesh().unwrap().triangle_count(), 24, "two shelves hidden");
+        assert_eq!(
+            d.scene_mesh().unwrap().triangle_count(),
+            24,
+            "two shelves hidden"
+        );
         // Save and open: the same document.
         let h = d.document().hash_hex();
         let bytes = d.save_shz("frac-in", b"").unwrap();

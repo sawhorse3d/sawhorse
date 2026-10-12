@@ -34,11 +34,57 @@ describe("Select tool", () => {
     expect(h.sel).toEqual([{ kind: "object", object: 1 }]);
   });
 
-  it("double-click on a grouped solid enters the group (lane-5 hook)", () => {
+  it("a click on a grouped solid selects the group; a double-click opens it", () => {
     let entered: number | null = null;
-    const h = fakeHost({ _state: { groups: [{ id: 3, name: "Carcass", objects: [1] }] } as never, enterGroup: (g) => (entered = g) });
-    new SelectTool(h).onEvent(ev("dblclick", [0.5, 0.5, 1], { picked: pickOf(face) }));
+    const I = { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [0, 0, 0] };
+    const graph = {
+      context: null,
+      path: [],
+      nodes: [{ id: 3, kind: "group", name: "Carcass", label: "Carcass", definition: null, parent: null, tag: null, hidden: false, locked: false, visible: true, xform: I, in_component: false }],
+      objects: [{ id: 1, parent: 3, hidden: false, locked: false, visible: true }],
+      meshes: [],
+      sketches: [],
+      definitions: [],
+      tag_colors: {},
+    };
+    const h = fakeHost({ _state: { groups: [], graph } as never, enterGroup: (g) => (entered = g) });
+    const t = new SelectTool(h);
+    t.onEvent(ev("move", [0.5, 0.5, 1], { picked: pickOf(face) }));
+    expect(h.hovered).toEqual({ kind: "node", node: 3 });
+    t.onEvent(ev("click", [0.5, 0.5, 1], { picked: pickOf(face) }));
+    expect(h.sel).toEqual([{ kind: "node", node: 3 }]);
+    expect(h.statuses.at(-1)?.text).toContain("group Carcass");
+    t.onEvent(ev("dblclick", [0.5, 0.5, 1], { picked: pickOf(face) }));
     expect(entered).toBe(3);
+  });
+
+  it("a click outside the open group closes it and selects what was clicked", async () => {
+    const I = { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [0, 0, 0] };
+    const graph = {
+      context: 3,
+      path: [3],
+      nodes: [{ id: 3, kind: "group", name: "Carcass", label: "Carcass", definition: null, parent: null, tag: null, hidden: false, locked: false, visible: true, xform: I, in_component: false }],
+      objects: [
+        { id: 1, parent: null, hidden: false, locked: false, visible: true },
+        { id: 2, parent: 3, hidden: false, locked: false, visible: true },
+      ],
+      meshes: [],
+      sketches: [],
+      definitions: [],
+      tag_colors: {},
+    };
+    const h = fakeHost({ _state: { groups: [], graph } as never, outcome: { kind: "context_changed", context: null } });
+    h.apply = async (op) => {
+      h.ops.push(op);
+      graph.context = null as never;
+      graph.path = [];
+      return { outcome: { kind: "context_changed", context: null }, scene: { mesh: null, state: h._state } } as never;
+    };
+    new SelectTool(h).onEvent(ev("click", [0.5, 0.5, 1], { picked: pickOf(face) }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.ops).toEqual([{ op: "set_context", node: null }]);
+    expect(h.sel).toEqual([face]);
   });
 
   it("drags a window left to right and a crossing box right to left", () => {

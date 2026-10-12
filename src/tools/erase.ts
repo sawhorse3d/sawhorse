@@ -4,6 +4,7 @@
 // refused with the reason in the status line.
 import type { Entity, KernelOp } from "../kernel/types";
 import { entityKey, eraseOp, eraseOps } from "../lib/entities";
+import { scopeEntity } from "../lib/scope";
 import { EMPTY_VIEW, Tool, type ToolEvent, type ToolView } from "./tool";
 
 export class EraseTool extends Tool {
@@ -23,7 +24,10 @@ export class EraseTool extends Tool {
 
   onEvent(e: ToolEvent): void {
     const h = this.host;
-    const ent = e.picked?.entity ?? null;
+    // In the open context: a group or component that is not open erases as a whole; what
+    // is outside the open one is not touched.
+    const raw = e.picked?.entity ?? null;
+    const ent = scopeEntity(raw, h.state());
     switch (e.type) {
       case "move":
         h.hover(ent && ent.kind !== "vertex" ? ent : null);
@@ -32,7 +36,10 @@ export class EraseTool extends Tool {
         h.hover(null);
         return;
       case "click": {
-        if (!ent) return;
+        if (!ent) {
+          if (raw) h.status("That is outside the group or component you are editing: press Esc to close it first.", true);
+          return;
+        }
         // A whole solid is deleted with Select + Delete, never by a stray eraser click.
         const op = eraseOp(ent, h.state());
         if (typeof op === "string") {

@@ -17,7 +17,7 @@ import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, describeSubject, facesToOutline, previewSegments, scaling, subjectEdges, subjectOf, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, describeSubject, facesToOutline, objectsOp, previewSegments, scaling, subjectEdges, subjectOf, type Subject } from "./xform";
 
 /** How close (px) the cursor must be to a grip to take it. */
 export const GRIP_PX = 12;
@@ -97,7 +97,7 @@ export function parseScale(text: string, units: Parameters<typeof parseLength>[1
 export function scaleOp(subject: Subject, c: V3, f: V3): KernelOp {
   const xform = scaling(c, f);
   if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold: false };
-  return { op: "transform", objects: subject.objects, xform };
+  return objectsOp(subject, xform, false);
 }
 
 interface Target {
@@ -178,7 +178,7 @@ export class ScaleTool extends Tool {
     const sel = h.selection();
     const outlines = new Map<string, V3[][]>();
     for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-    const subject = subjectOf(sel, picked?.entity ?? null, outlines);
+    const subject = subjectOf(sel, picked?.entity ?? null, outlines, h.state());
     if (typeof subject === "string") return;
     if (this.target && sel.length === 0 && JSON.stringify(this.target.subject) === JSON.stringify(subject)) return;
     const b = this.bounds(subject);
@@ -190,7 +190,8 @@ export class ScaleTool extends Tool {
   private bounds(s: Subject): [V3, V3] | null {
     if (s.kind === "geometry") return boundsOf(s.points);
     const solids = this.host.state()?.solids ?? [];
-    const pts = solids.filter((x) => s.objects.includes(x.id)).flatMap((x) => [x.min, x.max]);
+    const covered = coveredSolids(s);
+    const pts = solids.filter((x) => covered.includes(x.id)).flatMap((x) => [x.min, x.max]);
     return boundsOf(pts);
   }
 

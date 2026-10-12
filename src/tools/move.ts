@@ -8,7 +8,8 @@
 // Ctrl (tap it, or hold it on the last click) copies instead of moving. After a copy, type
 // x3 (or 3x, *3) for three copies at one, two and three times the move, or /4 for four
 // copies dividing the move into quarters; another array or distance replaces the last one.
-// Copies are separate solids (components arrive in lane 5).
+// Copies of solids are separate solids; copies of a component instance are instances of
+// the same component, and a copied group is a new group (lane 5).
 //
 // With faces, edges or points of one solid selected, Move moves that part of the solid:
 // faces that stay flat follow, and a face that would bend out of its plane is refused,
@@ -19,8 +20,9 @@ import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
+import { scopeEntity } from "../lib/scope";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, facesToOutline, previewSegments, subjectEdges, subjectOf, translation, type Subject } from "./xform";
+import { describeSubject, facesToOutline, objectsOp, previewSegments, subjectEdges, subjectOf, translation, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
@@ -46,9 +48,7 @@ const MIN_MOVE = 1e-5;
 export function moveOp(subject: Subject, delta: V3, copy: boolean, count = 1, autofold = false): KernelOp {
   const xform: Xform = translation(delta);
   if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold };
-  if (!copy) return { op: "transform", objects: subject.objects, xform };
-  if (count > 1) return { op: "array", objects: subject.objects, xform, count };
-  return { op: "copy", objects: subject.objects, xform };
+  return objectsOp(subject, xform, copy, count);
 }
 
 export class MoveTool extends Tool {
@@ -133,7 +133,7 @@ export class MoveTool extends Tool {
           if (g.to) h.showValue(h.fmt(dist(g.from, g.to)));
         } else {
           const ent = e.picked?.entity ?? null;
-          const o = ent && h.selection().length === 0 ? objectEntity(ent) : null;
+          const o = ent && h.selection().length === 0 ? objectEntity(scopeEntity(ent, h.state())) : null;
           h.hover(o);
         }
         h.changed();
@@ -184,7 +184,7 @@ export class MoveTool extends Tool {
     const sel = h.selection();
     const outlines = new Map<string, V3[][]>();
     for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-    const subject = subjectOf(sel, e.picked?.entity ?? null, outlines);
+    const subject = subjectOf(sel, e.picked?.entity ?? null, outlines, h.state());
     if (typeof subject === "string") {
       this.fresh = false;
       h.status(subject, true);
@@ -260,7 +260,7 @@ export class MoveTool extends Tool {
     const how = `${h.fmt(len(delta))} ${h.unitLabel()} along ${dirName(delta)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;
-      if (o.kind === "copied" && count > 1) return `Array: ${o.objects.length} copies of ${describeSubject(subject)}, ${how} apart. Type another count, or a distance.`;
+      if (o.kind === "copied" && count > 1) return `Array: ${count} copies of ${describeSubject(subject)}, ${how} apart. Type another count, or a distance.`;
       if (o.kind === "copied") return `Copied ${describeSubject(subject)} ${how}. Type x3 for more copies, or /4 to divide the distance.`;
       if (o.kind === "geometry_moved") return `Moved ${describeSubject(subject)} ${how}${o.faces.length ? ` (${o.faces.length} faces changed)` : ""}.`;
       return `Moved ${describeSubject(subject)} ${how}.`;
@@ -289,8 +289,10 @@ export class MoveTool extends Tool {
   }
 }
 
-/** The whole solid an entity belongs to, as a hover target. */
-function objectEntity(e: Entity): Entity | null {
+/** The whole solid (or group or component) an entity belongs to, as a hover target. */
+function objectEntity(e: Entity | null): Entity | null {
+  if (!e) return null;
+  if (e.kind === "node") return e;
   if (e.kind === "face") return { kind: "object", object: e.object };
   if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") return { kind: "object", object: e.owner.id };
   return null;

@@ -15,7 +15,7 @@ import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, facesToOutline, previewSegments, projectToPlane, rotation, signedAngle, subjectEdges, subjectOf, type Subject } from "./xform";
+import { describeSubject, facesToOutline, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, subjectEdges, subjectOf, type Subject } from "./xform";
 
 const DEG = Math.PI / 180;
 /** The protractor's ticks, and how near (in degrees) a cursor angle must be to snap to one. */
@@ -54,9 +54,7 @@ function axisWords(n: V3): string {
 export function rotateOp(subject: Subject, c: V3, n: V3, angle: number, copy: boolean, count = 1): KernelOp {
   const xform = rotation(c, n, angle);
   if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold: false };
-  if (!copy) return { op: "transform", objects: subject.objects, xform };
-  if (count > 1) return { op: "array", objects: subject.objects, xform, count };
-  return { op: "copy", objects: subject.objects, xform };
+  return objectsOp(subject, xform, copy, count);
 }
 
 interface Gesture {
@@ -200,7 +198,7 @@ export class RotateTool extends Tool {
       const sel = h.selection();
       const outlines = new Map<string, V3[][]>();
       for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-      const subject = subjectOf(sel, e.picked?.entity ?? null, outlines);
+      const subject = subjectOf(sel, e.picked?.entity ?? null, outlines, h.state());
       if (typeof subject === "string") return void h.status(subject, true);
       const normal = unit(this.normalFor(e.snap));
       this.copy = this.copy || e.ctrl;
@@ -271,7 +269,7 @@ export class RotateTool extends Tool {
     const how = `${fmtDeg(angle)} about ${axisWords(normal)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;
-      if (o.kind === "copied" && count > 1) return `Array: ${o.objects.length} turned copies of ${describeSubject(subject)}, ${fmtDeg(angle)} apart. Type another count, or an angle.`;
+      if (o.kind === "copied" && count > 1) return `Array: ${count} turned copies of ${describeSubject(subject)}, ${fmtDeg(angle)} apart. Type another count, or an angle.`;
       if (o.kind === "copied") return `Copied ${describeSubject(subject)} turned ${how}. Type x3 for more copies, or /4 to divide the angle.`;
       return `Turned ${describeSubject(subject)} ${how}.`;
     });

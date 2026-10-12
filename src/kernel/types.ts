@@ -312,7 +312,9 @@ export type Entity =
   | { kind: "region"; sketch: number; region: number }
   | { kind: "guide"; guide: number }
   | { kind: "dimension"; dimension: number }
-  | { kind: "object"; object: number };
+  | { kind: "object"; object: number }
+  /** A group or component instance, picked or selected as one (lane 5). */
+  | { kind: "node"; node: number };
 
 /** A plane frame (u x v = normal). */
 export interface FrameData {

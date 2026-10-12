@@ -1,9 +1,10 @@
 // Shared pieces of the transform tools (Move, Rotate, Scale): affine maps in the kernel's
 // plain-data form, what a gesture acts on (whole solids, or part of one), and the edges a
 // preview draws. Pure: no DOM, no three.js, unit-tested in move.test.ts and friends.
-import type { Entity, MeshData, V3, Xform } from "../kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, V3, Xform } from "../kernel/types";
 import { objectEdges, objectOf } from "../lib/entities";
 import { faceOf, solidName } from "../lib/names";
+import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { add, cross, dot, len, mul, sub } from "./draw";
 
 export const IDENTITY: Xform = {
@@ -58,27 +59,56 @@ export function applyX(x: Xform, p: V3): V3 {
 
 /** What a transform gesture acts on. */
 export type Subject =
-  | { kind: "objects"; objects: number[] }
+  /**
+   * Whole solids, groups and component instances (`nodes`, lane 5). `covered`: every solid
+   * that moves (the solids, and everything inside the nodes), for previews and bounds.
+   * `names`: how the nodes are called in the status line.
+   */
+  | { kind: "objects"; objects: number[]; nodes?: number[]; covered?: number[]; names?: string[] }
   /** Part of one solid: its points (a face's corners, an edge's ends, a vertex). */
   | { kind: "geometry"; object: number; points: V3[]; what: string };
 
-/** "solid 3", "solids 2 and 5", "face 6 of solid 3". */
+/** "solid 3", "solids 2 and 5", "component Shelf (2 of 4)", "face 6 of solid 3". */
 export function describeSubject(s: Subject): string {
   if (s.kind === "geometry") return s.what;
-  const names = s.objects.map(solidName);
+  const names = [...s.objects.map(solidName), ...(s.names ?? [])];
   if (names.length === 1) return names[0];
   if (names.length <= 3) return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-  return `${names.length} solids`;
+  return `${names.length} items`;
+}
+
+/** Every solid a whole-objects subject moves. */
+export function coveredSolids(s: Subject): number[] {
+  if (s.kind === "geometry") return [s.object];
+  return s.covered ?? s.objects;
+}
+
+/** A whole-objects subject from solids and nodes (with the scene graph for names). */
+export function objectsSubject(objects: number[], nodes: number[], state: DocState | null | undefined): Subject {
+  const g = graphOf(state);
+  const covered = [...new Set([...objects, ...nodes.flatMap((n) => solidsIn(g, n))])];
+  return { kind: "objects", objects, nodes, covered, names: nodes.map((n) => describeNode(g, n)) };
+}
+
+/** The transform / copy / array op for a whole-objects subject. */
+export function objectsOp(s: Extract<Subject, { kind: "objects" }>, xform: Xform, copy: boolean, count = 1): KernelOp {
+  const nodes = s.nodes?.length ? { nodes: s.nodes } : {};
+  if (!copy) return { op: "transform", objects: s.objects, xform, ...nodes };
+  if (count > 1) return { op: "array", objects: s.objects, xform, count, ...nodes };
+  return { op: "copy", objects: s.objects, xform, ...nodes };
 }
 
 /**
- * What to transform: the selected solids; or the selected faces, edges and points of ONE
- * solid (part of it); or, with nothing selected, the solid under the cursor. Face corners
- * come from `outlines` (face key -> world rings). A string says why nothing can move.
+ * What to transform: the selected solids, groups and components; or the selected faces,
+ * edges and points of ONE solid (part of it); or, with nothing selected, what is under the
+ * cursor (the group or component around it when that is not open). Face corners come from
+ * `outlines` (face key -> world rings). A string says why nothing can move.
  */
-export function subjectOf(selection: Entity[], picked: Entity | null, outlines: Map<string, V3[][]>): Subject | string {
+export function subjectOf(selection: Entity[], picked: Entity | null, outlines: Map<string, V3[][]>, state?: DocState | null): Subject | string {
   if (selection.length) {
     const objects = [...new Set(selection.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object))];
+    const nodes = [...new Set(selection.filter((e) => e.kind === "node").map((e) => (e as { node: number }).node))];
+    if (nodes.length) return objectsSubject(objects, nodes, state);
     if (objects.length) return { kind: "objects", objects };
     if (selection.some((e) => e.kind === "region")) return "Sketch regions don't move yet: push/pull them into a solid first.";
     if (selection.some((e) => e.kind === "guide" || e.kind === "dimension")) return "Guides and dimensions don't move: erase and place them again.";
@@ -112,6 +142,11 @@ export function subjectOf(selection: Entity[], picked: Entity | null, outlines: 
     if (selection.length > 1) what = faces > 1 ? `${faces} faces of ${solidName(object)}` : `${selection.length} parts of ${solidName(object)}`;
     return { kind: "geometry", object, points, what };
   }
+  if (picked && state) {
+    const unit = scopeEntity(picked, state);
+    if (!unit) return "That is outside the group or component you are editing: press Esc to close it first.";
+    if (unit.kind === "node") return objectsSubject([], [unit.node], state);
+  }
   const o = picked ? objectOf(picked) : null;
   if (o === null) return "Click a solid, or select what to move first.";
   return { kind: "objects", objects: [o] };
@@ -124,7 +159,7 @@ export function facesToOutline(selection: Entity[]): { object: number; face: num
 
 /** Edges a preview shows for the subject, before the transform. */
 export function subjectEdges(s: Subject, mesh: MeshData | null): [V3, V3][] {
-  if (s.kind === "objects") return s.objects.flatMap((o) => objectEdges(o, mesh));
+  if (s.kind === "objects") return coveredSolids(s).flatMap((o) => objectEdges(o, mesh));
   // Part of a solid: every edge of that solid touching a moving point (both ends known).
   const moving = (p: V3) => s.points.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= 1e-7);
   return objectEdges(s.object, mesh).filter(([a, b]) => moving(a) || moving(b));

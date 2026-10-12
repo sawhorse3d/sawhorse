@@ -7,7 +7,9 @@ import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
-import { eraseOps, highlightFor, partsOf } from "./lib/entities";
+import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
+import { contextTrail, describeNode, graphOf, scopeEntity, solidsIn } from "./lib/scope";
+import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
 import { formatLength, M_PER_IN, nextUnitSystem, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
 import type { Projection, ViewId, ViewportEngine } from "./viewport/engine";
@@ -37,6 +39,26 @@ import { ImportReport, type Report } from "./components/ImportReport";
 import { useCredits } from "./credits/useCredits";
 import { storageNote } from "./credits/device";
 import { NothingToRenderError, renderPasses } from "./render/passes";
+
+/** The dashed box around the open group or component (nothing at the model level). */
+export function contextBoxOverlay(st: import("./kernel/types").DocState | null): OverlayItem[] {
+  const g = st?.graph;
+  if (!st || !g || g.context === null) return [];
+  const inside = new Set(solidsIn(g, g.context));
+  const boxes = st.solids.filter((s) => inside.has(s.id));
+  if (!boxes.length) return [];
+  const lo = [0, 1, 2].map((k) => Math.min(...boxes.map((b) => b.min[k])));
+  const hi = [0, 1, 2].map((k) => Math.max(...boxes.map((b) => b.max[k])));
+  const c = (x: number, y: number, z: number): [number, number, number] => [x ? hi[0] : lo[0], y ? hi[1] : lo[1], z ? hi[2] : lo[2]];
+  const pts: [number, number, number][] = [];
+  for (const [a, b] of [
+    [c(0, 0, 0), c(1, 0, 0)], [c(1, 0, 0), c(1, 1, 0)], [c(1, 1, 0), c(0, 1, 0)], [c(0, 1, 0), c(0, 0, 0)],
+    [c(0, 0, 1), c(1, 0, 1)], [c(1, 0, 1), c(1, 1, 1)], [c(1, 1, 1), c(0, 1, 1)], [c(0, 1, 1), c(0, 0, 1)],
+    [c(0, 0, 0), c(0, 0, 1)], [c(1, 0, 0), c(1, 0, 1)], [c(1, 1, 0), c(1, 1, 1)], [c(0, 1, 0), c(0, 1, 1)],
+  ])
+    pts.push(a, b);
+  return [{ kind: "segments", points: pts, color: "--accent", width: 1.25, dashed: true }];
+}
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
@@ -118,7 +140,6 @@ export function App() {
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
-  const [groupContext, setGroupContext] = useState<number | null>(null);
   const [toolView, setToolView] = useState<ToolView>(EMPTY_VIEW);
   // The open document: its name, where it lives (for Save), the log length when last saved.
   const [docName, setDocName] = useState<string | null>(null);
@@ -146,21 +167,20 @@ export function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
   // Latest state for the tool host (tools live outside React).
-  const live = useRef({ scene, units, selection, target, groupContext, vcbEditing: false, vcbFor: null as ToolId | null, lastError: null as string | null });
+  const live = useRef({ scene, units, selection, target, vcbEditing: false, vcbFor: null as ToolId | null, lastError: null as string | null });
   // Copy a React state value into `live` only when it changed since the last render. The
   // handlers write `live` first (imperatively) and React state after; a render that runs
   // before React has applied those updates (a keystroke renders urgently and skips the
   // edit's pending updates) must not put the stale values back: that lost the Push target
   // between "draw a rectangle" and "type a distance" when the keys came fast.
-  const seen = useRef({ scene, units, selection, target, groupContext });
+  const seen = useRef({ scene, units, selection, target });
   {
     const prev = seen.current;
-    const next = { scene, units, selection, target, groupContext };
+    const next = { scene, units, selection, target };
     if (prev.scene !== scene) live.current.scene = scene;
     if (prev.units !== units) live.current.units = units;
     if (prev.selection !== selection) live.current.selection = selection;
     if (prev.target !== target) live.current.target = target;
-    if (prev.groupContext !== groupContext) live.current.groupContext = groupContext;
     seen.current = next;
   }
   // Edits run one at a time, in order.
@@ -218,8 +238,16 @@ export function App() {
           const t = op ? nextTarget(op, r.outcome, prev) : exists(prev) ? prev : null;
           live.current.target = t;
           setTarget(t);
-          // Drop selected entities that no longer exist (faces and regions by id).
-          const sel = live.current.selection.filter((e) => (e.kind === "face" || e.kind === "region" || e.kind === "object" ? partsOf(e, r.scene.mesh).length > 0 : true));
+          // Drop selected entities that no longer exist (faces and regions by id, groups and
+          // components by node) or that the editing context no longer offers.
+          const g = r.scene.state.graph;
+          const sel = live.current.selection.filter((e) => {
+            if (e.kind === "node") {
+              if (!g?.nodes.some((n) => n.id === e.node)) return false;
+            } else if ((e.kind === "face" || e.kind === "region" || e.kind === "object") && partsOf(e, r.scene.mesh).length === 0) return false;
+            const s = scopeEntity(e, r.scene.state);
+            return !!s && entityKey(s) === entityKey(e);
+          });
           live.current.selection = sel;
           setSelection(sel);
           setHover(null);
@@ -436,12 +464,14 @@ export function App() {
     [docName],
   );
 
-  /** What an export takes: the selected solids, or everything visible. */
+  /** What an export takes: the selected solids (and what is in selected groups and components), or everything visible. */
   const exportScope = useCallback((): ExportOptions["scope"] => {
     const objs = new Set<number>();
+    const g = graphOf(live.current.scene?.state);
     for (const e of live.current.selection) {
       if (e.kind === "object") objs.add(e.object);
       if (e.kind === "face") objs.add(e.object);
+      if (e.kind === "node") solidsIn(g, e.node).forEach((o) => objs.add(o));
     }
     return objs.size ? { objects: [...objs], meshes: [] } : undefined;
   }, []);
@@ -585,11 +615,11 @@ export function App() {
       },
       hover: (e) => setHover(e),
       changed: () => setToolView(activeRef.current?.view() ?? EMPTY_VIEW),
-      context: () => live.current.groupContext,
+      context: () => live.current.scene?.state.graph?.context ?? null,
       enterGroup: (g) => {
-        live.current.groupContext = g;
-        setGroupContext(g);
+        live.current.selection = [];
         setSelection([]);
+        void apply({ op: "set_context", node: g }, (r) => `Editing ${describeNode(r.scene.state.graph, g)}. Esc closes it.`);
       },
       toScreen: (p) => engineRef.current?.worldToScreen(p) ?? [0, 0],
       target: () => live.current.target,
@@ -760,10 +790,21 @@ export function App() {
 
   const selectAll = useCallback(() => {
     const m = live.current.scene?.mesh;
+    const state = live.current.scene?.state;
     if (!m) return;
-    const objs = [...new Set(m.parts.filter((p) => p.kind === "face").map((p) => p.owner))].map((o) => ({ kind: "object" as const, object: o }));
-    const regs = m.parts.filter((p) => p.kind === "region").map((p) => ({ kind: "region" as const, sketch: p.owner, region: p.index }));
-    const all: Entity[] = [...objs, ...regs];
+    // Everything the open context offers: its solids, the groups and components directly
+    // in it (as units), and its sketch regions.
+    const seen = new Set<string>();
+    const all: Entity[] = [];
+    const add = (raw: Entity) => {
+      const e = scopeEntity(raw, state);
+      if (e && !seen.has(entityKey(e))) {
+        seen.add(entityKey(e));
+        all.push(e);
+      }
+    };
+    for (const o of new Set(m.parts.filter((p) => p.kind === "face").map((p) => p.owner))) add({ kind: "object", object: o });
+    for (const p of m.parts) if (p.kind === "region") add({ kind: "region", sketch: p.owner, region: p.index });
     live.current.selection = all;
     setSelection(all);
     setMessage({ text: `Selected ${all.length} item${all.length === 1 ? "" : "s"}.`, error: false });
@@ -851,9 +892,8 @@ export function App() {
           setSelection([]);
           return;
         }
-        if (live.current.groupContext !== null) {
-          live.current.groupContext = null;
-          setGroupContext(null);
+        if ((live.current.scene?.state.graph?.context ?? null) !== null) {
+          void apply({ op: "leave_context" }, (r) => `Closed it. Editing ${contextTrail(r.scene.state.graph)}.`);
           return;
         }
         setTarget(null);
@@ -959,19 +999,20 @@ export function App() {
     hud.push({ text: kernelNote ?? `Kernel error: ${message?.text ?? "unavailable"}`, tone: "err" });
   }
   hud.push({ text: `Units: ${u.label}` });
-  const groupName = groupContext !== null ? st?.groups.find((g) => g.id === groupContext)?.name : null;
-  hud.push({ text: `Edit: ${groupName ? `Group ${groupName}` : "Model"} · undo ${st?.undo_depth ?? 0} · redo ${st?.redo_depth ?? 0}` });
+  hud.push({ text: `Edit: ${contextTrail(graphOf(st))} · undo ${st?.undo_depth ?? 0} · redo ${st?.redo_depth ?? 0}` });
 
   // Push targets show as a selection while the Push tool is active.
   const highlightEntities = useMemo<Entity[]>(() => {
     if (selection.length || toolId !== "pushpull" || !target) return selection;
     return [target.kind === "face" ? { kind: "face", object: target.object, face: target.face } : { kind: "region", sketch: target.sketch, region: target.region }];
   }, [selection, toolId, target]);
-  const highlight = useMemo(() => highlightFor(highlightEntities, hover, scene?.mesh ?? null), [highlightEntities, hover, scene]);
+  const highlight = useMemo(() => highlightFor(highlightEntities, hover, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, hover, scene]);
 
   // Guides and dimensions draw under the tool's own overlay.
   const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);
-  const overlay = useMemo(() => [...annotations.overlay, ...toolView.overlay], [annotations, toolView.overlay]);
+  // The open group or component: a dashed box around what is in it (SketchUp-like).
+  const contextBox = useMemo(() => contextBoxOverlay(st ?? null), [st]);
+  const overlay = useMemo(() => [...contextBox, ...annotations.overlay, ...toolView.overlay], [contextBox, annotations, toolView.overlay]);
   const labels = useMemo(() => [...annotations.labels, ...toolView.labels], [annotations, toolView.labels]);
 
   const menus = useMemo<Record<string, MenuItem[]>>(
