@@ -320,3 +320,13 @@ button.chip:hover{border-color:var(--accent)}
 .stock-dialog .stock-form input{width:84px}
 .stock-dialog .stock-form input[aria-label="Name"]{width:200px}
 .stock-dialog select{font:12px var(--body);padding:3px 5px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);max-width:100%}
+
+/* Lane 14: the browser demo's notice (only in the build served at /app/). Floats over the
+   bottom of the viewport; never part of the grid, so the layout is the desktop app's. */
+.demo-banner{position:fixed;left:50%;bottom:52px;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);padding:6px 6px 6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--fg);font-size:12px;box-shadow:0 2px 10px color-mix(in srgb,var(--fg) 14%,transparent)}
+.demo-banner b{font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.demo-banner span{color:var(--muted)}
+.demo-banner a{color:var(--accent);font-weight:500;white-space:nowrap}
+.demo-banner button{width:24px;height:24px;border-radius:50%;font-size:16px;line-height:1;color:var(--muted)}
+.demo-banner button:hover{background:var(--rail);color:var(--fg)}
+@media (max-width:640px){ .demo-banner{flex-wrap:wrap;border-radius:10px;bottom:12px} .demo-banner span{flex-basis:100%;order:3} }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TopBar, type MenuItem } from "./components/TopBar";
+import { DemoBanner } from "./components/DemoBanner";
+import { isWebDemo, RELEASES_URL, REPO_URL, sitePage } from "./lib/site";
 import { ToolRail } from "./components/ToolRail";
 import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
 import { SidePanel, type PaneId } from "./components/SidePanel";
@@ -1796,6 +1798,18 @@ export function App() {
             ]
           : []),
       ],
+      // The browser demo's way back to the site (the desktop app has no Help entries yet).
+      ...(isWebDemo()
+        ? {
+            Help: [
+              { label: "User Guide", onSelect: () => openLink(sitePage("guide/")) },
+              { label: "What's New", onSelect: () => openLink(sitePage("changelog/")) },
+              "-" as const,
+              { label: "Download the Desktop App", title: "Windows, macOS and Linux installers on GitHub", onSelect: () => openLink(RELEASES_URL) },
+              { label: "Source on GitHub", onSelect: () => openLink(REPO_URL) },
+            ],
+          }
+        : {}),
     }),
     [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, makeGroup, makeComponent, explode, addScene, goScene, activeScene],
   );
@@ -1853,6 +1867,7 @@ export function App() {
         }}
       />
       {dragging ? <div className="drop-hint">Drop a .shz to open it, or a SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG file to import it</div> : null}
+      {isWebDemo() ? <DemoBanner /> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
       <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
@@ -1999,4 +2014,9 @@ export function App() {
       />
     </div>
   );
+}
+
+/** Open a page of the site or GitHub in a new tab (browser demo only). */
+function openLink(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
 }

@@ -15,7 +15,10 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  base: "./",
+  // Relative by default (the Tauri webview and any static folder). The public demo is built
+  // with VITE_BASE=/app/ (.github/workflows/pages.yml, scripts/build-site.mjs) so it is
+  // served at https://sawhorse3d.com/app/; the kernel worker and its WASM resolve under it.
+  base: process.env.VITE_BASE || "./",
   server: {
     port: 5173,
     strictPort: true,
@@ -33,7 +36,8 @@ export default defineConfig({
   optimizeDeps: { include: ["openskp"] },
   build: {
     target: "es2022",
-    sourcemap: true,
+    // Source maps for every build but the public demo (scripts/build-site.mjs).
+    sourcemap: process.env.VITE_WEB_DEMO !== "1",
     // three.js alone is ~600 kB minified; one chunk is fine for a desktop-class app.
     chunkSizeWarningLimit: 1024,
   },
