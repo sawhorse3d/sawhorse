@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 7): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, and the cut list. Paint is on the tool rail but says "arrives in a later lane".
+Sawhorse is pre-alpha. This page covers what works today (lane 10): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, the cut list, and materials, paint, styles and shadows.
 
 ## The first ten minutes
 
@@ -52,6 +52,7 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 | W | Follow Me | Select the path first (edges, or a face for its edge), then click the profile | - |
 | T | Tape | Click two points to measure. Click an edge, then move away from it, to place a parallel guide. | the offset, or a length that drops a guide point |
 | D | Dimension | Click two points (or one edge), then click where the dimension line goes | - |
+| B | Paint | Click a face to paint it with the active material; a closed group or component takes it as its default; Ctrl+click paints the whole solid; click something selected to paint the whole selection. Alt+click picks a material up. Double-click a textured face to move, turn or scale its texture with the handles. | - |
 | Shift+Z | | Zoom extents | |
 | Ctrl+Z / Ctrl+Y | | Undo / redo (Ctrl+Shift+Z also redoes) | |
 | Ctrl+A | | Select all (in the open group or component) | |
@@ -189,7 +190,37 @@ Tags control what you see, nothing else: geometry stays where it is and in its g
 
 ## Scenes
 
-A scene remembers the camera, which tags are hidden and which group or component is open. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane). The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+
+## Materials and paint
+
+The Materials pane (right panel, **Materials**) shows the active material at the top, the materials in your model (with how many faces show each), and the library below: twelve woods (White oak, Red oak, Walnut, Cherry, Hard maple, Ash, Birch, Poplar, Pine, Douglas fir, Mahogany, Western red cedar), eight sheet goods (Baltic birch ply, Maple ply, Red oak ply, MDF, Hardboard, White melamine, OSB, Particle board), sixteen colours, and glass and metal. Type in the search box ("oak", "ply") or pick a category. Click a swatch and Paint (B) starts with it; a library material goes into your model with the first coat.
+
+**Painting.**
+- Click a face of a plain solid, or of a solid inside the group or component you are editing: that face is painted.
+- Click a closed group or component: it is painted as a whole. Its faces that have a material of their own keep it; the rest show the new one. Each copy of a component can be painted differently this way. Paint faces inside a component (double-click it first) to paint them in every copy.
+- Ctrl+click a face: its whole solid. Select several faces, or several solids, groups and components, and click one of them: all of them, one undo step.
+- Hover shows what a click would paint, in the material's colour.
+- Alt+click a face to make the material it shows the active one (sampling).
+- A face shows its own material, else its solid's, else the nearest group or component around it that has one. Back faces of open imported meshes show the default back-face colour. Faces that a push or a cut makes start unpainted; a face you split, or draw a shape on, keeps its paint on every piece.
+
+**Editing a material.** Click a material of your model to see its editor: rename it, change its colour, its texture's real size (type a width or a height in your units: the other follows, keeping the image's shape) and rotation, and what it is as stock. **Delete** takes it off everything (what was painted with it shows what is around it). **Import image...** makes a new material from a PNG or JPEG, one foot across until you give it its real size.
+
+**Stock.** A material can say what it is: **Solid lumber** or **Sheet goods**, and the species ("White oak", "3/4 Baltic birch ply"). The library's woods and sheet goods say so already. The cut list then lists a part painted with it by that species, as lumber or sheet goods, unless you named the part's stock yourself.
+
+**Positioning a texture.** Double-click a textured face with Paint (or select one face and click **Position texture** in the pane). Three handles appear on the face: drag the square in the middle to slide the texture, the round one to turn it about the middle, the small square to scale it. The texture follows as you drag; letting go is one undo step. Enter or Esc finishes. By default a texture's grain runs along the longer side of each face, so boards read right without positioning.
+
+## Styles and shadows
+
+The Styles pane (right panel, **Styles**) changes how the model is drawn, never the model.
+
+- **Presets**: Sawhorse (textures, plain edges), Shop drawing (hidden line on paper, heavy outlines, edges running a little past their ends), Shaded (colours without textures), X-ray, Clay (one colour, heavy outlines and endpoints) and Outdoors (textures under a sky, on the ground).
+- **Faces**: shaded with textures, shaded, monochrome, hidden line (faces in the background colour: only the edges you could see), wireframe (every edge, no faces), X-ray (see-through faces, every edge).
+- **Edges**: on or off; **Profiles** draws outlines heavier; **Extensions** runs edges a little past their ends, like pencil lines; **Endpoints** draws the ends of edges heavier. SVG view drawings (File > Export) follow the edge style.
+- **Background**, **Sky** and **Ground** colours. The horizon follows the camera as you tilt it.
+- **Shadows**: tick **Show shadows**, then pick the date, the time (local sun time) and the latitude; **Light** and **Dark** set how bright the sun and the shade are; **On the ground** and **On faces** choose where shadows fall. North is along green.
+
+Sliders show their effect as you drag and are one undo step when you let go. Styles and shadows are saved with the model, and a scene saved after changing them brings them back when you go to it.
 
 ## Cut list
 
@@ -207,7 +238,7 @@ So make the boards you repeat components (select, Edit > Make Component): six id
 
 **Grain** runs along the length; a small arrow beside L shows it. While the pane is open the view draws a grain arrow on every part. To change it, right-click a row: **Grain along the length**, **Grain across (along the width)** (the arrow moves to W, and the view's arrow turns), or **No grain** (MDF, a painted part). Files write the grain as "along L", "across W" or "none", and a grain you set is listed in the row's notes ("grain across W", "no grain").
 
-**Material and stock.** The Material column shows the part's material (its first solid's), or a dash. Right-click a row and choose **Stock / material...** to name what it is cut from ("White oak", "1/4 birch ply") and whether it counts as solid lumber, sheet goods, or (the default) whichever its name and thickness say. Names with ply, MDF, HDF, OSB, particle board, melamine or hardboard in them are sheet goods, and so is anything 1/4 in thick or thinner (its exact thickness: a 0.26 in panel is lumber even though it shows as 1/4). **Mark as sheet goods** / **Mark as solid lumber** switches the row; **Use the material's name** undoes the naming. Stock belongs to the component, so it is the same in every copy.
+**Material and stock.** The Material column shows the part's material (the one covering most of its first solid's faces, as painted), or a dash; a material that says what stock it is shows its species and decides lumber or sheet goods. Right-click a row and choose **Stock / material...** to name what it is cut from ("White oak", "1/4 birch ply") and whether it counts as solid lumber, sheet goods, or (the default) whichever its name and thickness say. Names with ply, MDF, HDF, OSB, particle board, melamine or hardboard in them are sheet goods, and so is anything 1/4 in thick or thinner (its exact thickness: a 0.26 in panel is lumber even though it shows as 1/4). **Mark as sheet goods** / **Mark as solid lumber** switches the row; **Use the material's name** undoes the naming. Stock belongs to the component, so it is the same in every copy.
 
 **Many rows at once.** Click a row, then Shift+click another to pick every row between them, or Ctrl+click to add or drop one row (Ctrl+Shift+click adds a range). Right-click any picked row and the menu (titled "3 parts: Side, Shelf, Top") acts on all of them: grain, **Stock / material...** (one dialog, "Stock for 3 parts"), sheet goods or lumber. It is one step: one Ctrl+Z puts them all back. Right-clicking a row that is not picked acts on that row only. Ctrl+Z and Ctrl+Y work while the pane's controls (Round to, Visible only, the buttons) have focus; only a text field you are typing in keeps them for itself.
 

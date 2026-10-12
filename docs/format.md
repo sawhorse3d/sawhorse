@@ -1,6 +1,6 @@
 # The `.shz` file format, version 1
 
-Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, the stock library and nesting settings in lane 9, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
+Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, the stock library and nesting settings in lane 9, materials, face paint, textures, styles and shadows in lane 10, all as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
 
 A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or Stored entries) with these entries:
 
@@ -10,7 +10,7 @@ A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or 
 | `scene.json` | yes | Everything about the model: the header below and the model data. UTF-8 JSON. |
 | `geometry.glb` | yes (Sawhorse writes it) | Every solid and imported mesh as glTF 2.0 binary, so any glTF viewer can show a `.shz`. Also the fallback geometry for objects that `scene.json` lists without a `brep`. |
 | `thumbnail.png` | no | A picture of the model (Sawhorse: the view at save time, at most 512 px on the long side). Named by `scene.json`'s `thumbnail`. |
-| `assets/` | no | Texture images, referenced from materials by path inside the archive. Version 1 writers keep textures as file-name references only, so this folder is empty. |
+| `assets/` | no | Texture images (PNG or JPEG), one entry per image, named by `scene.json`'s `textures[].path` and referenced from materials by that path. Stored, not compressed again. |
 
 Readers must ignore entries and JSON fields they do not know. Writers must not put required meaning into new fields without raising `version`.
 
@@ -40,7 +40,7 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
 }
 ```
 
-(`nodes`, `definitions`, `context`, `tag_colors` and `stock` are optional and left out when empty, or for `stock` when the model uses the built-in library.)
+(`nodes`, `definitions`, `context`, `tag_colors` and `stock` are optional and left out when empty, or for `stock` when the model uses the built-in library; so are lane 10's `textures`, `style` and `shadows`.)
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -87,7 +87,16 @@ An object is a watertight solid.
 | `hidden`, `locked` | boolean, optional | Hidden (not drawn, not exported by default) and locked (not editable). Absent: false. |
 | `part` | part attributes, optional | What was said about the solid as a cut-list part (below). For a solid with a `slot` it repeats its definition member's. |
 
-A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces.
+A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid), and optionally `material` (the face's own material, a name in `materials`; absent: the solid's) and `uv` (how a texture sits on the face, below). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces.
+
+**What a face shows**: its own `material`, else its solid's, else the nearest enclosing node's (`nodes[].material`, or the definition member's for a nested node). Absent everywhere: the default look.
+
+**Face `uv`** `{ "scale"?: [sx, sy], "rotation"?: degrees, "offset"?: [x, y] }` (defaults `[1, 1]`, `0`, `[0, 0]`). Texture coordinates of a point `p` on a face, in repeats of the image (x along its width, y along its height from its first row):
+
+1. The face's texture frame is its `plane` (`origin`, `u`, `v`), turned a quarter (`u' = v`, `v' = -u`) when the outer ring's extent along `v` is longer than along `u` (more than 1e-9 relatively): the image's width runs along the face's longer side.
+2. `q = ((p - origin) . u', (p - origin) . v') - material.offset - uv.offset`.
+3. Turn by `-(material.rotation + uv.rotation)` degrees: `r = (cos t q.x + sin t q.y, -sin t q.x + cos t q.y)` with `t` that angle.
+4. `(r.x / (W * sx), r.y / (H * sy))`, where `(W, H)` is the material's `size`, or 0.3048 m across at the image's aspect when it has none.
 
 The B-rep must be a valid solid: every edge shared by exactly two faces, once in each direction; every face planar (vertices within 1 micrometre of its plane) and simple; no face touches another except along shared edges and vertices; the solid encloses positive volume. A reader refuses a file whose solids do not validate; it does not repair them.
 
@@ -111,6 +120,7 @@ The model is a tree. Its inner nodes are groups and component instances; solids,
 | `slot` | integer, optional | A node nested inside a component instance: its definition member. |
 | `xform` | transform, optional | Local axes to world: for an instance, its placement (definition coordinates to world); for a group, where its axes are (its contents are stored in world coordinates already). Absent: the identity. |
 | `part` | part attributes, optional | A group's cut-list attributes (below). Instances carry none: theirs are their definition's. |
+| `material` | string, optional | The node's material (lane 10): what faces inside it without a material of their own show. A top-level instance's is its own (copies may differ); a nested node repeats its definition member's. |
 
 A transform is `{ "linear": [[a, b, c], [d, e, f], [g, h, i]], "translation": [x, y, z] }`, mapping a point `p` to `linear * p + translation` (rows of the matrix; metres). It must be finite and not flatten anything (`|det(linear)| >= 1e-9`).
 
@@ -129,8 +139,10 @@ A member has `slot` (unique in the definition), `parent` (optional: the `slot` o
 
 - `"solid"`: `material` (optional), `next_face_id`, `brep` (exactly as for objects, in definition coordinates).
 - `"mesh"`: `material`, `note`, `positions`, `faces`, `lines` (as for meshes, in definition coordinates).
-- `"group"`: `xform` (optional) of a nested group, in definition coordinates.
-- `"instance"`: `definition` (index into `definitions`) and `xform` (optional), a nested instance placed in definition coordinates. A definition must not contain itself, directly or through others.
+- `"group"`: `xform` (optional) of a nested group, in definition coordinates, and `material` (optional).
+- `"instance"`: `definition` (index into `definitions`), `xform` (optional), a nested instance placed in definition coordinates, and `material` (optional). A definition must not contain itself, directly or through others.
+
+A solid member's faces may carry `material` and `uv` like any B-rep's; an instance's solids show them too.
 
 **Instances are derived.** Every instance contains exactly one item per member of its definition (a solid, mesh or node with that `slot`, in the right nested group), and every solid of an instance is its member's solid under the instance's `xform`: each point mapped, each face plane mapped (normals by the inverse transpose), loops reversed when the transform mirrors. Writers list those solids in `objects` (for their `id`, display `number`, `name`, `parent`, `slot`, flags) without a `brep`; readers derive their geometry. A reader refuses a file whose instances do not hold exactly their definitions' members.
 
@@ -156,8 +168,11 @@ Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`
 | `context` | integer, optional | The node open for editing when the file was saved. |
 | `tags` | `{ name: visible }` | Every tag used, and whether it is shown. "Untagged" is not a tag: it is the absence of one. |
 | `tag_colors` | `{ name: "#rrggbb" }`, optional | Each tag's colour in the Tags pane. |
-| `materials[]` | `{ "name", "color": [r, g, b, a], "texture"? }` | sRGB colour with alpha, 0 to 255; `texture` names an image (a path inside `assets/`, or the original file name when the image was not kept). |
-| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), and the node open for editing in it. Names are unique. |
+| `materials[]` | `{ "name", "color": [r, g, b, a], "texture"?, "size"?, "rotation"?, "offset"?, "stock"? }` | sRGB colour with alpha, 0 to 255; `texture` names an image (a path in `textures`, or the original file name when the image was not kept, in which case the colour shows); `size` the image's real-world width and height in metres (absent: 0.3048 m across at the image's aspect); `rotation` degrees; `offset` metres; `stock` `{ "kind": "lumber" or "sheet", "species"? }`: what the cut list calls a part showing this material (the species, else the material's name) and whether it is sheet goods, unless the part says otherwise. |
+| `textures[]` | `{ "path", "mime" }`, optional | The images the model holds: `path` is `assets/<name>.png` or `.jpg` (letters, digits, `.`, `_`, `-`) and the archive entry holding the bytes; `mime` is `image/png` or `image/jpeg` and must match the bytes. At most 16 MB each and 512 in all. A reader that finds an entry missing opens the file with a note; materials naming it show their colour. (An op log or an in-memory snapshot carries the bytes inline as base64 `data`; a `.shz` never does.) |
+| `style` | style, optional | The drawing style (absent: the default). `{ "preset"?, "face"?: "textured" / "shaded" / "monochrome" / "hidden_line" / "wireframe" / "x_ray", "edges"?: { "edges"?, "profiles"?, "extensions"?, "endpoints"? }, "background"?: [r, g, b], "sky"?: [r, g, b], "ground"?: [r, g, b], "section_cuts"? }`. Absent fields take the defaults: textured, edges on, the rest off, the theme's background, no sky or ground, section cuts on. |
+| `shadows` | shadows, optional | The sun: `{ "on", "month" (1-12), "day", "minutes" (after midnight, local solar time), "latitude" (degrees, -90..90), "light", "dark" (0..100), "ground", "faces" }`. North is +Y. |
+| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"?, "style"?, "shadows"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), the node open for editing in it, and the style and shadows it brings back when activated (absent: it leaves them as they are). Names are unique. |
 | `guides[]` | `{ "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). |
 | `dimensions[]` | `{ "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. |
 | `last_number` | integer, optional | The last display number handed out, so a deleted solid's number is not reused after a reopen. |
@@ -199,7 +214,7 @@ glTF 2.0 binary. One node per object and per imported mesh, named after it, flat
 
 - `extras.sawhorse`: `object` (the object id) or `mesh` (the mesh id); `solid` (true for objects); `tag`; `groups` (the names of the groups and components around it, outermost first); for meshes, `note`.
 - A custom vertex attribute `_FACE_ID` (FLOAT SCALAR): the persistent face id of the face each vertex belongs to, so faces (and the drawn edges between coplanar faces) can be rebuilt exactly.
-- Materials as `pbrMetallicRoughness.baseColorFactor` (linear), named after the model's materials.
+- Materials as `pbrMetallicRoughness.baseColorFactor` (linear), named after the model's materials; a solid whose faces show different materials has one primitive per material. The `.shz` copy leaves texture images out (they are in `assets/`); a GLB exported on its own embeds them with `TEXCOORD_0`.
 
 ## Compatibility rules
 

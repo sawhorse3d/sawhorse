@@ -26,7 +26,9 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 | One component painted differently | One definition per paint | When a component's faces take their colour from the placement ("paint the component") and its placements are painted differently, each paint gets its own definition (`Leg`, `Leg (Walnut)`), noted. Sawhorse keeps materials in the definition. |
 | Loose geometry at the top level | Solids where closed, otherwise one mesh named after the file | |
 | Loose edges (edges on no face) | Lines on that piece's non-solid mesh | Hidden edges are left out. Soft and smooth edges are kept and drawn like any edge. |
-| Materials | Colours (sRGB + opacity), by name | A piece takes the material used by most of its faces (noted when there were several). A face with no material inherits its placement's material ("paint the component"), as SketchUp does. Textures: the image file name is kept as a reference on the material; images are not drawn yet. |
+| Materials | Colours (sRGB + opacity), by name; each face keeps its own (lane 10) | A piece's own material is the one on most of its faces; faces with another one keep theirs as face paint. A face with no material inherits its placement's material ("paint the component"), as SketchUp does. |
+| Textures | Texture images with their size (lane 10) | PNG and JPEG images come into the model (an `add_texture` step batched before the import, one undo step) with the tile size SketchUp stores, in inches. Other image types keep the file name as a reference, and the colour shows (noted). |
+| Texture positions | Per face, as a scale, a rotation and an offset (lane 10) | A face's mapping (SketchUp's pins, or its default projection from the face's own axes) is turned into the affine map it gives in world metres and fitted to Sawhorse's per-face scale, rotation and offset, so the texture lies where SketchUp drew it. Skewed (four-pin) and projected textures lose the skew or the projection (noted). |
 | Layers / tags | Tags, by name | `Layer0` / `Untagged` means untagged. A placement's own layer becomes the tag of its group or instance (hiding the tag hides everything inside). Layers hidden in the file come in hidden. |
 | Hidden groups and components | Hidden (the Outliner's eye is closed) | Nothing is dropped; open the eye to see them. (Before lane 5 they went on a hidden tag, `Hidden in SketchUp`.) |
 | Scenes (pages) | Saved scenes: camera (eye, target, up, field of view, parallel or perspective) and hidden tags | Scenes without a stored camera are left out (noted). |
@@ -39,13 +41,12 @@ Each of these is counted in the import notes when present, never silently droppe
 
 - Text and leader text, linear and radial dimensions, section planes, guide lines and guide points (the kernel has guides and dimensions; mapping SketchUp's onto them is a later lane).
 - Image entities (`Image` objects placed in the model).
-- Textures as pictures (only the file name is kept), texture positioning (UV pins), back-face materials.
-- Per-face materials inside one piece: the piece takes its most used material.
+- Back-face materials (Sawhorse draws back faces in the default back-face colour), skewed and projected texture positions (see above), textures other than PNG and JPEG.
 - Per-face layers inside a definition (faces and edges on their own layers): only placements carry tags.
 - An instance's own name when it equals its definition's (shown as the definition's name).
 - Component attributes and dynamic-component properties, glue-to and cut-opening behaviour, the component's insertion point and axes beyond its placement.
 - Which definitions were groups in SketchUp (see "Group or component?" above).
-- Styles, shadows, fog, geo-location, and the file's thumbnail.
+- Styles, shadows, fog, geo-location, and the file's thumbnail (Sawhorse has its own styles and sun; the file's are not read).
 - `.skp` export.
 
 ## Healing and refusals

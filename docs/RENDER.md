@@ -24,7 +24,14 @@ The prompt, the preset name and three images of the current view, each at the vi
 | edges | 8-bit greyscale PNG | The model's edges as black lines on white, with faces drawn white to hide what is behind them (4x MSAA). |
 | clay | 8-bit greyscale PNG | Flat-shaded light clay under a key light from the view's upper left. Replicate's fallback model estimates its own depth from this. |
 
-No model file, materials, textures or anything else is sent. Canvas cannot write 16-bit PNGs, so `src/render/png.ts` writes them. It uses the platform's `CompressionStream("deflate")`.
+Plus **material hints** (lane 10): which materials the visible faces show and how much of the picture each covers, so the render can match the wood.
+
+| Field | What | How it is made |
+|---|---|---|
+| `material_hints` | `[{ name, species, color, share }]`, most of the picture first | An exact material-id pass over the same camera (each face drawn with its material's index, no anti-aliasing), counted over the model's pixels. `species` is the material's stock link (`White oak`, `Baltic birch ply`) or null; `color` its sRGB colour as `#rrggbb`; `share` the fraction of the model's pixels, to 0.001. |
+| `prompt` | The prompt typed, then a sentence naming the materials | `Materials: white oak (most of it), baltic birch ply.`: up to five materials covering at least 3% of the model, "(most of it)" when the first covers half or more. Left off when nothing in view is painted, or when it would take the prompt past the service's 1000 characters. |
+
+The service ignores fields it does not know, so `material_hints` is there for it to use; the sentence works today. No model file, texture image or anything else is sent. Canvas cannot write 16-bit PNGs, so `src/render/png.ts` writes them. It uses the platform's `CompressionStream("deflate")`.
 
 The camera is the view's camera, re-aimed at the output aspect, so the render frames what the viewport frames. Zoom in (or press Shift+Z) before rendering to fill the picture.
 
@@ -54,7 +61,7 @@ The same vector (seed `00..1f`, a `POST /v1/checkout` request) is tested in thre
 |---|---|
 | Shared signing vector, base32, base64url | `src/credits/vector.test.ts` |
 | Signed headers verify, Retry-After, skew correction, unreachable | `src/credits/client.test.ts` |
-| 16-bit and 8-bit PNG writer, pass sizes, camera re-aim | `src/render/png.test.ts` |
+| 16-bit and 8-bit PNG writer, pass sizes, camera re-aim, the materials sentence | `src/render/png.test.ts` |
 | The pane: render, refunds, limits, no credits, not connected, checkout window and polling, popup blocked, history, claim | `src/components/RenderPane.test.tsx` |
 | The browser build with the service faked in Playwright. Every signature is verified the way the service verifies it, and the real depth, edge and clay passes are decoded and checked. | `e2e/render.spec.ts`, `e2e/fakeRenderService.ts` |
 | Device key: shared vector, create-once, corrupt seed kept, a keychain that drops writes, URL allow-list | `cd src-tauri && cargo test -p sawhorse-device-key` (CI `tauri-check`; `-- --ignored` for the real OS keychain) |
