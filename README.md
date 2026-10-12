@@ -1,5 +1,7 @@
 # Sawhorse
 
+**[sawhorse3d.com](https://sawhorse3d.com)** · **[Try it in your browser](https://sawhorse3d.com/app/)** (nothing to install, nothing uploaded) · [Download the desktop app](https://github.com/sawhorse3d/sawhorse/releases) (v0.1.0-alpha.1, unsigned for now) · [User guide](https://sawhorse3d.com/guide/)
+
 A free, local-first, open-source push/pull 3D modeler for woodworkers and makers. Draw a rectangle, push it up, type `3/4` and press Enter. Sawhorse keeps the keys your hands already know, adds a built-in cut list, exports watertight files for printing and CNC, and runs in a browser tab with nothing to install, or as a desktop app.
 
 **Status: pre-alpha.** Lanes 1 to 3 are done: the app shell from the approved design; a robust geometry kernel (sketches, push/pull on any face, booleans, undo) compiled to WebAssembly; and the feel: navigation, selection, inference snapping, typed values, Line / Rectangle / Circle / Polygon / Arc, Push/Pull, Tape with guides, and Dimension. You can model a bookshelf with dados by hand. Move / Rotate / Scale / Offset / Follow Me, groups and components, the cut list and file import/export land over the next lanes.
@@ -29,6 +31,7 @@ A production build: `npm run build:all` (kernel + site into `dist/`, servable fr
 | `crates/export` | Watertight-only binary STL and 3MF |
 | `crates/wasm-api` | wasm-bindgen surface the front end's kernel worker loads |
 | `src-tauri/` | Tauri 2 desktop shell |
+| `site/` | The public site's landing page; `scripts/build-site.mjs` adds the demo, the guide and the changelog (`docs/DEVELOPMENT.md`) |
 | `docs/` | `USER-GUIDE.md`, `DECISIONS.md` (index) and `adr/`, `DEVELOPMENT.md`, `CLEANROOM.md`, the approved UI mock |
 
 ## Tests

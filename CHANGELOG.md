@@ -4,6 +4,14 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 14, the public site, 2026-10-12)
+
+- **https://sawhorse3d.com**: a landing page (`site/`, static HTML and CSS in the mock's tokens and fonts, light and dark, no scripts, no analytics, no cookies): the pitch, Try it in your browser, Download for Windows, macOS (Apple Silicon) and Linux from the v0.1.0-alpha.1 pre-release with a note that the builds are unsigned, three features, how it is built, two screenshots from the running app, links to GitHub, the guide and the changelog, "maintained by @boardfoot", the licence and the Trimble notice.
+- **The browser demo at /app/**: `VITE_BASE` sets the build's base path (default `./`); with `VITE_WEB_DEMO=1` the app shows a dismissible "Alpha. Runs in your browser, nothing is uploaded." banner with a link to the latest release, and a Help menu (User Guide, What's New, Download the Desktop App, Source on GitHub). The kernel worker and its WASM load under the base; Open and Save use the browser's pickers as before.
+- **/guide/ and /changelog/**: `docs/USER-GUIDE.md` and this file rendered to HTML, with anchored headings and a table of contents.
+- **`scripts/build-site.mjs`, `check-site.mjs`, `serve-site.mjs`, `site-smoke.mjs`** (`npm run site`, `site:check`, `site:serve`, `site:smoke`) and **`.github/workflows/pages.yml`**: assemble, check (links, anchors, outside resources, image sizes, identity, the download links answer), smoke-test in a browser (the demo's kernel loads, a box extrudes, Ctrl+S saves and File > Open reads it back, the banner dismisses) and deploy with `actions/deploy-pages` on every push to `main`. `docs/DEVELOPMENT.md` describes the whole loop.
+- `scripts/capture-lane09.mjs --theme dark`.
+
 ### Changed (lane 14, version 0.1.0-alpha.1, 2026-10-12)
 
 - **Version 0.1.0-alpha.1** everywhere it is declared: `package.json`, `src-tauri/tauri.conf.json`, the `crates/` workspace and the desktop crates (with their lock files). Installers from the next tag carry it in their names; the files of the `v0.1.0-alpha.1` pre-release still say 0.0.1 because they were built before the bump. Windows Installer accepts only numeric versions, so the MSI is versioned `0.1.0.1` (`bundle.windows.wix.version`). Saved `.shz` files now record `"generator": "Sawhorse 0.1.0-alpha.1"`.

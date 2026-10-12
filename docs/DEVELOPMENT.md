@@ -308,6 +308,38 @@ To keep a find: download the artifact, copy its JSON into `crates/kernel/tests/r
 FUZZ_CASES=6250 FUZZ_SEED=<seed> FUZZ_REPORT=1 bash scripts/cargo.sh test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture
 ```
 
+## The public site and the browser demo (`.github/workflows/pages.yml`, lane 14)
+
+https://sawhorse3d.com is GitHub Pages with the "workflow" build type. Every push to `main` runs `pages.yml`: it builds the kernel (`npm run wasm`), assembles the site, checks it, smoke-tests it in Chromium and deploys it. Nothing is committed to a `gh-pages` branch.
+
+| Path on the site | Comes from |
+|---|---|
+| `/` | `site/` (static HTML and CSS, the mock's tokens and fonts, light and dark, no scripts; screenshots in `site/img/`, each under 400 KB) |
+| `/app/` | the Vite app built with `VITE_BASE=<base>app/` and `VITE_WEB_DEMO=1` (the dismissible alpha banner, the Help menu's links, no source maps) |
+| `/guide/` | `docs/USER-GUIDE.md`, rendered by `scripts/build-site.mjs` (marked; relative links point at the file on GitHub) |
+| `/changelog/` | `CHANGELOG.md`, rendered the same way |
+| `/CNAME` | `sawhorse3d.com` |
+
+Locally (port 5214 is this lane's; any free port works):
+
+```bash
+npm run wasm                                   # once; the demo refuses to build without the kernel
+npm run site                                   # -> dist-site/ (gitignored), base "/"
+npm run site:check -- --online                 # links, anchors, outside resources, sizes, identity, download links
+PW_CHANNEL=msedge npm run site:smoke           # serves dist-site on 5214, opens it, extrudes a box, saves and reopens
+npm run site:serve                             # serve dist-site at http://127.0.0.1:5214/ to look at it
+```
+
+The base: `actions/configure-pages` reports `""` once the custom domain is set and `/sawhorse` on the github.io project address; the workflow passes it as `--base` (and `--prefix` to the smoke test), so the demo's script, worker and WASM URLs match wherever it is served. To try the github.io shape locally: `MSYS_NO_PATHCONV=1 node scripts/build-site.mjs --base /sawhorse/ --out dist-site-gh`, then `node scripts/site-smoke.mjs --dir dist-site-gh --prefix /sawhorse/` (Git Bash rewrites a bare `/sawhorse/` argument into a Windows path without `MSYS_NO_PATHCONV=1`).
+
+Rules the checker enforces: no `<script>` on the site pages; the only outside resource is the Google Fonts stylesheet; no analytics, no cookies; the pitch, the licence line, the Trimble notice, the unsigned-builds note and "maintained by @boardfoot" are present; no machine paths anywhere in the output.
+
+**Download links** in `site/index.html` name the exact release assets (`releases/download/<tag>/<file>`). On a new release, update the tag and the file names there (the CI check fails on a link that does not answer). The `v0.1.0-alpha.1` files say 0.0.1 because they were built before the version bump; later tags carry the version from `tauri.conf.json`.
+
+**Screenshots** (`site/img/`) are lane 9's walk-through: with `npx vite --port 5214 --strictPort` running, `node scripts/capture-lane09.mjs --url http://localhost:5214 --out <dir> --prefix light` and again with `--theme dark --prefix dark`; stage 0 (the bookshelf) is `app-*.png`, stage 1 (Nesting) is `cutlist-*.png`, each kept at 1440 x 900 and quantised to a 256-colour palette (Pillow's fast octree, no dithering) to stay near 100 to 140 KB.
+
+**Custom domain.** The domain is set on the repository (`PUT repos/sawhorse3d/sawhorse/pages` with `cname`); DNS at the registrar points the apex at GitHub's four A (and four AAAA) addresses and `www` at `sawhorse3d.github.io` (see GitHub's "Managing a custom domain" page). HTTPS enforcement turns on after the certificate is issued, which needs the DNS in place. Until then github.io redirects to a domain that does not reach GitHub yet.
+
 ## Troubleshooting
 
 - `link: extra operand ... rcgu.o` on Windows: that is Git's coreutils `link`, not MSVC. Use `scripts/cargo.sh` (WSL).
