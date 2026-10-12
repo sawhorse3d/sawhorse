@@ -4,6 +4,20 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Integration (lanes 4, 6 and 8 merged, 2026-10-11)
+
+- Lanes 4 (transforms), 6 (file import/export) and 8 (render service and credit store) are merged into `main`; every gate passes on the merged tree (cargo test, clippy, fmt, wasm32 check, Vitest, build, golden:wasm, boolean:diff, the 200-file `.skp` corpus, all Playwright specs with `REQUIRE_KERNEL=1 REQUIRE_CORPUS=1`, and the render service's tests).
+- Display numbers ("Solid 3") now survive a save and reopen: `.shz` stores each solid's `number` and the model's `last_number` (both optional; a file without them is numbered in saved order, see `docs/format.md`). Imported and restored solids get numbers like drawn ones.
+- The desktop shell registers lane 6's dialog and fs plugins (with the drag-and-drop scope) and lane 8's opener plugin and device-key commands together.
+
+### Fixed (integration)
+
+- An imprint on a face with a notch and collinear vertices was rejected as a kernel bug ("non-positive volume 0"). The triangulator mis-bridged the new hole; it now falls back to its own ear clipper when earcut's area check fails, so the face triangulates. A face that still cannot be triangulated is reported as such (`Untessellatable`), not as a zero volume. An imprint loop whose corner lies within the merge tolerance of one of its own sides is refused as self-intersecting. Found by CI's fuzzer; kept as `crates/kernel/tests/repro/imprint-near-tolerance-non-positive-volume.json`, with `crates/kernel/tests/imprint_tolerance.rs` covering loops near an edge and near-coincident points.
+
+### Changed (integration)
+
+- CI: the long fuzz step on `main` runs a fixed seed (`FUZZ_SEED=20261011`, 10,000 sequences), so a red `main` is always a reproducible regression. Random seeds run nightly in `.github/workflows/nightly-fuzz.yml` (eight shards, 50,000 sequences, continue-on-error, repro artifacts). The `.skp` corpus now runs inside the `web` job (one wasm and one Vite build, one Playwright run with `REQUIRE_CORPUS=1`); `tauri-check` runs fmt, clippy (which compiles the shell, replacing the separate `cargo check`) and the device-key tests.
+
 ### Added (lane 8, render service and credit store, 2026-10-11)
 
 - Render credits per ADR-0004, with no accounts:

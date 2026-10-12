@@ -67,3 +67,9 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Who:** the lane-8 builder (Claude Opus 5.5).
 - **Read:** nothing from hew3d/hew or hew3d/openskp, and no published URL of any kind. The Stripe, fal, Replicate and Resend integrations were written from general knowledge of those public APIs. The Stripe webhook signature check uses the official `stripe` npm SDK, and its own type definitions in `node_modules` were consulted. The fal and Replicate request field names are marked for verification against the live schemas before launch (`docs/LAUNCH-CREDITS.md`). Package versions were looked up in the crates.io and npm registries; no documentation was read.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b|openskp'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002.
+
+### 2026-10-11 — integration (lanes 4, 6 and 8 merged; fuzz fix; CI): nothing read
+- **Who:** the integrator (Claude), merging lanes 4, 6 and 8 into `main`, fixing the imprint bug CI's fuzzer found, and reshaping CI.
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published URL of any kind was read, and no third-party source (including the npm `openskp` package and the cargo registry) was opened.
+- **Written from general knowledge:** the triangulator's fallback (`ear_clip` in `crates/tessellate`) is textbook ear clipping with holes bridged at their rightmost vertex to a visible outer vertex; the merge resolutions only combined the lanes' own code.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
