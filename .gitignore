@@ -18,3 +18,5 @@ crates/kernel/fuzz/artifacts/
 crates/kernel/proptest-regressions/*.tmp
 *.log
 .DS_Store
+# fuzzer boolean-refusal dumps (FUZZ_DUMP_REFUSALS=1), study material only
+crates/kernel/tests/repro/refusals/

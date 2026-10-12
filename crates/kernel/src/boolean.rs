@@ -606,11 +606,20 @@ pub fn combine(
             }
         }
     }
-    let out = engine.run(&ta, &tb, op)?;
+    let raw = engine.run(&ta, &tb, op)?;
+    // Welded first (slivers closed); if the weld left the surface unusable, the engine's
+    // own output as it was.
+    let mut welded = raw.clone();
+    let was_welded = crate::snap::weld_output(&mut welded) > 0;
+    let out = if was_welded { welded } else { raw.clone() };
     if out.triangles.is_empty() || out.volume().abs() <= AREA_EPS * POINT_MERGE {
         return Ok(None);
     }
-    let mut res = repolygonise(&out, &planes, &ids, &preserved)?;
+    let mut res = match repolygonise(&out, &planes, &ids, &preserved) {
+        Ok(r) => r,
+        Err(e) if was_welded => repolygonise(&raw, &planes, &ids, &preserved).map_err(|_| e)?,
+        Err(e) => return Err(e),
+    };
     crate::snap::snap_planes(&mut [&mut res]);
     resolve_face_ids(&mut res, &sources);
     Ok(Some(res))

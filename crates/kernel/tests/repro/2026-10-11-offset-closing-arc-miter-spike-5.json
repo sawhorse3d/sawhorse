@@ -1,0 +1,113 @@
+{
+  "name": "2026-10-11-offset-closing-arc-miter-spike-5",
+  "error": "op 9 Offset { source: Face { object: 1, face: 2 }, distance: -0.1875 }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(EdgesTouch { a: (25, 26), b: (18, 19) })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": -0.25,
+      "y": 0.0,
+      "w": 1.8783816534557003,
+      "h": 2.487118541158169
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 1,
+      "face": 4,
+      "distance": -1.0
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 3,
+      "distance": 0.5
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 3,
+      "path": [
+        [
+          -0.14020229331803746,
+          -0.5,
+          -0.25
+        ],
+        [
+          0.6283816534557003,
+          -0.5,
+          -0.21875
+        ]
+      ]
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 1,
+      "face": 4,
+      "distance": 0.25
+    },
+    {
+      "op": "add_guide",
+      "point": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dir": null
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 2,
+      "points": [
+        [
+          0.4087862400917752,
+          0.24677963528954228,
+          -0.25
+        ],
+        [
+          0.36486715741899023,
+          0.24677963528954228,
+          -0.25
+        ],
+        [
+          0.36486715741899023,
+          0.39613556234745073,
+          -0.25
+        ],
+        [
+          0.4087862400917752,
+          0.39613556234745073,
+          -0.25
+        ]
+      ]
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 2
+      },
+      "distance": -0.1875
+    }
+  ]
+}

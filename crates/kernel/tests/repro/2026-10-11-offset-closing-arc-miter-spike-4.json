@@ -1,0 +1,202 @@
+{
+  "name": "2026-10-11-offset-closing-arc-miter-spike-4",
+  "error": "op 13 Offset { source: Face { object: 2, face: 7 }, distance: -0.25 }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(EdgesTouch { a: (11, 12), b: (14, 15) })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.250004,
+      "w": 0.1,
+      "h": 0.75
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.5
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 4,
+      "path": [
+        [
+          0.1,
+          0.250004,
+          0.9375
+        ],
+        [
+          0.1,
+          0.5075598434865723,
+          0.6090670121838868
+        ],
+        [
+          0.1,
+          0.5312540000000001,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "create_group",
+      "name": "Fuzz",
+      "objects": []
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 7,
+      "path": [
+        [
+          0.1,
+          0.5898477500000001,
+          0.0
+        ],
+        [
+          0.1,
+          0.250004,
+          1.4296875
+        ]
+      ]
+    },
+    {
+      "op": "array",
+      "objects": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            -0.5503316686285993,
+            -0.8327204256918184,
+            0.06092410967833817
+          ],
+          [
+            0.3101367171653244,
+            -0.2716203574144691,
+            -0.9110639923210396
+          ],
+          [
+            0.7752098239640524,
+            -0.482492563749611,
+            0.40773846366997324
+          ]
+        ],
+        "translation": [
+          1.3709321887761068,
+          0.08530763796105362,
+          -0.46078229706538154
+        ]
+      },
+      "count": 3
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "delete_object",
+      "object": 1
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 2,
+        "face": 7
+      },
+      "distance": -0.25
+    }
+  ]
+}

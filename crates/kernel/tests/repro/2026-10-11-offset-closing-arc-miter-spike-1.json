@@ -1,0 +1,133 @@
+{
+  "name": "2026-10-11-offset-closing-arc-miter-spike-1",
+  "error": "op 7 Offset { source: Face { object: 2, face: 1 }, distance: -0.125 }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(EdgesTouch { a: (33, 34), b: (19, 20) })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 1e-06,
+      "y": 1e-06,
+      "w": 0.75,
+      "h": 0.75
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 1
+      },
+      "distance": -0.20549991787531796
+    },
+    {
+      "op": "copy",
+      "objects": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          -0.8685218322593126,
+          0.0
+        ]
+      }
+    },
+    {
+      "op": "follow_me",
+      "profile": {
+        "of": "face",
+        "object": 2,
+        "face": 5
+      },
+      "path": [
+        [
+          0.750001,
+          -0.11852083225931254,
+          -0.25
+        ],
+        [
+          0.750001,
+          0.13147916774068746,
+          -0.25
+        ],
+        [
+          1.0000010000000001,
+          0.13147916774068746,
+          -0.25
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 2,
+        "face": 1
+      },
+      "points": [
+        [
+          9.999999999732445e-07,
+          0.6801830983310138,
+          0.0
+        ],
+        [
+          0.07500099999999998,
+          0.6801830983310138,
+          0.0
+        ],
+        [
+          0.07500099999999998,
+          0.9426830983310137,
+          0.0
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 2,
+        "face": 1
+      },
+      "distance": -0.125
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "name": "2026-10-11-offset-closing-arc-miter-spike-2",
+  "error": "op 5 Offset { source: Face { object: 1, face: 6 }, distance: -0.25 }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(EdgesTouch { a: (12, 13), b: (15, 16) })",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": -0.25,
+      "y": -2.7187617271932827,
+      "w": 0.25,
+      "h": 1.9485968285927866
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": -0.7214259961622029
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 6,
+      "points": [
+        [
+          -0.25,
+          -2.0367528371858077,
+          -0.5410694971216522
+        ],
+        [
+          -0.25,
+          -2.2316125200450863,
+          -0.5410694971216522
+        ],
+        [
+          -0.25,
+          -2.2316125200450863,
+          -0.3967842978892116
+        ],
+        [
+          -0.25,
+          -2.0367528371858077,
+          -0.3967842978892116
+        ]
+      ]
+    },
+    {
+      "op": "create_group",
+      "name": "Fuzz",
+      "objects": []
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 6
+      },
+      "distance": -0.25
+    }
+  ]
+}

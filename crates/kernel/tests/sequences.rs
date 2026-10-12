@@ -1,8 +1,13 @@
 //! Op-sequence fuzzer (proptest-driven) over the whole document: sketch strokes with
 //! merging / T-junctions / crossings / overlaps / erasing, rectangles, polylines, extrude,
-//! general push/pull (both ways, through the far side), split_face, imprint, erasing
-//! (object edges and faces, sketch regions), batches, delete, groups, tags, and undo / redo
-//! interleaved anywhere.
+//! general push/pull (both ways, through the far side, severing), split_face, imprint,
+//! erasing (object edges and faces, sketch regions), batches, delete, groups, tags, and
+//! (lane 4) transforms, copies, arrays, moving part of a solid (autofold on and off),
+//! offsets of faces / regions / edge chains, and Follow Me (open and closed paths, adding
+//! and cutting), with undo / redo interleaved anywhere.
+//!
+//! `FUZZ_PLANE_SNAP=0` turns the boolean plane-snapping pass off for the run, so the same
+//! seeds measure the "not a valid solid" refusal rate with and without it.
 //!
 //! Generated ops are *intents* ([`Fuzz`]) resolved against the live document as the
 //! sequence runs: "an edge of some face of some solid", "a region of some sketch", "a
@@ -24,6 +29,7 @@ use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use sawhorse_kernel::Document;
 use sawhorse_kernel::model::Op;
 use sawhorse_kernel::testing::{check_sequence, write_repro};
+use sawhorse_kernel::transform::Xform;
 
 fn grid() -> impl Strategy<Value = f64> {
     prop_oneof![
@@ -120,6 +126,112 @@ enum Fuzz {
     Redo,
     /// Raw op with whatever ids it has (mostly refused).
     Raw(Op),
+    /// Lane 4: move / turn / scale / mirror a solid (or two).
+    Transform(u8, u8, XformPick),
+    Copy(u8, XformPick),
+    Array(u8, XformPick, u8),
+    /// Move part of a solid: a face's vertices (which 0), an edge (1) or a vertex (2) of
+    /// face `face`, by the pick, with or without autofold.
+    MoveGeometry {
+        object: u8,
+        face: u8,
+        which: u8,
+        index: u8,
+        xform: XformPick,
+        autofold: bool,
+    },
+    /// Offset a face (kind 0), a sketch region (1) or an edge chain of a face (2).
+    Offset {
+        kind: u8,
+        owner: u8,
+        part: u8,
+        edges: u8,
+        distance: f64,
+    },
+    /// Follow Me: a face profile along a path (0 straight along the normal, 1 an L, 2 round
+    /// another face's edge), or a region profile along its plane's normal then sideways.
+    FollowMe {
+        region: bool,
+        owner: u8,
+        part: u8,
+        path: u8,
+        other: u8,
+        a: f64,
+        b: f64,
+    },
+}
+
+/// A transform, as an intent.
+#[derive(Debug, Clone)]
+enum XformPick {
+    Translate([f64; 3]),
+    /// About axis 0/1/2 (or a skew axis for 3) through a point, by degrees.
+    Rotate(u8, f64, [f64; 3]),
+    Scale([f64; 3], [f64; 3]),
+    /// Garbage on purpose (NaN, huge, singular).
+    Bad(u8),
+}
+
+fn xform_of(x: &XformPick) -> Xform {
+    match x {
+        XformPick::Translate(d) => Xform::translation(DVec3::from_array(*d)),
+        XformPick::Rotate(axis, deg, about) => {
+            let a = match axis % 4 {
+                0 => DVec3::X,
+                1 => DVec3::Y,
+                2 => DVec3::Z,
+                _ => DVec3::new(0.3, -0.5, 0.8),
+            };
+            Xform::rotation(DVec3::from_array(*about), a, deg.to_radians())
+        }
+        XformPick::Scale(f, about) => {
+            Xform::scaling(DVec3::from_array(*about), DVec3::from_array(*f))
+        }
+        XformPick::Bad(k) => {
+            let mut x = Xform::IDENTITY;
+            match k % 3 {
+                0 => x.translation[1] = f64::NAN,
+                1 => x.translation[0] = 2e4,
+                _ => x.linear[2][2] = 0.0,
+            }
+            x
+        }
+    }
+}
+
+fn xform_pick() -> impl Strategy<Value = XformPick> {
+    let v = || (grid(), grid(), grid()).prop_map(|(x, y, z)| [x, y, z]);
+    let factor = || {
+        prop_oneof![
+            4 => (1i32..9).prop_map(|k| f64::from(k) * 0.25),
+            2 => -2.0..2.0f64,
+            1 => Just(-1.0),
+            1 => Just(0.0),
+            1 => Just(1e-6),
+        ]
+    };
+    prop_oneof![
+        4 => v().prop_map(XformPick::Translate),
+        3 => (0u8..4, prop_oneof![3 => (-8i32..8).prop_map(|k| f64::from(k) * 45.0), 1 => -360.0..360.0f64], v())
+            .prop_map(|(a, d, o)| XformPick::Rotate(a, d, o)),
+        2 => ((factor(), factor(), factor()), v()).prop_map(|((x, y, z), o)| XformPick::Scale([x, y, z], o)),
+        1 => any::<u8>().prop_map(XformPick::Bad),
+    ]
+}
+
+/// Lane-4 intents.
+fn lane4_op() -> impl Strategy<Value = Fuzz> {
+    prop_oneof![
+        3 => (any::<u8>(), any::<u8>(), xform_pick()).prop_map(|(o, p, x)| Fuzz::Transform(o, p, x)),
+        2 => (any::<u8>(), xform_pick()).prop_map(|(o, x)| Fuzz::Copy(o, x)),
+        1 => (any::<u8>(), xform_pick(), 0u8..5).prop_map(|(o, x, n)| Fuzz::Array(o, x, n)),
+        3 => (any::<u8>(), any::<u8>(), 0u8..3, any::<u8>(), xform_pick(), any::<bool>())
+            .prop_map(|(object, face, which, index, xform, autofold)| Fuzz::MoveGeometry { object, face, which, index, xform, autofold }),
+        3 => (0u8..3, any::<u8>(), any::<u8>(), 1u8..4, distance())
+            .prop_map(|(kind, owner, part, edges, distance)| Fuzz::Offset { kind, owner, part, edges, distance: distance * 0.25 }),
+        3 => (any::<bool>(), any::<u8>(), any::<u8>(), 0u8..3, any::<u8>(), distance(), distance())
+            .prop_map(|(region, owner, part, path, other, a, b)| Fuzz::FollowMe { region, owner, part, path, other, a, b }),
+    ]
 }
 
 fn fuzz_op() -> impl Strategy<Value = Fuzz> {
@@ -165,6 +277,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => ((grid(), grid(), grid()), (grid(), grid(), grid())).prop_map(|(a, b)| Fuzz::Dimension([a.0, a.1, a.2], [b.0, b.1, b.2])),
         1 => any::<u8>().prop_map(Fuzz::EraseGuide),
         1 => any::<u8>().prop_map(Fuzz::EraseDimension),
+        9 => lane4_op(),
     ]
 }
 
@@ -470,6 +583,197 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,
         Fuzz::Raw(op) => op.clone(),
+        Fuzz::Transform(o, pair, x) => {
+            let mut objects = vec![object(*o)];
+            if pair % 4 == 0 {
+                objects.push(object(o.wrapping_add(*pair)));
+            }
+            Op::Transform {
+                objects,
+                xform: xform_of(x),
+            }
+        }
+        Fuzz::Copy(o, x) => Op::Copy {
+            objects: vec![object(*o)],
+            xform: xform_of(x),
+        },
+        Fuzz::Array(o, x, n) => Op::Array {
+            objects: vec![object(*o)],
+            xform: xform_of(x),
+            count: u32::from(*n),
+        },
+        Fuzz::MoveGeometry {
+            object: o,
+            face: k,
+            which,
+            index,
+            xform,
+            autofold,
+        } => {
+            let oid = object(*o);
+            let points = match face(oid, *k) {
+                Some((_, ring, _)) => {
+                    let i = *index as usize % ring.len();
+                    match which {
+                        0 => ring.iter().map(|p| p.to_array()).collect(),
+                        1 => vec![ring[i].to_array(), ring[(i + 1) % ring.len()].to_array()],
+                        _ => vec![ring[i].to_array()],
+                    }
+                }
+                None => vec![[0.0; 3]],
+            };
+            Op::TransformGeometry {
+                object: oid,
+                points,
+                xform: xform_of(xform),
+                autofold: *autofold,
+            }
+        }
+        Fuzz::Offset {
+            kind,
+            owner,
+            part,
+            edges,
+            distance,
+        } => {
+            use sawhorse_kernel::offset::OffsetSource;
+            let source = match kind {
+                0 => {
+                    let oid = object(*owner);
+                    OffsetSource::Face {
+                        object: oid,
+                        face: face(oid, *part).map_or(1, |(id, _, _)| id),
+                    }
+                }
+                1 => {
+                    let sid = sketch(*owner);
+                    let regions: Vec<u64> = m
+                        .sketch(sid)
+                        .map(|sk| {
+                            sk.regions()
+                                .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    OffsetSource::Region {
+                        sketch: sid,
+                        region: pick(&regions, *part).unwrap_or(1),
+                    }
+                }
+                _ => {
+                    let oid = object(*owner);
+                    match face(oid, *part) {
+                        Some((_, ring, plane)) => {
+                            let n = (*edges as usize).min(ring.len());
+                            let closed = n == ring.len();
+                            let pts: Vec<[f64; 3]> = ring
+                                .iter()
+                                .take(if closed { n } else { n + 1 })
+                                .map(|p| p.to_array())
+                                .collect();
+                            OffsetSource::Edges {
+                                points: pts,
+                                closed,
+                                normal: plane.normal.to_array(),
+                                object: Some(oid),
+                            }
+                        }
+                        None => OffsetSource::Edges {
+                            points: vec![],
+                            closed: false,
+                            normal: [0.0, 0.0, 1.0],
+                            object: None,
+                        },
+                    }
+                }
+            };
+            Op::Offset {
+                source,
+                distance: *distance,
+            }
+        }
+        Fuzz::FollowMe {
+            region,
+            owner,
+            part,
+            path,
+            other,
+            a,
+            b,
+        } => {
+            use sawhorse_kernel::sweep::Profile;
+            if *region {
+                let sid = sketch(*owner);
+                let regions: Vec<u64> = m
+                    .sketch(sid)
+                    .map(|sk| {
+                        sk.regions()
+                            .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let plane = m.sketch(sid).map(|s| *s.plane());
+                let (o, n, u) = plane.map_or((DVec3::ZERO, DVec3::Z, DVec3::X), |p| {
+                    (p.origin, p.normal, p.u)
+                });
+                let p1 = o + n * *a;
+                let mut pts = vec![o.to_array(), p1.to_array()];
+                if *path > 0 {
+                    pts.push((p1 + u * *b).to_array());
+                }
+                return Op::FollowMe {
+                    profile: Profile::Region {
+                        sketch: sid,
+                        region: pick(&regions, *part).unwrap_or(1),
+                    },
+                    path: pts,
+                    closed: false,
+                };
+            }
+            let oid = object(*owner);
+            let Some((fid, ring, plane)) = face(oid, *part) else {
+                return Op::FollowMe {
+                    profile: Profile::Face {
+                        object: oid,
+                        face: 1,
+                    },
+                    path: vec![],
+                    closed: false,
+                };
+            };
+            let p0 = ring[0];
+            match path {
+                0 | 1 => {
+                    let p1 = p0 + plane.normal * *a;
+                    let mut pts = vec![p0.to_array(), p1.to_array()];
+                    if *path == 1 {
+                        pts.push((p1 + plane.u * *b).to_array());
+                    }
+                    Op::FollowMe {
+                        profile: Profile::Face {
+                            object: oid,
+                            face: fid,
+                        },
+                        path: pts,
+                        closed: false,
+                    }
+                }
+                _ => {
+                    // Round the edge of another face (the moulding case).
+                    let pts = face(oid, *other)
+                        .map(|(_, r, _)| r.iter().map(|p| p.to_array()).collect())
+                        .unwrap_or_default();
+                    Op::FollowMe {
+                        profile: Profile::Face {
+                            object: oid,
+                            face: fid,
+                        },
+                        path: pts,
+                        closed: true,
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -489,6 +793,22 @@ fn concrete(intents: &[Fuzz], tally: &mut Tally) -> (Vec<Op>, Option<String>) {
         let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| d.apply(&op)));
         if let Ok(r) = &step {
             tally.record(&op, r);
+            // FUZZ_DUMP_REFUSALS=1: keep the first few boolean refusals as replayable logs
+            // (tests/repro/refusals/, gitignored) to study what the engine left behind.
+            if let Err(e) = r
+                && e.to_string().contains("not a valid solid")
+                && std::env::var("FUZZ_DUMP_REFUSALS").is_ok_and(|v| v == "1")
+            {
+                tally.dumped += 1;
+                if tally.dumped <= 30 {
+                    let _ = write_repro(
+                        &repro_dir().join("refusals"),
+                        &format!("refusal-{:02}", tally.dumped),
+                        &e.to_string(),
+                        &ops,
+                    );
+                }
+            }
         }
         if let Err(p) = step {
             let msg = p
@@ -514,6 +834,7 @@ fn repro_dir() -> PathBuf {
 struct Tally {
     kinds: std::collections::BTreeMap<String, (usize, usize)>,
     reasons: std::collections::BTreeMap<String, usize>,
+    dumped: usize,
 }
 
 impl Tally {
@@ -529,7 +850,16 @@ impl Tally {
             Ok(_) => e.0 += 1,
             Err(err) => {
                 e.1 += 1;
-                let reason: String = err.to_string().chars().take(70).collect();
+                let reason: String = err
+                    .to_string()
+                    .chars()
+                    .take(
+                        std::env::var("FUZZ_REASON_LEN")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(70),
+                    )
+                    .collect();
                 *self.reasons.entry(format!("{kind}: {reason}")).or_default() += 1;
             }
         }
@@ -558,6 +888,61 @@ impl Tally {
             "  boolean-path refusals (not a valid solid): {boolean}
 "
         );
+        // The boolean path's other typed refusal: the engine's output could not be turned
+        // back into faces (pinches, slivers, an operand the engine would not take).
+        let degenerate: usize = self
+            .reasons
+            .iter()
+            .filter(|(r, _)| {
+                r.contains("degenerate geometry")
+                    || r.contains("boolean engine failed")
+                    || r.contains("is not a closed manifold")
+            })
+            .map(|(_, n)| n)
+            .sum();
+        out += &format!(
+            "  boolean-path refusals (degenerate engine output): {degenerate}
+"
+        );
+        let accepted = |k: &str| self.kinds.get(k).map_or(0, |e| e.0);
+        let pushes = accepted("push_pull") + accepted("push_pull_new_face");
+        let sweeps = accepted("follow_me");
+        let push_refusals: usize = self
+            .reasons
+            .iter()
+            .filter(|(r, _)| r.contains("not a valid solid") && r.starts_with("push_pull"))
+            .map(|(_, n)| n)
+            .sum();
+        out += &format!(
+            "  boolean refusal rate: {boolean} / ({pushes} accepted push/pulls + {sweeps} accepted sweeps) = {:.4}%; push/pull alone {push_refusals} / {pushes} = {:.4}%
+",
+            100.0 * boolean as f64 / (pushes + sweeps).max(1) as f64,
+            100.0 * push_refusals as f64 / pushes.max(1) as f64,
+        );
+        out += &format!(
+            "  plane snapping: {}
+",
+            if sawhorse_kernel::snap::plane_snapping() {
+                "on"
+            } else {
+                "off (FUZZ_PLANE_SNAP=0)"
+            }
+        );
+        // What the boolean refusals were (FUZZ_REASON_LEN=200 shows the validator's words).
+        let mut bools: Vec<(&String, &usize)> = self
+            .reasons
+            .iter()
+            .filter(|(r, _)| r.contains("not a valid solid") || r.contains("degenerate geometry"))
+            .collect();
+        bools.sort_by(|a, b| b.1.cmp(a.1));
+        out += "  boolean refusals by reason:
+";
+        for (reason, n) in bools.into_iter().take(16) {
+            out += &format!(
+                "  {n:>7}  {reason}
+"
+            );
+        }
         let mut top: Vec<(&String, &usize)> = self.reasons.iter().collect();
         top.sort_by(|a, b| b.1.cmp(a.1));
         out += "  top refusals:
@@ -581,6 +966,10 @@ struct Totals {
 }
 
 fn run(name: &str, cases: u32, max_len: usize, seed: Option<u64>) {
+    // Measurement switch: the same seeds with and without boolean plane snapping.
+    sawhorse_kernel::snap::set_plane_snapping(
+        std::env::var("FUZZ_PLANE_SNAP").map_or(true, |v| v != "0"),
+    );
     let config = Config {
         cases,
         failure_persistence: None,

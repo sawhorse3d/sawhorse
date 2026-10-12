@@ -83,6 +83,13 @@ struct Cluster {
 
 /// Snap the planes and vertices of every solid in `solids` together (see the module docs).
 pub fn snap_planes(solids: &mut [&mut Polys]) -> SnapStats {
+    snap_planes_with(solids, SNAP_FLOOR)
+}
+
+/// [`snap_planes`] with a chosen floor: operands keep [`SNAP_FLOOR`] (their exact
+/// constructions matter); a boolean's result, which nothing was built on yet, uses 0 so
+/// every vertex lands on its planes' corner.
+pub fn snap_planes_with(solids: &mut [&mut Polys], floor: f64) -> SnapStats {
     let mut stats = SnapStats::default();
     if !plane_snapping() {
         return stats;
@@ -187,7 +194,7 @@ pub fn snap_planes(solids: &mut [&mut Polys]) -> SnapStats {
                 .iter()
                 .map(|(n, d)| (n.dot(x0) - d).abs())
                 .fold(0.0, f64::max);
-            if residual <= SNAP_FLOOR {
+            if residual <= floor {
                 continue;
             }
             let Some(x) = solve(&planes, x0) else {
@@ -223,6 +230,66 @@ pub fn snap_planes(solids: &mut [&mut Polys]) -> SnapStats {
         }
     }
     stats
+}
+
+/// Weld the engine's output: vertices closer than [`POINT_MERGE`] (the kernel's "same
+/// point") become one, the lowest index keeping its position, and triangles left with a
+/// repeated corner are dropped. On tilted planes the engine can leave two vertices a
+/// rounding apart where nearly-coincident faces met (slivers, edges through faces, zero-
+/// length edges); welding them is what the tolerance says they are. When a weld leaves the
+/// surface non-manifold, re-polygonising refuses it, typed, as before. Part of the snapping
+/// pass (off with it). Returns how many vertices were merged.
+pub fn weld_output(t: &mut crate::boolean::TriSolid) -> usize {
+    if !plane_snapping() {
+        return 0;
+    }
+    let n = t.positions.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        t.positions[a]
+            .x
+            .total_cmp(&t.positions[b].x)
+            .then(a.cmp(&b))
+    });
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let mut merged = 0;
+    for i in 0..n {
+        let a = order[i];
+        for &b in &order[i + 1..] {
+            if t.positions[b].x - t.positions[a].x > POINT_MERGE {
+                break;
+            }
+            if t.positions[a].distance(t.positions[b]) <= POINT_MERGE {
+                let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                if ra != rb {
+                    parent[ra.max(rb)] = ra.min(rb);
+                    merged += 1;
+                }
+            }
+        }
+    }
+    if merged == 0 {
+        return 0;
+    }
+    let mut keep_tri = Vec::with_capacity(t.triangles.len());
+    let mut keep_id = Vec::with_capacity(t.face_ids.len());
+    for (tri, &id) in t.triangles.iter().zip(&t.face_ids) {
+        let m = tri.map(|i| root(&mut parent, i as usize) as u32);
+        if m[0] != m[1] && m[1] != m[2] && m[0] != m[2] {
+            keep_tri.push(m);
+            keep_id.push(id);
+        }
+    }
+    t.triangles = keep_tri;
+    t.face_ids = keep_id;
+    merged
 }
 
 /// The point on every plane `(n, d)` (n.x = d) nearest `x0`: exact projections for one or

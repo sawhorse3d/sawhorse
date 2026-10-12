@@ -265,7 +265,9 @@ pub fn map_plane(a: &DAffine3, p: &Plane) -> Option<Plane> {
 pub(crate) fn typed(e: &crate::validate::TopologyError) -> TransformError {
     for v in &e.violations {
         match v {
-            Violation::SelfIntersectingSolid(_) => return TransformError::SelfIntersects,
+            Violation::SelfIntersectingSolid(_) | Violation::SelfIntersectingFace(_) => {
+                return TransformError::SelfIntersects;
+            }
             Violation::NonPositiveVolume(_) => return TransformError::InsideOut,
             Violation::ZeroLengthEdge(_) => return TransformError::CollapsesEdge,
             Violation::NonPlanar { .. } => return TransformError::NotPlanar,
@@ -314,9 +316,10 @@ impl Object {
 
     /// Rebuild from edited plain data keeping ids, then validate (typed refusals).
     fn finish(&self, p: Polys) -> Result<Object, TransformError> {
+        // A build error means two moved vertices met, or a face turned over onto another.
         let o = self
             .rebuilt(p)
-            .map_err(|e| TransformError::InvalidResult(e.to_string()))?;
+            .map_err(|_| TransformError::FoldsOntoItself)?;
         o.validate().map_err(|e| typed(&e))?;
         Ok(o)
     }

@@ -1,0 +1,154 @@
+{
+  "name": "2026-10-11-offset-through-a-vertex-exactly",
+  "error": "op 12 Offset { source: Face { object: 1, face: 3 }, distance: -0.25 } panicked: assertion `left == right` failed\n  left: EndPointOnFinalOffsetVertex { end_point: Vector2 { x: 0.0, y: -375.0 }, final_offset_vertex: PlineVertex { x: 0.0, y: -375.0, bulge: 0.0 } }\n right: IsValid",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.5,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.75
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 3
+      },
+      "distance": -0.0625
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 2,
+      "path": [
+        [
+          0.3125,
+          0.0,
+          0.75
+        ],
+        [
+          0.17432316002017068,
+          0.11238719333669511,
+          0.75
+        ],
+        [
+          0.0,
+          0.21875,
+          0.75
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "create_group",
+      "name": "Fuzz",
+      "objects": []
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 8,
+      "path": [
+        [
+          0.15253276501764934,
+          0.12568254416960822,
+          0.75
+        ],
+        [
+          0.0390625,
+          0.0,
+          0.75
+        ]
+      ]
+    },
+    {
+      "op": "add_guide",
+      "point": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dir": null
+    },
+    {
+      "op": "erase_edge",
+      "object": 1,
+      "a": [
+        0.0,
+        0.21875,
+        0.75
+      ],
+      "b": [
+        0.15253276501764934,
+        0.12568254416960822,
+        0.75
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.0625,
+          0.25,
+          -0.25
+        ],
+        [
+          0.5,
+          0.21875,
+          -0.25
+        ]
+      ]
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 3
+      },
+      "distance": -0.25
+    }
+  ]
+}

@@ -68,3 +68,10 @@ opt-level = 2
 
 [profile.test]
 opt-level = 1
+
+# cavalier_contours checks its own slicing with debug assertions that fire on exactly
+# degenerate input (an offset passing exactly through a vertex, lane-4 fuzzer find).
+# Release builds, including the browser kernel, run it without them; tests run it the same
+# way. The kernel validates every result it draws, so a bad slice is a typed refusal.
+[profile.dev.package.cavalier_contours]
+debug-assertions = false

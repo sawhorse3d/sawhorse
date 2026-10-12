@@ -129,7 +129,11 @@ fn from_pline(pl: &Polyline<f64>) -> Vec<DVec2> {
             let (b0, b1) = (pt(&v(next)), pt(&v(next + 1)));
             if let Some(m) = line_meet(a0, a1, b0, b1) {
                 out.push(m);
-                // The arc's end vertex is replaced by the miter too.
+                // The arc's end vertex is replaced by the miter too. When the arc is the
+                // closing segment, its end is the first vertex, already out: drop it.
+                if next >= n && !out.is_empty() {
+                    out.remove(0);
+                }
                 i += 2;
                 continue;
             }
@@ -294,6 +298,34 @@ mod tests {
         let shrunk = offset_rings(&[l], -0.25);
         assert_eq!(shrunk.len(), 1);
         assert!((signed_area(&shrunk[0]) - 1.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_grown_hole_cutting_the_shrunk_outline_keeps_a_clean_ring() {
+        // A face with a small hole near one side, shrunk by more than the hole is from the
+        // edge: the grown hole cuts the outline, the rest is one clean rectangle (lane-4
+        // fuzzer find: the miter of the closing arc used to leave a spike).
+        let outer = vec![
+            DVec2::new(-0.974, -0.3607),
+            DVec2::new(0.974, -0.3607),
+            DVec2::new(0.974, 0.3607),
+            DVec2::new(-0.974, 0.3607),
+        ];
+        let hole = vec![
+            DVec2::new(0.2923, -0.0361),
+            DVec2::new(0.4871, -0.0361),
+            DVec2::new(0.4871, -0.1804),
+            DVec2::new(0.2923, -0.1804),
+        ];
+        let out = offset_rings(&[outer, hole], -0.25);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].len(), 4, "a rectangle, no spike: {out:?}");
+        assert!(!crate::validate::rings_cross(std::slice::from_ref(&out[0])));
+        assert!(
+            (signed_area(&out[0]) - (0.0423 + 0.724) * 0.2214).abs() < 1e-9,
+            "{}",
+            signed_area(&out[0])
+        );
     }
 
     #[test]

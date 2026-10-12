@@ -138,7 +138,9 @@ pub enum TransformError {
     CollapsesEdge,
     #[error("that would bend a face out of its plane")]
     NotPlanar,
-    #[error("the result is not a valid solid: {0}")]
+    #[error("that would fold the solid onto itself")]
+    FoldsOntoItself,
+    #[error("that would not leave a valid solid ({0})")]
     InvalidResult(String),
 }
 
