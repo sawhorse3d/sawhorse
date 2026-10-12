@@ -58,7 +58,7 @@ Parallel lanes: each `.worktrees/<slug>` checkout gets its own cargo target dire
 
 The Render pane talks to the render service (`../render-service`, its own repository) at `VITE_RENDER_SERVICE_URL`, default `http://127.0.0.1:8787`. Run it with `cd ../render-service && npm ci && npm run dev`. With no keys it uses a mock provider, a simulated checkout and an embedded Postgres. Without it, the pane says "Render service not connected" and the chip shows a dash. The full local loop, the device key and what is sent are in `docs/RENDER.md`. Device-key tests run in WSL: `cd src-tauri && cargo test -p sawhorse-device-key` (WSL needs `libdbus-1-dev` and `pkg-config`).
 
-### The e2e suites (lanes 3, 4, 6 and 8)
+### The e2e suites (lanes 3, 4, 5, 6 and 8)
 
 | Spec | What it drives |
 |---|---|
@@ -80,10 +80,11 @@ The Render pane talks to the render service (`../render-service`, its own reposi
 | `e2e/scale.spec.ts` | Scale: grips, a face grip with a factor, an absolute size, a mirror; a tapered leg (frustum volume) |
 | `e2e/offset.spec.ts` | Offset: a face inward (imprint, tenon pulled up), outward (sketch), a sketch region, a selected edge offset across a face |
 | `e2e/follow.spec.ts` | Follow Me: a chamfer routed round a box top through the UI, checked against the exact removed volume |
+| `e2e/groups.spec.ts` | lane 5: Ctrl+G, a click selecting the group, Push/Pull refusing a closed group's face, double-click to open, Esc to close, undo returning inside, Ctrl+Shift+G; Make Component (dialog), a Ctrl+Move copy as an instance, an edit inside one reaching both, Make Unique from the Outliner; tags (New tag, assign, hide), scene tabs (add, switch, rename), the Outliner's eye and lock |
 
 Shared helpers for the lane-4 specs live in `e2e/helpers.ts`. `hover` re-reads the screen position and nudges the cursor until the expected inference shows, because the view refits after an edit. `solids()` reads every solid's display number, bounds and volume from `window.__sawhorse.solids()`.
 
-The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
+The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, `solids()`, `graph()` (the scene graph: groups, instances, definitions, the open context), and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
 
 Lane-end capture (every lane ends with one, saved beside the repo in `../_captures/`), with `npm run dev` running:
 
@@ -99,6 +100,32 @@ Lane 4's walk-through, `scripts/capture-lane04.mjs`, drives a running dev server
 npx vite --port 5184 --strictPort        # in another terminal
 node scripts/capture-lane04.mjs --url http://localhost:5184 --out ../_captures
 ```
+
+Lane 5's walk-through, `scripts/capture-lane05.mjs`, builds a bookshelf from components in the running app: a Side component and its Ctrl+Move copy, a Shelf component and a Move array of three more, one shelf opened and made 1 in thick (all four follow), Make Unique on another and back to 3/4 in (only it changes), tags Carcass and Shelves, and two scenes (Front hides the shelves, Iso shows everything). It checks the solids after each stage and exits non-zero when one is wrong.
+
+```bash
+npm run dev -- --port 5195            # in another terminal
+node scripts/capture-lane05.mjs --url http://localhost:5195 --out ../_captures
+```
+
+### Groups, components, tags and scenes (lane 5)
+
+| What | Where |
+|---|---|
+| The tree, definitions, propagation, tidying, the structure validator | `crates/kernel/src/nodes.rs` (design: `docs/adr/0005-groups-components.md`) |
+| The ops and their context rules | `crates/kernel/src/model.rs` (`Op::SetContext` ... `Op::ActivateScene`; `editable_object`, `sketch_edit_key`, `draw_on_plane`) |
+| Undo and navigation | `crates/kernel/src/document.rs` (SetContext / LeaveContext are logged, not undo steps) |
+| Persistence | `crates/kernel/src/snapshot.rs` (`nodes`, `definitions`), `docs/format.md` |
+| What a click means in the open context | `src/lib/scope.ts` |
+| Outliner, Tags pane, scene tabs, naming dialog | `src/components/Outliner.tsx`, `TagsPane.tsx`, `SceneTabs.tsx`, `NameDialog.tsx`; wiring in `src/App.tsx` |
+
+```bash
+bash scripts/cargo.sh test -p sawhorse-kernel --test structure --test structure_props   # behaviour and invariants
+npx vitest run src/lib/scope.test.ts src/components/structure.test.tsx
+PW_PORT=4195 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test e2e/groups.spec.ts
+```
+
+Every instance's solids must equal its definition's under its placement: the model validator checks it on every commit, so a propagation bug shows up as a kernel bug (a `Structure(...)` topology violation) in any test or fuzz run, never as a silently different copy.
 
 ### Files, formats and the .skp corpus (lane 6)
 
@@ -159,7 +186,8 @@ cd .. && wasm-pack build crates/wasm-api --target web --out-dir ../../src/wasm/p
 | Global self-intersection (edges through faces, chords, vertex/edge contact, coplanar overlap) and positive volume | `kernel/src/intersect.rs`, `Object::validate` | every commit |
 | Property invariants | `crates/kernel/tests/invariants.rs` (extrude, push/pull inverse), `sketch_props.rs` (insertion order independence, simple region boundaries, split-then-erase identity), `face_props.rs` (split/imprint then merge identity, transactional refusals), `push.rs` (every push/pull path, volume/area/Euler) | `cargo test` |
 | Boolean differential | `crates/kernel/tests/booleans/cases.json` (26 cases) via `tests/booleans.rs` (hand-computed volume, area, shells, genus, faces) and `scripts/boolean-diff.mjs` (same cases, WASM kernel vs npm `manifold-3d` on identical operand meshes) | `cargo test`, `npm run boolean:diff` (CI) |
-| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, and since lane 4 transforms, copies, arrays, partial moves, offsets and Follow Me; undo/redo interleaved); every solid must be one piece; every op checked for validity, typed refusals, unchanged state on refusal, undo/redo round trip, log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
+| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, since lane 4 transforms, copies, arrays, partial moves, offsets and Follow Me, and since lane 5 make group / component / unique, explode, delete nodes, open and close (the context), node moves, copies and arrays, hide, lock, tag create / rename / colour / delete / assign, scenes add / update / delete / activate, renames; undo/redo interleaved; a third of the sequences start with a component, two copies and one copy open, and while a context is open most intents pick what it holds); every solid must be one piece; every op checked for validity (the tree and every instance included), typed refusals, unchanged state on refusal, undo/redo round trip (navigation excepted: it is not an undo step), log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
+| Groups and components (lane 5) | `crates/kernel/tests/structure.rs` (a bookshelf of components, groups, scoped stickiness, severance making a copy unique, nesting, tags, scenes, hidden / locked, rotated and mirrored instances, the snapshot) and `structure_props.rs` (proptest: an instance edit reaches every instance exactly; Make Unique forks; Make Component then Explode and Make Group then Explode are the identity on hashes) | `cargo test` |
 | Repro replay | `crates/kernel/tests/repro/*.json` via `tests/repro.rs` | `cargo test` |
 | Transforms (lane 4) | `crates/kernel/tests/transforms.rs`: object-level moves, turns, scales and mirrors keep face ids and drawn edges; copies and arrays; moving part of a solid with autofold off and on; severance; proptest "transform then inverse restores the hash"; `transform.rs` unit tests (`Xform` algebra, `divided` steps compose back) | `cargo test` |
 | Offset and Follow Me (lane 4) | `crates/kernel/tests/offset.rs` and `follow_me.rs` (exact areas and volumes: Pappus for mitered sweeps, the moulding round a box top at either end); `offset.rs`, `sweep.rs`, `snap.rs` and `sever.rs` unit tests | `cargo test` |
@@ -189,6 +217,7 @@ Run that from PowerShell or cmd. From Git Bash, put the loop in a script file an
 
 | Date | Run | Result |
 |---|---|---|
+| 2026-10-11 (lane 5) | `scripts/fuzz-shards.sh 6250 20261100 1`, eight shards of 6,250 (seeds 20261101..20261108), debug build, WSL Ubuntu 24.04, parallel; the fuzzer now also drives every lane-5 op (groups, components, the editing context, node moves / copies / arrays, hide, lock, tags, scenes, renames), a third of the sequences start inside one copy of an arrayed component, and the validator checks every instance against its definition after every op | **50,000 sequences clean** (about 47 s per shard): 688,017 ops accepted, 694,357 refused (typed), 79,952 solids at the end. Accepted lane-5 ops: make_component 26,211; set_context 29,912; make_group 7,045; leave_context 2,791; explode 1,643; make_unique 1,307; delete_node 798; set_hidden 2,453; set_locked 2,502; tag_items 2,473; create_tag 2,775; rename_tag 572; set_tag_color 674; delete_tag 707; add_scene 1,801; update_scene 36; activate_scene 41; delete_scene 34; rename 2,424 (with array 17,207, copy 9,111 and transform 12,254 now including node moves). Five finds fixed on the way, kept in `tests/repro/`: emptying the open group inside one copy of a component (by deleting or collapsing its only solid) let tidying remove its empty counterparts in the other copies, which removed it from the definition and so from under the open context (`2026-10-11-empty-open-group-in-a-component`, `-collapse-empties-open-group-in-a-component`, `-collapse-in-open-group-of-a-copy`; tidying now keeps the counterparts of anything on the context path); and two pre-existing face-edit bugs the new op mix reached: an imprint on a sweep 5 micrometres thick, and one near a face folded by a partial move, put a corner within the merge distance of another face and reached the validator as a kernel bug (`-imprint-on-a-five-micron-sliver`, `-imprint-near-a-folded-face`; face edits now refuse that, typed, `FaceEditError::TooClose`). Boolean-path refusals: not a valid solid 951, degenerate 44. |
 | 2026-10-11 (integration) | `scripts/fuzz-shards.sh 6250 20261100 1` after merging lanes 4, 6 and 8 and the imprint fix, and CI's fixed seed `FUZZ_CASES=10000 FUZZ_SEED=20261011` | **50,000 sequences clean** in 89 s wall (seeds 20261101..20261108; about 86,000 to 88,000 ops accepted and 78,000 to 80,000 refused per shard). Boolean-path refusals: not a valid solid 1,563, degenerate 83. The CI seed: 10,000 sequences clean, 138,694 ops accepted. The find that prompted it, from a random-seed CI run, is `tests/repro/imprint-near-tolerance-non-positive-volume.json` (earcut mis-bridged a hole on a notched face; fixed with the ear-clipping fallback). |
 | 2026-10-11 (lane 4) | `scripts/fuzz-shards.sh 6250 20261100`, eight shards of 6,250 (seeds 20261101..20261108), debug build, WSL Ubuntu 24.04, parallel; the fuzzer now also drives transforms, copies, arrays, moving part of a solid (autofold on and off), offsets (faces, regions, edge chains) and Follow Me (open, L and closed paths), and checks that every solid is one piece (severance) | **50,000 sequences clean** in 91 s wall: 695,256 ops accepted, 630,713 refused (typed), 52,297 solids at the end. Accepted lane-4 ops: transform 15,506; copy 10,291; array 4,163; transform_geometry 4,878; offset 8,952; follow_me 5,726 (push_pull 43,172, push_pull_new_face 13,975). Six finds fixed on the way, kept in `tests/repro/`: an inward offset whose grown hole cut the shrunk outline left a spike where the closing arc was mitered (`2026-10-11-offset-closing-arc-miter-spike-1..5`), and an offset passing exactly through a vertex tripped a `cavalier_contours` debug assertion (`2026-10-11-offset-through-a-vertex-exactly`; tests now run that crate without debug assertions, as release and the browser do). **Boolean refusal rate, same seeds, plane snapping off then on**: "not a valid solid" 1,677 then 1,563 (-6.8%); with the "degenerate engine output" refusals, 1,759 then 1,646 (-6.4%); per accepted push/pull or sweep 2.80% then 2.62% (push/pull alone 2.55% then 2.38%). Higher than lane 3's 0.5% because transformed (turned, scaled) solids put many more faces on tilted planes; the rest is mostly zero-thickness fins where a pushed face's swept side wall lies, up to rounding, in the plane of a tilted outer wall (see `docs/adr/0001-kernel.md`). |
 | 2026-10-11 (lane 3) | eight shards of `FUZZ_CASES=6250`, `FUZZ_SEED=20261012..20261019`, debug build, WSL Ubuntu 24.04, parallel | **50,000 sequences clean** in 64 s wall: 720,677 ops accepted, 604,336 refused (typed), 32,268 solids at the end. The fuzzer now also drives lane 3's ops: draw (29,858 accepted), push_pull_new_face (14,938), add_guide / erase_guide / delete_guides, add_dimension / erase_dimension, erase_edge (2,022), erase_face (2,439), erase_region (9,247), batch (4,247). Boolean-path refusals (`not a valid solid`, near-coincident geometry on tilted planes): 291 of 61,102 accepted push/pulls, about 0.5%, unchanged from lane 2. |

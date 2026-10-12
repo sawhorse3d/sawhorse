@@ -284,6 +284,8 @@ pub struct GraphLeaf {
     pub hidden: bool,
     pub locked: bool,
     pub visible: bool,
+    /// Part of a component definition (inside an instance).
+    pub in_component: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -618,6 +620,7 @@ impl Model {
             hidden: m.hidden,
             locked: m.locked,
             visible,
+            in_component: m.slot.is_some(),
         };
         Graph {
             context: self.context(),
@@ -1805,16 +1808,33 @@ impl Model {
         Ok(())
     }
 
-    /// Remove empty groups and instances (not the open context or its ancestors), purge
-    /// unused definitions, forget scene contexts that are gone. Propagates what it changed.
+    /// The definition and slot a node inside an instance stands for.
+    fn member_key(&self, n: NodeId) -> Option<(DefId, u32)> {
+        let slot = self.nodes[n].member.slot?;
+        let i = self.instance_of(self.nodes[n].member.parent?)?;
+        match self.nodes[i].kind {
+            NodeKind::Instance(d) => Some((d, slot)),
+            NodeKind::Group => None,
+        }
+    }
+
+    /// Remove empty groups and instances (not the open context or its ancestors, nor their
+    /// counterparts in other copies of a component), purge unused definitions, forget scene
+    /// contexts that are gone. Propagates what it changed.
     pub(crate) fn tidy(&mut self) -> Result<(), KernelError> {
         loop {
             let kids = self.kids();
             let path = self.path_of(self.context);
+            // An open group inside a component is the same member in every copy: its empty
+            // counterparts elsewhere stay too (removing one would remove it from the
+            // definition, and so the open one).
+            let open: BTreeSet<(DefId, u32)> =
+                path.iter().filter_map(|&k| self.member_key(k)).collect();
             let empty: Vec<NodeId> = self
                 .nodes
                 .keys()
                 .filter(|k| !path.contains(k))
+                .filter(|&k| self.member_key(k).is_none_or(|m| !open.contains(&m)))
                 .filter(|k| kids.of(Some(*k)).is_empty())
                 .filter(|k| {
                     kids.sketches

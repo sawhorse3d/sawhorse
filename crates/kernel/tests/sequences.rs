@@ -4,7 +4,11 @@
 //! erasing (object edges and faces, sketch regions), batches, delete, groups, tags, and
 //! (lane 4) transforms, copies, arrays, moving part of a solid (autofold on and off),
 //! offsets of faces / regions / edge chains, and Follow Me (open and closed paths, adding
-//! and cutting), with undo / redo interleaved anywhere.
+//! and cutting), and (lane 5) groups and components: make group / component / unique,
+//! explode, delete, open and close (the editing context), node moves / copies / arrays,
+//! hide, lock, tags (create, rename, colour, delete, assign) and scenes (add, update,
+//! delete, activate), with undo / redo interleaved anywhere. While a group or component is
+//! open, most intents pick what is in it, so edits propagate through definitions.
 //!
 //! `FUZZ_PLANE_SNAP=0` turns the boolean plane-snapping pass off for the run, so the same
 //! seeds measure the "not a valid solid" refusal rate with and without it.
@@ -27,7 +31,8 @@ use glam::{DVec2, DVec3};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use sawhorse_kernel::Document;
-use sawhorse_kernel::model::Op;
+use sawhorse_kernel::model::{Op, SceneDef};
+use sawhorse_kernel::nodes::Item;
 use sawhorse_kernel::testing::{check_sequence, write_repro};
 use sawhorse_kernel::transform::Xform;
 
@@ -159,6 +164,29 @@ enum Fuzz {
         a: f64,
         b: f64,
     },
+    /// Lane 5. Items are picked among what the open context holds (solids and nodes).
+    MakeGroup(Vec<u8>),
+    MakeComponent(Vec<u8>),
+    MakeUnique(u8),
+    Explode(u8),
+    DeleteNode(u8),
+    /// Open a node (any node in the model), or the model (`None`).
+    Enter(Option<u8>),
+    Leave,
+    NodeTransform(u8, XformPick),
+    NodeCopy(u8, XformPick),
+    NodeArray(u8, XformPick, u8),
+    Hide(u8, bool),
+    Lock(u8, bool),
+    TagItems(u8, Option<u8>),
+    CreateTag(u8, Option<[u8; 3]>),
+    RenameTag(u8, u8),
+    DeleteTag(u8),
+    TagColor(u8, Option<[u8; 3]>),
+    /// Scenes: 0 add, 1 update, 2 delete, 3 activate; name index; hidden-tag mask; open
+    /// node (or the model).
+    Scene(u8, u8, u8, Option<u8>),
+    Rename(u8, Option<u8>),
 }
 
 /// A transform, as an intent.
@@ -234,6 +262,35 @@ fn lane4_op() -> impl Strategy<Value = Fuzz> {
     ]
 }
 
+/// Lane-5 intents.
+fn lane5_op() -> impl Strategy<Value = Fuzz> {
+    let picks = || prop::collection::vec(any::<u8>(), 1..4);
+    let color = || {
+        prop::option::of((any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(r, g, b)| [r, g, b]))
+    };
+    prop_oneof![
+        3 => picks().prop_map(Fuzz::MakeGroup),
+        4 => picks().prop_map(Fuzz::MakeComponent),
+        2 => any::<u8>().prop_map(Fuzz::MakeUnique),
+        2 => any::<u8>().prop_map(Fuzz::Explode),
+        1 => any::<u8>().prop_map(Fuzz::DeleteNode),
+        5 => prop::option::of(any::<u8>()).prop_map(Fuzz::Enter),
+        3 => Just(Fuzz::Leave),
+        2 => (any::<u8>(), xform_pick()).prop_map(|(n, x)| Fuzz::NodeTransform(n, x)),
+        3 => (any::<u8>(), xform_pick()).prop_map(|(n, x)| Fuzz::NodeCopy(n, x)),
+        2 => (any::<u8>(), xform_pick(), 0u8..4).prop_map(|(n, x, c)| Fuzz::NodeArray(n, x, c)),
+        1 => (any::<u8>(), any::<bool>()).prop_map(|(i, b)| Fuzz::Hide(i, b)),
+        1 => (any::<u8>(), any::<bool>()).prop_map(|(i, b)| Fuzz::Lock(i, b)),
+        1 => (any::<u8>(), prop::option::of(0u8..4)).prop_map(|(i, t)| Fuzz::TagItems(i, t)),
+        1 => (0u8..5, color()).prop_map(|(t, c)| Fuzz::CreateTag(t, c)),
+        1 => (0u8..5, 0u8..5).prop_map(|(a, b)| Fuzz::RenameTag(a, b)),
+        1 => (0u8..5).prop_map(Fuzz::DeleteTag),
+        1 => (0u8..5, color()).prop_map(|(t, c)| Fuzz::TagColor(t, c)),
+        2 => (0u8..4, 0u8..3, any::<u8>(), prop::option::of(any::<u8>())).prop_map(|(k, n, h, c)| Fuzz::Scene(k, n, h, c)),
+        1 => (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(i, n)| Fuzz::Rename(i, n)),
+    ]
+}
+
 fn fuzz_op() -> impl Strategy<Value = Fuzz> {
     let pt = || (grid(), grid()).prop_map(|(x, y)| [x, y]);
     prop_oneof![
@@ -278,6 +335,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => any::<u8>().prop_map(Fuzz::EraseGuide),
         1 => any::<u8>().prop_map(Fuzz::EraseDimension),
         9 => lane4_op(),
+        8 => lane5_op(),
     ]
 }
 
@@ -285,15 +343,62 @@ fn pick<T: Copy>(items: &[T], k: u8) -> Option<T> {
     (!items.is_empty()).then(|| items[k as usize % items.len()])
 }
 
+fn pick_ref<T>(items: &[T], k: u8) -> Option<&T> {
+    (!items.is_empty()).then(|| &items[k as usize % items.len()])
+}
+
 const TAGS: [&str; 3] = ["Legs", "Top", "Jig"];
+/// Tags the lane-5 intents create, rename, colour and delete (the first two shared with
+/// the older intents, so renames and deletes hit tags in use).
+const NODE_TAGS: [&str; 5] = ["Legs", "Top", "Carcass", "Shelves", "Untagged"];
 
 /// Turn an intent into a concrete op against the current document.
 fn resolve(f: &Fuzz, d: &Document) -> Op {
     let m = d.model();
     let sketches = m.sketch_ids();
     let objects = m.object_ids();
-    let sketch = |k: u8| pick(&sketches, k).unwrap_or(1);
-    let object = |k: u8| pick(&objects, k).unwrap_or(1);
+    // Mostly what the open context offers (so edits inside components happen), sometimes
+    // anything (so refusals of what is outside it are exercised too).
+    let (ctx_sketches, ctx_objects) = (m.context_sketches(), m.context_objects());
+    let sketch = |k: u8| {
+        if k % 8 != 0
+            && let Some(s) = pick(&ctx_sketches, k)
+        {
+            return s;
+        }
+        pick(&sketches, k).unwrap_or(1)
+    };
+    let object = |k: u8| {
+        if k % 8 != 0
+            && let Some(o) = pick(&ctx_objects, k)
+        {
+            return o;
+        }
+        pick(&objects, k).unwrap_or(1)
+    };
+    // Items of the open context: its solids, then its groups and instances.
+    let ctx_items: Vec<Item> = ctx_objects
+        .iter()
+        .map(|&o| Item::Object(o))
+        .chain(m.context_nodes().into_iter().map(Item::Node))
+        .collect();
+    let item = |k: u8| pick(&ctx_items, k).unwrap_or(Item::Object(1));
+    // A tag the model has (mostly), else one of the fuzzer's names.
+    let tag_names: Vec<String> = m.tags().keys().cloned().collect();
+    let existing_tag = |k: u8| match pick_ref(&tag_names, k) {
+        Some(t) if k % 4 != 3 => t.clone(),
+        _ => NODE_TAGS[k as usize % NODE_TAGS.len()].to_string(),
+    };
+    let all_nodes: Vec<u64> = m.nodes().iter().map(|(id, _)| *id).collect();
+    let ctx_nodes = m.context_nodes();
+    let node = |k: u8| {
+        if k % 8 != 0
+            && let Some(n) = pick(&ctx_nodes, k)
+        {
+            return n;
+        }
+        pick(&all_nodes, k).unwrap_or(1)
+    };
     // Outer ring (world) and plane of a face, if it exists.
     // Faces are addressed by persistent id: pick the k-th face, send its id.
     let face = |o: u64, k: u8| -> Option<(u64, Vec<DVec3>, sawhorse_kernel::plane::Plane)> {
@@ -579,6 +684,98 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         Fuzz::TagVisible(t, v) => Op::SetTagVisible {
             tag: TAGS[*t as usize].to_string(),
             visible: *v,
+        },
+        Fuzz::MakeGroup(ks) => Op::MakeGroup {
+            items: ks.iter().map(|&k| item(k)).collect(),
+            name: (ks[0] % 2 == 0).then(|| "Fuzz group".into()),
+        },
+        Fuzz::MakeComponent(ks) => Op::MakeComponent {
+            items: ks.iter().map(|&k| item(k)).collect(),
+            name: format!("Part {}", ks[0] % 3),
+        },
+        Fuzz::MakeUnique(k) => Op::MakeUnique { node: node(*k) },
+        Fuzz::Explode(k) => Op::Explode { node: node(*k) },
+        Fuzz::DeleteNode(k) => Op::DeleteNode { node: node(*k) },
+        Fuzz::Enter(k) => Op::SetContext {
+            node: k.map(|k| pick(&all_nodes, k).unwrap_or(1)),
+        },
+        Fuzz::Leave => Op::LeaveContext,
+        Fuzz::NodeTransform(k, x) => Op::Transform {
+            objects: vec![],
+            nodes: vec![node(*k)],
+            xform: xform_of(x),
+        },
+        Fuzz::NodeCopy(k, x) => Op::Copy {
+            objects: vec![],
+            nodes: vec![node(*k)],
+            xform: xform_of(x),
+        },
+        Fuzz::NodeArray(k, x, c) => Op::Array {
+            objects: vec![],
+            nodes: vec![node(*k)],
+            xform: xform_of(x),
+            count: u32::from(*c),
+        },
+        Fuzz::Hide(k, b) => Op::SetHidden {
+            items: vec![item(*k)],
+            hidden: *b,
+        },
+        Fuzz::Lock(k, b) => Op::SetLocked {
+            items: vec![item(*k)],
+            locked: *b,
+        },
+        Fuzz::TagItems(k, t) => Op::TagItems {
+            items: vec![item(*k)],
+            tag: t.map(|t| NODE_TAGS[t as usize].to_string()),
+        },
+        Fuzz::CreateTag(t, c) => Op::CreateTag {
+            name: NODE_TAGS[*t as usize].into(),
+            color: *c,
+        },
+        Fuzz::RenameTag(a, b) => Op::RenameTag {
+            tag: existing_tag(*a),
+            name: NODE_TAGS[*b as usize].into(),
+        },
+        Fuzz::DeleteTag(t) => Op::DeleteTag {
+            tag: existing_tag(*t),
+        },
+        Fuzz::TagColor(t, c) => Op::SetTagColor {
+            tag: existing_tag(*t),
+            color: *c,
+        },
+        Fuzz::Scene(kind, n, hidden, ctx) => {
+            // Updates, deletes and activations mostly name a scene that exists.
+            let names: Vec<String> = m.scenes().iter().map(|s| s.name.clone()).collect();
+            let name = match pick_ref(&names, *n) {
+                Some(s) if *kind > 0 && n % 4 != 3 => s.clone(),
+                _ => format!("Scene {n}"),
+            };
+            let tags: Vec<String> = m.tags().keys().cloned().collect();
+            let scene = SceneDef {
+                name: name.clone(),
+                eye: [3.0, -3.0, 2.0 + f64::from(*n)],
+                target: [0.0, 0.0, 0.0],
+                up: [0.0, 0.0, 1.0],
+                fov: 35.0,
+                parallel: n % 2 == 0,
+                hidden_tags: tags
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| hidden & (1 << (i % 8)) != 0)
+                    .map(|(_, t)| t.clone())
+                    .collect(),
+                context: ctx.and_then(|k| pick(&all_nodes, k)),
+            };
+            match kind {
+                0 => Op::AddScene { scene },
+                1 => Op::UpdateScene { name, scene },
+                2 => Op::DeleteScene { name },
+                _ => Op::ActivateScene { name },
+            }
+        }
+        Fuzz::Rename(k, n) => Op::Rename {
+            item: item(*k),
+            name: n.map(|n| format!("Name {n}")),
         },
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,
@@ -996,6 +1193,14 @@ fn run(name: &str, cases: u32, max_len: usize, seed: Option<u64>) {
         3 => (grid(), grid(), size(), size(), size(), any::<bool>()).prop_map(|(x, y, w, h, d, down)| vec![
             Fuzz::Rect(0, x, y, w, h),
             Fuzz::Extrude(0, 0, if down { -d } else { d }),
+        ]),
+        // A component with copies, one of them open: edits inside propagate.
+        2 => (grid(), grid(), size(), size(), size(), xform_pick(), any::<u8>()).prop_map(|(x, y, w, h, d, step, which)| vec![
+            Fuzz::Rect(0, x, y, w, h),
+            Fuzz::Extrude(0, 0, d),
+            Fuzz::MakeComponent(vec![0]),
+            Fuzz::NodeArray(0, step, 2),
+            Fuzz::Enter(Some(which)),
         ]),
         1 => Just(Vec::new()),
     ];

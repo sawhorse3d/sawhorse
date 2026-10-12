@@ -424,6 +424,7 @@ impl Object {
         let ids = [p.faces[a].id, p.faces[b].id].map(|i| i.unwrap_or(0));
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("split_face");
+        self.refuse_self_contact()?;
         Ok(ids)
     }
 
@@ -440,6 +441,7 @@ impl Object {
         let id = p.faces[sub].id.unwrap_or(0);
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("imprint");
+        self.refuse_self_contact()?;
         Ok(id)
     }
 
@@ -476,6 +478,7 @@ impl Object {
         let inside = inside.and_then(|i| p.faces.get(i).and_then(|f| f.id));
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("draw");
+        self.refuse_self_contact()?;
         Ok((ids, inside))
     }
 
@@ -505,7 +508,18 @@ impl Object {
         let id = p.faces.get(fi).and_then(|f| f.id).unwrap_or(0);
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate(what);
+        self.refuse_self_contact()?;
         Ok(id)
+    }
+
+    /// A face edit that brings a new corner or edge within the merge distance of another
+    /// face (a loop drawn on a sliver a few micrometres thick) would leave the solid
+    /// touching itself: refused, typed, instead of reaching the validator as a bug.
+    fn refuse_self_contact(&self) -> Result<(), FaceEditError> {
+        match crate::intersect::self_intersection(&self.brep) {
+            Some(_) => Err(FaceEditError::TooClose),
+            None => Ok(()),
+        }
     }
 
     /// Indexed triangle solid (shared vertices in slotmap order, face ordinal per triangle),

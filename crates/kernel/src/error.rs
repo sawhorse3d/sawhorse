@@ -105,6 +105,10 @@ pub enum FaceEditError {
     Dangling,
     #[error("could not rebuild the face: {0}")]
     Build(#[from] BuildError),
+    /// The new lines would come within 0.01 mm of another face of the solid (on a sliver
+    /// thinner than that, say), so the solid would touch itself.
+    #[error("that would put a corner or line within 0.01 mm of another face of the solid")]
+    TooClose,
 }
 
 /// Errors from moving, rotating, scaling, copying and arraying (lane 4). Refusals of bad

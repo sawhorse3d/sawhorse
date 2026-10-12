@@ -1,0 +1,120 @@
+{
+  "name": "2026-10-11-imprint-on-a-five-micron-sliver",
+  "error": "(fixed) op 5 Imprint { object: 2, face: 3, points: [[-0.03749999999999999, 0.1856334667513208, 0.25000075000000005], [-0.04999999999999999, 0.1856334667513208, 0.25000100000000003], [-0.04999999999999999, 0.21063346675132083, 0.25000100000000003], [-0.03749999999999999, 0.21063346675132083, 0.25000075000000005]] }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); SelfIntersectingSolid(VertexOnFace { vertex: 8, face: 1 }) An imprint on a sweep 5 micrometres thick put its corners within the merge distance of the opposite face: the solid touched itself and reached the validator. Face edits now refuse that, typed (FaceEditError::TooClose).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.25
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ],
+        [
+          2.9140686017899218,
+          0.0,
+          0.25
+        ],
+        [
+          0.0,
+          0.25,
+          0.25
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "follow_me",
+      "profile": {
+        "of": "region",
+        "sketch": 2,
+        "region": 1
+      },
+      "path": [
+        [
+          0.0,
+          0.0,
+          0.25
+        ],
+        [
+          0.0,
+          0.0,
+          0.250005
+        ],
+        [
+          -0.25,
+          0.0,
+          0.250005
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "imprint",
+      "object": 2,
+      "face": 3,
+      "points": [
+        [
+          -0.03749999999999999,
+          0.1856334667513208,
+          0.25000075000000005
+        ],
+        [
+          -0.04999999999999999,
+          0.1856334667513208,
+          0.25000100000000003
+        ],
+        [
+          -0.04999999999999999,
+          0.21063346675132083,
+          0.25000100000000003
+        ],
+        [
+          -0.03749999999999999,
+          0.21063346675132083,
+          0.25000075000000005
+        ]
+      ]
+    }
+  ]
+}
