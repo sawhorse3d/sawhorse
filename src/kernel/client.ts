@@ -213,6 +213,27 @@ export class KernelClient {
     return this.edit(await this.call({ kind: "namedBatch", name, ops }));
   }
 
+  /** Sheet `sheet` laid out on paper (lane 12, read-only): what the canvas and every sheet
+   * export draw. */
+  async sheetRender(sheet: number): Promise<import("../sheets/render").SheetRender> {
+    const r = (await this.call({ kind: "sheetRender", sheet })).sheetRender;
+    if (!r) throw new Error("kernel returned no sheet");
+    return r;
+  }
+
+  /** Where a cursor at paper (x, y) snaps on viewport `item` of sheet `sheet` (lane 12). */
+  async sheetSnap(sheet: number, item: number, x: number, y: number, radius: number): Promise<import("../sheets/render").SheetSnap | null> {
+    return (await this.call({ kind: "sheetSnap", sheet, item, x, y, radius })).sheetSnap ?? null;
+  }
+
+  /** How viewport `item` (not yet placed) would draw: the factor that fits its drawing in its
+   * rectangle and the drawing's size (lane 12). */
+  async viewportFit(item: import("./sheetTypes").ItemKind): Promise<import("../sheets/render").ViewportFit> {
+    const r = (await this.call({ kind: "viewportFit", item })).viewportFit;
+    if (!r) throw new Error("kernel returned no fit");
+    return r;
+  }
+
   /** A fresh document (ground sketch only), as an edit result. */
   async newDocument(): Promise<EditResult> {
     const scene = await this.init();

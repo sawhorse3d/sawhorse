@@ -185,3 +185,175 @@ fn the_cut_list_as_a_table() {
         "0.75 x 11.25 x 71.25"
     );
 }
+
+/// Every golden with sheets: each sheet's render hash, written under `UPDATE_GOLDEN=1`
+/// (after `--test golden` in the kernel) and checked otherwise; `scripts/golden-wasm.mjs`
+/// checks the WASM build draws the same.
+#[test]
+fn sheet_goldens() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../kernel/tests/golden");
+    let update = std::env::var("UPDATE_GOLDEN").is_ok_and(|v| v == "1");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    let mut seen = 0;
+    for f in files {
+        let mut g: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        let ops: Vec<Op> = serde_json::from_value(g["ops"].clone()).unwrap();
+        let m = Document::replay(&ops).unwrap().model().clone();
+        let sheets = m.sheets();
+        if sheets.is_empty() {
+            assert!(g.get("renders").is_none(), "{}", f.display());
+            continue;
+        }
+        seen += 1;
+        let n = sheets.len();
+        let hashes: Vec<String> = sheets
+            .iter()
+            .enumerate()
+            .map(|(k, (id, _))| {
+                sawhorse_export::sheet::render(
+                    &m,
+                    *id,
+                    &sawhorse_export::sheet::RenderOptions {
+                        number: k + 1,
+                        count: n,
+                    },
+                )
+                .unwrap()
+                .hash
+            })
+            .collect();
+        if update {
+            // Only the "renders" entry changes: the rest of the file keeps the order the
+            // kernel's golden test writes it in.
+            let text = std::fs::read_to_string(&f).unwrap();
+            let entry = format!(
+                "\"renders\": {}",
+                serde_json::to_string_pretty(&hashes)
+                    .unwrap()
+                    .replace('\n', "\n  ")
+            );
+            let text = match text.find("\"renders\":") {
+                Some(at) => {
+                    let end = at + text[at..].find(']').unwrap() + 1;
+                    format!("{}{}{}", &text[..at], entry, &text[end..])
+                }
+                None => {
+                    let close = text.rfind('}').unwrap();
+                    format!("{},\n  {}\n}}\n", text[..close].trim_end(), entry)
+                }
+            };
+            std::fs::write(&f, text).unwrap();
+            g = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+            assert_eq!(g["renders"], serde_json::json!(hashes));
+        } else {
+            assert_eq!(
+                g["renders"],
+                serde_json::json!(hashes),
+                "{}: sheet renders drifted (UPDATE_GOLDEN=1)",
+                f.display()
+            );
+        }
+    }
+    assert!(seen >= 1);
+}
+
+#[test]
+fn the_sheet_golden_lays_out() {
+    use sawhorse_export::sheet::{Prim, RenderOptions, render};
+    let m = golden("sheet");
+    let (id, _) = m.sheets()[0];
+    let r = render(
+        &m,
+        id,
+        &RenderOptions {
+            number: 1,
+            count: 1,
+        },
+    )
+    .unwrap();
+    assert!((r.size[0] - 11.0 * IN).abs() < 1e-12 && (r.size[1] - 8.5 * IN).abs() < 1e-12);
+    let texts: Vec<&str> = r
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    for want in [
+        "36\"",
+        "72\"",
+        "17 1/4\"",
+        "FRONT ELEVATION 1:12",
+        "PLAN 1:12",
+        "SECTION A 1:4",
+        "Back panel 1/4 ply in a rabbet",
+        "CUT LIST",
+        "Side",
+        "Bookshelf",
+        "1 of 1",
+        "As noted",
+        "2026-10-12",
+        "Shop drawings",
+    ] {
+        assert!(texts.contains(&want), "missing {want:?} in {texts:?}");
+    }
+    // Every dimension reports its text; the viewports are at their scales.
+    let dims: Vec<&str> = r
+        .items
+        .iter()
+        .filter(|i| i.kind == "dimension")
+        .filter_map(|i| i.text.as_deref())
+        .collect();
+    assert_eq!(dims, ["36\"", "72\"", "17 1/4\""]);
+    let f: Vec<f64> = r.viewports.iter().map(|v| v.factor).collect();
+    assert!(
+        (f[0] - 1.0 / 12.0).abs() < 1e-15 && (f[2] - 0.25).abs() < 1e-15,
+        "{f:?}"
+    );
+    // The front elevation: a 6.8 in frame (72 in tall is 6 in on paper) and its caption.
+    let front = &r.items[0];
+    assert!(
+        front.bounds[3] > 6.8 * IN && front.bounds[3] < 7.2 * IN,
+        "{:?}",
+        front.bounds
+    );
+    // Nothing overlaps: the items' boxes are apart (the label's leader reaches into the
+    // elevation, which is what it is for).
+    let boxes: Vec<_> = r
+        .items
+        .iter()
+        .filter(|i| i.kind == "viewport" || i.kind == "table")
+        .map(|i| i.bounds)
+        .collect();
+    for (i, a) in boxes.iter().enumerate() {
+        for b in &boxes[i + 1..] {
+            let apart = a[0] + a[2] <= b[0]
+                || b[0] + b[2] <= a[0]
+                || a[1] + a[3] <= b[1]
+                || b[1] + b[3] <= a[1];
+            assert!(apart, "{a:?} overlaps {b:?}");
+        }
+    }
+    // The section is filled where it is cut.
+    assert!(r.prims.iter().any(|p| matches!(p, Prim::Fill { color, .. } if *color == sawhorse_export::section::DEFAULT_FILL)));
+    // Deterministic.
+    assert_eq!(
+        render(
+            &m,
+            id,
+            &RenderOptions {
+                number: 1,
+                count: 1
+            }
+        )
+        .unwrap(),
+        r
+    );
+}

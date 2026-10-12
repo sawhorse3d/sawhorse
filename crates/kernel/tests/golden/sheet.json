@@ -489,6 +489,54 @@
       }
     },
     {
+      "op": "add_scene",
+      "scene": {
+        "name": "Front",
+        "eye": [
+          0.4572,
+          -3.0,
+          0.9144
+        ],
+        "target": [
+          0.4572,
+          0.0,
+          0.9144
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": true,
+        "sections": {}
+      }
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "Plan",
+        "eye": [
+          0.4572,
+          0.142875,
+          3.0
+        ],
+        "target": [
+          0.4572,
+          0.142875,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov": 35.0,
+        "parallel": true,
+        "sections": {}
+      }
+    },
+    {
       "op": "add_sheet",
       "setup": {
         "name": "Bookshelf",
@@ -525,11 +573,11 @@
           0.015239999999999998,
           0.015239999999999998,
           0.09144,
-          0.16763999999999998
+          0.17271999999999998
         ],
         "source": {
-          "from": "standard",
-          "view": "front"
+          "from": "scene",
+          "name": "Front"
         },
         "scale": {
           "kind": "ratio",
@@ -551,8 +599,8 @@
           0.035559999999999994
         ],
         "source": {
-          "from": "standard",
-          "view": "top"
+          "from": "scene",
+          "name": "Plan"
         },
         "scale": {
           "kind": "ratio",
@@ -609,7 +657,7 @@
             0.0
           ]
         ],
-        "offset": 0.008889999999999999,
+        "offset": -0.007619999999999999,
         "style": "arrows"
       }
     },
@@ -688,9 +736,9 @@
         "kind": "table",
         "rect": [
           0.1143,
-          0.05841999999999999,
+          0.10922,
           0.14986,
-          0.05841999999999999
+          0.05334
         ],
         "columns": [
           "part",
@@ -712,7 +760,7 @@
       "op": "redo"
     }
   ],
-  "hash": "ab2f2a4b8a7c949d",
+  "hash": "5d91d273e0d0e66e",
   "stats": {
     "objects": 9,
     "faces": 54,
@@ -726,5 +774,8 @@
   "sections": [
     "ce03808fc8484b3b",
     "05ffdbf92ab8bcff"
+  ],
+  "renders": [
+    "7cd3825b5e35b490"
   ]
 }

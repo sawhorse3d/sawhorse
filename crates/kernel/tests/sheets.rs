@@ -493,8 +493,8 @@ fn sheets_survive_the_snapshot_and_hash_only_when_present() {
 }
 
 /// The golden `sheet.json`: the section golden's bookshelf (cut by "Section A") with a
-/// "Section" scene looking at the cut from the left, and a Letter landscape sheet: the front
-/// elevation and the plan at 1:12, the section at 1:4 cropped to the bottom shelf, the
+/// "Section" scene looking at the cut from the left, "Front" and "Plan" scenes with the cut
+/// off, and a Letter landscape sheet: the front elevation and the plan at 1:12, the section at 1:4 cropped to the bottom shelf, the
 /// overall width, height and the shelf spacing dimensioned, a label with a leader, the cut
 /// list and the title block. (At 1:8 a 72 in bookshelf is 9 in tall: more than Letter's
 /// 8 1/2 in, so the elevations are 1:12.)
@@ -525,6 +525,41 @@ fn the_sheet_golden_is_this_drawing() {
             },
         },
     );
+    // The elevations from scenes that switch the cut off.
+    let uncut = sawhorse_kernel::section::SceneSections::default();
+    for (name, eye, target, up) in [
+        (
+            "Front",
+            [0.4572, -3.0, 0.9144],
+            [0.4572, 0.0, 0.9144],
+            [0.0, 0.0, 1.0],
+        ),
+        (
+            "Plan",
+            [0.4572, 0.142875, 3.0],
+            [0.4572, 0.142875, 0.0],
+            [0.0, 1.0, 0.0],
+        ),
+    ] {
+        ok(
+            &mut d,
+            Op::AddScene {
+                scene: SceneDef {
+                    name: name.into(),
+                    eye,
+                    target,
+                    up,
+                    fov: 35.0,
+                    parallel: true,
+                    hidden_tags: vec![],
+                    context: None,
+                    style: None,
+                    shadows: None,
+                    sections: Some(Box::new(uncut.clone())),
+                },
+            },
+        );
+    }
     let mut setup = SheetSetup::named("Bookshelf");
     setup.title = TitleBlock {
         show: true,
@@ -551,9 +586,9 @@ fn the_sheet_golden_is_this_drawing() {
         &mut d,
         s,
         ItemKind::Viewport {
-            rect: r(0.6, 0.6, 3.6, 6.6),
-            source: ViewportSource::Standard {
-                view: StdView::Front,
+            rect: r(0.6, 0.6, 3.6, 6.8),
+            source: ViewportSource::Scene {
+                name: "Front".into(),
             },
             scale: twelfth,
             centre: None,
@@ -567,7 +602,9 @@ fn the_sheet_golden_is_this_drawing() {
         s,
         ItemKind::Viewport {
             rect: r(4.5, 0.6, 3.4, 1.4),
-            source: ViewportSource::Standard { view: StdView::Top },
+            source: ViewportSource::Scene {
+                name: "Plan".into(),
+            },
             scale: twelfth,
             centre: None,
             hidden_lines: false,
@@ -605,7 +642,8 @@ fn the_sheet_golden_is_this_drawing() {
     add_item(
         &mut d,
         s,
-        dim(DimKind::Horizontal, [0.0, 0.0, 0.0], [36.0, 0.0, 0.0], 0.35),
+        // Below the elevation (a horizontal dimension's offset is up the page).
+        dim(DimKind::Horizontal, [0.0, 0.0, 0.0], [36.0, 0.0, 0.0], -0.3),
     );
     add_item(
         &mut d,
@@ -639,7 +677,7 @@ fn the_sheet_golden_is_this_drawing() {
         &mut d,
         s,
         ItemKind::Table {
-            rect: r(4.5, 2.3, 5.9, 2.3),
+            rect: r(4.5, 4.3, 5.9, 2.1),
             columns: CutColumn::default_set(),
             decimal: false,
             visible_only: false,

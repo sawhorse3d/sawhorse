@@ -32,6 +32,10 @@ struct Golden {
     /// caps and outlines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sections: Option<Vec<String>>,
+    /// Each sheet's render hash (lane 12): computed and checked by the export crate's
+    /// `sheet_goldens` test and by the WASM cross-check; kept as it is here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    renders: Option<Vec<String>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]

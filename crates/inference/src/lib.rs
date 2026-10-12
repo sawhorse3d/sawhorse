@@ -17,6 +17,7 @@
 //! lines use the mock's axis colours. The UI reads them from the CSS tokens named here.
 
 pub mod bvh;
+pub mod flat;
 pub mod geom;
 pub mod infer;
 pub mod pick;

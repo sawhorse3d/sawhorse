@@ -199,6 +199,16 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "texture":
         res = { id: req.id, ok: true, file: document(mod).texture(req.path) };
         break;
+      // Lane 12: drawing sheets (read-only).
+      case "sheetRender":
+        res = { id: req.id, ok: true, sheetRender: JSON.parse(document(mod).sheet_render(req.sheet)) };
+        break;
+      case "sheetSnap":
+        res = { id: req.id, ok: true, sheetSnap: JSON.parse(document(mod).sheet_snap(req.sheet, req.item, req.x, req.y, req.radius)) };
+        break;
+      case "viewportFit":
+        res = { id: req.id, ok: true, viewportFit: JSON.parse(document(mod).viewport_fit(JSON.stringify(req.item))) };
+        break;
       case "faces":
         res = { id: req.id, ok: true, faces: JSON.parse(document(mod).faces_json(req.object)) };
         break;

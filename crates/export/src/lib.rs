@@ -10,6 +10,7 @@
 //! | SVG | [`svg`] | mm (parallel views and outlines) | hidden-line drawing of a view; outline of a face |
 //! | Section slice (SVG, DXF) | [`section`] | mm, 1:1 | a section plane's caps and outline (lane 12) |
 //! | Line drawings for sheets | [`drawing`] | view-plane metres | exact hidden-line removal, sections honoured (lane 12) |
+//! | Drawing sheets laid out | [`sheet`] | paper metres | viewports, dimensions, labels, tables, images, title block: what every sheet output draws (lane 12) |
 //!
 //! A [`Scope`] says what to export: every visible solid and mesh, or a selection.
 //! Printable formats refuse a scope holding anything that is not a watertight solid: a
@@ -27,6 +28,7 @@ pub mod library;
 pub mod obj;
 pub mod png;
 pub mod section;
+pub mod sheet;
 pub mod stl;
 pub mod svg;
 pub mod table;

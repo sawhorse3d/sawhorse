@@ -741,6 +741,12 @@ export interface WasmDoc {
   section_view(): string;
   /** The drawing sheets in order (lane 12), as JSON. */
   sheets(): string;
+  /** A sheet laid out on paper (lane 12), as JSON. */
+  sheet_render(sheet: number): string;
+  /** Where a cursor snaps on a sheet viewport's drawing (lane 12), as JSON. */
+  sheet_snap(sheet: number, item: number, x: number, y: number, radius: number): string;
+  /** How a viewport item would draw: the factor that fits it, its drawing's size (lane 12). */
+  viewport_fit(item_json: string): string;
   free(): void;
 }
 
@@ -789,7 +795,11 @@ export type RequestBody =
   | { kind: "texture"; path: string }
   /** Lane 11 (plugins): a solid's faces by persistent id; a named batch with placeholders, one undo step. */
   | { kind: "faces"; object: number }
-  | { kind: "namedBatch"; name: string; ops: unknown[] };
+  | { kind: "namedBatch"; name: string; ops: unknown[] }
+  // Lane 12: drawing sheets (read-only).
+  | { kind: "sheetRender"; sheet: number }
+  | { kind: "sheetSnap"; sheet: number; item: number; x: number; y: number; radius: number }
+  | { kind: "viewportFit"; item: import("./sheetTypes").ItemKind };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -850,6 +860,12 @@ export type WorkerResponse =
       uvs?: Float32Array;
       library?: LibraryEntry[];
       ops?: KernelOp[];
+      /** A sheet laid out (lane 12). */
+      sheetRender?: import("../sheets/render").SheetRender;
+      /** A sheet snap (lane 12; null: nothing near). */
+      sheetSnap?: import("../sheets/render").SheetSnap | null;
+      /** A viewport's fit (lane 12). */
+      viewportFit?: import("../sheets/render").ViewportFit;
       faces?: FaceInfo[];
     }
   | { id: number; ok: false; error: string; missing?: boolean };

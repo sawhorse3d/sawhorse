@@ -56,6 +56,8 @@ import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
 import { NameDialog, type NameRequest } from "./components/NameDialog";
 import { SceneTabs } from "./components/SceneTabs";
+import { SheetsWorkspace } from "./sheets/SheetsWorkspace";
+import { ModeSwitch, type WorkMode } from "./sheets/SheetTabs";
 import type { OutlineRow, OutlinerAction } from "./components/Outliner";
 import { TAG_PALETTE, hexToRgb } from "./components/TagsPane";
 import { applySelection } from "./lib/entities";
@@ -145,6 +147,16 @@ function entityOfItem(item: Item): Entity {
 
 function sameItem(a: Item, b: Item): boolean {
   return "node" in a ? "node" in b && a.node === b.node : "object" in b && a.object === b.object;
+}
+
+/** Model or Sheets (lane 12), per viewer. */
+const MODE_KEY = "sawhorse.mode";
+function loadMode(): WorkMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === "sheets" ? "sheets" : "model";
+  } catch {
+    return "model";
+  }
 }
 
 const IMPORT_UNITS_KEY = "sawhorse.importUnits";
@@ -273,6 +285,18 @@ export function App() {
   const [shadowPreview, setShadowPreview] = useState<Shadows | null>(null);
   const [focusMaterials, setFocusMaterials] = useState(0);
   const [engineObj, setEngineObj] = useState<ViewportEngine | null>(null);
+  // Lane 12: the model, or its drawing sheets (the 3D view stays loaded under them).
+  const [mode, setModeState] = useState<WorkMode>(loadMode);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const setMode = useCallback((m: WorkMode) => {
+    setModeState(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {
+      /* a per-viewer convenience only */
+    }
+  }, []);
   const cutOpen = pane === "cutlist";
   const [cutStart] = useState(loadCutRounding);
   const [cutPick, setCutPick] = useState<RoundingChoice>(cutStart.choice);
@@ -1119,6 +1143,20 @@ export function App() {
     [swatches],
   );
 
+  /** An image a sheet shows (lane 12): the swatch made from the model's copy. */
+  const sheetHref = useCallback(
+    (path: string): string | null => {
+      const digest = live.current.scene?.state.textures?.find((t) => t.path === path)?.digest;
+      return digest ? (swatches[`tex:${digest}`] ?? null) : null;
+    },
+    [swatches],
+  );
+  /** The 3D view's camera, as a sheet viewport keeps it (lane 12). */
+  const sheetCamera = useCallback(() => {
+    const v = engineRef.current?.viewSpec();
+    return v ? { eye: v.eye, target: v.target, up: v.up, parallel: v.ortho, fov: v.fov } : null;
+  }, []);
+
   /** Make a material from a PNG or JPEG and make it the active one (one undo step). */
   const importImage = useCallback(
     async (file: File) => {
@@ -1874,8 +1912,11 @@ export function App() {
       // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
       const textEntry = keyBelongsToControl(e.target, e.key) && !(inVcb && !live.current.vcbEditing);
       const mod = e.ctrlKey || e.metaKey;
+      // Sheets mode (lane 12) has its own keys (src/sheets/SheetsWorkspace.tsx); only undo,
+      // redo and the file shortcuts are the app's there.
+      const sheetsMode = modeRef.current === "sheets";
       // A plugin's shortcut (always with Ctrl, Alt or Meta; built-in keys win, see usePlugins).
-      if (!textEntry && !inVcb && pluginsRef.current?.shortcut(e)) return;
+      if (!sheetsMode && !textEntry && !inVcb && pluginsRef.current?.shortcut(e)) return;
       // Undo, redo and the file shortcuts are the app's wherever focus is (a pane's select,
       // checkbox or button too), unless a text field is being edited (it has its own undo).
       if (mod && !e.altKey && (!isEditableText(e.target) || inVcb)) {
@@ -1905,6 +1946,7 @@ export function App() {
           void importDialog();
           return;
         }
+        if (sheetsMode) return;
         if (k === "a" && !inVcb) {
           e.preventDefault();
           void afterPointer(selectAll);
@@ -1920,6 +1962,7 @@ export function App() {
           return;
         }
       }
+      if (sheetsMode) return;
       if (e.key === "Shift" && !textEntry) activeRef.current?.onShift(true);
       if ((e.key === "Control" || e.key === "Alt") && !e.repeat && !textEntry) {
         // A tap of Ctrl or Alt alone (Move / Rotate copy, Move autofold). Alt must not
@@ -2169,6 +2212,10 @@ export function App() {
         { label: "Restore Unsaved Work", disabled: !pendingRestore, onSelect: () => pendingRestore && restore(pendingRestore) },
       ],
       View: [
+        // Lane 12: the model or its drawing sheets.
+        { label: "Model", checked: mode === "model", onSelect: () => setMode("model") },
+        { label: "Sheets", checked: mode === "sheets", title: "Drawing sheets: scaled views of the model on paper", onSelect: () => setMode("sheets") },
+        "-",
         { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
         "-",
         { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
@@ -2208,7 +2255,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -2231,7 +2278,7 @@ export function App() {
 
   return (
     <div
-      className={`app${dragging ? " dropping" : ""}`}
+      className={`app${dragging ? " dropping" : ""}${mode === "sheets" ? " sheets-mode" : ""}`}
       id="app"
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
@@ -2292,7 +2339,32 @@ export function App() {
         menus={menus}
       />
       <ToolRail active={toolId} onSelect={selectTool} plugins={plugins.toolDefs} />
-      <SceneTabs scenes={st?.scenes ?? []} active={activeScene} onGo={goScene} onAdd={addScene} onUpdate={updateScene} onRename={renameScene} onDelete={deleteScene} />
+      <SceneTabs
+        scenes={st?.scenes ?? []}
+        active={activeScene}
+        onGo={goScene}
+        onAdd={addScene}
+        onUpdate={updateScene}
+        onRename={renameScene}
+        onDelete={deleteScene}
+        lead={<ModeSwitch mode={mode} onMode={setMode} sheets={scene?.sheets?.length ?? 0} />}
+      />
+      {mode === "sheets" ? (
+        <SheetsWorkspace
+          lead={<ModeSwitch mode={mode} onMode={setMode} sheets={scene?.sheets?.length ?? 0} />}
+          sheets={scene?.sheets ?? []}
+          scenes={st?.scenes ?? []}
+          stateKey={`${st?.stats.hash ?? ""}:${kernelState}`}
+          kernel={() => kernelRef.current}
+          apply={apply}
+          message={(text, error = false) => setMessage({ text, error })}
+          href={sheetHref}
+          texturePaths={(st?.textures ?? []).map((t) => t.path)}
+          camera={sheetCamera}
+          metric={units === "mm" || units === "cm" || units === "m"}
+          docName={docName ? stem(docName) : "Untitled"}
+        />
+      ) : null}
       <Viewport
         mesh={scene?.mesh ?? null}
         units={units}

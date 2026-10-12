@@ -15,9 +15,11 @@ export interface SceneTabsProps {
   onUpdate: (name: string) => void;
   onRename: (name: string, next: string) => void;
   onDelete: (name: string) => void;
+  /** Lane 12: the Model / Sheets switch, first in the row. */
+  lead?: React.ReactNode;
 }
 
-export function SceneTabs({ scenes, active, onGo, onAdd, onUpdate, onRename, onDelete }: SceneTabsProps) {
+export function SceneTabs({ scenes, active, onGo, onAdd, onUpdate, onRename, onDelete, lead }: SceneTabsProps) {
   const [menu, setMenu] = useState<{ name: string; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -38,6 +40,7 @@ export function SceneTabs({ scenes, active, onGo, onAdd, onUpdate, onRename, onD
 
   return (
     <nav className="scenes" aria-label="Scenes">
+      {lead}
       <div role="tablist" aria-label="Scenes" className="scene-list">
         {scenes.map((s) =>
           renaming === s.name ? (

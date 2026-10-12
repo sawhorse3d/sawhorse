@@ -43,6 +43,9 @@ pub struct DocCore {
     doc: Document,
     /// Picking / inference picture of the current state, rebuilt lazily after edits.
     scene: std::cell::RefCell<Option<std::rc::Rc<sawhorse_inference::scene::Scene>>>,
+    /// The last sheet viewport's drawing a snap used (lane 12, `drawings.rs`): a cursor
+    /// moving over a viewport asks again and again between edits. Dropped with `scene`.
+    snaps: std::cell::RefCell<Option<drawings::SnapCache>>,
 }
 
 impl Default for DocCore {
@@ -214,6 +217,7 @@ impl DocCore {
         DocCore {
             doc,
             scene: std::cell::RefCell::new(None),
+            snaps: std::cell::RefCell::new(None),
         }
     }
 
@@ -226,6 +230,7 @@ impl DocCore {
         let op: Op = serde_json::from_str(op_json).map_err(|e| format!("bad op: {e}"))?;
         let out = self.doc.apply(&op).map_err(|e| e.to_string())?;
         self.scene.replace(None);
+        self.snaps.replace(None);
         serde_json::to_string(&out).map_err(|e| e.to_string())
     }
 
@@ -269,6 +274,7 @@ impl DocCore {
         let (out, _) =
             sawhorse_kernel::refbatch::apply(&mut self.doc, &batch).map_err(|e| e.to_string())?;
         self.scene.replace(None);
+        self.snaps.replace(None);
         serde_json::to_string(&out).map_err(|e| e.to_string())
     }
 
@@ -658,6 +664,7 @@ impl DocCore {
         let parsed = sawhorse_import::read(None, bytes, &opts).map_err(|e| e.to_string())?;
         let out = self.doc.apply(&parsed.op()).map_err(|e| e.to_string())?;
         self.scene.replace(None);
+        self.snaps.replace(None);
         serde_json::to_string(&serde_json::json!({ "outcome": out, "notes": parsed.notes }))
             .map_err(|e| e.to_string())
     }
