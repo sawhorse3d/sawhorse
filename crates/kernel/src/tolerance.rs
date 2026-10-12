@@ -30,6 +30,13 @@ pub const MIN_EXTRUDE: f64 = POINT_MERGE;
 /// meaningful: at 1e4 m an f64 still resolves ~2e-12 m.
 pub const MAX_COORD: f64 = 1e4;
 
+/// Plane snapping before a boolean (lane 4, `crate::snap`) leaves a vertex alone when it is
+/// within this of every plane around it (1 pm): that is rounding, and re-solving it would
+/// only trade one rounding for another (and break exact constructions, such as the push
+/// prism built on a face's own vertices). Deviations above it, up to POINT_MERGE, are
+/// drift and get snapped.
+pub const SNAP_FLOOR: f64 = 1e-12;
+
 /// Quantum for the deterministic model hash (1 nm). Positions are rounded to this
 /// before hashing so the hash is stable across platforms and builds.
 pub const HASH_QUANTUM: f64 = 1e-9;

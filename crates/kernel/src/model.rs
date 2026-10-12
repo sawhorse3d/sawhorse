@@ -18,7 +18,9 @@ use slotmap::SlotMap;
 
 use std::collections::BTreeMap;
 
-use crate::error::{DocumentError, FaceEditError, KernelError, PushError, SketchError};
+use crate::error::{
+    DocumentError, FaceEditError, KernelError, PushError, SketchError, TransformError,
+};
 use crate::ids::{
     DimensionId, GroupId, GuideId, ObjectId, RegionId, SketchId, from_public, to_public,
 };
@@ -26,7 +28,11 @@ use crate::object::{Object, Provenance, PushOutcome};
 use crate::plane::Plane;
 use crate::sketch::Sketch;
 use crate::tolerance::PLANARITY;
+use crate::transform::Xform;
 use crate::validate::{TopologyError, Violation};
+
+/// Most copies one array op makes.
+pub const MAX_ARRAY: u32 = 1000;
 
 /// One undoable edit. Lengths in metres; ids are public ids.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -140,6 +146,31 @@ pub enum Op {
     },
     /// Remove one dimension.
     EraseDimension { dimension: u64 },
+    /// Move, rotate, scale or mirror whole solids by an affine map (Move, Rotate and Scale
+    /// tools). Face ids, drawn edges, tags and display numbers stay; each result must
+    /// validate (see [`crate::transform`]). Solids never weld to what they touch.
+    Transform { objects: Vec<u64>, xform: Xform },
+    /// Copy solids, each copy mapped by `xform` (Ctrl with Move / Rotate). The copies are new
+    /// objects (new ids and display numbers) with the originals' face ids, tags and drawn
+    /// edges; they join no group.
+    Copy { objects: Vec<u64>, xform: Xform },
+    /// An array: `count` copies of each solid, copy k mapped by `xform` applied k times
+    /// (x3 after a 36 in move: copies at 36, 72 and 108 in; /4 is the same with a quarter
+    /// of the move). Copies are made in order k = 1..=count, object by object.
+    Array {
+        objects: Vec<u64>,
+        xform: Xform,
+        count: u32,
+    },
+    /// Move (or scale, or turn) part of a solid: the vertices at `points` (world positions)
+    /// by `xform`. A face bent out of its plane is refused unless `autofold` (then it folds
+    /// along a triangulation and coplanar pieces merge back).
+    TransformGeometry {
+        object: u64,
+        points: Vec<[f64; 3]>,
+        xform: Xform,
+        autofold: bool,
+    },
     /// Delete an object (it also leaves any group).
     DeleteObject { object: u64 },
     /// Group objects under a name.
@@ -224,6 +255,23 @@ pub enum OpOutcome {
     TagSet,
     Undone,
     Redone,
+    /// Solids were moved, turned or scaled (the same ids).
+    Transformed {
+        objects: Vec<u64>,
+    },
+    /// New solids from a copy or an array, in creation order.
+    Copied {
+        objects: Vec<u64>,
+    },
+    /// Part of a solid moved; the persistent ids of the faces that changed (folds included).
+    GeometryMoved {
+        faces: Vec<u64>,
+    },
+    /// A push/pull (or a sweep) cut a solid into pieces: each piece is its own solid. The
+    /// first id is the original solid (the piece holding its smallest face id).
+    Severed {
+        objects: Vec<u64>,
+    },
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -509,7 +557,16 @@ impl Model {
                     _ => o.push_pull_id(*face, *distance)?,
                 };
                 match pushed {
-                    PushOutcome::Moved => Ok(OpOutcome::FaceMoved),
+                    PushOutcome::Moved => {
+                        let pieces = self.sever(oid);
+                        if pieces.len() > 1 {
+                            Ok(OpOutcome::Severed {
+                                objects: pieces.into_iter().map(to_public).collect(),
+                            })
+                        } else {
+                            Ok(OpOutcome::FaceMoved)
+                        }
+                    }
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");
                         self.object_order.retain(|&k| k != oid);
@@ -665,6 +722,49 @@ impl Model {
                     .ok_or(DocumentError::NoSuchAnnotation(*dimension))?;
                 Ok(OpOutcome::AnnotationErased)
             }
+            Op::Transform { objects, xform } => {
+                let keys = self.transform_targets(objects)?;
+                for &k in &keys {
+                    let next = self.objects[k].transformed(xform)?;
+                    self.objects[k] = next;
+                }
+                Ok(OpOutcome::Transformed {
+                    objects: keys.into_iter().map(to_public).collect(),
+                })
+            }
+            Op::Copy { objects, xform } => {
+                let keys = self.transform_targets(objects)?;
+                let made = self.copies(&keys, xform, 1)?;
+                Ok(OpOutcome::Copied { objects: made })
+            }
+            Op::Array {
+                objects,
+                xform,
+                count,
+            } => {
+                if *count == 0 || *count > MAX_ARRAY {
+                    return Err(TransformError::BadCount.into());
+                }
+                let keys = self.transform_targets(objects)?;
+                let made = self.copies(&keys, xform, *count)?;
+                Ok(OpOutcome::Copied { objects: made })
+            }
+            Op::TransformGeometry {
+                object,
+                points,
+                xform,
+                autofold,
+            } => {
+                let k = from_public::<ObjectId>(*object);
+                let o = self
+                    .objects
+                    .get(k)
+                    .ok_or(TransformError::NoSuchObject(*object))?;
+                let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                let (next, faces) = o.transform_geometry(&pts, xform, *autofold)?;
+                self.objects[k] = next;
+                Ok(OpOutcome::GeometryMoved { faces })
+            }
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);
                 if self.objects.remove(k).is_none() {
@@ -723,6 +823,69 @@ impl Model {
             }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
+    }
+
+    /// The live objects named by `objects` (duplicates dropped, order kept).
+    fn transform_targets(&self, objects: &[u64]) -> Result<Vec<ObjectId>, TransformError> {
+        if objects.is_empty() {
+            return Err(TransformError::NothingSelected);
+        }
+        let mut keys: Vec<ObjectId> = Vec::with_capacity(objects.len());
+        for &o in objects {
+            let k = from_public::<ObjectId>(o);
+            if !self.objects.contains_key(k) {
+                return Err(TransformError::NoSuchObject(o));
+            }
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        Ok(keys)
+    }
+
+    /// `count` copies of each object, copy k mapped by `xform` k times. Returns the new ids.
+    fn copies(
+        &mut self,
+        keys: &[ObjectId],
+        xform: &Xform,
+        count: u32,
+    ) -> Result<Vec<u64>, TransformError> {
+        xform.check()?;
+        let mut made = Vec::with_capacity(keys.len() * count as usize);
+        for k in 1..=count {
+            let x = xform.power(k);
+            for &key in keys {
+                let mut copy = self.objects[key].transformed(&x)?;
+                copy.source = None;
+                made.push(to_public(self.insert_object(copy)));
+            }
+        }
+        Ok(made)
+    }
+
+    /// Split an object that has come apart into one object per piece (see
+    /// [`crate::sever`]). Returns every piece's key, the original first; the new pieces join
+    /// the original's groups.
+    fn sever(&mut self, oid: ObjectId) -> Vec<ObjectId> {
+        let Some(pieces) = self.objects[oid].split_shells() else {
+            return vec![oid];
+        };
+        let mut it = pieces.into_iter();
+        let first = it.next().expect("at least two pieces");
+        self.objects[oid] = first;
+        let mut keys = vec![oid];
+        let original = to_public(oid);
+        for piece in it {
+            let k = self.insert_object(piece);
+            let id = to_public(k);
+            for g in self.groups.values_mut() {
+                if g.objects.contains(&original) {
+                    g.objects.push(id);
+                }
+            }
+            keys.push(k);
+        }
+        keys
     }
 
     /// Add a new object at the end of the creation order with the next display number.

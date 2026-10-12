@@ -29,6 +29,10 @@ export type KernelOp =
   | { op: "delete_guides" }
   | { op: "add_dimension"; a: [number, number, number]; b: [number, number, number]; offset: [number, number, number] }
   | { op: "erase_dimension"; dimension: number }
+  | { op: "transform"; objects: number[]; xform: Xform }
+  | { op: "copy"; objects: number[]; xform: Xform }
+  | { op: "array"; objects: number[]; xform: Xform; count: number }
+  | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
   | { op: "delete_object"; object: number }
   | { op: "create_group"; name: string; objects: number[] }
   | { op: "delete_group"; group: number }
@@ -36,6 +40,12 @@ export type KernelOp =
   | { op: "set_tag_visible"; tag: string; visible: boolean }
   | { op: "undo" }
   | { op: "redo" };
+
+/** An affine map (crates/kernel/src/transform.rs `Xform`): p -> linear * p + translation, row-major. */
+export interface Xform {
+  linear: [V3, V3, V3];
+  translation: V3;
+}
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */
 export type OpOutcome =
@@ -56,6 +66,10 @@ export type OpOutcome =
   | { kind: "group_created"; group: number }
   | { kind: "group_deleted" }
   | { kind: "tag_set" }
+  | { kind: "transformed"; objects: number[] }
+  | { kind: "copied"; objects: number[] }
+  | { kind: "geometry_moved"; faces: number[] }
+  | { kind: "severed"; objects: number[] }
   | { kind: "undone" }
   | { kind: "redone" };
 

@@ -1,0 +1,284 @@
+{
+  "name": "transforms",
+  "description": "Lane 4: a board turned a quarter about a post, copied, arrayed x3 and /4 on a half turn, a part of it moved with autofold, the rest sloped, a strip pushed through so the board severs in two; undo and redo in between.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.9144,
+      "h": 0.2794
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.01905
+    },
+    {
+      "op": "transform",
+      "objects": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.5,
+          -0.5,
+          0.0
+        ]
+      }
+    },
+    {
+      "op": "copy",
+      "objects": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.4,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "op": "array",
+      "objects": [
+        2
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.4,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 3
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "array",
+      "objects": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            0.7071067811865476,
+            -0.7071067811865475,
+            0.0
+          ],
+          [
+            0.7071067811865475,
+            0.7071067811865476,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.6464466094067263,
+          -0.20710678118654752,
+          0.1
+        ]
+      },
+      "count": 3
+    },
+    {
+      "op": "transform_geometry",
+      "object": 2,
+      "points": [
+        [
+          0.6206,
+          0.4144,
+          0.01905
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.02
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "transform_geometry",
+      "object": 3,
+      "points": [
+        [
+          1.0206,
+          0.4144,
+          0.01905
+        ],
+        [
+          1.0206,
+          0.4144,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.05,
+          0.0,
+          0.0
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 4,
+        "face": 2
+      },
+      "points": [
+        [
+          1.5,
+          -0.6,
+          0.01905
+        ],
+        [
+          1.6,
+          -0.6,
+          0.01905
+        ],
+        [
+          1.6,
+          0.5,
+          0.01905
+        ],
+        [
+          1.5,
+          0.5,
+          0.01905
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "push_pull",
+      "object": 4,
+      "face": 8,
+      "distance": -0.01905
+    }
+  ],
+  "hash": "1bf9b5a4e38028e5",
+  "stats": {
+    "objects": 9,
+    "faces": 55,
+    "edges": 109,
+    "vertices": 72,
+    "genus": 0,
+    "watertight": true
+  }
+}

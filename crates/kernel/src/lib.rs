@@ -28,14 +28,19 @@ pub mod model;
 pub mod object;
 pub mod plane;
 pub mod push;
+pub mod sever;
 pub mod sketch;
+pub mod snap;
 #[doc(hidden)]
 pub mod testing;
 pub mod tolerance;
+pub mod transform;
 pub mod validate;
 
 pub use document::Document;
-pub use error::{BuildError, DocumentError, FaceEditError, KernelError, PushError, SketchError};
+pub use error::{
+    BuildError, DocumentError, FaceEditError, KernelError, PushError, SketchError, TransformError,
+};
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};
 

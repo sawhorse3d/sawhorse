@@ -568,12 +568,19 @@ fn relabel(out: &TriSolid, planes: &[Plane]) -> Result<Vec<usize>, BooleanError>
 /// `a op b` for two closed polygon B-reps (see [`repolygonise`]). `Ok(None)` when the
 /// result is empty. User-drawn edges of either operand survive where the result still
 /// has an edge along them.
+///
+/// Both operands first go through the plane-snapping pass ([`crate::snap`]: nearly
+/// coplanar faces made exactly coplanar, vertices re-solved onto them), and so does the
+/// re-polygonised result.
 pub fn combine(
     a: &Polys,
     b: &Polys,
     op: BoolOp,
     engine: &dyn BooleanEngine,
 ) -> Result<Option<Polys>, BooleanError> {
+    let (mut a, mut b) = (a.clone(), b.clone());
+    crate::snap::snap_planes(&mut [&mut a, &mut b]);
+    let (a, b) = (&a, &b);
     let ta = polys_tri_solid(a, 0)?;
     let tb = polys_tri_solid(b, a.faces.len() as u32)?;
     let mut planes = Vec::with_capacity(a.faces.len() + b.faces.len());
@@ -604,6 +611,7 @@ pub fn combine(
         return Ok(None);
     }
     let mut res = repolygonise(&out, &planes, &ids, &preserved)?;
+    crate::snap::snap_planes(&mut [&mut res]);
     resolve_face_ids(&mut res, &sources);
     Ok(Some(res))
 }

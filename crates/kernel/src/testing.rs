@@ -47,6 +47,14 @@ pub fn check_model(m: &Model) -> Result<(), String> {
         if v.is_nan() || v <= 0.0 {
             return Err(format!("object {i} has non-positive volume {v}"));
         }
+        // Severance by connectivity (lane 4): a solid that came apart is split into one
+        // object per piece, so every committed object is exactly one piece.
+        let pieces = o.piece_count();
+        if pieces != 1 {
+            return Err(format!(
+                "object {i} has {pieces} pieces (it should have been severed)"
+            ));
+        }
     }
     let mesh = view_mesh(m).map_err(|e| format!("view mesh: {e}"))?;
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {

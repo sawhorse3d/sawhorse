@@ -107,6 +107,41 @@ pub enum FaceEditError {
     Build(#[from] BuildError),
 }
 
+/// Errors from moving, rotating, scaling, copying and arraying (lane 4). Refusals of bad
+/// input or of a result that would not be a valid solid; nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum TransformError {
+    #[error("nothing is selected to transform")]
+    NothingSelected,
+    #[error("no object #{0}")]
+    NoSuchObject(u64),
+    #[error("the transform is not finite or is beyond 10 km")]
+    BadTransform,
+    #[error("that would flatten the solid (a scale of zero)")]
+    Singular,
+    #[error("that would move geometry beyond 10 km")]
+    OutOfBounds,
+    #[error("an array needs 1 to {max} copies", max = crate::model::MAX_ARRAY)]
+    BadCount,
+    #[error("there is no point of the solid there")]
+    NoSuchVertex,
+    #[error("nothing to move")]
+    NothingToMove,
+    /// Moving part of a solid would bend a face out of its plane (autofold is off).
+    #[error("that would bend face #{face} out of its plane (hold Alt to fold it)")]
+    WouldBend { face: u64 },
+    #[error("that would make the solid pass through itself")]
+    SelfIntersects,
+    #[error("that would turn the solid inside out")]
+    InsideOut,
+    #[error("that would shrink an edge to nothing")]
+    CollapsesEdge,
+    #[error("that would bend a face out of its plane")]
+    NotPlanar,
+    #[error("the result is not a valid solid: {0}")]
+    InvalidResult(String),
+}
+
 /// Errors from document-level commands (undo, redo, groups, tags, deleting objects).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DocumentError {
@@ -146,6 +181,8 @@ pub enum KernelError {
     FaceEdit(#[from] FaceEditError),
     #[error(transparent)]
     Document(#[from] DocumentError),
+    #[error(transparent)]
+    Transform(#[from] TransformError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]
