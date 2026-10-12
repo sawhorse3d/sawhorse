@@ -7,8 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/check-provenance.mjs dist",
     "build:all": "npm run wasm && npm run build",
+    "check:provenance": "node scripts/check-provenance.mjs",
     "wasm": "node scripts/build-wasm.mjs",
     "golden:wasm": "node scripts/golden-wasm.mjs",
     "preview": "vite preview",

@@ -36,8 +36,12 @@ export default defineConfig({
   optimizeDeps: { include: ["openskp"] },
   build: {
     target: "es2022",
-    // Source maps for every build but the public demo (scripts/build-site.mjs).
-    sourcemap: process.env.VITE_WEB_DEMO !== "1",
+    // Source maps are opt-in (SAWHORSE_SOURCEMAP=1 for a local debugging build). A map embeds
+    // every dependency's original source, and openskp's carries a 5,796-byte SketchUp-authored
+    // blank template that tree-shaking keeps out of our shipped JS; the v0.1.0-alpha.1
+    // installers shipped it inside skp-*.js.map. scripts/check-provenance.mjs refuses any
+    // dist that contains a map or those bytes.
+    sourcemap: process.env.SAWHORSE_SOURCEMAP === "1",
     // three.js alone is ~600 kB minified; one chunk is fine for a desktop-class app.
     chunkSizeWarningLimit: 1024,
   },

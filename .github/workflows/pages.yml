@@ -51,6 +51,8 @@ jobs:
         uses: actions/configure-pages@v5
       - name: assemble the site
         run: node scripts/build-site.mjs --out dist-site --base "${{ steps.pages.outputs.base_path }}/"
+      - name: provenance (no source maps, no SketchUp document bytes in what we publish)
+        run: node scripts/check-provenance.mjs dist-site
       - name: check the site (links, outside resources, sizes, download links)
         run: node scripts/check-site.mjs --dir dist-site --base "${{ steps.pages.outputs.base_path }}/" --online
       - name: install Playwright Chromium

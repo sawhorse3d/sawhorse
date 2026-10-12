@@ -322,6 +322,10 @@ Run that from PowerShell or cmd. From Git Bash, put the loop in a script file an
 | 2026-10-11 (lane 2) | seed 20261011, earlier attempts | Five kernel bugs found and fixed before the clean run, each kept as a repro in `crates/kernel/tests/repro/`: an inside-out solid accepted from the topological push path (`2026-10-11-push-inverts-thin-wedge`); duplicate sketch edges when two crossings merged next to a shared vertex (`-sketch-near-coincident-crossings`); a zero-thickness fin from a boolean on a split vertex 1e-17 m off its plane (`-split-vertex-off-plane-fin`); a cut grazing a hole corner by 1e-16 m (`-split-grazes-hole-corner`); a crossing landing within the merge distance of an unrelated short edge (`-sketch-crossing-cluster`). |
 
 
+## Source maps and the provenance tripwire
+
+Production builds emit no source maps: a map embeds every dependency's original source, and openskp's carries a SketchUp-authored blank template that tree-shaking keeps out of our JavaScript (see `docs/CLEANROOM.md`, 2026-10-12). `SAWHORSE_SOURCEMAP=1 npm run build` turns maps on for a local debugging build; never ship one. `npm run build` ends with `node scripts/check-provenance.mjs dist`, which fails on any `.map`, any inline map, or SketchUp document bytes (raw, base64 or compressed) anywhere in the output; `npm run check:provenance <dir>` runs it on another directory, and `pages.yml` runs it on `dist-site` before deploying.
+
 ## Desktop (Tauri 2)
 
 `src-tauri/` is configured (`tauri.conf.json`, capabilities, icons from `src-tauri/app-icon.svg`) but not built locally. CI's `tauri-check` job compiles it on Ubuntu; tagging `v*` runs `release.yml`, which builds Windows, macOS and Linux installers into a draft prerelease, unsigned unless signing secrets exist. Once a machine has a linker: `npm run tauri dev`.
