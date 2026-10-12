@@ -300,15 +300,15 @@ Plugins add tools, panels and commands. Each runs in its own sandbox, apart from
 
 **The Plugins pane** is the puzzle-piece tab at the end of the right panel. It lists every plugin with its state (Off, Running, Not responding, Stopped, Crashed, Cannot load), what it asks for and its last error, and the panels of the plugins that are running, each in a section under its name (click the name to fold it).
 
-- **Enable...** shows what the plugin asks for; Enable starts it, now and every time Sawhorse starts. **Disable** stops it and takes its panels, commands and tools away.
+- **Enable...** shows what the plugin asks for; Enable starts it, now and every time Sawhorse starts. What you allow is for those exact files: a new version, or another plugin with the same id (even one taking a sample's place, which the dialog points out), stays **Off** until you enable it again and see what it asks for. **Disable** stops it and takes its panels, commands and tools away.
 - **Reload** restarts it (a plugin loaded from a folder is read again first).
 - **Developer: console** shows what it logged; useful when something does not work.
-- **Uninstall** removes a plugin you installed. The samples cannot be uninstalled, only disabled.
+- **Uninstall** removes a plugin you installed; **Remove** takes a plugin loaded for this session or from a folder off the list (the folder stays). The samples cannot be uninstalled, only disabled.
 - **Open folder** (desktop) shows where it is on disk.
 
 **Getting a plugin.** Plugins > Install from .zip... (or the button under the list) takes a plugin's .zip. On the desktop it goes into the app's plugin folder; in the browser, into this browser. In the browser, Load from .zip for this session runs one until you close the tab; on the desktop, Load unpacked folder runs one from a folder (for people writing plugins). Install only plugins you trust, and read what they ask for before enabling them.
 
-**Using them.** A plugin's commands are in the Plugins menu under its name (with its shortcut, if it has one), its panels in the Plugins pane, and its tools in the last group of the tool rail. Changes a plugin makes are undone with Ctrl+Z like your own; the status line names them ("Undone: Generate cabinet").
+**Using them.** A plugin's commands are in the Plugins menu under its name (with its shortcut, if it has one), its panels in the Plugins pane, and its tools in the last group of the tool rail. In a panel, Enter takes the value you typed and hands the keyboard back to the model, so the next tool key (R, P ...) picks a tool; after ticking a box, tool keys work straight away. Changes a plugin makes are undone with Ctrl+Z like your own; the status line names them ("Undone: Generate cabinet").
 
 **The samples** come with Sawhorse, off until you enable them:
 

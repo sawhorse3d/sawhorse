@@ -38,7 +38,7 @@ hello-box/
 
 ```json
 {
-  "$schema": "../../packages/plugin-api/manifest.schema.json",
+  "$schema": "https://raw.githubusercontent.com/sawhorse3d/sawhorse/main/packages/plugin-api/manifest.schema.json",
   "id": "org.example.hello-box",
   "name": "Hello box",
   "version": "1.0.0",
@@ -69,7 +69,9 @@ await ui.registerCommand({
 });
 ```
 
-Zip the folder (`npm run plugin:pack -- hello-box` in this repository, or any zip tool), then in Sawhorse: Plugins > Install from .zip..., and **Enable...** in the Plugins pane. Plugins > Hello box > Add a Cube puts the cube in; Ctrl+Z takes it out in one step ("Undone: Add a cube").
+`$schema` is optional and only for your editor (completion and checking of `plugin.json`); the app ignores it. The address above works anywhere. The samples in this repository use the relative path `../../packages/plugin-api/manifest.schema.json`, which works only for a folder under `plugins/`; for a copy of the schema next to your plugin, write `./manifest.schema.json`.
+
+Check it (`npm run plugin:check -- path/to/hello-box` in this repository: the manifest, the code rules and a type check of every `// @ts-check` file against the API), zip the folder (`npm run plugin:pack -- path/to/hello-box`, or any zip tool), then in Sawhorse: Plugins > Install from .zip..., and **Enable...** in the Plugins pane. Plugins > Hello box > Add a Cube puts the cube in; Ctrl+Z takes it out in one step ("Undone: Add a cube").
 
 Everything is in metres, Z up, like the kernel. Show and read lengths with [`units`](#sawhorseunits).
 
@@ -121,13 +123,15 @@ Declared in `permissions`, listed in the dialog the person sees before enabling,
 | `file` | save and open files, only through the app's save and open dialogs, where the person picks the file | `file.save`, `file.open` |
 | `net` | requests to the hosts in `net`, over https, without cookies or credentials, through the app | `net.fetch`, and a global `fetch` |
 
-Without `net` there is no `fetch` in the sandbox at all. When a new version asks for more than was granted, the plugin is off until the person enables it again and sees the new list.
+Without `net` there is no `fetch` in the sandbox at all, and no other way out (see [What a plugin cannot do](#what-a-plugin-cannot-do)).
+
+**A grant is for the files the person enabled**, not for the plugin's id. The app keeps a SHA-256 of the package (every file, its path and contents) with the grant. A different package with the same id (an update, a replacement zip, a zip that takes a bundled sample's id) is listed **Off**, with "These are not the files you enabled: enable it again to let it run", until the person enables it again and sees what it asks for; the dialog says when it takes a bundled sample's place. When a new version also asks for more than was granted, the message lists what is new. Two sources keep their grant when their files change, because the person chose the source rather than a build of it: a bundled sample updated with the app, and a folder loaded with Load unpacked folder on the desktop (Reload reads it again while you work on it).
 
 ## Lifecycle
 
 1. **Listed.** On start the app lists the bundled samples and the installed plugins (desktop: `<app data>/plugins/<id>/`; browser: kept in this browser). A plugin whose manifest or code breaks the rules is listed with its errors and cannot start.
-2. **Enabled.** The person clicks Enable..., reads the permissions and confirms. The grant is remembered; the plugin starts now and on every later start.
-3. **Started.** The app makes a Web Worker for it, locks it down, sends its modules, links them and imports the entry. Top-level code runs (top-level `await` is fine); register commands, panels and tools there. An entry may also export `activate(sawhorse)`, which runs after the module loads. When the entry finishes, the plugin is **Running**.
+2. **Enabled.** The person clicks Enable..., reads the permissions and confirms. The grant is remembered for these files; the plugin starts now and on every later start, until its files change (above).
+3. **Started.** The app makes a Web Worker for it (under the page's content security policy), locks it down, sends its modules, checks and links them and imports the entry. Top-level code runs (top-level `await` is fine); register commands, panels and tools there. An entry may also export `activate(sawhorse)`, which runs after the module loads. When the entry finishes, the plugin is **Running**.
 4. **Running.** The app calls the plugin's handlers (a command, a panel button, a tool event) and delivers the events it listens to. Each call is answered when the handler (or the promise it returns) finishes.
 5. **Not responding.** The app pings every plugin each second. One that has not answered for 5 s (busy in a loop) is marked Not responding, with Stop in the status line and the pane; after 15 s it is stopped. It runs in its own thread, so the app never freezes.
 6. **Stopped.** Disable, Stop, Reload, a crash, the watchdog, or the app closing ends the worker. Its panels, commands and tools disappear at once. Reload starts it again (an unpacked folder is read again first).
@@ -277,7 +281,7 @@ await panel.update({ fields: { status: { text: "Done.", tone: "info" }, generate
 await panel.setBody([...]); // replace everything
 ```
 
-`values` holds every input field by id. A typed length that cannot be read ("3 1/2 ft-ish") shows its error under the field and is not sent. Images are `data:` URLs of png, jpeg, gif, webp or svg only.
+`values` holds every input field by id. A typed length that cannot be read ("3 1/2 ft-ish") shows its error under the field and is not sent (the field keeps the focus to be fixed; Esc puts the old value back). Enter that commits a number or text field hands the keyboard back to the model, so the person's next tool key ("r", "p") picks a tool; a checkbox or a button keeps only Space and Enter. Images are `data:` URLs of png, jpeg, gif, webp or svg only.
 
 ### Tools
 
@@ -382,16 +386,28 @@ The desktop app's content security policy does not yet let the window reach outs
 
 ## What a plugin cannot do
 
-Enforced by the app and the sandbox, not by convention:
+Enforced by the app and the sandbox, not by convention. Three locks, each enough on its own for what it covers:
+
+1. **The code is checked before it runs.** Every module is parsed as an ES module (with [acorn](https://github.com/acornjs/acorn), the way the browser will read it) by the app's loader, again by the sandbox, and by `npm run plugin:check`; the rules are read from the syntax tree, so no arrangement of comments, strings or regular expressions hides anything. A module the parser cannot read is refused.
+2. **The worker's global object is cut down to an allowlist** before the plugin's code loads ([below](#what-a-plugins-global-object-has)): anything not on it, including every browser API added after this was written, is gone.
+3. **The worker runs under the page's content security policy.** It is started from a `blob:` URL, so the browser applies the app's policy to it (the browser build's is in its `index.html`, the desktop app's in `src-tauri/tauri.conf.json`): no script or font from anywhere but the app itself.
+
+So a plugin cannot:
 
 - **Reach the page.** No DOM, no `window`, no `document`; the app draws panels and tool overlays from data.
-- **Reach the network** without `net`: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` and `WebTransport` are removed from the worker.
-- **Load code from elsewhere.** A module may import only `"sawhorse"` and its own files by a relative path (`./lib/parts.js`); `import()` and `importScripts` are refused before the plugin runs, and `importScripts` is removed from the worker too.
+- **Reach the network** without `net`: no `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `WebTransport`, `FontFace` (a font load is a request to any address) or `Notification`; no `import()` of anything.
+- **Load code from elsewhere.** A module may import only `"sawhorse"` and its own files by a relative path (`./lib/parts.js`). `import(...)` (and any other `import.<something>` but `import.meta`) and `importScripts` are refused before the plugin runs; `importScripts` and `URL.createObjectURL` are removed from the worker too, and the policy refuses outside and `data:` scripts.
 - **Turn text into code.** `eval`, `new Function(...)` (and its async and generator forms) and string timers throw.
-- **Keep data elsewhere.** IndexedDB, Cache Storage and the origin private file system are removed; use `storage`.
-- **Talk to other pages or start workers.** `BroadcastChannel`, `Worker` and `SharedWorker` are removed.
+- **Keep data elsewhere.** IndexedDB, Cache Storage, the origin private file system, the older sandboxed file systems (`webkitRequestFileSystem` and its synchronous form), storage buckets and Web Locks are removed; use `storage`.
+- **Talk to other pages or start workers.** `BroadcastChannel`, `MessageChannel`, `Worker`, `SharedWorker` and raw `postMessage` are removed.
+- **Use devices.** `navigator` keeps only facts about the browser (`language`, `languages`, `hardwareConcurrency`, `onLine`, `platform`, `userAgent` and the like); USB, HID, serial, Bluetooth, permissions and the GPU are not there.
+- **Run on someone else's grant.** A grant belongs to the files the person enabled ([Permissions](#permissions)).
 - **Freeze the app.** It runs in its own thread; the watchdog stops it when it stops answering.
 - **Change history or navigate.** Undo, redo, opening and closing groups and replacing the document are the person's.
+
+### What a plugin's global object has
+
+The language's own built-ins (`Object`, `Array`, `Map`, `Promise`, `Math`, `JSON`, `Intl`, typed arrays, `WeakRef` ...) and `WebAssembly`, plus: `console`; `setTimeout`, `setInterval` (functions only), `queueMicrotask`, `requestAnimationFrame`, `structuredClone`; `TextEncoder`, `TextDecoder`, `atob`, `btoa`, `URL`, `URLSearchParams`, `Blob`, `File`, `FileReader`; streams and `CompressionStream`; `Headers`, `Request`, `Response` (bodies only: `net.fetch` answers with a `Response`); `crypto` (`getRandomValues`, `randomUUID`, `subtle`) and `performance`; `OffscreenCanvas`, `ImageData`, `Path2D`, `createImageBitmap` and the `DOMMatrix` family (to draw a picture for a panel's image field); `Event`, `EventTarget`, `AbortController`, `DOMException`; `self`, `location` and `navigator` (cut down). The full list is `ALLOWED_GLOBALS` in [`src/plugins/lockdown.ts`](../src/plugins/lockdown.ts). TypeScript's `WebWorker` library declares more than this; what it declares beyond the list is `undefined` at run time.
 
 ## Checking, packing, installing
 
@@ -399,12 +415,12 @@ In this repository:
 
 ```bash
 npm run plugin:check                         # every plugin under plugins/: manifest, sources, type check against index.d.ts
-npm run plugin:check -- path/to/my-plugin    # one folder anywhere (no README / LICENSE rule outside plugins/)
+npm run plugin:check -- path/to/my-plugin    # one folder anywhere: the same, with its // @ts-check files type-checked
 npm run plugin:pack -- plugins/cabinet-generator   # -> dist-plugins/com.sawhorse3d.cabinet-generator-1.0.0.zip
 npm run plugin:pack -- my-plugin --out my-plugin.zip
 ```
 
-`plugin:pack` checks first and writes the same bytes for the same folder (files in a fixed order with a fixed date).
+Under `plugins/` (the samples' rule) a missing `README.md` or `LICENSE` fails the check; anywhere else it is a warning. The type check covers the files that start with `// @ts-check`; a file without it is named in a warning and not checked. `plugin:pack` checks first and writes the same bytes for the same folder (files in a fixed order with a fixed date); without `--out` it writes into this repository's `dist-plugins/` (ignored by git), so pass `--out` to put the zip somewhere else.
 
 **Installing** (Plugins menu, or the buttons under the list in the Plugins pane):
 
@@ -414,14 +430,15 @@ npm run plugin:pack -- my-plugin --out my-plugin.zip
 | Load unpacked folder... | read from the folder you pick; **Reload** reads it again (for working on a plugin) | - |
 | Load from .zip for this session... | - | until the tab closes |
 | Open folder | shows the folder in your file manager | - |
-| Uninstall | removes the folder | removes it from this browser |
+| **Uninstall** (an installed plugin) | removes the folder | removes it from this browser |
+| **Remove** (an unpacked folder or a session plugin) | takes it off the list; the folder stays | takes it off the list |
 
-A zip may hold the folder's contents or the folder itself. The bundled samples are always listed; they cannot be uninstalled, only disabled.
+A zip may hold the folder's contents or the folder itself. Installing a zip whose `id` is already listed replaces that plugin, and the new files are off until they are enabled ([Permissions](#permissions)). The bundled samples are always listed; they cannot be uninstalled, only disabled, and one that a zip with its id replaced comes back when that plugin is uninstalled or removed.
 
-**Working on a plugin**: on the desktop, Load unpacked folder, then edit and click Reload. In the browser, pack and Load from .zip for this session. Watch Developer: console.
+**Working on a plugin**: on the desktop, Load unpacked folder, then edit and click Reload (the folder keeps its grant while you edit it). In the browser, pack and Load from .zip for this session (each new zip is enabled again). Watch Developer: console.
 
 ## Publishing
 
-There is no plugin directory yet. Share the zip (a release on your repository works well) and its README, say what each permission is for, and keep the `id` the same across versions so an install replaces the old one. A later version of Sawhorse may add a directory, signing and update checks; the manifest and API 1 will keep working (`api` stays the contract: a plugin says which API it speaks, and the app refuses one it does not).
+There is no plugin directory yet. Share the zip (a release on your repository works well) and its README, say what each permission is for, and keep the `id` the same across versions so an install replaces the old one (each new version is enabled again by the person who installs it: the grant was for the old files). A later version of Sawhorse may add a directory, signing and update checks; the manifest and API 1 will keep working (`api` stays the contract: a plugin says which API it speaks, and the app refuses one it does not).
 
 `packages/plugin-api` (types, schema, shim) is meant to be published to npm as `sawhorse-plugin-api` for editor support; until it is, copy `index.d.ts` and `manifest.schema.json` from this repository.

@@ -4,6 +4,20 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Security (lane 11, after its independent verification, 2026-10-12)
+
+- **A plugin without `net` could reach the network**: `FontFace(...).load()` inside its worker fetched any URL (the verifier sent the model's labels, volumes and bounds to a local listener), and `webkitRequestFileSystemSync` gave every plugin an origin-wide file system to write to. The sandbox now cuts the worker's global object to an **allowlist** (the language's built-ins and web APIs that reach nothing) instead of removing a list of known names, so these and any API a later browser adds are gone; `navigator` keeps only facts, and `URL.createObjectURL` is removed.
+- **The browser build had no content security policy.** It now has one (`index.html`: scripts from the app and `blob:` only, fonts from the app and `data:` only, no objects), and each plugin's worker is started from a `blob:` URL so the page's policy governs it, in the browser and on the desktop: a plugin that got past the other locks still could not load an outside script or font.
+- **The source check could be fooled**: it guessed regex versus division, so a regex holding a quote after `if (...)`, `throw`, `delete` or `export default` hid an `import("data:...")` or `import("http://...")` from `plugin:check`, the app and the sandbox. Plugin sources are now parsed with **acorn** as ES modules and checked on the syntax tree; a module the parser cannot read is refused.
+- **A grant was keyed by id alone**: a zip with the id and permissions of an enabled plugin, even one replacing a bundled sample, started at once with the old grant. A grant now belongs to the files enabled (their SHA-256): other files under that id are off until enabled again, and the dialog names the sample a plugin replaces. Bundled samples keep their grant across app updates, unpacked folders across Reload.
+
+### Fixed (lane 11, after its verification)
+
+- After Enter in a plugin panel's field, or ticking a box in any pane, tool keys ("r", "p") went to the control. Enter that commits a panel field now hands the keyboard back to the model, and a checkbox, radio, range or colour picker keeps only the keys it uses.
+- `npm run plugin:check -- <folder>` type-checks a plugin anywhere, not only under `plugins/`.
+- `docs/PLUGINS.md`: the first plugin's `$schema` works outside this repository; what `plugin:check` does outside `plugins/`; where `plugin:pack` writes; **Remove** (session and unpacked plugins) beside **Uninstall**; the three locks and the list of what a plugin's global object has; grants and updates. `docs/DEVELOPMENT.md`: driving the file pickers in Playwright with `?io=basic`.
+- `acorn` 8.19.0 (MIT) is a runtime dependency (plugin sources).
+
 ### Added (lane 11, plugins, 2026-10-12)
 
 - **Plugins** (ADR-0009, the authoring guide `docs/PLUGINS.md`): a plugin is a folder (or a .zip of it) with `plugin.json` and an ES-module entry, and runs in its own Web Worker, locked down before its code loads (no DOM, no network unless granted and then only to its listed hosts through the app, no IndexedDB or other storage of its own, no `importScripts`, no `eval` or `new Function`), talking to the app only by messages. The app enforces the permissions it asked for (`model.read`, `model.write`, `ui`, `storage`, `file`, `net`) on every call; a plugin that stops answering is reported after 5 s (with Stop) and stopped after 15 s; a crash ends only its worker. The same in the browser and on the desktop.
