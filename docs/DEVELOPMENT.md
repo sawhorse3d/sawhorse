@@ -146,7 +146,7 @@ Fuzzer knobs (all forwarded into WSL by `scripts/cargo.sh`): `FUZZ_CASES` (count
 The eight-shard run is a script since lane 4 (Git Bash; it runs everything inside WSL):
 
 ```bash
-MSYS_NO_PATHCONV=1 wsl.exe bash /mnt$HOME/Desktop/sawhorse/app/scripts/fuzz-shards.sh 6250 20261100 1   # cases per shard, seed base, plane snapping 1|0
+MSYS_NO_PATHCONV=1 wsl.exe bash /mnt/c/Users/<you>/Desktop/sawhorse/app/scripts/fuzz-shards.sh 6250 20261100 1   # cases per shard, seed base, plane snapping 1|0
 ```
 
 The same by hand, e.g. eight of 6,250:
