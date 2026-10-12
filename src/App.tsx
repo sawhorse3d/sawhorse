@@ -3,9 +3,13 @@ import { TopBar, type MenuItem } from "./components/TopBar";
 import { ToolRail } from "./components/ToolRail";
 import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
 import { SidePanel, type PaneId } from "./components/SidePanel";
+import { CutListReport } from "./components/CutListReport";
 import { rowKey } from "./components/CutListPane";
 import { grainOverlay } from "./cutlist/arrows";
+import { csvBytes, CSV_TYPE } from "./cutlist/csv";
+import { labelsPdf, reportPdf } from "./cutlist/documents";
 import { defaultRounding, GRAIN_WORDS } from "./cutlist/format";
+import { PDF_TYPE } from "./cutlist/pdf";
 import type { CutList, CutRow, Grain, Rounding } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
@@ -1209,8 +1213,31 @@ export function App() {
     [apply],
   );
 
-  // CSV, PDF, Print and Labels arrive with the exports (the next step of this lane).
-  const exportsSoon = useCallback(() => setMessage({ text: "Cut list exports arrive with the next step.", error: false }), []);
+  const cutTitle = docName ? stem(docName) : "Untitled";
+  const saveCut = useCallback(
+    async (make: (l: CutList) => Uint8Array, suffix: string, type: typeof PDF_TYPE, what: string) => {
+      const l = cutList;
+      if (!l) return;
+      try {
+        const res = await saveFile(`${cutTitle} ${suffix}`, make(l), type);
+        if (res) setMessage({ text: `Saved ${res.name}: ${what}.`, error: false });
+      } catch (e) {
+        setMessage({ text: `Could not save the cut list: ${e instanceof Error ? e.message : String(e)}`, error: true });
+      }
+    },
+    [cutList, cutTitle],
+  );
+  const printCut = useCallback(() => {
+    const body = document.body;
+    const done = () => {
+      body.classList.remove("print-cutlist");
+      window.removeEventListener("afterprint", done);
+    };
+    body.classList.add("print-cutlist");
+    window.addEventListener("afterprint", done);
+    setMessage({ text: "Printing the cut list (the report only, not the window).", error: false });
+    window.print();
+  }, []);
 
   const selectAll = useCallback(() => {
     const m = live.current.scene?.mesh;
@@ -1594,6 +1621,7 @@ export function App() {
       {dragging ? <div className="drop-hint">Drop a .shz to open it, or a SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG file to import it</div> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
+      <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
       <TopBar
         view={camView}
         onView={setView}
@@ -1649,10 +1677,10 @@ export function App() {
           onSelectRow: selectCutRow,
           onGrain: setGrain,
           onStock: setStock,
-          onCsv: exportsSoon,
-          onPdf: exportsSoon,
-          onPrint: exportsSoon,
-          onLabels: exportsSoon,
+          onCsv: () => void saveCut(csvBytes, "cut list.csv", CSV_TYPE, "the cut list as a spreadsheet"),
+          onPdf: () => void saveCut((l) => reportPdf(l, cutTitle), "cut list.pdf", PDF_TYPE, "the cut list report"),
+          onPrint: printCut,
+          onLabels: () => void saveCut((l) => labelsPdf(l, cutTitle), "labels.pdf", PDF_TYPE, `${plural(cutList?.rows.length ?? 0, "label")} on Avery 5160-size sheets`),
         }}
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{

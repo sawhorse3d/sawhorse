@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
 import { CutListPane, rowKey, type CutListPaneProps } from "./CutListPane";
+import { CutListReport } from "./CutListReport";
 import type { CutList } from "../kernel/types";
 
 afterEach(cleanup);
@@ -101,6 +102,21 @@ describe("Cut list pane", () => {
     expect((screen.getByRole("button", { name: "CSV" }) as HTMLButtonElement).disabled).toBe(true);
     rerender(<CutListPane {...props({ list: { ...empty, visible_only: true, totals: { ...empty.totals, hidden: 3 } }, visibleOnly: true })} />);
     expect(screen.getByTestId("cutlist-empty").textContent).toMatch(/Untick Visible only/);
+  });
+});
+
+describe("Printable report", () => {
+  it("renders every row, grain and the totals into a print-only article on the page body", () => {
+    render(<CutListReport list={bookshelf()} title="Bookshelf" />);
+    const report = screen.getByTestId("print-report");
+    expect(report.parentElement).toBe(document.body);
+    expect(report.querySelector("h1")?.textContent).toBe("Cut list: Bookshelf");
+    const rows = [...report.querySelectorAll("tbody tr")].map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent));
+    expect(rows[2]).toEqual(["Top", "1", "3/4", "11 1/4", "36", "Oak", "along W (across)", "2.11", ""]);
+    expect(rows[4][5]).toBe("1/4 birch ply (sheet)");
+    expect(rows[4][7]).toBe("17.07 sq ft");
+    expect(report.querySelector(".totals")?.textContent).toContain("18.99 board feet, Oak");
+    expect(report.querySelector("footer")?.textContent).toMatch(/nesting/);
   });
 });
 
