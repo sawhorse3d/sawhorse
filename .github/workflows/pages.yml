@@ -1,0 +1,79 @@
+name: Pages
+
+# The public site, https://sawhorse3d.com: the landing page (site/), the browser demo at
+# /app/, the user guide at /guide/ and the changelog at /changelog/, assembled by
+# scripts/build-site.mjs and deployed with GitHub Pages' "workflow" build type.
+#
+# The site base comes from actions/configure-pages: "" with the custom domain, "/sawhorse"
+# on the github.io project address, so the demo's assets resolve on either. Before it
+# deploys, the build is checked (links, outside resources, image sizes, the download links
+# answer) and smoke-tested in Chromium (the demo's kernel loads and a box extrudes).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits rather than cancelling one mid-deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  SAWHORSE_NO_WSL: "1"
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: wasm-pack build (the demo's kernel)
+        run: npm run wasm
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: assemble the site
+        run: node scripts/build-site.mjs --out dist-site --base "${{ steps.pages.outputs.base_path }}/"
+      - name: check the site (links, outside resources, sizes, download links)
+        run: node scripts/check-site.mjs --dir dist-site --base "${{ steps.pages.outputs.base_path }}/" --online
+      - name: install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: smoke test (landing page, demo kernel, a box, save and open)
+        run: node scripts/site-smoke.mjs --dir dist-site --prefix "${{ steps.pages.outputs.base_path }}/" --shots site-smoke --shot-prefix ci
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: site-smoke
+          path: site-smoke/
+          if-no-files-found: ignore
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist-site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
