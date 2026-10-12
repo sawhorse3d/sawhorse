@@ -13,7 +13,7 @@
 //   8. the carcass as 3/4 birch ply (three sheets) and 9. the Stock dialog.
 //
 //   npx vite --port 5201 --strictPort   (in another terminal)
-//   node scripts/capture-lane09.mjs --url http://localhost:5201 --out ../_captures [--files <dir>]
+//   node scripts/capture-lane09.mjs --url http://localhost:5201 --out ../_captures [--files <dir>] [--theme dark] [--prefix <name>]
 //
 // Uses the installed Edge (PW_CHANNEL=msedge) so nothing is downloaded. Exits non-zero when
 // a stage does not produce what it should.
@@ -31,6 +31,8 @@ const url = args.url ?? "http://localhost:5201";
 const outDir = path.resolve(args.out ?? "../_captures");
 const files = path.resolve(args.files ?? path.join(os.tmpdir(), "sawhorse-lane09"));
 const prefix = args.prefix ?? "2026-10-12-lane09";
+// --theme dark re-takes the walk-through in the dark theme (lane 14 uses both for the site).
+const theme = args.theme === "dark" ? "dark" : "light";
 const IN = 0.0254;
 mkdirSync(outDir, { recursive: true });
 mkdirSync(files, { recursive: true });
@@ -43,7 +45,7 @@ const fail = (msg) => {
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, acceptDownloads: true });
   page.setDefaultTimeout(15_000);
-  await page.goto(`${url}/?theme=light&autosave=0&io=basic`);
+  await page.goto(`${url}/?theme=${theme}&autosave=0&io=basic`);
   await page.waitForSelector('main.vp[data-kernel="ready"]', { timeout: 30_000 });
   const vp = page.locator("main.vp");
   const hint = page.locator("#hint");

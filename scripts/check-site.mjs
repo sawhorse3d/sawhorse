@@ -1,0 +1,151 @@
+#!/usr/bin/env node
+// Check the assembled site (scripts/build-site.mjs) before it is deployed:
+//
+//   - every page's local links, images and anchors resolve to a file or an id;
+//   - no scripts at all on the site pages, and the only outside resource is the Google
+//     Fonts stylesheet (no analytics, no cookies, no trackers);
+//   - the words that must be there are there (the pitch, the licence, the trademark
+//     notice, the unsigned-builds note, the maintainer's handle);
+//   - screenshots under 400 KB; CNAME says sawhorse3d.com; .nojekyll present;
+//   - the demo in app/ is built for <base>app/, with the kernel WASM and its worker;
+//   - no machine paths or personal names anywhere in the output;
+//   - with --online, every download link answers (follows GitHub's redirect to the file).
+//
+//   node scripts/check-site.mjs [--dir dist-site] [--base /] [--online]
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const argv = process.argv.slice(2);
+const opt = (name, dflt) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : dflt;
+};
+const dir = path.resolve(root, opt("dir", "dist-site"));
+let base = opt("base", "/");
+if (!base.startsWith("/")) base = `/${base}`;
+if (!base.endsWith("/")) base = `${base}/`;
+const online = argv.includes("--online");
+
+const problems = [];
+const bad = (msg) => problems.push(msg);
+const MAX_IMG = 400 * 1024;
+
+function walk(d) {
+  return readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+}
+const files = walk(dir);
+const rel = (f) => path.relative(dir, f).replace(/\\/g, "/");
+
+// ---- required files -------------------------------------------------------------------
+for (const f of ["index.html", "style.css", "favicon.svg", ".nojekyll", "CNAME", "app/index.html", "guide/index.html", "changelog/index.html"]) {
+  if (!existsSync(path.join(dir, f))) bad(`missing ${f}`);
+}
+if (existsSync(path.join(dir, "CNAME")) && readFileSync(path.join(dir, "CNAME"), "utf8").trim() !== "sawhorse3d.com") bad("CNAME is not sawhorse3d.com");
+
+// ---- site pages (everything but the app bundle) ---------------------------------------
+const pages = files.filter((f) => f.endsWith(".html") && !rel(f).startsWith("app/"));
+const ids = new Map(pages.map((f) => [f, new Set([...readFileSync(f, "utf8").matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]))]));
+const downloads = new Set();
+
+function resolveLocal(from, url) {
+  const clean = url.split("#")[0].split("?")[0];
+  let target = clean === "" ? from : path.resolve(path.dirname(from), decodeURIComponent(clean));
+  if (clean.endsWith("/") || (existsSync(target) && statSync(target).isDirectory())) target = path.join(target, "index.html");
+  return target;
+}
+
+for (const f of pages) {
+  const html = readFileSync(f, "utf8");
+  const name = rel(f);
+  if (/<script\b/i.test(html)) bad(`${name}: has a <script> (the site pages carry no scripts)`);
+  if (/\bon[a-z]+\s*=\s*"/i.test(html)) bad(`${name}: inline event handler`);
+  if (/(google-analytics|googletagmanager|gtag\(|plausible|matomo|segment\.|hotjar|document\.cookie|set-cookie)/i.test(html)) bad(`${name}: tracking or cookie code`);
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    const href = /href="([^"]+)"/.exec(m[0])?.[1] ?? "";
+    if (/^https?:/.test(href) && !/rel="(preconnect|dns-prefetch)"/.test(m[0]) && !href.startsWith("https://fonts.googleapis.com/")) bad(`${name}: outside stylesheet or link ${href}`);
+  }
+  for (const m of html.matchAll(/\s(src|srcset|poster)="([^"]+)"/gi)) {
+    const url = m[2].split(/\s/)[0];
+    if (/^(https?:)?\/\//.test(url)) bad(`${name}: loads an outside resource ${url}`);
+    else if (!url.startsWith("data:") && !existsSync(resolveLocal(f, url))) bad(`${name}: ${m[1]}="${url}" does not exist`);
+  }
+  for (const m of html.matchAll(/\shref="([^"]+)"/gi)) {
+    const url = m[1].replace(/&amp;/g, "&");
+    if (/^(mailto:|https?:)/.test(url)) {
+      if (url.includes("/releases/download/")) downloads.add(url);
+      continue;
+    }
+    const target = resolveLocal(f, url);
+    if (!existsSync(target)) {
+      bad(`${name}: link ${url} does not exist`);
+      continue;
+    }
+    const hash = url.includes("#") ? url.split("#")[1] : "";
+    if (hash && target.endsWith(".html") && !(ids.get(target) ?? new Set()).has(hash)) bad(`${name}: anchor ${url} has no matching id`);
+  }
+  if (!/MIT OR Apache-2\.0/.test(html)) bad(`${name}: no licence line`);
+  if (!/Not affiliated with Trimble\. SketchUp is a trademark of Trimble Inc\./.test(html)) bad(`${name}: no trademark notice`);
+}
+
+const home = existsSync(path.join(dir, "index.html")) ? readFileSync(path.join(dir, "index.html"), "utf8") : "";
+for (const must of [
+  "Free, local-first, open-source SketchUp-style modeling for woodworkers and makers",
+  "Try it in your browser",
+  'href="app/"',
+  "unsigned",
+  "maintained by @boardfoot",
+  'href="guide/"',
+  'href="changelog/"',
+  "https://github.com/sawhorse3d/sawhorse",
+]) {
+  if (!home.includes(must)) bad(`index.html: missing "${must}"`);
+}
+for (const os of ["Windows", "macOS (Apple Silicon)", "Linux"]) if (!home.includes(`<h3>${os}</h3>`)) bad(`index.html: no ${os} download`);
+if (downloads.size < 3) bad(`index.html: ${downloads.size} download links (want at least 3)`);
+
+// ---- images ---------------------------------------------------------------------------
+for (const f of files.filter((f) => /\.(png|jpe?g|webp)$/i.test(f) && !rel(f).startsWith("app/"))) {
+  const size = statSync(f).size;
+  if (size > MAX_IMG) bad(`${rel(f)}: ${Math.round(size / 1024)} KB (limit 400 KB)`);
+}
+
+// ---- the demo -------------------------------------------------------------------------
+if (existsSync(path.join(dir, "app", "index.html"))) {
+  const app = readFileSync(path.join(dir, "app", "index.html"), "utf8");
+  const scripts = [...app.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
+  if (!scripts.length) bad("app/index.html: no module script");
+  for (const s of scripts) if (!s.startsWith(`${base}app/assets/`)) bad(`app/index.html: script ${s} is not under ${base}app/assets/`);
+  const assets = existsSync(path.join(dir, "app", "assets")) ? readdirSync(path.join(dir, "app", "assets")) : [];
+  if (!assets.some((a) => a.endsWith(".wasm"))) bad("app/assets: no kernel .wasm (run npm run wasm before building the site)");
+  if (!assets.some((a) => /kernel\.worker.*\.js$/.test(a))) bad("app/assets: no kernel worker");
+  if (assets.some((a) => a.endsWith(".map"))) bad("app/assets: source maps in the public build");
+  const bundle = assets.filter((a) => a.endsWith(".js")).map((a) => readFileSync(path.join(dir, "app", "assets", a), "utf8")).join("\n");
+  if (!bundle.includes("Runs in your browser, nothing is uploaded.")) bad("app: the demo banner is not in the bundle (VITE_WEB_DEMO=1 missing?)");
+}
+
+// ---- identity: no machine paths or personal names -------------------------------------
+for (const f of files.filter((f) => /\.(html|css|js|svg|txt|json)$/i.test(f) || path.basename(f) === "CNAME")) {
+  const text = readFileSync(f, "utf8");
+  const hit = /([A-Za-z]:\\\\?Users\\\\?[A-Za-z0-9_]+|\/home\/[a-z_][a-z0-9_-]*\/|\/Users\/[A-Za-z0-9_]+\/|\/mnt\/[a-z]\/)/.exec(text);
+  if (hit) bad(`${rel(f)}: machine path ${hit[0]}`);
+}
+
+// ---- online: the download links answer ------------------------------------------------
+if (online) {
+  for (const url of downloads) {
+    try {
+      const r = await fetch(url, { method: "HEAD", redirect: "follow" });
+      if (!r.ok) bad(`download ${url}: HTTP ${r.status}`);
+    } catch (e) {
+      bad(`download ${url}: ${e.message}`);
+    }
+  }
+}
+
+if (problems.length) {
+  console.error(`[check-site] ${problems.length} problem(s):\n  - ${problems.join("\n  - ")}`);
+  process.exit(1);
+}
+console.log(`[check-site] ok: ${pages.length} pages, ${files.length} files, base ${base}${online ? `, ${downloads.size} download links answer` : ""}`);

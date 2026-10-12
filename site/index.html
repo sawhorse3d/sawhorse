@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sawhorse</title>
+<meta name="description" content="Free, local-first, open-source SketchUp-style modeling for woodworkers and makers. Runs in your browser or as a desktop app.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="Sawhorse">
+<meta property="og:description" content="Free, local-first, open-source SketchUp-style modeling for woodworkers and makers.">
+<meta property="og:image" content="https://sawhorse3d.com/img/app-light.png">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Sawhorse home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18M5 9l-2 11M19 9l2 11M8 9l-1.5 11M16 9l1.5 11M6.5 15h11" stroke="var(--accent)" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+      Sawhorse
+    </a>
+    <nav aria-label="Site">
+      <a href="app/">Try it</a>
+      <a href="#download">Download</a>
+      <a href="guide/">User guide</a>
+      <a href="changelog/">Changelog</a>
+      <a href="https://github.com/sawhorse3d/sawhorse">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow"><b>Alpha</b> v0.1.0-alpha.1</span>
+        <h1>Sawhorse</h1>
+        <p class="pitch">Free, local-first, open-source SketchUp-style modeling for woodworkers and makers.</p>
+        <p class="lede">Draw a rectangle, push it up, type <kbd>3/4</kbd> and press <kbd>Enter</kbd>. The keys your hands already know, a cut list that lays out your sheets and boards, and files that print and cut.</p>
+        <div class="actions">
+          <a class="btn primary" href="app/">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l13 8-13 8z"/></svg>
+            Try it in your browser
+          </a>
+          <a class="btn" href="#download">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+            Download
+          </a>
+        </div>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="img/app-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="img/app-light.png" width="1440" height="900" alt="Sawhorse with a bookshelf built from components: the tool rail on the left, the 3D view in the middle, the side panel on the right and the value box at the bottom.">
+        </picture>
+        <figcaption>The browser build: the same app as the desktop one.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="features">
+    <div class="wrap">
+      <h2 id="features">What it does</h2>
+      <p class="sub">Made for the shop.</p>
+      <div class="features">
+        <div class="feature">
+          <h3><span class="dot" style="background:var(--inf-end)"></span>Opens .skp, exports watertight</h3>
+          <p>Bring SketchUp models in, with their groups, components and layers. Every STL and 3MF that leaves is a closed solid, ready for the slicer or the CNC.</p>
+        </div>
+        <div class="feature">
+          <h3><span class="dot" style="background:var(--grain)"></span>Cut list and nesting built in</h3>
+          <p>Parts, sizes, grain and board feet as you draw; sheets and boards laid out with your kerf, and cutting diagrams as SVG, DXF and PDF.</p>
+        </div>
+        <div class="feature">
+          <h3><span class="dot" style="background:var(--inf-mid)"></span>Offline, no account</h3>
+          <p>Your models stay on your machine. No sign-up, no subscription, no tracking. The browser version uploads nothing, and the desktop app works with the network unplugged.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" aria-labelledby="dl-h">
+    <div class="wrap">
+      <h2 id="dl-h">Download</h2>
+      <p class="sub">Version 0.1.0-alpha.1, a pre-release. Or skip the install and <a href="app/">try it in your browser</a>.</p>
+      <div class="downloads">
+        <div class="dl">
+          <h3>Windows</h3>
+          <a class="btn primary" href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse_0.0.1_x64-setup.exe">Download for Windows</a>
+          <small>64-bit installer (.exe). Also as an <a href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse_0.0.1_x64_en-US.msi">.msi</a>.</small>
+        </div>
+        <div class="dl">
+          <h3>macOS (Apple Silicon)</h3>
+          <a class="btn primary" href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse_0.0.1_aarch64.dmg">Download for macOS</a>
+          <small>Disk image (.dmg) for M1 and later Macs.</small>
+        </div>
+        <div class="dl">
+          <h3>Linux</h3>
+          <a class="btn primary" href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse_0.0.1_amd64.AppImage">Download for Linux</a>
+          <small>x86-64 AppImage. Also as a <a href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse_0.0.1_amd64.deb">.deb</a> or an <a href="https://github.com/sawhorse3d/sawhorse/releases/download/v0.1.0-alpha.1/Sawhorse-0.0.1-1.x86_64.rpm">.rpm</a>.</small>
+        </div>
+      </div>
+      <p class="notice"><b>The builds are unsigned for now</b>, so your system warns before the first launch. Windows: in SmartScreen, choose More info, then Run anyway. macOS: open it once, then System Settings, Privacy &amp; Security, Open Anyway. Every installer is built in the open by GitHub Actions; see the <a href="https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.1">release page</a>.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="how">
+    <div class="wrap split">
+      <div>
+        <h2 id="how">How it is built</h2>
+        <p>The geometry kernel is Rust, compiled to WebAssembly: a solid modeler with exact push/pull and booleans, and a validator that checks the model after every operation. The interface is TypeScript, React and three.js, and the same build runs in a browser tab and in the desktop app.</p>
+        <p>Sawhorse is built with AI agents working under tests: unit and property tests, a fuzzer that runs thousands of random modeling sessions on every change and tens of thousands more each night, golden hashes that hold the WebAssembly kernel to the native one, and an independent review of every piece of work before it merges.</p>
+        <p>It is clean-room: no SketchUp code and no SketchUp SDK. SketchUp files are read by the MIT-licensed openskp library, on your machine.</p>
+        <ul class="links">
+          <li><a href="https://github.com/sawhorse3d/sawhorse">Source on GitHub</a></li>
+          <li><a href="guide/">User guide</a></li>
+          <li><a href="changelog/">Changelog</a></li>
+          <li><a href="https://github.com/sawhorse3d/sawhorse/issues">Report a bug</a></li>
+        </ul>
+        <p class="maint">maintained by @boardfoot</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="img/cutlist-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="img/cutlist-light.png" width="1440" height="900" loading="lazy" alt="The Nesting section of the cut list: the bookshelf's parts laid out on five oak boards and one plywood sheet, with grain arrows in the model.">
+        </picture>
+        <figcaption>Cut list and nesting, worked out again after every edit.</figcaption>
+      </figure>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Sawhorse is free software, MIT OR Apache-2.0.</p>
+    <p>Not affiliated with Trimble. SketchUp is a trademark of Trimble Inc.</p>
+  </div>
+</footer>
+</body>
+</html>
