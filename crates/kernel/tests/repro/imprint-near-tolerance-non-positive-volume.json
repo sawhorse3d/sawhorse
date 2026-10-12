@@ -1,0 +1,157 @@
+{
+  "name": "imprint-near-tolerance-non-positive-volume",
+  "error": "op 9 Imprint { object: 1, face: 4, points: [[0.25, 1.1250010000000001, 0.05500000000000001], [0.25, 1.200001, 0.05500000000000001], [0.25, 1.200001, 0.07500000000000001], [0.25, 1.1250010000000001, 0.07500000000000001]] }: validator rejected the result: kernel bug, operation rolled back: 1 topology violation(s); NonPositiveVolume(0.0) -- CI fuzzer, 2026-10-11 (run 38186357264). Cause: not the loop (it sits 25 mm clear of every edge) but the side face it was imprinted on: a notch plus three collinear vertices on one edge made earcut bridge the new hole wrongly, its triangles missed 1.9% of the face, and Object::volume() turned that TessellateError into a volume of 0. Fixed: sawhorse-tessellate falls back to its own ear clipper when earcut's area check fails; Object::validate reports a face that cannot be triangulated as Violation::Untessellatable instead of NonPositiveVolume(0); faceops::imprint refuses (SelfIntersecting) a loop whose corner lies within POINT_MERGE of a side it does not belong to (tests/imprint_tolerance.rs).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 1e-06,
+      "w": 0.25,
+      "h": 1.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.1
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 4
+      },
+      "points": [
+        [
+          0.25,
+          1.237312724297062,
+          0.020363598659523252
+        ],
+        [
+          0.25,
+          1.574812724297062,
+          0.020363598659523252
+        ],
+        [
+          0.25,
+          1.574812724297062,
+          0.027863598659523252
+        ],
+        [
+          0.25,
+          1.237312724297062,
+          0.027863598659523252
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 5,
+      "points": [
+        [
+          0.21250000000000002,
+          1.500001,
+          0.015
+        ],
+        [
+          0.2,
+          1.500001,
+          0.015
+        ],
+        [
+          0.2,
+          1.500001,
+          0.02
+        ],
+        [
+          0.21250000000000002,
+          1.500001,
+          0.02
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 5,
+      "path": [
+        [
+          0.15625,
+          1.500001,
+          0.0
+        ],
+        [
+          0.25,
+          1.500001,
+          0.017818148827082846
+        ]
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 4,
+      "points": [
+        [
+          0.25,
+          1.1250010000000001,
+          0.05500000000000001
+        ],
+        [
+          0.25,
+          1.200001,
+          0.05500000000000001
+        ],
+        [
+          0.25,
+          1.200001,
+          0.07500000000000001
+        ],
+        [
+          0.25,
+          1.1250010000000001,
+          0.07500000000000001
+        ]
+      ]
+    }
+  ]
+}

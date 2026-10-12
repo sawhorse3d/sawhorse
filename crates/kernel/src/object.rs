@@ -277,9 +277,14 @@ impl Object {
         }
         // Every face can be locally consistent while the whole solid is inside out (a face
         // pushed backwards through itself): the enclosed volume must be positive.
-        let volume = self.volume();
-        if volume.is_nan() || volume <= 0.0 {
-            v.push(Violation::NonPositiveVolume(volume));
+        match self.tri_solid() {
+            Ok(t) => {
+                let volume = t.volume();
+                if volume.is_nan() || volume <= 0.0 {
+                    v.push(Violation::NonPositiveVolume(volume));
+                }
+            }
+            Err(e) => v.push(Violation::Untessellatable(e.to_string())),
         }
         if v.is_empty() {
             Ok(report)

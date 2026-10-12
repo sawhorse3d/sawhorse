@@ -67,6 +67,10 @@ pub enum Violation {
     SelfIntersectingSolid(crate::intersect::SelfHit),
     /// The solid encloses no positive volume (it is inside out, or flat).
     NonPositiveVolume(f64),
+    /// A face could not be triangulated (the tessellator's message), so the solid can be
+    /// neither measured nor drawn. Reported apart from [`Violation::NonPositiveVolume`]:
+    /// before 2026-10-11 it showed up as a volume of exactly 0.
+    Untessellatable(String),
     SketchInvalid(String),
     EulerOdd {
         shell: usize,

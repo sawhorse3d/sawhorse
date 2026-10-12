@@ -474,6 +474,19 @@ pub fn imprint(p: &mut Polys, fi: usize, pts: &[DVec3]) -> Result<usize, FaceEdi
         }
     }
     let n = p2.len();
+    // Exactly simple is not enough: a corner within tolerance of a side it does not belong
+    // to (a spike doubling back, a waist pinched to a hair) would weld into a solid whose
+    // boundary touches itself. Refuse it like a crossing (fuzz, 2026-10-11).
+    for i in 0..n {
+        for k in 0..n {
+            if k == i || (k + 1) % n == i {
+                continue;
+            }
+            if point_segment_distance(p2[i], p2[k], p2[(k + 1) % n]) <= POINT_MERGE {
+                return Err(FaceEditError::SelfIntersecting);
+            }
+        }
+    }
     for k in 0..n {
         let (a, b) = (p2[k], p2[(k + 1) % n]);
         if view
