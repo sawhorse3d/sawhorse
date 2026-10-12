@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 2e3e73ef0624a8a6983a8046d531139793362905614a51d572fd0bacd772c471 # shrinks to n = [-0.42676240604898064, -0.031865296248551334, 0.46407779613754063], w = 1.8959937319077045, h = 0.4584860655372872, d = 0.10505761706733177, face = 4, e1 = 1, e2 = 2, t1 = 0.125, t2 = 0.375, bend = 0.0, on_vertex = false
 cc 770c9f4790f953e6c1380cffa43bd85aed9d760f981fae95bbe488d78da70890 # shrinks to n = [1.0, 0.0, 0.0], w = 0.05, h = 0.05, d = 0.7681373333377038, face = 5, u0 = 0.5, v0 = 0.5, du = 1, dv = 1, triangle = false
+cc 1aaf4f63fd40f47b35f7a37ad9ab4d53ae4555884702e0d49456ecb86c2e5aa0 # shrinks to n = [0.0, 0.0, 1.0], w = 0.05, h = 0.05, d = 0.05, face = 0, e1 = 0, e2 = 1, t1 = 0.125, t2 = 0.125, bend = 5.308666708911116e-6, on_vertex = true

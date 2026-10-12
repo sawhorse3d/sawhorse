@@ -143,10 +143,13 @@ proptest! {
                 prop_assert_eq!(merged(&m), original);
             }
             Ok(other) => prop_assert!(false, "unexpected {:?}", other),
-            // Neighbouring corners joined straight: the cut would run along an edge.
+            // Neighbouring corners joined straight, or bent by so little that the bend is
+            // within the merge distance of the edge: the cut would run along an edge.
             Err(e) => {
                 let adjacent = (e2 + 1) % 4 == e1 || (e1 + 1) % 4 == e2;
-                prop_assert!(!e.is_bug() && on_vertex && adjacent && bend <= 0.0, "{}", e);
+                let bend_off_edge = mid.distance(a.lerp(b, 0.5));
+                let straight = bend <= 0.0 || bend_off_edge <= 2.0 * sawhorse_kernel::tolerance::POINT_MERGE;
+                prop_assert!(!e.is_bug() && on_vertex && adjacent && straight, "{} (bend {} m off the edge)", e, bend_off_edge);
             }
         }
     }
