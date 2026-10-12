@@ -53,13 +53,18 @@ export function friendlyError(msg: string): string {
     .replace(/\bno region #\d+ in this sketch/g, "that region no longer exists")
     .replace(/\bno group #\d+/g, "that group no longer exists")
     .replace(/\bno guide or dimension #\d+/g, "that guide or dimension no longer exists")
+    .replace(/\bno group or component #\d+/g, "that group or component no longer exists")
+    .replace(/\bno component definition #\d+/g, "that component no longer exists")
+    .replace(/\bno imported mesh #\d+/g, "that imported mesh no longer exists")
     .replace(/\bobject #(\d+)/g, (_m, id: string) => solidName(Number(id)))
     .replace(/\bface #(\d+)/g, (_m, id: string) => faceName(Number(id)))
     .replace(/\bregion #(\d+)/g, "that region")
     .replace(/\bsketch #(\d+)/g, "that sketch")
     .replace(/\bgroup #(\d+)/g, "that group")
     .replace(/\bguide or dimension #(\d+)/g, "that guide or dimension")
-    .replace(/#(\d+)/g, "that one");
+    .replace(/#(\d+)/g, "that one")
+    // A bare public id (slot-reuse bits make them ten digits or more) is never shown.
+    .replace(/\b\d{10,}\b/g, "that one");
 }
 
 /** True when a status text names something by a raw id (tests use it as a tripwire). */

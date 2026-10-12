@@ -20,6 +20,9 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/.worktrees/**", "**/_captures/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
+  // openskp is only imported on the first .skp import (by the kernel worker). Without this,
+  // Vite discovers it then, re-optimises and reloads the dev page mid-import.
+  optimizeDeps: { include: ["openskp"] },
   build: {
     target: "es2022",
     sourcemap: true,

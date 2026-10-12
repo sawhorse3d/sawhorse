@@ -76,3 +76,37 @@ test("Esc cancels typing, Ctrl+Z works mid-entry, arrays follow a copy, tool key
   await expect(page.locator("#hint")).toHaveClass(/err/);
   await expect(vp).toHaveAttribute("data-hash", hash ?? "");
 });
+
+test("the measurements box clears after undo and redo", async ({ page }) => {
+  const vp = await ready(page);
+  const vcb = page.locator("#vcb");
+  const IN = 0.0254;
+  const click = async (p: [number, number, number]) => {
+    const box = await page.locator("#cv").boundingBox();
+    const xy = await page.evaluate((q) => (window as unknown as { __sawhorse: { worldToScreen(p: number[]): [number, number] } }).__sawhorse.worldToScreen(q), p);
+    await page.mouse.move(box!.x + xy[0], box!.y + xy[1], { steps: 2 });
+    await page.mouse.click(box!.x + xy[0], box!.y + xy[1]);
+  };
+  await page.keyboard.press("r");
+  await page.keyboard.type("24,16");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("p");
+  await page.keyboard.type("12");
+  await page.keyboard.press("Enter");
+  await expect(vp).toHaveAttribute("data-watertight", "true");
+  // The tape shows what it measured...
+  await page.keyboard.press("t");
+  await click([24 * IN, 0, 12 * IN]);
+  await click([24 * IN, 16 * IN, 12 * IN]);
+  await expect(page.locator("#hint")).toContainText("Distance 16 in");
+  await expect(vcb).toHaveValue("16");
+  // ...until the document steps back: then the box is empty again (the measurement was of
+  // geometry that is gone), and after redo too.
+  await page.keyboard.press("Control+z");
+  await expect(vp).toHaveAttribute("data-triangles", "2");
+  await expect(vcb).toHaveValue("");
+  await click([0, 0, 0]);
+  await page.keyboard.press("Control+y");
+  await expect(vp).toHaveAttribute("data-watertight", "true");
+  await expect(vcb).toHaveValue("");
+});

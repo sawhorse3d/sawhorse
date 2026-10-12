@@ -108,7 +108,13 @@ export function App() {
   const [kernelState, setKernelState] = useState<KernelState>("loading");
   const [kernelNote, setKernelNote] = useState<string | null>(null);
   const [vcb, setVcb] = useState("");
-  const [message, setMessage] = useState<Message>(null);
+  const [message, setMessageRaw] = useState<Message>(null);
+  // Every error that reaches the status line is reworded: kernel refusals (and the file,
+  // export and import errors that carry them) name things by public id, which people never
+  // see (src/lib/names.ts).
+  const setMessage = useCallback((m: Message) => setMessageRaw(m && m.error ? { ...m, text: friendlyError(m.text) } : m), []);
+  /** After undo / redo: the active tool's gesture is void and the measurements box shows its default again. */
+  const afterHistoryRef = useRef<() => void>(() => undefined);
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
@@ -240,8 +246,22 @@ export function App() {
   );
 
   const apply = useCallback((op: KernelOp, describe?: (r: EditResult) => string) => run((k) => k.apply(op), op, describe), [run]);
-  const undo = useCallback(() => run((k) => k.undo(), null, (r) => `Undone. ${r.scene.state.undo_depth} more step(s) to undo.`), [run]);
-  const redo = useCallback(() => run((k) => k.redo(), null, (r) => `Redone. ${r.scene.state.redo_depth} more step(s) to redo.`), [run]);
+  const undo = useCallback(
+    () =>
+      run((k) => k.undo(), null, (r) => `Undone. ${r.scene.state.undo_depth} more step(s) to undo.`).then((r) => {
+        if (r) afterHistoryRef.current();
+        return r;
+      }),
+    [run],
+  );
+  const redo = useCallback(
+    () =>
+      run((k) => k.redo(), null, (r) => `Redone. ${r.scene.state.redo_depth} more step(s) to redo.`).then((r) => {
+        if (r) afterHistoryRef.current();
+        return r;
+      }),
+    [run],
+  );
 
   const restore = useCallback(
     (a: Autosave) => {
@@ -667,6 +687,13 @@ export function App() {
     },
     [],
   );
+
+  afterHistoryRef.current = () => {
+    const t = activeRef.current;
+    t?.reset();
+    setToolView(t?.view() ?? EMPTY_VIEW);
+    if (!live.current.vcbEditing) setVcb(defaultValue(toolIdRef.current, live.current.units));
+  };
 
   const selectTool = useCallback(
     (id: ToolId) => {

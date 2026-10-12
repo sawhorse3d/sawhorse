@@ -42,4 +42,19 @@ describe("friendly names", () => {
     for (const t of out) expect(hasRawId(t)).toBe(false);
     expect(hasRawId(`solid ${REUSED}`)).toBe(true);
   });
+
+  it("never lets a raw id through, whatever the message", () => {
+    const { state, mesh } = scene();
+    setNameSource(state, mesh);
+    const msgs = [
+      `Export refused: no object #${REUSED} in the model`,
+      "no group or component #4294967299",
+      "no component definition #12",
+      "no imported mesh #3",
+      `Could not open the file: object ${REUSED} is broken`,
+    ];
+    const out = msgs.map(friendlyError);
+    expect(out.slice(1, 4)).toEqual(["that group or component no longer exists", "that component no longer exists", "that imported mesh no longer exists"]);
+    for (const t of out) expect(hasRawId(t), t).toBe(false);
+  });
 });
