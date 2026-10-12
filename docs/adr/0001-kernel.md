@@ -2,7 +2,7 @@
 
 - Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations), lane 2 (kernel core) and lane 3 (feel) implemented, 2026-10-11
 - Deciders: the maintainer
-- Source: `docs/DECISIONS.md` seed, vault note `the maintainer's notes`
+- Source: `docs/DECISIONS.md` seed
 
 ## Context
 

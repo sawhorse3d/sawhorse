@@ -2,7 +2,7 @@
 name = "sawhorse-desktop"
 version = "0.0.1"
 description = "Sawhorse desktop shell (Tauri 2). The geometry kernel runs as WASM in the webview, not here."
-authors = ["the maintainer"]
+authors = ["Sawhorse contributors"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.85"

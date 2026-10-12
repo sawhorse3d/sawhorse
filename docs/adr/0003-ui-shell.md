@@ -2,7 +2,7 @@
 
 - Status: Accepted, 2026-10-11. Mock approved by the maintainer: "mock looks great". Lane 3 (feel) implemented, 2026-10-11.
 - Deciders: the maintainer
-- Source: `docs/DECISIONS.md` seed; approved mock `docs/mock/sawhorse-mock.html` (published at https://(mock link removed))
+- Source: `docs/DECISIONS.md` seed; approved mock `docs/mock/sawhorse-mock.html`
 
 ## Context
 
@@ -10,7 +10,7 @@ People who already model furniture have SketchUp in their hands: the keys, the p
 
 ## Decision
 
-- Build exactly the mock: https://(mock link removed). Local copy at `docs/mock/sawhorse-mock.html`.
+- Build exactly the mock: the approved mock (local copy below). Local copy at `docs/mock/sawhorse-mock.html`.
 - Layout: top bar (menus, view buttons Iso/Top/Front/Right/Persp, Credits chip); left tool rail with SketchUp-2017 default keys (Space select, E erase, L line, R rect, C circle, A arc, P push/pull, M move, Q rotate, S scale, F offset, W follow-me, T tape, D dimension, B paint); viewport; right panel tabs Outliner / Tags / Cut list / Render; bottom Value Control Box (typed length/angle/count mid-gesture; units in, ft-in, fractional in, mm, cm, m).
 - Inference colours are OURS: endpoint lime, midpoint teal, on-edge amber, on-face violet. Not SketchUp's.
 - Own glyphs, own layout. No copied icons, no pixel-for-pixel UI (Tetris v. Xio).

@@ -42,3 +42,7 @@ PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test
 ## License
 
 Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option. Contributions are accepted under the same terms. Sawhorse does not contain or call the Trimble SketchUp SDK; see `docs/CLEANROOM.md` for the clean-room rule.
+
+## Identity
+
+Sawhorse is published pseudonymously by its maintainer under the project account. Copyright is held by the Sawhorse contributors under MIT OR Apache-2.0.

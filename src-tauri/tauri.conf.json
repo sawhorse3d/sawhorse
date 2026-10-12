@@ -31,7 +31,7 @@
     "category": "GraphicsAndDesign",
     "shortDescription": "Free push/pull 3D modeling for woodworkers and makers",
     "longDescription": "Sawhorse is a free, local-first, open-source push/pull 3D modeler for woodworkers and makers, with a built-in cut list and watertight exports.",
-    "copyright": "Copyright (c) 2026 the maintainer. MIT OR Apache-2.0.",
+    "copyright": "Copyright (c) 2026 Sawhorse contributors. MIT OR Apache-2.0.",
     "license": "MIT OR Apache-2.0",
     "icon": [
       "icons/32x32.png",
