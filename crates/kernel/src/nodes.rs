@@ -35,6 +35,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::cutlist::PartAttrs;
 use crate::error::{DocumentError, KernelError, StructureError, TransformError};
 use crate::ids::{DefId, MeshId, NodeId, ObjectId, SketchId, from_public, to_public};
 use crate::meshbuild::LooseMesh;
@@ -81,6 +82,9 @@ pub struct Node {
     pub xform: Xform,
     pub tag: Option<String>,
     pub member: Membership,
+    /// Grain and stock said about a group as a part (lane 7; an instance's are its
+    /// definition's, so this stays empty on instances).
+    pub part: PartAttrs,
 }
 
 /// A component definition: what its instances share.
@@ -91,6 +95,8 @@ pub struct Definition {
     pub members: BTreeMap<u32, Member>,
     /// The next slot number to hand out.
     pub next_slot: u32,
+    /// Grain and stock said about the component as a part (lane 7).
+    pub part: PartAttrs,
 }
 
 /// One member of a definition: a solid, a mesh, a nested group or a nested instance.
@@ -102,6 +108,8 @@ pub struct Member {
     pub tag: Option<String>,
     pub hidden: bool,
     pub locked: bool,
+    /// A nested group's part attributes (a solid member's are in its template solid).
+    pub part: PartAttrs,
     pub kind: MemberKind,
 }
 
@@ -239,13 +247,16 @@ fn template_mesh(m: &LooseMesh, inv: &Xform) -> Result<LooseMesh, TransformError
 /// Same member apart from solid / mesh geometry (which the caller tracks).
 fn same_member(a: &Member, b: &Member) -> bool {
     let kind = match (&a.kind, &b.kind) {
-        (MemberKind::Solid(x), MemberKind::Solid(y)) => x.material == y.material,
+        (MemberKind::Solid(x), MemberKind::Solid(y)) => {
+            x.material == y.material && x.part == y.part
+        }
         (MemberKind::Mesh(x), MemberKind::Mesh(y)) => x.material == y.material && x.name == y.name,
         (MemberKind::Group(x), MemberKind::Group(y)) => x == y,
         (MemberKind::Instance(d, x), MemberKind::Instance(e, y)) => d == e && x == y,
         _ => false,
     };
     kind && a.parent == b.parent
+        && a.part == b.part
         && a.name == b.name
         && a.tag == b.tag
         && a.hidden == b.hidden
@@ -855,6 +866,7 @@ impl Model {
                 parent: self.context,
                 ..Default::default()
             },
+            part: PartAttrs::default(),
         });
         for t in things {
             self.membership_mut(t).expect("resolved").parent = Some(g);
@@ -882,6 +894,7 @@ impl Model {
             name: name.trim().to_string(),
             members: BTreeMap::new(),
             next_slot: 1,
+            part: PartAttrs::default(),
         });
         let i = match things.as_slice() {
             [Thing::Node(g)] if self.nodes[*g].kind == NodeKind::Group => {
@@ -889,6 +902,8 @@ impl Model {
                 let node = &mut self.nodes[g];
                 node.kind = NodeKind::Instance(d);
                 node.name = None;
+                // What was said about the group as a part is said about the component now.
+                self.defs[d].part = std::mem::take(&mut node.part);
                 g
             }
             _ => {
@@ -901,6 +916,7 @@ impl Model {
                         parent: self.context,
                         ..Default::default()
                     },
+                    part: PartAttrs::default(),
                 });
                 for &t in &things {
                     self.membership_mut(t).expect("resolved").parent = Some(i);
@@ -1548,6 +1564,7 @@ impl Model {
                         Some(MemberKind::Solid(g)) if !self.dirty.touched.contains(&k) => {
                             let mut g = (**g).clone();
                             g.material = o.material.clone();
+                            g.part = o.part.clone();
                             g
                         }
                         _ => {
@@ -1561,6 +1578,7 @@ impl Model {
                         tag: o.tag.clone(),
                         hidden: m.hidden,
                         locked: m.locked,
+                        part: PartAttrs::default(),
                         kind: MemberKind::Solid(Box::new(geom)),
                     }
                 }
@@ -1584,6 +1602,7 @@ impl Model {
                         tag: mesh.tag.clone(),
                         hidden: m.hidden,
                         locked: m.locked,
+                        part: PartAttrs::default(),
                         kind: MemberKind::Mesh(Box::new(geom)),
                     }
                 }
@@ -1609,6 +1628,10 @@ impl Model {
                         tag: node.tag.clone(),
                         hidden: m.hidden,
                         locked: m.locked,
+                        part: match node.kind {
+                            NodeKind::Group => node.part.clone(),
+                            NodeKind::Instance(_) => PartAttrs::default(),
+                        },
                         kind,
                     }
                 }
@@ -1766,6 +1789,7 @@ impl Model {
                         xform,
                         tag: m.tag.clone(),
                         member,
+                        part: m.part.clone(),
                     };
                     let k = match by_slot.get(&s) {
                         Some(&Thing::Node(k)) => {
@@ -2070,6 +2094,7 @@ impl Model {
                         if crate::hash::object_hash(o) != crate::hash::object_hash(&want)
                             || o.next_face_id != want.next_face_id
                             || o.material != g.material
+                            || o.part != g.part
                             || o.name != member.name
                             || o.tag != member.tag
                         {
@@ -2085,7 +2110,10 @@ impl Model {
                     }
                     (Thing::Node(k), MemberKind::Group(l)) => {
                         let node = &self.nodes[k];
-                        if node.kind != NodeKind::Group || node.xform != n.xform.after(l) {
+                        if node.kind != NodeKind::Group
+                            || node.xform != n.xform.after(l)
+                            || node.part != member.part
+                        {
                             return Err("an instance's group is not its definition's".into());
                         }
                     }

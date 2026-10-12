@@ -384,6 +384,23 @@ pub enum Op {
     DeleteMesh {
         mesh: u64,
     },
+    /// Cut list (lane 7): which way a part's grain runs. `Length` is the default and clears
+    /// the override. A component instance names its definition. Metadata: allowed anywhere
+    /// in the tree, like a name, and it reaches every copy of a component.
+    SetGrain {
+        part: crate::cutlist::PartRef,
+        grain: crate::cutlist::Grain,
+    },
+    /// Cut list: the stock a part is cut from, in words (`None`: its material's name), and
+    /// whether it is sheet goods or solid lumber (`None`: decided from the name and the
+    /// thickness).
+    SetStock {
+        part: crate::cutlist::PartRef,
+        #[serde(default)]
+        stock: Option<String>,
+        #[serde(default)]
+        sheet: Option<bool>,
+    },
     /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
     /// edit; refused (typed) when the snapshot does not validate.
     Restore {
@@ -620,6 +637,8 @@ pub enum OpOutcome {
     MaterialSet,
     Renamed,
     MeshDeleted,
+    /// A part's grain or stock was set (cut list).
+    PartSet,
     /// A saved model was restored.
     Restored {
         objects: usize,
@@ -838,6 +857,7 @@ impl Model {
                     || n.tag.is_some()
                     || n.member != crate::nodes::Membership::default()
                     || n.xform != Xform::IDENTITY
+                    || !n.part.is_default()
             })
             || self
                 .objects
@@ -1427,6 +1447,24 @@ impl Model {
                 self.mark(removed.member.parent);
                 Ok(OpOutcome::MeshDeleted)
             }
+            Op::SetGrain { part, grain } => {
+                let g = (*grain != crate::cutlist::Grain::Length).then_some(*grain);
+                self.set_part(*part, |a| a.grain = g)
+            }
+            Op::SetStock { part, stock, sheet } => {
+                let stock = match stock {
+                    Some(s) if !s.trim().is_empty() => {
+                        check_name(s)?;
+                        Some(s.trim().to_string())
+                    }
+                    _ => None,
+                };
+                let sheet = *sheet;
+                self.set_part(*part, move |a| {
+                    a.stock = stock;
+                    a.sheet = sheet;
+                })
+            }
             Op::Restore { snapshot } => {
                 *self = Model::from_snapshot(snapshot)?;
                 Ok(OpOutcome::Restored {
@@ -1860,6 +1898,7 @@ impl Model {
                     parent: ctx,
                     ..Default::default()
                 },
+                part: Default::default(),
             });
             for t in members {
                 match t {
@@ -1877,6 +1916,7 @@ impl Model {
                 name: clip_name(&d.name, crate::nodes::DEFAULT_COMPONENT_NAME),
                 members: BTreeMap::new(),
                 next_slot: 1,
+                part: Default::default(),
             };
             self.template_items(&mut def, None, &d.items, &mut notes)?;
             self.template_nodes(&mut def, None, &d.children, &def_ids, &mut notes)?;
@@ -2037,6 +2077,7 @@ impl Model {
                         tag: tag.clone(),
                         hidden: false,
                         locked: false,
+                        part: Default::default(),
                         kind: MemberKind::Solid(Box::new(o)),
                     },
                 );
@@ -2054,6 +2095,7 @@ impl Model {
                         tag: tag.clone(),
                         hidden: false,
                         locked: false,
+                        part: Default::default(),
                         kind: MemberKind::Mesh(Box::new(m)),
                     },
                 );
@@ -2087,6 +2129,7 @@ impl Model {
                             tag,
                             hidden: n.hidden,
                             locked: false,
+                            part: Default::default(),
                             kind: MemberKind::Group(Xform::IDENTITY),
                         },
                     );
@@ -2108,6 +2151,7 @@ impl Model {
                             tag,
                             hidden: n.hidden,
                             locked: false,
+                            part: Default::default(),
                             kind: MemberKind::Instance(d, *xform),
                         },
                     );
@@ -2141,6 +2185,7 @@ impl Model {
                     xform: Xform::IDENTITY,
                     tag,
                     member,
+                    part: Default::default(),
                 });
                 for item in items {
                     let built = build_item(item)?;
@@ -2192,6 +2237,7 @@ impl Model {
                     xform: *xform,
                     tag,
                     member,
+                    part: Default::default(),
                 });
                 self.rederive(i)?;
                 let kids = self.kids();

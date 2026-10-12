@@ -46,6 +46,9 @@ pub struct Object {
     /// Where it sits in the model's tree (its group or component instance), and whether it
     /// is hidden or locked (see [`crate::nodes`]).
     pub(crate) member: crate::nodes::Membership,
+    /// What was said about it as a part of a cut list: grain and stock (lane 7). Carried
+    /// into a component definition's template with the solid, like its material.
+    pub(crate) part: crate::cutlist::PartAttrs,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
@@ -170,6 +173,7 @@ impl Object {
             next_face_id: faces.len() as u64 + 1,
             number: 0,
             member: Default::default(),
+            part: Default::default(),
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -224,6 +228,12 @@ impl Object {
         self.material = from.material.clone();
         self.number = from.number;
         self.member = from.member.clone();
+        self.part = from.part.clone();
+    }
+
+    /// Grain and stock said about this solid as a part (lane 7).
+    pub fn part(&self) -> &crate::cutlist::PartAttrs {
+        &self.part
     }
 
     /// Its group or component instance, slot and hidden / locked flags.
@@ -368,6 +378,7 @@ impl Object {
             next_face_id: next,
             number: 0,
             member: Default::default(),
+            part: Default::default(),
         }
     }
 

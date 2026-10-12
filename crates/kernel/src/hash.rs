@@ -239,6 +239,9 @@ fn hash_structure(h: &mut StableHasher, m: &Model) {
         opt(h, n.tag.as_deref());
         membership(h, &n.member);
         xform(h, &n.xform);
+        if !n.part.is_default() {
+            n.part.hash_into(h);
+        }
     }
     let defs = m.definitions();
     h.usize(defs.len());
@@ -246,6 +249,9 @@ fn hash_structure(h: &mut StableHasher, m: &Model) {
         h.u64(id);
         h.tag(&d.name);
         h.u64(u64::from(d.next_slot));
+        if !d.part.is_default() {
+            d.part.hash_into(h);
+        }
         h.usize(d.members.len());
         for (&slot, mem) in &d.members {
             h.u64(u64::from(slot));
@@ -253,11 +259,17 @@ fn hash_structure(h: &mut StableHasher, m: &Model) {
             opt(h, mem.name.as_deref());
             opt(h, mem.tag.as_deref());
             h.u64(u64::from(mem.hidden) | (u64::from(mem.locked) << 1));
+            if !mem.part.is_default() {
+                mem.part.hash_into(h);
+            }
             match &mem.kind {
                 MemberKind::Solid(o) => {
                     h.tag("solid");
                     hash_solid(h, o);
                     opt(h, o.material());
+                    if !o.part().is_default() {
+                        o.part().hash_into(h);
+                    }
                 }
                 MemberKind::Mesh(x) => {
                     h.tag("mesh");
@@ -338,6 +350,10 @@ pub fn model_hash(m: &Model) -> u64 {
             h.tag("meta");
             h.tag(o.name().unwrap_or(""));
             h.tag(o.material().unwrap_or(""));
+        }
+        // Cut-list attributes only when said (lane 7), so older documents keep their hashes.
+        if !o.part().is_default() {
+            o.part().hash_into(&mut h);
         }
     }
     // Annotations are hashed only when there are any, so documents without guides keep

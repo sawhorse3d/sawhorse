@@ -16,6 +16,7 @@
 //! Public ids are renumbered compactly in saved order (1, 2, 3, ...): a document whose ids
 //! were already compact (nothing deleted) restores to the same model hash.
 
+use crate::cutlist::PartAttrs;
 use std::collections::BTreeMap;
 
 use glam::DVec3;
@@ -144,6 +145,9 @@ pub struct SnapObject {
     pub hidden: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub locked: bool,
+    /// Cut-list attributes (lane 7): grain, stock, sheet. Absent: none said.
+    #[serde(default, skip_serializing_if = "PartAttrs::is_default")]
+    pub part: PartAttrs,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -176,6 +180,9 @@ pub struct SnapNode {
     /// Local axes to world (an instance's placement). Absent: the identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xform: Option<Xform>,
+    /// Cut-list attributes (lane 7): grain, stock, sheet. Absent: none said.
+    #[serde(default, skip_serializing_if = "PartAttrs::is_default")]
+    pub part: PartAttrs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -193,6 +200,9 @@ pub struct SnapDefinition {
     pub name: String,
     pub next_slot: u32,
     pub members: Vec<SnapMember>,
+    /// Cut-list attributes (lane 7): grain, stock, sheet. Absent: none said.
+    #[serde(default, skip_serializing_if = "PartAttrs::is_default")]
+    pub part: PartAttrs,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -210,6 +220,9 @@ pub struct SnapMember {
     pub hidden: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub locked: bool,
+    /// Cut-list attributes of a solid or nested group member (lane 7).
+    #[serde(default, skip_serializing_if = "PartAttrs::is_default")]
+    pub part: PartAttrs,
     #[serde(flatten)]
     pub kind: SnapMemberKind,
 }
@@ -484,6 +497,7 @@ impl Model {
                     slot: o.member.slot,
                     hidden: o.member.hidden,
                     locked: o.member.locked,
+                    part: o.part.clone(),
                 })
                 .collect(),
             meshes: self
@@ -583,6 +597,7 @@ impl Model {
                     locked: n.member.locked,
                     slot: n.member.slot,
                     xform: opt_xform(&n.xform),
+                    part: n.part.clone(),
                 }
             })
             .collect()
@@ -594,6 +609,7 @@ impl Model {
             .map(|d| SnapDefinition {
                 name: d.name.clone(),
                 next_slot: d.next_slot,
+                part: d.part.clone(),
                 members: d
                     .members
                     .iter()
@@ -604,6 +620,10 @@ impl Model {
                         tag: m.tag.clone(),
                         hidden: m.hidden,
                         locked: m.locked,
+                        part: match &m.kind {
+                            MemberKind::Solid(o) => o.part.clone(),
+                            _ => m.part.clone(),
+                        },
                         kind: match &m.kind {
                             MemberKind::Solid(o) => SnapMemberKind::Solid {
                                 material: o.material.clone(),
@@ -660,6 +680,7 @@ impl Model {
                     name: d.name.clone(),
                     members: BTreeMap::new(),
                     next_slot: d.next_slot,
+                    part: d.part.clone(),
                 })
             })
             .collect();
@@ -675,6 +696,7 @@ impl Model {
                     } => {
                         let mut o = brep_object(&what, brep, *next_face_id)?;
                         o.material = material.clone();
+                        o.part = mem.part.clone();
                         MemberKind::Solid(Box::new(o))
                     }
                     SnapMemberKind::Mesh {
@@ -712,6 +734,11 @@ impl Model {
                             tag: mem.tag.clone(),
                             hidden: mem.hidden,
                             locked: mem.locked,
+                            part: if matches!(kind, MemberKind::Solid(_)) {
+                                PartAttrs::default()
+                            } else {
+                                mem.part.clone()
+                            },
                             kind,
                         },
                     )
@@ -750,6 +777,7 @@ impl Model {
                     hidden: n.hidden,
                     locked: n.locked,
                 },
+                part: n.part.clone(),
             });
             if node_ids.insert(n.id, k).is_some() {
                 return Err(bad(format!("node {} listed twice", n.id)));
@@ -840,6 +868,7 @@ impl Model {
             obj.name = o.name.clone();
             obj.tag = o.tag.clone();
             obj.material = o.material.clone();
+            obj.part = o.part.clone();
             obj.source = o
                 .source_sketch
                 .and_then(|i| sketch_ids.get(i))
@@ -895,6 +924,7 @@ impl Model {
                         xform: Xform::IDENTITY,
                         tag: None,
                         member: Membership::default(),
+                        part: PartAttrs::default(),
                     });
                     for o in objects {
                         m.objects[o].member.parent = Some(k);
