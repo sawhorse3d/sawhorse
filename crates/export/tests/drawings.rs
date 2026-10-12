@@ -357,3 +357,106 @@ fn the_sheet_golden_lays_out() {
         r
     );
 }
+
+#[test]
+fn the_sheet_golden_as_dxf() {
+    use sawhorse_export::dxf::pairs;
+    use sawhorse_export::sheet::{RenderOptions, fit_text, render, text_width};
+    use sawhorse_export::sheet_dxf::dxf;
+    use sawhorse_kernel::sheets::PaperUnits;
+    let m = golden("sheet");
+    let (id, _) = m.sheets()[0];
+    let r = render(
+        &m,
+        id,
+        &RenderOptions {
+            number: 1,
+            count: 1,
+        },
+    )
+    .unwrap();
+    let text = dxf(&r, PaperUnits::Inches);
+    assert!(text.ends_with("  0\nEOF\n"));
+    let p = pairs(&text);
+    let header: Vec<_> = p
+        .windows(2)
+        .filter(|w| w[0].0 == 9)
+        .map(|w| (w[0].1.clone(), w[1].1.clone()))
+        .collect();
+    assert!(
+        header.contains(&("$INSUNITS".into(), "1".into())),
+        "{header:?}"
+    );
+    // Every entity is a LINE, an LWPOLYLINE or a TEXT: no DIMENSION entities.
+    let kinds: std::collections::BTreeSet<&str> = p
+        .iter()
+        .skip_while(|(c, v)| !(*c == 2 && v == "ENTITIES"))
+        .filter(|(c, _)| *c == 0)
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["ENDSEC", "EOF", "LINE", "LWPOLYLINE", "TEXT"]
+            .into_iter()
+            .collect()
+    );
+    // The dimension strings are text on the DIMENSIONS layer.
+    let texts: Vec<&str> = p
+        .iter()
+        .filter(|(c, _)| *c == 1)
+        .map(|(_, v)| v.as_str())
+        .collect();
+    for want in [
+        "36\"",
+        "72\"",
+        "17 1/4\"",
+        "CUT LIST",
+        "FRONT ELEVATION 1:12",
+        "Bookshelf",
+    ] {
+        assert!(texts.contains(&want), "missing {want:?}");
+    }
+    // Everything on the paper: x in 0..11, y in 0..8.5 (inches).
+    for (c, v) in &p {
+        let v: f64 = match v.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if *c == 10 || *c == 11 {
+            assert!((-1e-6..=11.0 + 1e-6).contains(&v), "x {v}");
+        }
+        if *c == 20 || *c == 21 {
+            assert!((-1e-6..=8.5 + 1e-6).contains(&v), "y {v}");
+        }
+    }
+    // The overall width dimension's text sits under the elevation (y up: low on the page).
+    let at = p.iter().position(|(c, v)| *c == 1 && v == "36\"").unwrap();
+    let y = p[..at]
+        .iter()
+        .rev()
+        .find(|(c, _)| *c == 20)
+        .unwrap()
+        .1
+        .parse::<f64>()
+        .unwrap();
+    assert!(y < 1.5, "{y}");
+    // The section's cut is outlined on its own layer; layers are declared.
+    assert!(p.windows(2).any(|w| w[0] == (8, "SECTION".into())));
+    // In millimetres: the same picture, 25.4 times larger.
+    let mm = pairs(&dxf(&r, PaperUnits::Millimetres));
+    let max_x = mm
+        .iter()
+        .filter(|(c, _)| *c == 10)
+        .filter_map(|(_, v)| v.parse::<f64>().ok())
+        .fold(0.0, f64::max);
+    assert!(max_x > 250.0 && max_x <= 279.4 + 1e-6, "{max_x}");
+    // Deterministic.
+    assert_eq!(dxf(&r, PaperUnits::Inches), text);
+    // Fitting text as the PDF does.
+    assert_eq!(fit_text("Back panel", 1.0, 100.0, false), "Back panel");
+    let short = fit_text("Back panel 1/4 ply in a rabbet", 1.0, 5.0, false);
+    assert!(
+        short.ends_with("...") && text_width(&short, 1.0, false) <= 5.0,
+        "{short}"
+    );
+}

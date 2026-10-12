@@ -63,7 +63,7 @@ test("the File menu: open, save, import, units and every export", async ({ page 
   await page.goto("/");
   await page.getByRole("button", { name: "File", exact: true }).click();
   const items = page.getByRole("menu", { name: "File" }).locator(":scope > button, :scope > .subwrap > button");
-  await expect(items).toHaveText([/New/, /Open…\s*Ctrl\+O/, /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/]);
+  await expect(items).toHaveText([/New/, /Open…\s*Ctrl\+O/, /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/, /Print Sheets…/]);
   await page.getByRole("menuitem", { name: "Export", exact: true }).hover();
   await expect(page.getByRole("menu", { name: "Export" }).getByRole("menuitem")).toHaveText([
     "STL…",
@@ -77,8 +77,11 @@ test("the File menu: open, save, import, units and every export", async ({ page 
     // Lane 12: a section plane's slice (greyed out until the model has a section plane).
     "Section slice (SVG)…",
     "Section slice (DXF)…",
+    // Lane 12: every drawing sheet as one PDF (greyed out until there is a sheet).
+    "Sheets (PDF)…",
   ]);
   await expect(page.getByRole("menuitem", { name: "Section slice (SVG)…" })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Sheets (PDF)…" })).toBeDisabled();
 });
 
 test("import an STL, export STL and 3MF, re-import the STL", async ({ page }) => {

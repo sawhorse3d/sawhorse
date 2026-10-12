@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { readPdf } from "../src/cutlist/pdf";
+import { pngDpi } from "../src/sheets/exports";
 import { goldenShz, openShz } from "./shz";
 
 // Drawing sheets (lane 12) through the browser build: the sheet golden laid out by the
@@ -177,4 +179,55 @@ test("build a sheet of the bookshelf with every tool, edit it, undo, and save it
   expect(svg).toContain('width="17in" height="11in"');
   expect(svg).toContain('viewBox="0 0 1224 792"');
   for (const t of ["36&quot;", "72&quot;", "17 1/4&quot;", "CUT LIST", "Walnut, oil finish", "Bookshelf, walnut"]) expect(svg).toContain(`>${t}<`);
+});
+
+test("the sheet golden out as PDF (its dimension strings are text in it), DXF, PNG and print", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openShz(page, await goldenShz("sheet"), 9, "sheet.shz");
+  await sheetsMode(page);
+  await expect.poll(async () => (await render(page))?.items.length).toBe(8);
+  const exportButton = (kind: string) => page.locator(`[data-testid="sheet-export"] [data-export="${kind}"]`);
+  const save = async (kind: string) => {
+    const download = page.waitForEvent("download");
+    await exportButton(kind).click();
+    const d = await download;
+    return { name: d.suggestedFilename(), bytes: readFileSync((await d.path())!) };
+  };
+
+  // The golden PDF text check: one Letter landscape page, every dimension string as text.
+  const pdf = await save("pdf");
+  expect(pdf.name).toBe("sheet - Bookshelf.pdf");
+  const check = readPdf(new Uint8Array(pdf.bytes));
+  expect(check.pages).toBe(1);
+  for (const t of ['36"', '72"', '17 1/4"', "FRONT ELEVATION 1:12", "PLAN 1:12", "SECTION A 1:4", "CUT LIST", "Back panel 1/4 ply in a rabbet", "Bookshelf", "1 of 1", "As noted"]) expect(check.text[0]).toContain(t);
+  expect(pdf.bytes.toString("latin1")).toContain("/MediaBox [0 0 792 612]");
+  writeFileSync("test-results/sheets-golden.pdf", pdf.bytes);
+
+  // DXF: paper inches, text for the dimensions.
+  const dxf = (await save("dxf")).bytes.toString("utf8");
+  expect(dxf).toContain("$INSUNITS\n 70\n1\n");
+  expect(dxf).toContain('\n36"\n');
+  expect(dxf).not.toContain("DIMENSION\n");
+
+  // PNG at 150 dpi: 11 x 8.5 in is 1650 x 1275 pixels, and says so.
+  const png = (await save("png150")).bytes;
+  expect(png.readUInt32BE(16)).toBe(1650);
+  expect(png.readUInt32BE(20)).toBe(1275);
+  expect(pngDpi(new Uint8Array(png))).toBe(150);
+  writeFileSync("test-results/sheets-golden-150dpi.png", png);
+
+  // Print: the sheet alone, at its real size, through the print dialog.
+  await page.evaluate(() => {
+    const w = window as unknown as { printed?: string[] };
+    w.printed = [];
+    window.print = () => {
+      w.printed!.push(document.querySelector(".print-sheets")?.innerHTML.slice(0, 400) ?? "");
+      w.printed!.push(document.querySelector("style[data-print-sheets]")?.textContent ?? "");
+    };
+  });
+  await exportButton("print").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { printed: string[] }).printed.length)).toBe(2);
+  const printed = await page.evaluate(() => (window as unknown as { printed: string[] }).printed);
+  expect(printed[0]).toContain('width="11in" height="8.5in"');
+  expect(printed[1]).toContain("@page { size: 11in 8.5in; margin: 0 }");
 });

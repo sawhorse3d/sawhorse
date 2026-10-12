@@ -30,10 +30,10 @@ pub enum OutlineFlavour {
     R12,
 }
 
-struct Dxf(String);
+pub(crate) struct Dxf(pub(crate) String);
 
 impl Dxf {
-    fn pair(&mut self, code: i32, value: impl std::fmt::Display) {
+    pub(crate) fn pair(&mut self, code: i32, value: impl std::fmt::Display) {
         let _ = write!(self.0, "{code:>3}\n{value}\n");
     }
     fn xyz(&mut self, base: i32, p: DVec3) {
@@ -45,7 +45,7 @@ impl Dxf {
 }
 
 /// A number as DXF wants it: plain decimal, no exponent, `-0` written as `0`.
-fn num(x: f64) -> String {
+pub(crate) fn num(x: f64) -> String {
     let x = if x == 0.0 { 0.0 } else { x };
     let s = format!("{x:.6}");
     let s = s.trim_end_matches('0').trim_end_matches('.').to_string();

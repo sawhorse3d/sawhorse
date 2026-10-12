@@ -234,6 +234,13 @@ export class KernelClient {
     return r;
   }
 
+  /** Sheet `sheet` as DXF text, at paper size in the sheet's units (lane 12). */
+  async sheetDxf(sheet: number): Promise<string> {
+    const r = (await this.call({ kind: "sheetDxf", sheet })).sheetDxf;
+    if (r === undefined) throw new Error("kernel returned no DXF");
+    return r;
+  }
+
   /** A fresh document (ground sketch only), as an edit result. */
   async newDocument(): Promise<EditResult> {
     const scene = await this.init();

@@ -10,7 +10,18 @@ import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, c
 import type { SheetRender } from "./render";
 import type { SheetToolId } from "./SheetCanvas";
 
-export type SheetExportKind = "pdf" | "svg" | "dxf" | "png150" | "png300" | "print";
+import type { SheetExportKind } from "./runExport";
+export type { SheetExportKind };
+
+const EXPORTS: { kind: SheetExportKind; label: string; title: string; primary?: boolean }[] = [
+  { kind: "print", label: "Print…", title: "This sheet through the system print dialog, at 100% (it can also save a PDF)", primary: true },
+  { kind: "pdf", label: "PDF", title: "This sheet as a vector PDF at its paper size" },
+  { kind: "pdf-all", label: "PDF, all sheets", title: "Every sheet in order, a page each" },
+  { kind: "svg", label: "SVG", title: "This sheet as SVG, in paper units" },
+  { kind: "dxf", label: "DXF", title: "This sheet as DXF at paper size: lines, outlines and text" },
+  { kind: "png150", label: "PNG 150 dpi", title: "This sheet as an image" },
+  { kind: "png300", label: "PNG 300 dpi", title: "This sheet as an image, print quality" },
+];
 
 export interface SheetsPaneProps {
   sheets: SheetRow[];
@@ -511,36 +522,11 @@ export function SheetsPane(props: SheetsPaneProps) {
 
             <Section title="Print and export" testId="sheet-export">
               <div className="btnrow">
-                {props.exports.includes("print") ? (
-                  <button type="button" className="btn primary" onClick={() => props.onExport("print")}>
-                    Print…
+                {EXPORTS.filter((x) => props.exports.includes(x.kind)).map((x) => (
+                  <button key={x.kind} type="button" className={x.primary ? "btn primary" : "btn"} data-export={x.kind} title={x.title} onClick={() => props.onExport(x.kind)}>
+                    {x.label}
                   </button>
-                ) : null}
-                {props.exports.includes("pdf") ? (
-                  <button type="button" className="btn" onClick={() => props.onExport("pdf")}>
-                    PDF
-                  </button>
-                ) : null}
-                {props.exports.includes("svg") ? (
-                  <button type="button" className="btn" onClick={() => props.onExport("svg")}>
-                    SVG
-                  </button>
-                ) : null}
-                {props.exports.includes("dxf") ? (
-                  <button type="button" className="btn" onClick={() => props.onExport("dxf")}>
-                    DXF
-                  </button>
-                ) : null}
-                {props.exports.includes("png150") ? (
-                  <button type="button" className="btn" onClick={() => props.onExport("png150")}>
-                    PNG 150 dpi
-                  </button>
-                ) : null}
-                {props.exports.includes("png300") ? (
-                  <button type="button" className="btn" onClick={() => props.onExport("png300")}>
-                    PNG 300 dpi
-                  </button>
-                ) : null}
+                ))}
               </div>
               <p className="note">At the paper's real size: {paperText(paperSize(setup)[0], units)} x {paperText(paperSize(setup)[1], units)}. Print at 100% (no fit to page) to keep the scales.</p>
             </Section>

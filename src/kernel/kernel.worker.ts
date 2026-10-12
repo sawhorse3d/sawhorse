@@ -206,6 +206,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "sheetSnap":
         res = { id: req.id, ok: true, sheetSnap: JSON.parse(document(mod).sheet_snap(req.sheet, req.item, req.x, req.y, req.radius)) };
         break;
+      case "sheetDxf":
+        res = { id: req.id, ok: true, sheetDxf: document(mod).sheet_dxf(req.sheet) };
+        break;
       case "viewportFit":
         res = { id: req.id, ok: true, viewportFit: JSON.parse(document(mod).viewport_fit(JSON.stringify(req.item))) };
         break;

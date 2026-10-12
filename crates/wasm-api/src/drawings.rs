@@ -153,6 +153,32 @@ impl DocCore {
         serde_json::to_string(&r).map_err(|e| e.to_string())
     }
 
+    /// Sheet `sheet` as DXF in its own units (see `sawhorse_export::sheet_dxf`).
+    pub fn sheet_dxf_text(&self, sheet: u64) -> Result<String, String> {
+        let m = self.doc.model();
+        let order = m.sheets();
+        let number = order
+            .iter()
+            .position(|(id, _)| *id == sheet)
+            .ok_or(format!("no sheet #{sheet}"))?
+            + 1;
+        let units = m
+            .sheet(sheet)
+            .ok_or(format!("no sheet #{sheet}"))?
+            .setup
+            .units;
+        let r = sawhorse_export::sheet::render(
+            m,
+            sheet,
+            &sawhorse_export::sheet::RenderOptions {
+                number,
+                count: order.len(),
+            },
+        )
+        .ok_or(format!("no sheet #{sheet}"))?;
+        Ok(sawhorse_export::sheet_dxf::dxf(&r, units))
+    }
+
     /// Where a cursor at paper point (`x`, `y`) snaps on viewport `item` of sheet `sheet`,
     /// within `radius` paper metres: `{kind, at, point}` (the model point) or null.
     pub fn sheet_snap_json(
@@ -270,6 +296,13 @@ impl Doc {
     pub fn sheet_render(&self, sheet: f64) -> Result<String, JsError> {
         self.core
             .sheet_render_json(js_id(sheet)?)
+            .map_err(|e| JsError::new(&e))
+    }
+
+    /// See [`DocCore::sheet_dxf_text`].
+    pub fn sheet_dxf(&self, sheet: f64) -> Result<String, JsError> {
+        self.core
+            .sheet_dxf_text(js_id(sheet)?)
             .map_err(|e| JsError::new(&e))
     }
 
@@ -431,6 +464,29 @@ mod tests {
             core.viewport_fit_json(r#"{"kind":"line","a":[0,0],"b":[1,1],"width":0.001}"#)
                 .is_err()
         );
+        // The sheet as DXF, in inches, with its dimension strings.
+        let dxf = core.sheet_dxf_text(1).unwrap();
+        assert!(
+            dxf.contains(
+                "$INSUNITS
+ 70
+1
+"
+            ),
+            "{}",
+            &dxf[..200]
+        );
+        assert!(
+            dxf.contains(
+                "
+36\"
+"
+            ) && dxf.ends_with(
+                "EOF
+"
+            )
+        );
+        assert!(core.sheet_dxf_text(7).is_err());
     }
 
     #[test]

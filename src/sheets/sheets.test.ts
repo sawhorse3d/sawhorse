@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { IN, MM, canBeToScale, captionFor, fittingScale, newSetup, paperSize, paperText, parsePaper, scaleFactor, scaleLabel, STANDARD_SCALES } from "./paper";
 import { circumcentre, dimOffset, dimPreview, hitItem, modelToPaper, sheetLayers, sheetSvg, snapPoint, toDrawing, toPaper, type SheetRender, type ViewportInfo } from "./render";
 import { nextSheetName } from "./SheetsWorkspace";
+import { PT, crc32, pngDpi, sheetsPdf, withDpi } from "./exports";
+import { readPdf, textWidth, winAnsi } from "../cutlist/pdf";
 import { dimPaper } from "./SheetCanvas";
 
 const front: ViewportInfo = {
@@ -177,5 +179,64 @@ describe("SVG", () => {
     expect(l.items[1].svg).toContain("<text");
     expect(l.items[1].svg).toContain("<path");
     expect(l.over).toContain("Bookshelf");
+  });
+});
+
+describe("PDF and PNG", () => {
+  it("writes the sheet as a vector PDF at its paper size, the strings as text", () => {
+    const bytes = sheetsPdf([render, { ...render, id: 2, name: "Two" }], new Map(), "Bookshelf");
+    const pdf = readPdf(bytes);
+    expect(pdf.pages).toBe(2);
+    expect(pdf.text[0]).toEqual(['A & B <30">', "Bookshelf"]);
+    const s = new TextDecoder("latin1").decode(bytes);
+    expect(s).toContain("/MediaBox [0 0 792 612]");
+    // Colours, the even-odd fill, the margin frame, a dashless line; no images, so no XObject.
+    expect(s).toContain("f* Q");
+    expect(s).toContain("0.094 0.102 0.098 RG");
+    expect(s).not.toContain("/XObject");
+    // Middle-anchored text starts half its width to the left of its point.
+    const tm = /\/F1 6\.8 Tf 1 0 0 1 ([\d.]+) ([\d.]+) Tm \(A & B <30">\) Tj/.exec(s);
+    expect(tm).not.toBeNull();
+    expect(Number(tm![1])).toBeCloseTo(0.05 * PT - textWidth('A & B <30">', 0.0024 * PT) / 2, 1);
+    expect(Number(tm![2])).toBeCloseTo(612 - 0.04 * PT, 1);
+    // Deterministic.
+    expect(sheetsPdf([render, { ...render, id: 2, name: "Two" }], new Map(), "Bookshelf")).toEqual(bytes);
+  });
+
+  it("puts images in as JPEG XObjects and turns rotated text", () => {
+    const withImage: SheetRender = { ...render, prims: [...render.prims, { p: "image", rect: [0.1, 0.1, 0.02, 0.01], path: "assets/logo.png" }, { p: "text", at: [0.1, 0.1], text: "72\"", size: 0.0024, anchor: "middle", angle: 90, color: [24, 26, 25] }] };
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 1, 2, 0xff, 0xd9]);
+    const bytes = sheetsPdf([withImage], new Map([["assets/logo.png", { jpeg, width: 40, height: 20, dataUrl: "" }]]), "x");
+    const pdf = readPdf(bytes);
+    expect(pdf.text[0]).toContain('72"');
+    const s = new TextDecoder("latin1").decode(bytes);
+    expect(s).toContain("/Subtype /Image /Width 40 /Height 20 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length 9");
+    expect(s).toMatch(/\/XObject << \/Im1 \d+ 0 R >>/);
+    expect(s).toContain("/Im1 Do Q");
+    expect(s).toMatch(/0 1 -1 0 [\d.]+ [\d.]+ Tm \(72"\) Tj/);
+  });
+
+  it("knows the diameter sign", () => {
+    expect(winAnsi("Ø")).toEqual([0xd8]);
+    expect(textWidth("Ø", 1000)).toBe(778);
+  });
+
+  it("writes the resolution into a PNG", () => {
+    expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
+    // The smallest PNG: signature, IHDR (1 x 1 RGB), IEND (CRCs are not checked here).
+    const chunk = (type: string, body: number[]) => {
+      const out = [0, 0, 0, body.length, ...[...type].map((c) => c.charCodeAt(0)), ...body];
+      const crc = crc32(new Uint8Array(out.slice(4)));
+      return [...out, (crc >>> 24) & 255, (crc >>> 16) & 255, (crc >>> 8) & 255, crc & 255];
+    };
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, ...chunk("IHDR", [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]), ...chunk("IEND", [])]);
+    expect(pngDpi(png)).toBeNull();
+    const at300 = withDpi(png, 300);
+    expect(pngDpi(at300)).toBe(300);
+    expect(at300.length).toBe(png.length + 21);
+    // Again: replaced, not added twice.
+    expect(pngDpi(withDpi(at300, 150))).toBe(150);
+    expect(withDpi(at300, 150).length).toBe(at300.length);
+    expect(() => withDpi(new Uint8Array(40), 300)).toThrow("not a PNG");
   });
 });

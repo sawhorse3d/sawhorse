@@ -747,6 +747,8 @@ export interface WasmDoc {
   sheet_snap(sheet: number, item: number, x: number, y: number, radius: number): string;
   /** How a viewport item would draw: the factor that fits it, its drawing's size (lane 12). */
   viewport_fit(item_json: string): string;
+  /** A sheet as DXF in its own units (lane 12). */
+  sheet_dxf(sheet: number): string;
   free(): void;
 }
 
@@ -799,7 +801,8 @@ export type RequestBody =
   // Lane 12: drawing sheets (read-only).
   | { kind: "sheetRender"; sheet: number }
   | { kind: "sheetSnap"; sheet: number; item: number; x: number; y: number; radius: number }
-  | { kind: "viewportFit"; item: import("./sheetTypes").ItemKind };
+  | { kind: "viewportFit"; item: import("./sheetTypes").ItemKind }
+  | { kind: "sheetDxf"; sheet: number };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -866,6 +869,8 @@ export type WorkerResponse =
       sheetSnap?: import("../sheets/render").SheetSnap | null;
       /** A viewport's fit (lane 12). */
       viewportFit?: import("../sheets/render").ViewportFit;
+      /** A sheet as DXF text (lane 12). */
+      sheetDxf?: string;
       faces?: FaceInfo[];
     }
   | { id: number; ok: false; error: string; missing?: boolean };

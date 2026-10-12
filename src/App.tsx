@@ -58,6 +58,7 @@ import { NameDialog, type NameRequest } from "./components/NameDialog";
 import { SceneTabs } from "./components/SceneTabs";
 import { SheetsWorkspace } from "./sheets/SheetsWorkspace";
 import { ModeSwitch, type WorkMode } from "./sheets/SheetTabs";
+import { runSheetExport, type SheetExportKind } from "./sheets/runExport";
 import type { OutlineRow, OutlinerAction } from "./components/Outliner";
 import { TAG_PALETTE, hexToRgb } from "./components/TagsPane";
 import { applySelection } from "./lib/entities";
@@ -1157,6 +1158,18 @@ export function App() {
     return v ? { eye: v.eye, target: v.target, up: v.up, parallel: v.ortho, fov: v.fov } : null;
   }, []);
 
+  /** Every sheet as one PDF, or printed (lane 12; the Sheet pane writes one sheet). */
+  const exportSheets = useCallback(
+    (kind: SheetExportKind) => {
+      const k = kernelRef.current;
+      if (!k) return;
+      void queue.current.then(() =>
+        runSheetExport(kind, { kernel: k, sheets: live.current.scene?.sheets ?? [], active: null, docName: docName ? stem(docName) : "Untitled", message: (text, error = false) => setMessage({ text, error }) }),
+      );
+    },
+    [docName],
+  );
+
   /** Make a material from a PNG or JPEG and make it the active one (one undo step). */
   const importImage = useCallback(
     async (file: File) => {
@@ -2158,8 +2171,11 @@ export function App() {
             "-" as const,
             { label: "Section slice (SVG)…", disabled: !st?.graph?.sections?.length, title: "The selected (or active) section plane's cut, filled, 1:1 in millimetres", onSelect: () => void exportSection(null, "svg-section") },
             { label: "Section slice (DXF)…", disabled: !st?.graph?.sections?.length, title: "The selected (or active) section plane's cut as closed polylines, 1:1 in millimetres", onSelect: () => void exportSection(null, "dxf-section") },
+            "-" as const,
+            { label: "Sheets (PDF)…", disabled: !scene?.sheets?.length, title: "Every drawing sheet, a page each, vector, at its paper size", onSelect: () => exportSheets("pdf-all") },
           ],
         },
+        { label: "Print Sheets…", disabled: !scene?.sheets?.length, title: "Every drawing sheet through the system print dialog, at 100%", onSelect: () => exportSheets("print-all") },
       ],
       Edit: [
         { label: `Undo${stepName(st?.undo_depth, st?.stats.hash) ? ` ${stepName(st?.undo_depth, st?.stats.hash)}` : ""}`, keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
@@ -2255,7 +2271,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets],
   );
 
   const valueLabel = active?.valueLabel() ?? null;

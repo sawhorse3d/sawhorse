@@ -192,17 +192,39 @@ pub fn text_width(s: &str, size: f64, bold: bool) -> f64 {
         .map(|c| {
             let k = c as u32;
             if (32..=126).contains(&k) {
-                u32::from(HELVETICA[(k - 32) as usize])
-            } else if c == '°' {
-                400
-            } else if c == '×' {
-                584
-            } else {
-                600
+                return u32::from(HELVETICA[(k - 32) as usize]);
+            }
+            // The few others the PDF writer encodes (src/cutlist/pdf.ts, WIDE); anything
+            // else is drawn as "?" there, 556 wide.
+            match c {
+                '×' => 584,
+                '·' => 278,
+                '—' => 1000,
+                '²' => 333,
+                '½' | '¼' | '¾' => 834,
+                '°' => 400,
+                '’' => 222,
+                '“' | '”' => 333,
+                'Ø' => 778,
+                _ => 556,
             }
         })
         .sum();
     f64::from(w) * size * if bold { 1.05 } else { 1.0 } / 1000.0
+}
+
+/// `s` shortened with "..." to fit `width` (as the PDF writer's `fit` does).
+pub fn fit_text(s: &str, size: f64, width: f64, bold: bool) -> String {
+    if text_width(s, size, bold) <= width {
+        return s.to_string();
+    }
+    let mut t: Vec<char> = s.chars().collect();
+    while t.len() > 1
+        && text_width(&format!("{}...", t.iter().collect::<String>()), size, bold) > width
+    {
+        t.pop();
+    }
+    format!("{}...", t.iter().collect::<String>().trim_end())
 }
 
 // ---- geometry helpers -------------------------------------------------------------------

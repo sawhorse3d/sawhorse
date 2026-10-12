@@ -1,7 +1,8 @@
 // A small PDF 1.4 writer (lane 7), our own: pages of text, lines and rectangles in the
 // standard Helvetica fonts (no embedding: every PDF reader has them), uncompressed content
 // streams, a cross-reference table with exact byte offsets. Enough for the cut list report
-// and label sheets; nothing else depends on it.
+// and label sheets, and (lane 12) drawing sheets: colour, dashes, filled paths, rotated
+// text and JPEG images, added without changing a byte of what the cut list writes.
 //
 // Coordinates are PDF points (1/72 in) from the bottom-left corner of the page.
 
@@ -13,8 +14,8 @@ const HELVETICA = [
 ];
 
 /** WinAnsi codes for the few non-ASCII characters the cut list writes. */
-const WIN_ANSI: Record<string, number> = { "×": 0xd7, "·": 0xb7, "—": 0x97, "–": 0x96, "²": 0xb2, "½": 0xbd, "¼": 0xbc, "¾": 0xbe, "°": 0xb0, "’": 0x92, "“": 0x93, "”": 0x94, "é": 0xe9, "è": 0xe8, "ü": 0xfc, "ö": 0xf6, "ä": 0xe4 };
-const WIDE: Record<number, number> = { 0xd7: 584, 0xb7: 278, 0x97: 1000, 0x96: 556, 0xb2: 333, 0xbd: 834, 0xbc: 834, 0xbe: 834, 0xb0: 400, 0x92: 222, 0x93: 333, 0x94: 333 };
+const WIN_ANSI: Record<string, number> = { "×": 0xd7, "·": 0xb7, "—": 0x97, "–": 0x96, "²": 0xb2, "½": 0xbd, "¼": 0xbc, "¾": 0xbe, "°": 0xb0, "’": 0x92, "“": 0x93, "”": 0x94, "é": 0xe9, "è": 0xe8, "ü": 0xfc, "ö": 0xf6, "ä": 0xe4, "Ø": 0xd8 };
+const WIDE: Record<number, number> = { 0xd7: 584, 0xb7: 278, 0x97: 1000, 0x96: 556, 0xb2: 333, 0xbd: 834, 0xbc: 834, 0xbe: 834, 0xb0: 400, 0x92: 222, 0x93: 333, 0x94: 333, 0xd8: 778 };
 
 /** A string as WinAnsi codes (unknown characters become "?"). */
 export function winAnsi(s: string): number[] {
@@ -88,6 +89,55 @@ export class PdfPage {
     return this;
   }
 
+  // ---- lane 12: drawing sheets --------------------------------------------------------
+
+  /** A line in an RGB colour (0-255), optionally dashed ([on, off] points). */
+  lineRGB(x1: number, y1: number, x2: number, y2: number, width: number, rgb: RGB, dash?: [number, number]): this {
+    const d = dash ? `[${num(dash[0])} ${num(dash[1])}] 0 d ` : "";
+    this.ops.push(`q ${col(rgb)} RG ${num(width)} w 1 J ${d}${num(x1)} ${num(y1)} m ${num(x2)} ${num(y2)} l S Q`);
+    return this;
+  }
+
+  /** Closed rings filled even-odd. */
+  fillRings(rings: [number, number][][], rgb: RGB): this {
+    const path = rings
+      .filter((r) => r.length >= 3)
+      .map((r) => `${r.map((p, i) => `${num(p[0])} ${num(p[1])} ${i ? "l" : "m"}`).join(" ")} h`)
+      .join(" ");
+    if (path) this.ops.push(`q ${col(rgb)} rg ${path} f* Q`);
+    return this;
+  }
+
+  /** A rectangle stroked and/or filled in RGB colours. */
+  rectRGB(x: number, y: number, w: number, h: number, o: { stroke?: RGB; fill?: RGB; width?: number }): this {
+    if (!o.stroke && !o.fill) return this;
+    const parts = ["q"];
+    if (o.fill) parts.push(`${col(o.fill)} rg`);
+    if (o.stroke) parts.push(`${col(o.stroke)} RG ${num(o.width ?? 0.5)} w`);
+    parts.push(`${num(x)} ${num(y)} ${num(w)} ${num(h)} re`, o.fill && o.stroke ? "B" : o.fill ? "f" : "S", "Q");
+    this.ops.push(parts.join(" "));
+    return this;
+  }
+
+  /** Text on its baseline at (x, y), anchored at its start, middle or end, turned `angle`
+   * degrees counter-clockwise. */
+  textRGB(x: number, y: number, s: string, size: number, o: { rgb?: RGB; bold?: boolean; angle?: number; align?: "left" | "center" | "right" } = {}): this {
+    const w = textWidth(s, size, o.bold);
+    const a = ((o.angle ?? 0) * Math.PI) / 180;
+    const [c, sn] = [Math.cos(a), Math.sin(a)];
+    const dx = o.align === "right" ? -w : o.align === "center" ? -w / 2 : 0;
+    const [tx, ty] = [x + dx * c, y + dx * sn];
+    const m = Math.abs(a) < 1e-12 ? `1 0 0 1 ${num(tx)} ${num(ty)}` : `${num4(c)} ${num4(sn)} ${num4(-sn)} ${num4(c)} ${num(tx)} ${num(ty)}`;
+    this.ops.push(`BT ${col(o.rgb ?? [0, 0, 0])} rg /${o.bold ? "F2" : "F1"} ${num(size)} Tf ${m} Tm ${pdfString(s)} Tj ET`);
+    return this;
+  }
+
+  /** An image the document holds (`PdfDoc.addJpeg`) drawn into a rectangle. */
+  image(name: string, x: number, y: number, w: number, h: number): this {
+    this.ops.push(`q ${num(w)} 0 0 ${num(h)} ${num(x)} ${num(y)} cm /${name} Do Q`);
+    return this;
+  }
+
   /** An arrow from (x1, y1) to (x2, y2) with a small head. */
   arrow(x1: number, y1: number, x2: number, y2: number, width = 0.8, head = 4): this {
     this.line(x1, y1, x2, y2, width);
@@ -104,12 +154,30 @@ export class PdfPage {
   }
 }
 
+export type RGB = [number, number, number];
+
+/** A colour component, 0-1, three places. */
+const col = (c: RGB) => c.map((v) => num4(v / 255, 3)).join(" ");
+function num4(n: number, places = 4): string {
+  const k = 10 ** places;
+  const r = Math.round(n * k) / k;
+  return Object.is(r, -0) ? "0" : String(r);
+}
+
 /** US Letter, points. */
 export const LETTER: [number, number] = [612, 792];
 
 export class PdfDoc {
   readonly pages: PdfPage[] = [];
+  private readonly images: { name: string; w: number; h: number; jpeg: Uint8Array }[] = [];
   constructor(readonly info: { title?: string; creator?: string } = {}) {}
+
+  /** A JPEG image (`w` x `h` pixels, RGB) for pages to draw; its name for `PdfPage.image`. */
+  addJpeg(jpeg: Uint8Array, w: number, h: number): string {
+    const name = `Im${this.images.length + 1}`;
+    this.images.push({ name, w, h, jpeg });
+    return name;
+  }
 
   page(size: [number, number] = LETTER): PdfPage {
     const p = new PdfPage(size[0], size[1]);
@@ -126,11 +194,19 @@ export class PdfDoc {
     const pagesObj = add("");
     const font1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
     const font2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+    // Images (lane 12) go in only when there are any, so other documents keep their bytes.
+    const xobjects = this.images.map((im) => {
+      let raw = "";
+      for (let i = 0; i < im.jpeg.length; i += 0x8000) raw += String.fromCharCode(...im.jpeg.subarray(i, i + 0x8000));
+      const n = add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.jpeg.length} >>\nstream\n${raw}\nendstream`);
+      return `/${im.name} ${n} 0 R`;
+    });
+    const xres = xobjects.length ? ` /XObject << ${xobjects.join(" ")} >>` : "";
     const kids: number[] = [];
     for (const p of this.pages) {
       const content = p.content();
       const stream = add(`<< /Length ${latin1Length(content)} >>\nstream\n${content}\nendstream`);
-      kids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${num(p.width)} ${num(p.height)}] /Resources << /Font << /F1 ${font1} 0 R /F2 ${font2} 0 R >> >> /Contents ${stream} 0 R >>`));
+      kids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${num(p.width)} ${num(p.height)}] /Resources << /Font << /F1 ${font1} 0 R /F2 ${font2} 0 R >>${xres} >> /Contents ${stream} 0 R >>`));
     }
     objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;
     objects[pagesObj - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(" ")}] /Count ${kids.length} >>`;

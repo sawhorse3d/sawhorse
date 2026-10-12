@@ -86,3 +86,15 @@
 .sheets-pane .note{margin-top:0}
 .sheets-pane .note.err{color:var(--warn)}
 @media (max-width:860px){ .app.sheets-mode{grid-template-rows:auto auto auto 520px auto auto} }
+
+/* Printing sheets (src/sheets/exports.ts printSheets): only the sheets, a page each, at
+   their real size (the @page size is set while printing). */
+.print-sheets{display:none}
+@media print{
+  body.print-sheet #root{display:none!important}
+  body.print-sheet{background:#fff!important;margin:0!important}
+  body.print-sheet .print-sheets{display:block}
+  .print-sheet-page{overflow:hidden}
+  .print-sheet-page + .print-sheet-page{break-before:page}
+  .print-sheet-page svg{display:block}
+}

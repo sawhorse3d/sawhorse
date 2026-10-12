@@ -9,10 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { EditResult, KernelClient } from "../kernel/client";
 import type { CameraSpec, DimKind, ItemKind, Scale, SheetRow, SheetSetup, ViewportSource } from "../kernel/sheetTypes";
 import type { KernelOp, SceneDef } from "../kernel/types";
-import { saveFile } from "../io/files";
 import { sniffImage, texturePathFor, toBase64 } from "../lib/looks";
+import { runSheetExport } from "./runExport";
 import { DEFAULT_COLUMNS, IN, ITEM_NAMES, canBeToScale, captionFor, fittingScale, newSetup, scaleLabel, sourceLabel } from "./paper";
-import { sheetSvg, type Href, type SheetRender } from "./render";
+import type { Href, SheetRender } from "./render";
 import { SheetCanvas, type PlaceRequest, type SheetCanvasHandle, type SheetToolId } from "./SheetCanvas";
 import { SheetRail } from "./SheetRail";
 import { SheetsPane, setupOf, type SheetExportKind } from "./SheetsPane";
@@ -20,7 +20,6 @@ import { SheetTabs } from "./SheetTabs";
 
 const ACTIVE_KEY = "sawhorse.sheet";
 const SNAP_KEY = "sawhorse.sheetSnap";
-const SVG_FILE = { description: "SVG drawing", mime: "image/svg+xml", extensions: [".svg"] };
 
 function load(key: string): string | null {
   try {
@@ -282,29 +281,11 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
     setItem(id, { ...item, source, scale, centre: null, caption: item.caption === captionFor(item.source, item.scale) ? captionFor(source, scale) : item.caption }, `Viewport shows the 3D view${cam.parallel ? ` at ${scaleLabel(scale)}` : " (perspective: not to scale)"}.`);
   };
 
-  // ---- exports (lane 12 step 6 adds PDF, DXF, PNG and printing) -------------------------
-  const exportSheet = async (kind: SheetExportKind) => {
+  // ---- exports ------------------------------------------------------------------------
+  const exportSheet = (kind: SheetExportKind) => {
     const k = kernel();
-    if (!k || activeId === null || !shown) return;
-    const r = await k.sheetRender(activeId);
-    const base = `${props.docName} - ${shown.sheet.name}`;
-    try {
-      if (kind === "svg") {
-        // Images go in as data URLs, so the file stands alone.
-        const urls = new Map<string, string>();
-        for (const p of r.prims) {
-          if (p.p !== "image" || urls.has(p.path)) continue;
-          const bytes = await k.texture(p.path);
-          const mime = sniffImage(bytes) ?? "image/png";
-          urls.set(p.path, `data:${mime};base64,${toBase64(bytes)}`);
-        }
-        const svg = sheetSvg(r, (p) => urls.get(p) ?? null, shown.sheet.units ?? "inches");
-        const res = await saveFile(`${base}.svg`, new TextEncoder().encode(svg), SVG_FILE);
-        if (res) message(`Saved ${res.name}: the sheet at its real paper size.`);
-      }
-    } catch (e) {
-      message(`Export refused: ${e instanceof Error ? e.message : String(e)}`, true);
-    }
+    if (!k) return;
+    void runSheetExport(kind, { kernel: k, sheets, active: activeId, docName: props.docName, message });
   };
 
   // ---- keys -----------------------------------------------------------------------------
@@ -369,7 +350,7 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
     [kernel, activeId],
   );
 
-  const exports = useMemo<SheetExportKind[]>(() => ["svg"], []);
+  const exports = useMemo<SheetExportKind[]>(() => ["print", "pdf", "pdf-all", "svg", "dxf", "png150", "png300"], []);
 
   return (
     <>

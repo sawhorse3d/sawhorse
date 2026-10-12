@@ -29,6 +29,7 @@ pub mod obj;
 pub mod png;
 pub mod section;
 pub mod sheet;
+pub mod sheet_dxf;
 pub mod stl;
 pub mod svg;
 pub mod table;
