@@ -987,6 +987,16 @@ impl Model {
         if self.materials.contains_key(to) {
             return Err(LooksError::MaterialExists(to.to_string()).into());
         }
+        // The nesting default (lane 9) is keyed by the name the cut list reads: when that is
+        // the material's own name (no species linked), the default follows the new name,
+        // unless the new name already has one of its own.
+        let reads_by_name = m.stock.as_ref().is_none_or(|l| l.species.trim().is_empty());
+        let carried = self
+            .stock
+            .as_ref()
+            .and_then(|l| l.default_for(name))
+            .filter(|_| reads_by_name)
+            .map(str::to_string);
         self.materials.remove(name);
         self.materials.insert(to.to_string(), m);
         self.each_material_ref(&mut |r| {
@@ -994,6 +1004,14 @@ impl Model {
                 *r = Some(to.to_string());
             }
         });
+        if let Some(stock) = carried
+            && self.stock_library().default_for(to).is_none()
+        {
+            self.edit_stock(|l| {
+                l.set_default(name, None)?;
+                l.set_default(to, Some(&stock))
+            })?;
+        }
         Ok(OpOutcome::MaterialSet)
     }
 

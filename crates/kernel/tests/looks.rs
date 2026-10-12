@@ -651,6 +651,46 @@ fn renaming_and_deleting_a_material_reach_everything() {
 }
 
 #[test]
+fn renaming_a_material_carries_its_nesting_stock() {
+    let mut d = Document::with_ground_sketch();
+    ok(&mut d, define("Ply", [220, 200, 160], None));
+    ok(
+        &mut d,
+        define(
+            "Maple",
+            [230, 210, 170],
+            Some((StockKind::Lumber, "Hard maple")),
+        ),
+    );
+    let set = |material: &str| Op::SetMaterialStock {
+        material: material.into(),
+        stock: Some("4 x 8 sheet, 1/2".into()),
+    };
+    ok(&mut d, set("Ply"));
+    ok(&mut d, set("Hard maple"));
+    let rename = |name: &str, to: &str| Op::RenameMaterial {
+        name: name.into(),
+        to: to.into(),
+    };
+    // Read by its own name: the default moves with it.
+    ok(&mut d, rename("Ply", "Birch ply"));
+    let lib = d.model().stock_library().into_owned();
+    assert_eq!(lib.default_for("Birch ply"), Some("4 x 8 sheet, 1/2"));
+    assert_eq!(lib.default_for("Ply"), None);
+    // Read by its species: the default stays with the species.
+    ok(&mut d, rename("Maple", "Maple top"));
+    let lib = d.model().stock_library().into_owned();
+    assert_eq!(lib.default_for("Hard maple"), Some("4 x 8 sheet, 1/2"));
+    assert_eq!(lib.default_for("Maple top"), None);
+    // One undo puts the old name and its default back.
+    d.undo().unwrap();
+    d.undo().unwrap();
+    let lib = d.model().stock_library().into_owned();
+    assert_eq!(lib.default_for("Ply"), Some("4 x 8 sheet, 1/2"));
+    assert_eq!(lib.default_for("Birch ply"), None);
+}
+
+#[test]
 fn locked_things_are_not_painted() {
     let mut d = Document::with_ground_sketch();
     ok(&mut d, define("Oak", [200, 170, 120], None));

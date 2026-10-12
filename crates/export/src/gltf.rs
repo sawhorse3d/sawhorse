@@ -539,7 +539,11 @@ mod tests {
         let bytes = document_with(&m, &Scope::visible(&m), GlbOptions { textures: false }).unwrap();
         let (d2, _) = parse_glb(&bytes).unwrap();
         assert!(d2.get("images").is_none());
-        assert!(d2["meshes"][0]["primitives"][1]["attributes"].get("TEXCOORD_0").is_none());
+        assert!(
+            d2["meshes"][0]["primitives"][1]["attributes"]
+                .get("TEXCOORD_0")
+                .is_none()
+        );
     }
 
     #[test]

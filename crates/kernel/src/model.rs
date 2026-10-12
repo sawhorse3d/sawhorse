@@ -1099,7 +1099,7 @@ impl Model {
     }
 
     /// Edit the library; a library edited back to the built-in one is stored as `None`.
-    fn edit_stock(
+    pub(crate) fn edit_stock(
         &mut self,
         f: impl FnOnce(&mut crate::stock::StockLibrary) -> Result<(), crate::error::StockError>,
     ) -> Result<OpOutcome, KernelError> {
