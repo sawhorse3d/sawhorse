@@ -4,7 +4,7 @@
 # Never commit a target-dir here; CARGO_TARGET_DIR comes from scripts/env.sh.
 [workspace]
 resolver = "3"
-members = ["kernel", "tessellate", "inference", "export", "wasm-api"]
+members = ["kernel", "tessellate", "inference", "export", "import", "shz", "wasm-api"]
 # cargo-fuzz harness: needs nightly + libFuzzer, so it is its own workspace.
 exclude = ["kernel/fuzz"]
 
@@ -22,6 +22,8 @@ sawhorse-kernel = { path = "kernel" }
 sawhorse-tessellate = { path = "tessellate" }
 sawhorse-inference = { path = "inference" }
 sawhorse-export = { path = "export" }
+sawhorse-import = { path = "import" }
+sawhorse-shz = { path = "shz" }
 
 # Math: f64 everywhere inside the kernel.
 glam = { version = "0.34", default-features = false, features = ["std", "f64"] }
@@ -37,10 +39,16 @@ i_overlay = "9.0"
 manifold-rust = { version = "=0.16.0", default-features = false }
 # 2D polyline offsets (Offset tool; ADR-0001). MIT OR Apache-2.0, pure Rust.
 cavalier_contours = { version = "0.9", default-features = false }
-# 3MF export.
+# 3MF: our writer is hand-made (crates/export/src/three_mf.rs); threemf reads it back in
+# tests and reads 3MF imports.
 threemf = "0.8"
+# Zip containers (3MF, .shz). Already in the tree through threemf; same features.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+# XML for SVG import. Already in the tree through threemf.
+quick-xml = "0.39"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Exact f64 parsing: .shz snapshots and op logs must read back bit for bit.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"

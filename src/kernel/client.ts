@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -114,6 +114,44 @@ export class KernelClient {
     const r = await this.call({ kind: "export", format, object });
     if (r.file === undefined) throw new Error("kernel returned no file");
     return r.file;
+  }
+
+  /** The document (or a scope of it) as a file in `format`. Throws KernelRefusal with a plain message when refused. */
+  async exportFile(format: ExportFormat, options: ExportOptions = {}): Promise<Uint8Array> {
+    const r = await this.call({ kind: "exportFile", format, options });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no file");
+    return r.file;
+  }
+
+  /** Import a file (format from its name, else its bytes) as one undoable step. */
+  async importFile(name: string, bytes: Uint8Array, options: ImportOptions = {}): Promise<EditResult & { notes: string[] }> {
+    const r = await this.call({ kind: "importFile", name, bytes, options });
+    return { ...this.edit(r), notes: r.notes ?? [] };
+  }
+
+  /** Import a SketchUp file (parsed by openskp in the worker) as one undoable step. */
+  async importSkp(name: string, bytes: Uint8Array): Promise<EditResult & { notes: string[] }> {
+    const r = await this.call({ kind: "importSkp", name, bytes });
+    return { ...this.edit(r), notes: r.notes ?? [] };
+  }
+
+  /** The document as a .shz (zip: scene.json, geometry.glb, thumbnail.png). */
+  async saveShz(displayUnits: string, thumbnail: Uint8Array): Promise<Uint8Array> {
+    const r = await this.call({ kind: "saveShz", displayUnits, thumbnail });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no file");
+    return r.file;
+  }
+
+  /** Replace the document with an opened .shz. A refused file changes nothing. */
+  async openShz(bytes: Uint8Array): Promise<EditResult & { notes: string[]; opened: { display_units: string | null; generator: string } }> {
+    const r = await this.call({ kind: "openShz", bytes });
+    return { ...this.edit(r), notes: r.notes ?? [], opened: r.opened ?? { display_units: null, generator: "" } };
+  }
+
+  /** A fresh document (ground sketch only), as an edit result. */
+  async newDocument(): Promise<EditResult> {
+    const scene = await this.init();
+    return { outcome: { kind: "restored", objects: 0, meshes: 0, sketches: scene.state.sketches.length }, scene };
   }
 
   private edit(r: WorkerResponse & { ok: true }): EditResult {

@@ -20,3 +20,7 @@ crates/kernel/proptest-regressions/*.tmp
 .DS_Store
 # fuzzer boolean-refusal dumps (FUZZ_DUMP_REFUSALS=1), study material only
 crates/kernel/tests/repro/refusals/
+
+
+# Generated .skp corpus (npm run corpus:skp); only the manifest and golden images are committed.
+tests/corpus/skp/

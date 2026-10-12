@@ -5,7 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
-import type { Inference, KernelOp, MeshData, Picked, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+import type { Inference, KernelOp, MeshData, OpOutcome, Picked, SceneData, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -109,6 +109,39 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "log":
         res = { id: req.id, ok: true, log: JSON.parse(document(mod).op_log_json()) as KernelOp[] };
         break;
+      case "importFile": {
+        const d = document(mod);
+        const r = JSON.parse(d.import_file(req.name, req.bytes, JSON.stringify(req.options ?? {}))) as { outcome: OpOutcome; notes: string[] };
+        res = { id: req.id, ok: true, outcome: r.outcome, notes: r.notes, scene: scene(d) };
+        break;
+      }
+      case "importSkp": {
+        // openskp (MIT) parses SketchUp files here, off the UI thread, loaded on first use.
+        const { skpToOp } = await import("../io/skp");
+        const r = skpToOp(req.bytes, req.name);
+        const d = document(mod);
+        const outcome = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
+        res = { id: req.id, ok: true, outcome, notes: r.notes, scene: scene(d) };
+        break;
+      }
+      case "saveShz": {
+        const file = document(mod).save_shz(req.displayUnits, req.thumbnail);
+        res = { id: req.id, ok: true, file };
+        break;
+      }
+      case "openShz": {
+        const d = document(mod);
+        const info = JSON.parse(d.open_shz(req.bytes)) as { notes: string[]; display_units: string | null; generator: string };
+        const st = JSON.parse(d.state_json()) as { objects: number[]; meshes: unknown[]; sketches: unknown[] };
+        const outcome: OpOutcome = { kind: "restored", objects: st.objects.length, meshes: st.meshes.length, sketches: st.sketches.length };
+        res = { id: req.id, ok: true, outcome, notes: info.notes, opened: { display_units: info.display_units, generator: info.generator }, scene: scene(d) };
+        break;
+      }
+      case "exportFile": {
+        const file = document(mod).export_file(req.format, JSON.stringify(req.options ?? {}));
+        res = { id: req.id, ok: true, file };
+        break;
+      }
       case "export": {
         const d = document(mod);
         const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);

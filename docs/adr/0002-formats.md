@@ -1,6 +1,6 @@
 # ADR-0002: File formats
 
-- Status: Accepted, 2026-10-11 (seed decisions). `.skp` export pending the attorney read.
+- Status: Accepted, 2026-10-11 (seed decisions). Implemented in lane 6 (all imports and exports, `.shz`, `.skp` import). `.skp` export pending the attorney read and our own blank template.
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed
 
@@ -19,4 +19,10 @@ Woodworkers and makers already have SketchUp files and need printable, cuttable 
 
 - Lane 1 ships the first two exporters in `crates/export`, both refusing non-watertight input with a typed error: hand-written binary STL (millimetres, Z-up) and 3MF through `threemf` (millimetres). `Scene.export_stl` exposes STL to the webview. Not yet wired to a menu.
 - The kernel's op log (`Op` JSON, `crates/kernel/src/model.rs`) is the first stable on-disk shape: fuzzer repros and golden replays use it. `.shz` and `docs/format.md` arrive with the file lane.
+- Lane 6 (2026-10-11) built the file lane:
+  - Exports over the whole document or a selection (`crates/export`): STL and 3MF refuse anything that is not a watertight solid, naming it; 3MF is a hand-written OPC package (one named object per solid, base-material colours) checked against the core spec basics; GLB (Y up, metres, a node per object, `_FACE_ID`), OBJ (`o` + `g` per object, MTL), DXF (R12 `3DFACE` + `LINE`; `LWPOLYLINE` or R12 outline of a face), SVG (hidden-line view, to scale for parallel views; face outline in mm). Every writer is read back by an independent reader and by our own importer in tests.
+  - Imports (`crates/import`): STL, OBJ, glTF/GLB, 3MF, DXF, SVG, all into one kernel `import` op; the kernel builds solids through `meshbuild.rs` (weld, clean, separate touching solids, orient, merge coplanar triangles, validate) and keeps anything else as a visible non-solid mesh with a note, never silently repaired.
+  - `.skp` import through npm `openskp` 1.3.0 in the kernel worker (`src/io/skp.ts`); what comes across is in `docs/skp-compat.md`. No `.skp` export in this lane.
+  - `.shz` save and open (`crates/shz`, `crates/kernel/src/snapshot.rs`) per `docs/format.md`: `mimetype`, `scene.json` (exact f64 B-reps with persistent face ids), `geometry.glb`, `thumbnail.png`, `assets/`. Save then open reproduces the model hash.
+  - The `.skp` test corpus (200 files) is generated with openskp's writer from our own procedural models and is not committed, because that writer starts every file from an embedded SketchUp-saved blank scaffold; only the generator, a SHA-256 manifest and 20 reference renders are committed (`tests/corpus/README.md`). The same scaffold is why `.skp` export still needs `assets/blank-2017.skp` (the maintainer's own blank) before it ships: openskp's writer patches fixed byte offsets of its scaffold, so swapping the template needs work in or around that writer.
 - npm `openskp` (MIT) and hew3d/openskp (GPL) are different things: only the MIT package may ever be a dependency; the GPL repository is a design reference at most and every reading goes in `docs/CLEANROOM.md`.

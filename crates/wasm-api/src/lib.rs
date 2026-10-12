@@ -77,6 +77,65 @@ struct DocState<'a> {
     guides: Vec<GuideInfo>,
     dimensions: Vec<DimensionInfo>,
     tags: &'a std::collections::BTreeMap<String, bool>,
+    /// Every object's name, tag and material (same order as `objects`).
+    object_info: Vec<ObjectInfo<'a>>,
+    /// Imported non-solid meshes, with the note saying why each is not a solid.
+    meshes: Vec<MeshInfo<'a>>,
+    materials: Vec<MaterialInfo<'a>>,
+    scenes: &'a [sawhorse_kernel::model::SceneDef],
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ObjectInfo<'a> {
+    id: u64,
+    name: Option<&'a str>,
+    tag: Option<&'a str>,
+    material: Option<&'a str>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct MeshInfo<'a> {
+    id: u64,
+    name: &'a str,
+    note: &'a str,
+    faces: usize,
+    lines: usize,
+    tag: Option<&'a str>,
+    visible: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct MaterialInfo<'a> {
+    name: &'a str,
+    color: [u8; 4],
+    texture: Option<&'a str>,
+}
+
+/// Options for [`DocCore::export`] (JSON from the UI).
+#[derive(Debug, Default, serde::Deserialize)]
+struct ExportOptions {
+    /// What to export; every visible solid and mesh when absent.
+    #[serde(default)]
+    scope: Option<sawhorse_export::Scope>,
+    /// The camera, for `svg-view`.
+    #[serde(default)]
+    view: Option<sawhorse_export::svg::ViewSpec>,
+    /// The face (`{"kind":"face","owner":object,"index":face}`) or sketch region
+    /// (`{"kind":"region","owner":sketch,"index":region}`) for the outline formats.
+    #[serde(default)]
+    outline: Option<OutlineTarget>,
+    #[serde(default)]
+    flavour: sawhorse_export::dxf::OutlineFlavour,
+    /// The MTL file an OBJ names (`mtllib`).
+    #[serde(default)]
+    mtl_file: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OutlineTarget {
+    kind: String,
+    owner: u64,
+    index: u64,
 }
 
 /// One solid as the UI names and measures it.
@@ -272,6 +331,39 @@ impl DocCore {
                 })
                 .collect(),
             tags: m.tags(),
+            object_info: m
+                .objects()
+                .into_iter()
+                .map(|(id, o)| ObjectInfo {
+                    id,
+                    name: o.name(),
+                    tag: o.tag(),
+                    material: o.material(),
+                })
+                .collect(),
+            meshes: m
+                .meshes()
+                .into_iter()
+                .map(|(id, x)| MeshInfo {
+                    id,
+                    name: &x.name,
+                    note: &x.note,
+                    faces: x.faces.len(),
+                    lines: x.lines.len(),
+                    tag: x.tag.as_deref(),
+                    visible: m.is_mesh_visible(id),
+                })
+                .collect(),
+            materials: m
+                .materials()
+                .iter()
+                .map(|(name, x)| MaterialInfo {
+                    name,
+                    color: x.color,
+                    texture: x.texture.as_deref(),
+                })
+                .collect(),
+            scenes: m.scenes(),
         };
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
     }
@@ -353,6 +445,137 @@ impl DocCore {
     pub fn obj(&self, object: u64) -> Result<String, String> {
         sawhorse_export::object_obj(self.object(object)?, &format!("sawhorse-object-{object}"))
             .map_err(|e| e.to_string())
+    }
+
+    /// The rings of a face or sketch region in its own plane frame (metres, outer first).
+    fn outline_2d(&self, t: &OutlineTarget) -> Result<Vec<Vec<glam::DVec2>>, String> {
+        let m = self.doc.model();
+        match t.kind.as_str() {
+            "face" => {
+                let o = self.object(t.owner)?;
+                let fi = o
+                    .face_ordinal(t.index)
+                    .ok_or_else(|| format!("no face #{}", t.index))?;
+                let p = o.brep().to_polys();
+                let plane = p.plane(fi).ok_or("the face has no plane")?;
+                Ok(p.faces[fi]
+                    .rings()
+                    .map(|r| r.iter().map(|&i| plane.to_local(p.points[i])).collect())
+                    .collect())
+            }
+            "region" => {
+                let s = m
+                    .sketch(t.owner)
+                    .ok_or_else(|| format!("no sketch #{}", t.owner))?;
+                let r = s
+                    .region(sawhorse_kernel::ids::from_public(t.index))
+                    .ok_or_else(|| format!("no region #{}", t.index))?;
+                let (o, h) = s.region_rings(r);
+                Ok(std::iter::once(o).chain(h).collect())
+            }
+            k => Err(format!("unknown outline kind {k}")),
+        }
+    }
+
+    /// Read a file (`name` picks the format by extension, else the bytes do) and apply it
+    /// as one import op. Returns `{"outcome": ..., "notes": [...]}` as JSON: the kernel's
+    /// outcome (with its own notes on healing and non-solid meshes) and the reader's notes
+    /// (units assumed, entities skipped).
+    pub fn import(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        options_json: &str,
+    ) -> Result<String, String> {
+        let mut opts: sawhorse_import::ImportOptions = if options_json.trim().is_empty() {
+            sawhorse_import::ImportOptions::default()
+        } else {
+            serde_json::from_str(options_json).map_err(|e| format!("bad import options: {e}"))?
+        };
+        if opts.name.is_empty() {
+            opts.name = name.to_string();
+        }
+        let parsed = sawhorse_import::read(None, bytes, &opts).map_err(|e| e.to_string())?;
+        let out = self.doc.apply(&parsed.op()).map_err(|e| e.to_string())?;
+        self.scene.replace(None);
+        serde_json::to_string(&serde_json::json!({ "outcome": out, "notes": parsed.notes }))
+            .map_err(|e| e.to_string())
+    }
+
+    /// The document as a `.shz` (see `docs/format.md`), with the user's unit system and an
+    /// optional PNG thumbnail.
+    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, String> {
+        let opts = sawhorse_shz::SaveOptions {
+            display_units: (!display_units.is_empty()).then(|| display_units.to_string()),
+            thumbnail_png: (!thumbnail_png.is_empty()).then(|| thumbnail_png.to_vec()),
+            generator: None,
+        };
+        sawhorse_shz::write(self.doc.model(), &opts).map_err(|e| e.to_string())
+    }
+
+    /// Replace the document with an opened `.shz`. Returns `{"notes": [...],
+    /// "display_units": ...}` as JSON. A file that does not open changes nothing.
+    pub fn open_shz(&mut self, bytes: &[u8]) -> Result<String, String> {
+        let opened = sawhorse_shz::read(bytes).map_err(|e| e.to_string())?;
+        let info = serde_json::json!({
+            "notes": opened.notes,
+            "display_units": opened.scene.units.display,
+            "generator": opened.scene.generator,
+        });
+        *self = DocCore::from_document(opened.document);
+        Ok(info.to_string())
+    }
+
+    /// Write the document (or a scope of it) in `format`: `stl`, `3mf`, `glb`, `obj`,
+    /// `mtl`, `dxf`, `dxf-outline`, `svg-view`, `svg-outline`. Options as JSON (see
+    /// [`ExportOptions`]); an empty string means the defaults.
+    pub fn export(&self, format: &str, options_json: &str) -> Result<Vec<u8>, String> {
+        let opts: ExportOptions = if options_json.trim().is_empty() {
+            ExportOptions::default()
+        } else {
+            serde_json::from_str(options_json).map_err(|e| format!("bad export options: {e}"))?
+        };
+        let m = self.doc.model();
+        let scope = opts
+            .scope
+            .clone()
+            .unwrap_or_else(|| sawhorse_export::Scope::visible(m));
+        let e = |e: sawhorse_export::ExportError| e.to_string();
+        let outline = || -> Result<Vec<Vec<glam::DVec2>>, String> {
+            let t = opts
+                .outline
+                .as_ref()
+                .ok_or("select one face (or sketch region) to export its outline")?;
+            self.outline_2d(t)
+        };
+        Ok(match format {
+            "stl" => sawhorse_export::stl::document(m, &scope).map_err(e)?,
+            "3mf" => sawhorse_export::three_mf::document(m, &scope).map_err(e)?,
+            "glb" => sawhorse_export::gltf::document(m, &scope).map_err(e)?,
+            "obj" => {
+                let mtl = opts.mtl_file.as_deref().unwrap_or("model.mtl");
+                sawhorse_export::obj::document(m, &scope, mtl)
+                    .map_err(e)?
+                    .into_bytes()
+            }
+            "mtl" => sawhorse_export::obj::mtl(m).into_bytes(),
+            "dxf" => sawhorse_export::dxf::document(m, &scope)
+                .map_err(e)?
+                .into_bytes(),
+            "dxf-outline" => sawhorse_export::dxf::outline(&outline()?, opts.flavour)
+                .map_err(e)?
+                .into_bytes(),
+            "svg-view" => {
+                let view = opts.view.as_ref().ok_or("svg-view needs the camera")?;
+                sawhorse_export::svg::view(m, &scope, view)
+                    .map_err(e)?
+                    .into_bytes()
+            }
+            "svg-outline" => sawhorse_export::svg::outline(&outline()?)
+                .map_err(e)?
+                .into_bytes(),
+            f => return Err(format!("unknown export format {f}")),
+        })
     }
 }
 
@@ -525,6 +748,35 @@ impl Doc {
     /// Wavefront OBJ (mm, Z-up) of one object.
     pub fn export_obj(&self, object_id: f64) -> Result<String, JsError> {
         self.core.obj(id(object_id)?).map_err(js)
+    }
+
+    /// The document as a `.shz` file (scene.json + geometry.glb + thumbnail.png).
+    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, JsError> {
+        self.core.save_shz(display_units, thumbnail_png).map_err(js)
+    }
+
+    /// Replace this document with an opened `.shz` (nothing to undo afterwards). Returns
+    /// `{notes, display_units, generator}` as JSON; a refused file changes nothing.
+    pub fn open_shz(&mut self, bytes: &[u8]) -> Result<String, JsError> {
+        self.core.open_shz(bytes).map_err(js)
+    }
+
+    /// Import a file into the document as one undoable step (see [`DocCore::import`]).
+    pub fn import_file(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        options_json: &str,
+    ) -> Result<String, JsError> {
+        self.core.import(name, bytes, options_json).map_err(js)
+    }
+
+    /// The document in `format` (`stl`, `3mf`, `glb`, `obj`, `mtl`, `dxf`, `dxf-outline`,
+    /// `svg-view`, `svg-outline`) with JSON options `{scope?, view?, outline?, flavour?,
+    /// mtl_file?}`. A refusal (an open mesh in an STL, no face for an outline) is a thrown
+    /// error with a plain message.
+    pub fn export_file(&self, format: &str, options_json: &str) -> Result<Vec<u8>, JsError> {
+        self.core.export(format, options_json).map_err(js)
     }
 }
 
@@ -727,6 +979,154 @@ mod tests {
         assert_eq!(d.document().hash_hex(), before);
         let mut fresh = DocCore::default();
         assert_eq!(fresh.undo().unwrap_err(), "nothing to undo");
+    }
+
+    #[test]
+    fn exports_every_format_through_the_doc() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"define_material","name":"Pine","color":[230,200,150,255]}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"set_material","object":1,"material":"Pine"}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"rename_object","object":1,"name":"Board"}"#,
+        );
+        let stl = d.export("stl", "").unwrap();
+        assert_eq!(stl.len(), 84 + 12 * 50);
+        assert_eq!(&d.export("3mf", "").unwrap()[..2], b"PK");
+        assert_eq!(&d.export("glb", "").unwrap()[..4], b"glTF");
+        let obj =
+            String::from_utf8(d.export("obj", r#"{"mtl_file":"board.mtl"}"#).unwrap()).unwrap();
+        assert!(obj.contains("mtllib board.mtl\no Board\ng Board\nusemtl Pine\n"));
+        assert!(
+            String::from_utf8(d.export("mtl", "").unwrap())
+                .unwrap()
+                .contains("newmtl Pine")
+        );
+        assert!(
+            String::from_utf8(d.export("dxf", "").unwrap())
+                .unwrap()
+                .contains("3DFACE")
+        );
+        let outline = r#"{"outline":{"kind":"face","owner":1,"index":2}}"#;
+        let svg = String::from_utf8(d.export("svg-outline", outline).unwrap()).unwrap();
+        assert!(
+            svg.contains(r#"width="300.0000mm" height="200.0000mm""#),
+            "{svg}"
+        );
+        let dxf = String::from_utf8(d.export("dxf-outline", outline).unwrap()).unwrap();
+        assert!(dxf.contains("LWPOLYLINE"));
+        let view = r#"{"view":{"eye":[1,-1,1],"target":[0.15,0.1,0.05],"up":[0,0,1],"ortho":true,"half_height":0.3,"width":400,"height":300}}"#;
+        assert!(
+            String::from_utf8(d.export("svg-view", view).unwrap())
+                .unwrap()
+                .starts_with("<?xml")
+        );
+        // Refusals are plain messages.
+        assert!(
+            d.export("svg-outline", "")
+                .unwrap_err()
+                .contains("select one face")
+        );
+        assert!(d.export("svg-view", "").unwrap_err().contains("camera"));
+        assert!(
+            d.export("pdf", "")
+                .unwrap_err()
+                .contains("unknown export format")
+        );
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!(st["object_info"][0]["name"], "Board");
+        assert_eq!(
+            st["materials"][0]["color"],
+            serde_json::json!([230, 200, 150, 255])
+        );
+    }
+
+    #[test]
+    fn imports_files_through_the_doc() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        );
+        let stl = d.export("stl", "").unwrap();
+        let mut fresh = DocCore::default();
+        let r: serde_json::Value =
+            serde_json::from_str(&fresh.import("part.stl", &stl, "").unwrap()).unwrap();
+        assert_eq!(r["outcome"]["kind"], "imported");
+        assert_eq!(r["outcome"]["objects"], serde_json::json!([1]));
+        assert!(r["notes"][0].as_str().unwrap().contains("millimetres"));
+        let st: serde_json::Value = serde_json::from_str(&fresh.state_json()).unwrap();
+        assert_eq!(st["object_info"][0]["name"], "part");
+        assert!((st["stats"]["volume_m3"].as_f64().unwrap() - 0.006).abs() < 1e-9);
+        // In inches, the same bytes come in 25.4 times bigger.
+        let mut inch = DocCore::default();
+        inch.import("part.stl", &stl, r#"{"units":"in"}"#).unwrap();
+        let st: serde_json::Value = serde_json::from_str(&inch.state_json()).unwrap();
+        assert!(
+            (st["stats"]["volume_m3"].as_f64().unwrap() - 0.006 * 25.4f64.powi(3)).abs() < 1e-6
+        );
+        assert!(
+            fresh
+                .import("x.bin", b"nope", "")
+                .unwrap_err()
+                .contains("not a file")
+        );
+        fresh.undo().unwrap();
+        assert!(
+            fresh.document().model().objects().is_empty(),
+            "one undo step"
+        );
+    }
+
+    #[test]
+    fn save_and_open_shz() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        );
+        let h = d.document().hash_hex();
+        let bytes = d.save_shz("mm", b"").unwrap();
+        let mut fresh = DocCore::default();
+        let info: serde_json::Value =
+            serde_json::from_str(&fresh.open_shz(&bytes).unwrap()).unwrap();
+        assert_eq!(info["display_units"], "mm");
+        assert_eq!(fresh.document().hash_hex(), h);
+        assert!(fresh.undo().is_err(), "nothing to undo after open");
+        let before = fresh.document().hash_hex();
+        assert!(
+            fresh
+                .open_shz(b"junk")
+                .unwrap_err()
+                .contains("not a Sawhorse file")
+        );
+        assert_eq!(
+            fresh.document().hash_hex(),
+            before,
+            "a refused open changes nothing"
+        );
     }
 
     #[test]

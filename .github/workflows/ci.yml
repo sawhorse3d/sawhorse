@@ -99,6 +99,44 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
+  corpus:
+    name: SKP corpus (generate, import all 200, golden images)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: wasm-pack build
+        run: npm run wasm
+      - name: build (tsc + vite)
+        run: npm run build
+      - name: generate the corpus (200 .skp files, byte for byte against tests/corpus/manifest.json)
+        run: npm run corpus:skp
+      - name: install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: import and render every file; perceptual diff of the 20-file sample
+        env:
+          REQUIRE_KERNEL: "1"
+          REQUIRE_CORPUS: "1"
+        run: npm run e2e:corpus
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: corpus-renders
+          path: test-results/corpus/
+          if-no-files-found: ignore
+
   tauri-check:
     name: Tauri shell compiles (Linux)
     runs-on: ubuntu-22.04

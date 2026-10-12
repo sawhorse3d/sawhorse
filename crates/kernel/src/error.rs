@@ -207,6 +207,16 @@ pub enum DocumentError {
     NoGuides,
     #[error("undo, redo and batches cannot be nested inside a batch")]
     NotInBatch,
+    #[error("the import data is invalid: {0}")]
+    BadImport(String),
+    #[error("the file has nothing Sawhorse can import")]
+    NothingImported,
+    #[error("no imported mesh #{0}")]
+    NoSuchMesh(u64),
+    #[error("no material named {0:?}")]
+    NoSuchMaterial(String),
+    #[error("the file cannot be opened: {0}")]
+    BadSnapshot(String),
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

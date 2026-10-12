@@ -24,6 +24,7 @@ pub mod hash;
 pub mod ids;
 pub mod intersect;
 pub mod mesh;
+pub mod meshbuild;
 pub mod model;
 pub mod object;
 pub mod offset;
@@ -32,6 +33,7 @@ pub mod push;
 pub mod sever;
 pub mod sketch;
 pub mod snap;
+pub mod snapshot;
 pub mod sweep;
 #[doc(hidden)]
 pub mod testing;

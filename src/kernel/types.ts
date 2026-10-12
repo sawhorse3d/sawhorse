@@ -40,6 +40,11 @@ export type KernelOp =
   | { op: "delete_group"; group: number }
   | { op: "set_tag"; object: number; tag: string | null }
   | { op: "set_tag_visible"; tag: string; visible: boolean }
+  | { op: "import"; items?: ImportItem[]; strokes?: ImportStroke[]; materials?: MaterialDef[]; scenes?: SceneDef[]; hidden_tags?: string[] }
+  | { op: "define_material"; name: string; color: [number, number, number, number]; texture?: string | null }
+  | { op: "set_material"; object: number; material: string | null }
+  | { op: "rename_object"; object: number; name: string | null }
+  | { op: "delete_mesh"; mesh: number }
   | { op: "undo" }
   | { op: "redo" };
 
@@ -62,6 +67,44 @@ export interface OffsetPreview {
 export interface Xform {
   linear: [V3, V3, V3];
   translation: V3;
+}
+
+/** One imported polygon soup (crates/kernel/src/meshbuild.rs `ImportItem`): metres, Z up. */
+export interface ImportItem {
+  name: string;
+  group?: string | null;
+  tag?: string | null;
+  material?: string | null;
+  positions: [number, number, number][];
+  /** Faces as rings of indices: the outer ring, then holes. */
+  faces: number[][][];
+  lines?: [number, number][];
+  /** Merge adjacent coplanar faces (triangle soups); false keeps drawn dividing edges. */
+  merge_coplanar?: boolean;
+}
+
+/** A stroke for a sketch (DXF lines, SVG paths): world points on one plane. */
+export interface ImportStroke {
+  points: [number, number, number][];
+  closed?: boolean;
+}
+
+export interface MaterialDef {
+  name: string;
+  /** sRGB + alpha, 0..255. */
+  color: [number, number, number, number];
+  texture?: string | null;
+}
+
+/** A saved view (SketchUp scene): camera in metres, Z up. */
+export interface SceneDef {
+  name: string;
+  eye: V3;
+  target: V3;
+  up: V3;
+  fov?: number;
+  parallel?: boolean;
+  hidden_tags?: string[];
 }
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */
@@ -88,6 +131,11 @@ export type OpOutcome =
   | { kind: "geometry_moved"; faces: number[] }
   | { kind: "severed"; objects: number[] }
   | { kind: "swept"; objects: number[]; cut: boolean }
+  | { kind: "imported"; objects: number[]; meshes: number[]; groups: number[]; sketches: number[]; notes: string[] }
+  | { kind: "material_set" }
+  | { kind: "renamed" }
+  | { kind: "mesh_deleted" }
+  | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "undone" }
   | { kind: "redone" };
 
@@ -128,6 +176,12 @@ export interface DocState {
   guides: { id: number; point: V3; dir: V3 | null }[];
   dimensions: { id: number; a: V3; b: V3; offset: V3; length: number }[];
   tags: Record<string, boolean>;
+  /** Name, tag and material of every object (same order as `objects`). */
+  object_info: { id: number; name: string | null; tag: string | null; material: string | null }[];
+  /** Imported meshes that are not valid solids, and why. */
+  meshes: { id: number; name: string; note: string; faces: number; lines: number; tag: string | null; visible: boolean }[];
+  materials: { name: string; color: [number, number, number, number]; texture: string | null }[];
+  scenes: SceneDef[];
 }
 
 export type V3 = [number, number, number];
@@ -244,13 +298,15 @@ export interface PickQuery {
 
 /** A pickable part: an object's face (index = persistent face id) or a sketch region (index = region id). */
 export interface MeshPart {
-  kind: "face" | "region";
+  kind: "face" | "region" | "mesh";
   owner: number;
   index: number;
   origin: [number, number, number];
   normal: [number, number, number];
   u: [number, number, number];
   v: [number, number, number];
+  /** The owner's material colour, sRGB + alpha. */
+  color?: [number, number, number, number];
 }
 
 export interface MeshData {
@@ -264,7 +320,7 @@ export interface MeshData {
   edges: Float32Array;
   /** One per edge segment: index into `edgeOwners`. */
   edgeOwner: Uint32Array;
-  edgeOwners: { kind: "object" | "sketch"; id: number }[];
+  edgeOwners: { kind: "object" | "sketch" | "mesh"; id: number }[];
   parts: MeshPart[];
 }
 
@@ -302,6 +358,10 @@ export interface WasmDoc {
   offset_preview(query: string): string;
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
+  export_file(format: string, options: string): Uint8Array;
+  import_file(name: string, bytes: Uint8Array, options: string): string;
+  save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
+  open_shz(bytes: Uint8Array): string;
   free(): void;
 }
 
@@ -326,8 +386,44 @@ export type RequestBody =
   | { kind: "infer"; query: InferQuery }
   | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
   | { kind: "offsetPreview"; source: OffsetSource; distance: number }
-  | { kind: "export"; format: "stl" | "obj"; object: number };
+  | { kind: "export"; format: "stl" | "obj"; object: number }
+  | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
+  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions }
+  | { kind: "importSkp"; name: string; bytes: Uint8Array }
+  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
+  | { kind: "openShz"; bytes: Uint8Array };
 export type WorkerRequest = RequestBody & { id: number };
+
+/** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
+export type ExportFormat = "stl" | "3mf" | "glb" | "obj" | "mtl" | "dxf" | "dxf-outline" | "svg-view" | "svg-outline";
+
+/** The camera of an SVG view drawing (crates/export svg::ViewSpec). */
+export interface ViewSpec {
+  eye: V3;
+  target: V3;
+  up: V3;
+  ortho: boolean;
+  fov: number;
+  half_height: number;
+  width: number;
+  height: number;
+}
+
+/** Units for files that do not say (STL, OBJ, a DXF without $INSUNITS). */
+export type ImportUnit = "mm" | "cm" | "m" | "in" | "ft";
+
+export interface ImportOptions {
+  units?: ImportUnit;
+  name?: string;
+}
+
+export interface ExportOptions {
+  scope?: { objects: number[]; meshes: number[] };
+  view?: ViewSpec;
+  outline?: { kind: "face" | "region"; owner: number; index: number };
+  flavour?: "lwpolyline" | "r12";
+  mtl_file?: string;
+}
 
 export type WorkerResponse =
   | {
@@ -342,5 +438,9 @@ export type WorkerResponse =
       rings?: V3[][];
       preview?: OffsetPreview;
       file?: Uint8Array | string;
+      /** Reader notes from an import (units assumed, entities skipped). */
+      notes?: string[];
+      /** What opening a .shz found: the unit system it was saved in, who wrote it. */
+      opened?: { display_units: string | null; generator: string };
     }
   | { id: number; ok: false; error: string; missing?: boolean };

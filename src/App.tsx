@@ -30,12 +30,47 @@ import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { autosaveEnabled, clearAutosave, describeAutosave, loadAutosave, saveAutosave, worthRestoring, type Autosave } from "./lib/autosave";
+import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, readBrowserFile, saveFile, stem, type FileHandle, type PickedFile } from "./io/files";
+import { EXPORTS, MTL_TYPE, type ExportChoice } from "./io/exports";
+import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
+import { ImportReport, type Report } from "./components/ImportReport";
 
 /** What the Value Control Box offers before anything is typed: 12 in up, 24 x 16 in rectangles. */
 export const DEFAULT_DISTANCE = 12 * M_PER_IN;
 export const DEFAULT_RECT: [number, number] = [24 * M_PER_IN, 16 * M_PER_IN];
 
 const UNITS_KEY = "sawhorse.units";
+const IMPORT_UNITS_KEY = "sawhorse.importUnits";
+const IMPORT_UNITS: { id: ImportUnit; label: string }[] = [
+  { id: "mm", label: "Millimetres" },
+  { id: "cm", label: "Centimetres" },
+  { id: "m", label: "Metres" },
+  { id: "in", label: "Inches" },
+  { id: "ft", label: "Feet" },
+];
+
+function loadImportUnits(): ImportUnit {
+  try {
+    const v = localStorage.getItem(IMPORT_UNITS_KEY);
+    if (v && IMPORT_UNITS.some((u) => u.id === v)) return v as ImportUnit;
+  } catch {
+    /* storage blocked */
+  }
+  return "mm";
+}
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/** One line for the status bar after an import or open. */
+export function describeImport(name: string, o: OpOutcome): string {
+  if (o.kind === "restored") return `Opened ${name}: ${plural(o.objects, "solid")}${o.meshes ? `, ${plural(o.meshes, "mesh")} (not solid)` : ""}.`;
+  if (o.kind !== "imported") return `Imported ${name}.`;
+  const parts = [plural(o.objects.length, "solid")];
+  if (o.meshes.length) parts.push(`${plural(o.meshes.length, "mesh")} that ${o.meshes.length === 1 ? "is" : "are"} not solid`);
+  if (o.groups.length) parts.push(plural(o.groups.length, "group"));
+  if (o.sketches.length) parts.push(`strokes in ${plural(o.sketches.length, "sketch")}`);
+  return `Imported ${name}: ${parts.join(", ")}.`;
+}
 
 function loadUnits(): UnitSystem {
   try {
@@ -76,6 +111,14 @@ export function App() {
   const [target, setTarget] = useState<Target | null>(null);
   const [groupContext, setGroupContext] = useState<number | null>(null);
   const [toolView, setToolView] = useState<ToolView>(EMPTY_VIEW);
+  // The open document: its name, where it lives (for Save), the log length when last saved.
+  const [docName, setDocName] = useState<string | null>(null);
+  const fileHandle = useRef<FileHandle | undefined>(undefined);
+  const [savedLogLen, setSavedLogLen] = useState<number | null>(null);
+  const [report, setReport] = useState<Report | null>(null);
+  const [importUnits, setImportUnits] = useState<ImportUnit>(loadImportUnits);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Camera: the requested standard view (re-applied when viewSeq changes), the projection,
   // zoom-extents requests, and what the camera actually shows (null after an orbit).
   const [view, setViewState] = useState<ViewId>("iso");
@@ -231,6 +274,211 @@ export function App() {
     setMessage({ text: "Unsaved work discarded.", error: false });
   }, []);
 
+  // ---- files ---------------------------------------------------------------------------
+
+  const dirty = !!scene && savedLogLen !== null && scene.state.log_len !== savedLogLen;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    document.title = `${dirty ? "• " : ""}${docName ? stem(docName) : "Untitled"} - Sawhorse`;
+  }, [dirty, docName]);
+
+  const confirmDiscard = useCallback(() => !dirtyRef.current || window.confirm("Discard the unsaved changes to this model?"), []);
+
+  /** Bring a file into the model as one undo step (`.skp` through openskp, the rest through the kernel's readers). */
+  const importBytes = useCallback(
+    async (f: PickedFile) => {
+      const ext = extensionOf(f.name);
+      setMessage({ text: `Importing ${f.name}…`, error: false });
+      let notes: string[] = [];
+      const r = await run(
+        async (k) => {
+          const res = ext === ".skp" ? await k.importSkp(f.name, f.bytes) : await k.importFile(f.name, f.bytes, { units: importUnits });
+          notes = res.notes;
+          return res;
+        },
+        null,
+        (res) => describeImport(f.name, res.outcome),
+      );
+      if (!r) {
+        setReport({ title: `Could not import ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });
+        return;
+      }
+      const kernelNotes = r.outcome.kind === "imported" ? r.outcome.notes : [];
+      setReport({ title: describeImport(f.name, r.outcome), lines: [...notes, ...kernelNotes] });
+      const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+      w.__sawhorse = { ...(w.__sawhorse ?? {}), lastImport: { name: f.name, outcome: r.outcome, notes: [...notes, ...kernelNotes] } };
+      setFitSeq((n) => n + 1);
+    },
+    [run, importUnits],
+  );
+
+  /** Open a .shz in place of the current model. */
+  const openBytes = useCallback(
+    async (f: PickedFile) => {
+      if (!confirmDiscard()) return;
+      let info: { notes: string[]; opened: { display_units: string | null } } | null = null;
+      const r = await run(
+        async (k) => {
+          const res = await k.openShz(f.bytes);
+          info = res;
+          return res;
+        },
+        null,
+        (res) => describeImport(f.name, res.outcome),
+      );
+      if (!r || !info) {
+        setReport({ title: `Could not open ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });
+        return;
+      }
+      const opened = info as { notes: string[]; opened: { display_units: string | null } };
+      setDocName(f.name);
+      fileHandle.current = f.handle;
+      setSavedLogLen(r.scene.state.log_len);
+      const du = opened.opened.display_units;
+      if (du && UNIT_SYSTEMS.some((x) => x.id === du)) {
+        setUnits(du as UnitSystem);
+        live.current.units = du as UnitSystem;
+      }
+      setReport(opened.notes.length ? { title: `Opened ${f.name}`, lines: opened.notes } : null);
+      setSelection([]);
+      setFitSeq((n) => n + 1);
+    },
+    [run, confirmDiscard],
+  );
+
+  /** Route files (picked, dropped): a .shz opens, anything else is imported. */
+  const takeFiles = useCallback(
+    async (files: PickedFile[]) => {
+      for (const f of files) {
+        const ext = extensionOf(f.name);
+        if (ext === ".shz") await openBytes(f);
+        else if (ALL_EXTENSIONS.includes(ext)) await importBytes(f);
+        else setMessage({ text: `${f.name}: not a file Sawhorse can open (use .shz, .skp, STL, 3MF, glTF, OBJ, DXF or SVG).`, error: true });
+      }
+    },
+    [openBytes, importBytes],
+  );
+
+  const newDocument = useCallback(async () => {
+    if (!confirmDiscard()) return;
+    const r = await run((k) => k.newDocument(), null, () => "New model.");
+    if (r) {
+      setDocName(null);
+      fileHandle.current = undefined;
+      setSavedLogLen(r.scene.state.log_len);
+      setReport(null);
+      setSelection([]);
+      setView("iso");
+    }
+  }, [run, confirmDiscard]);
+
+  const openDialog = useCallback(async () => {
+    try {
+      const f = await pickFile([SHZ, ...IMPORT_TYPES]);
+      if (f) await takeFiles([f]);
+    } catch (e) {
+      setMessage({ text: `Could not open the file: ${e instanceof Error ? e.message : String(e)}`, error: true });
+    }
+  }, [takeFiles]);
+
+  const importDialog = useCallback(async () => {
+    try {
+      const f = await pickFile(IMPORT_TYPES);
+      if (f) await importBytes(f);
+    } catch (e) {
+      setMessage({ text: `Could not import the file: ${e instanceof Error ? e.message : String(e)}`, error: true });
+    }
+  }, [importBytes]);
+
+  const save = useCallback(
+    async (as: boolean) => {
+      const k = kernelRef.current;
+      if (!k) return;
+      try {
+        await queue.current;
+        const png = (await engineRef.current?.snapshotPng(512)) ?? new Uint8Array();
+        const bytes = await k.saveShz(live.current.units, png);
+        const name = `${docName ? stem(docName) : "Untitled"}.shz`;
+        const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current);
+        if (!res) return;
+        setDocName(res.name);
+        fileHandle.current = res.handle;
+        setSavedLogLen(live.current.scene?.state.log_len ?? null);
+        setMessage({ text: `Saved ${res.name} (${(bytes.length / 1024).toFixed(0)} KB).`, error: false });
+      } catch (e) {
+        setMessage({ text: `Could not save: ${e instanceof Error ? e.message : String(e)}`, error: true });
+      }
+    },
+    [docName],
+  );
+
+  /** What an export takes: the selected solids, or everything visible. */
+  const exportScope = useCallback((): ExportOptions["scope"] => {
+    const objs = new Set<number>();
+    for (const e of live.current.selection) {
+      if (e.kind === "object") objs.add(e.object);
+      if (e.kind === "face") objs.add(e.object);
+    }
+    return objs.size ? { objects: [...objs], meshes: [] } : undefined;
+  }, []);
+
+  /** The face or sketch region an outline export draws: the one selected, or the Push/Pull target. */
+  const outlineTarget = useCallback((): ExportOptions["outline"] | null => {
+    const faces = live.current.selection.filter((e) => e.kind === "face" || e.kind === "region");
+    const pick = faces.length === 1 ? faces[0] : null;
+    if (pick?.kind === "face") return { kind: "face", owner: pick.object, index: pick.face };
+    if (pick?.kind === "region") return { kind: "region", owner: pick.sketch, index: pick.region };
+    const t = live.current.target;
+    if (t?.kind === "face") return { kind: "face", owner: t.object, index: t.face };
+    if (t?.kind === "region") return { kind: "region", owner: t.sketch, index: t.region };
+    return null;
+  }, []);
+
+  const exportAs = useCallback(
+    async (c: ExportChoice) => {
+      const k = kernelRef.current;
+      if (!k) return;
+      const base = docName ? stem(docName) : "Untitled";
+      const opts: ExportOptions = { scope: exportScope() };
+      if (c.needs === "outline") {
+        const o = outlineTarget();
+        if (!o) {
+          setMessage({ text: "Select one face (or sketch region) to export its outline.", error: true });
+          return;
+        }
+        opts.outline = o;
+        opts.scope = undefined;
+      }
+      if (c.needs === "view") {
+        const e = engineRef.current;
+        if (!e) return;
+        opts.view = e.viewSpec();
+      }
+      if (c.id === "obj") opts.mtl_file = `${base}.mtl`;
+      try {
+        await queue.current;
+        const bytes = await k.exportFile(c.id, opts);
+        const res = await saveFile(`${base}${c.type.extensions[0]}`, bytes, c.type);
+        if (!res) return;
+        if (c.id === "obj" && (live.current.scene?.state.materials.length ?? 0) > 0) {
+          await saveFile(`${base}.mtl`, await k.exportFile("mtl", {}), MTL_TYPE);
+        }
+        setMessage({ text: `Exported ${res.name}: ${c.hint}.`, error: false });
+      } catch (e) {
+        setMessage({ text: `Export refused: ${e instanceof Error ? e.message : String(e)}`, error: true });
+      }
+    },
+    [docName, exportScope, outlineTarget],
+  );
+
+  // Desktop drag-and-drop arrives through Tauri (see src-tauri/src/lib.rs).
+  useEffect(() => {
+    let off = () => {};
+    void onTauriDrop((files) => void takeFiles(files)).then((f) => (off = f));
+    return () => off();
+  }, [takeFiles]);
+
   useEffect(() => {
     const k = createKernel();
     kernelRef.current = k;
@@ -245,6 +493,7 @@ export function App() {
         live.current.scene = s;
         setScene(s);
         setKernelState("ready");
+        setSavedLogLen(s.state.log_len);
         if (!autosaveEnabled()) return;
         const saved = await loadAutosave();
         if (!worthRestoring(saved)) return;
@@ -529,6 +778,21 @@ export function App() {
           void redo();
           return;
         }
+        if (k === "s") {
+          e.preventDefault();
+          void save(e.shiftKey);
+          return;
+        }
+        if (k === "o" && !e.shiftKey) {
+          e.preventDefault();
+          void openDialog();
+          return;
+        }
+        if (k === "i" && !e.shiftKey) {
+          e.preventDefault();
+          void importDialog();
+          return;
+        }
         if (k === "a" && !inVcb) {
           e.preventDefault();
           void afterPointer(selectAll);
@@ -634,7 +898,7 @@ export function App() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer]);
+  }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer, save, openDialog, importDialog]);
 
   const cycleUnits = () => {
     const next = nextUnitSystem(units);
@@ -656,6 +920,7 @@ export function App() {
           }
         : { text: `Sketch: ${s.regions} region${s.regions === 1 ? "" : "s"} · draw with Rect (R)` },
     );
+    if (st.meshes?.length) hud.push({ text: `${plural(st.meshes.length, "mesh")} not solid (imported)`, tone: "err" });
     if (selection.length) hud.push({ text: `Selection: ${selection.length}` });
     else if (target && toolId === "pushpull") hud.push({ text: `Selected: ${describeTarget(target)}` });
   } else if (kernelState === "loading") {
@@ -681,6 +946,33 @@ export function App() {
 
   const menus = useMemo<Record<string, MenuItem[]>>(
     () => ({
+      File: [
+        { label: "New", onSelect: () => void newDocument() },
+        { label: "Open…", keys: "Ctrl+O", onSelect: () => void openDialog() },
+        { label: "Save", keys: "Ctrl+S", onSelect: () => void save(false) },
+        { label: "Save As…", keys: "Ctrl+Shift+S", onSelect: () => void save(true) },
+        "-",
+        { label: "Import…", keys: "Ctrl+I", title: "SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG, as one undo step", onSelect: () => void importDialog() },
+        {
+          label: "Import units",
+          items: IMPORT_UNITS.map((x) => ({
+            label: `${x.label} (STL, OBJ, unitless DXF)`,
+            checked: importUnits === x.id,
+            onSelect: () => {
+              setImportUnits(x.id);
+              try {
+                localStorage.setItem(IMPORT_UNITS_KEY, x.id);
+              } catch {
+                /* per-viewer convenience only */
+              }
+            },
+          })),
+        },
+        {
+          label: "Export",
+          items: EXPORTS.map((c) => ({ label: c.label, title: c.hint, onSelect: () => void exportAs(c) })),
+        },
+      ],
       Edit: [
         { label: "Undo", keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
         { label: "Redo", keys: "Ctrl+Y", disabled: !st?.can_redo, onSelect: () => void redo() },
@@ -689,6 +981,15 @@ export function App() {
         { label: "Select None", keys: "Esc", onSelect: () => setSelection([]) },
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
         { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
+        {
+          label: "Delete Imported Meshes",
+          title: "Imported geometry that is not a solid",
+          disabled: !st?.meshes?.length,
+          onSelect: () => {
+            const ops: KernelOp[] = (st?.meshes ?? []).map((m) => ({ op: "delete_mesh", mesh: m.id }));
+            void apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Deleted ${plural(ops.length, "imported mesh")}.`);
+          },
+        },
         "-",
         { label: "Restore Unsaved Work", disabled: !pendingRestore, onSelect: () => pendingRestore && restore(pendingRestore) },
       ],
@@ -698,15 +999,64 @@ export function App() {
         { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
         "-",
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
+        ...(st?.scenes?.length
+          ? [
+              "-" as const,
+              ...st.scenes.map((sc) => ({
+                label: `Scene: ${sc.name}`,
+                onSelect: () => {
+                  const p: Projection = sc.parallel ? "parallel" : "perspective";
+                  engineRef.current?.lookAt(sc.eye, sc.target, sc.up, p, sc.fov ?? 35);
+                  setProjection(p);
+                  setCamView(null);
+                  if (sc.hidden_tags?.length) setMessage({ text: `Scene ${sc.name} hides tags: ${sc.hidden_tags.join(", ")}.`, error: false });
+                },
+              })),
+            ]
+          : []),
       ],
     }),
-    [st?.can_undo, st?.can_redo, st?.guides?.length, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length, pendingRestore, restore],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
 
   return (
-    <div className="app" id="app">
+    <div
+      className={`app${dragging ? " dropping" : ""}`}
+      id="app"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setDragging(false);
+        const files = [...e.dataTransfer.files];
+        void Promise.all(files.map(readBrowserFile)).then(takeFiles);
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        data-testid="file-input"
+        accept={ALL_EXTENSIONS.join(",")}
+        onChange={(e) => {
+          const files = [...(e.currentTarget.files ?? [])];
+          e.currentTarget.value = "";
+          void Promise.all(files.map(readBrowserFile)).then(takeFiles);
+        }}
+      />
+      {dragging ? <div className="drop-hint">Drop a .shz to open it, or a SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG file to import it</div> : null}
+      {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       <TopBar view={camView} onView={setView} credits={0} menus={menus} />
       <ToolRail active={toolId} onSelect={selectTool} />
       <Viewport

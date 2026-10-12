@@ -551,10 +551,29 @@ name = "sawhorse-export"
 version = "0.0.1"
 dependencies = [
  "glam",
+ "sawhorse-inference",
  "sawhorse-kernel",
  "sawhorse-tessellate",
+ "serde",
+ "serde_json",
  "thiserror",
  "threemf",
+ "zip",
+]
+
+[[package]]
+name = "sawhorse-import"
+version = "0.0.1"
+dependencies = [
+ "glam",
+ "quick-xml",
+ "sawhorse-export",
+ "sawhorse-kernel",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "threemf",
+ "zip",
 ]
 
 [[package]]
@@ -586,6 +605,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sawhorse-shz"
+version = "0.0.1"
+dependencies = [
+ "sawhorse-export",
+ "sawhorse-import",
+ "sawhorse-kernel",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "sawhorse-tessellate"
 version = "0.0.1"
 dependencies = [
@@ -603,8 +635,10 @@ dependencies = [
  "console_error_panic_hook",
  "glam",
  "sawhorse-export",
+ "sawhorse-import",
  "sawhorse-inference",
  "sawhorse-kernel",
+ "sawhorse-shz",
  "serde",
  "serde_json",
  "wasm-bindgen",

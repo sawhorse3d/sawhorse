@@ -22,8 +22,9 @@ use crate::error::{
     DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError, TransformError,
 };
 use crate::ids::{
-    DimensionId, GroupId, GuideId, ObjectId, RegionId, SketchId, from_public, to_public,
+    DimensionId, GroupId, GuideId, MeshId, ObjectId, RegionId, SketchId, from_public, to_public,
 };
+use crate::meshbuild::{ImportItem, LooseMesh, build_item};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::offset::OffsetSource;
 use crate::plane::Plane;
@@ -197,6 +198,43 @@ pub enum Op {
     SetTag { object: u64, tag: Option<String> },
     /// Show or hide every object on a tag.
     SetTagVisible { tag: String, visible: bool },
+    /// Bring in geometry from a file as one undoable step: polygon soups become solids
+    /// where they are valid solids and non-solid meshes (with a note) where they are not,
+    /// strokes go into sketches, plus materials, scenes and hidden tags. See
+    /// [`crate::meshbuild`].
+    Import {
+        #[serde(default)]
+        items: Vec<ImportItem>,
+        #[serde(default)]
+        strokes: Vec<ImportStroke>,
+        #[serde(default)]
+        materials: Vec<MaterialDef>,
+        #[serde(default)]
+        scenes: Vec<SceneDef>,
+        #[serde(default)]
+        hidden_tags: Vec<String>,
+    },
+    /// Add or replace a material (a colour, plus the file name of a texture if it had one).
+    DefineMaterial {
+        name: String,
+        color: [u8; 4],
+        #[serde(default)]
+        texture: Option<String>,
+    },
+    /// Paint an object with a material, or take its material off (`None`).
+    SetMaterial {
+        object: u64,
+        material: Option<String>,
+    },
+    /// Name an object, or clear its name (`None`).
+    RenameObject { object: u64, name: Option<String> },
+    /// Delete an imported non-solid mesh.
+    DeleteMesh { mesh: u64 },
+    /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
+    /// edit; refused (typed) when the snapshot does not validate.
+    Restore {
+        snapshot: Box<crate::snapshot::Snapshot>,
+    },
     /// Step back one op (document command; see [`crate::document::Document`]).
     Undo,
     /// Step forward again after an undo (document command).
@@ -214,6 +252,47 @@ pub enum DrawTarget {
     Plane { origin: [f64; 3], normal: [f64; 3] },
     /// Onto the plane of this face of a solid (persistent face id).
     Face { object: u64, face: u64 },
+}
+
+/// A stroke from a file (DXF lines and polylines, SVG paths): world points on one plane.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ImportStroke {
+    pub points: Vec<[f64; 3]>,
+    #[serde(default)]
+    pub closed: bool,
+}
+
+/// A material as an op carries it: an sRGB colour with alpha, and the file name of the
+/// texture it had (kept as a reference; textures are not drawn yet).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct MaterialDef {
+    pub name: String,
+    pub color: [u8; 4],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
+}
+
+/// A saved view (SketchUp "scene"): camera in metres, Z up, and the tags it hides.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SceneDef {
+    pub name: String,
+    pub eye: [f64; 3],
+    pub target: [f64; 3],
+    pub up: [f64; 3],
+    /// Vertical field of view, degrees.
+    #[serde(default = "default_fov")]
+    pub fov: f64,
+    #[serde(default)]
+    pub parallel: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_tags: Vec<String>,
+}
+
+fn default_fov() -> f64 {
+    35.0
 }
 
 /// What an op did, with the ids the UI needs next.
@@ -294,6 +373,24 @@ pub enum OpOutcome {
     Severed {
         objects: Vec<u64>,
     },
+    /// A file was imported: the solids, non-solid meshes, groups and sketches it made, and
+    /// plain-language notes (what was healed, what stayed a mesh and why, what was skipped).
+    Imported {
+        objects: Vec<u64>,
+        meshes: Vec<u64>,
+        groups: Vec<u64>,
+        sketches: Vec<u64>,
+        notes: Vec<String>,
+    },
+    MaterialSet,
+    Renamed,
+    MeshDeleted,
+    /// A saved model was restored.
+    Restored {
+        objects: usize,
+        meshes: usize,
+        sketches: usize,
+    },
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -303,17 +400,31 @@ pub enum OpOutcome {
 
 #[derive(Debug, Clone, Default)]
 pub struct Model {
-    sketches: SlotMap<SketchId, Sketch>,
-    sketch_order: Vec<SketchId>,
-    objects: SlotMap<ObjectId, Object>,
-    object_order: Vec<ObjectId>,
-    groups: SlotMap<GroupId, Group>,
+    pub(crate) sketches: SlotMap<SketchId, Sketch>,
+    pub(crate) sketch_order: Vec<SketchId>,
+    pub(crate) objects: SlotMap<ObjectId, Object>,
+    pub(crate) object_order: Vec<ObjectId>,
+    pub(crate) groups: SlotMap<GroupId, Group>,
     /// Tag name -> visible. Every tag an object uses is listed here.
-    tags: BTreeMap<String, bool>,
-    guides: SlotMap<GuideId, Guide>,
-    dimensions: SlotMap<DimensionId, Dimension>,
+    pub(crate) tags: BTreeMap<String, bool>,
+    pub(crate) guides: SlotMap<GuideId, Guide>,
+    pub(crate) dimensions: SlotMap<DimensionId, Dimension>,
+    /// Imported geometry that is not a valid solid (see [`crate::meshbuild`]).
+    pub(crate) meshes: SlotMap<MeshId, LooseMesh>,
+    pub(crate) mesh_order: Vec<MeshId>,
+    /// Material name -> definition.
+    pub(crate) materials: BTreeMap<String, Material>,
+    /// Saved views, in order.
+    pub(crate) scenes: Vec<SceneDef>,
     /// Last display number handed to an object (see [`Object::number`]).
-    last_number: u64,
+    pub(crate) last_number: u64,
+}
+
+/// A material: sRGB colour with alpha, and a texture file name kept as a reference.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Material {
+    pub color: [u8; 4],
+    pub texture: Option<String>,
 }
 
 /// A guide line (unit `dir`) or a guide point (`dir` zero).
@@ -348,6 +459,17 @@ fn finite3(p: &[f64; 3]) -> Option<DVec3> {
 pub struct Group {
     pub name: String,
     pub objects: Vec<u64>,
+}
+
+/// A usable name from a file: trimmed, at most 64 characters, `fallback` when empty.
+fn clip_name(n: &str, fallback: &str) -> String {
+    let t: String = n.trim().chars().take(64).collect();
+    let t = t.trim().to_string();
+    if t.is_empty() {
+        fallback.to_string()
+    } else {
+        t
+    }
 }
 
 fn check_name(n: &str) -> Result<(), DocumentError> {
@@ -451,6 +573,37 @@ impl Model {
             o.tag()
                 .is_none_or(|t| self.tags.get(t).copied().unwrap_or(true))
         })
+    }
+
+    /// Imported non-solid meshes in import order, with their public ids.
+    pub fn meshes(&self) -> Vec<(u64, &LooseMesh)> {
+        self.mesh_order
+            .iter()
+            .map(|&k| (to_public(k), &self.meshes[k]))
+            .collect()
+    }
+
+    pub fn mesh(&self, id: u64) -> Option<&LooseMesh> {
+        self.meshes.get(from_public::<MeshId>(id))
+    }
+
+    /// True when the mesh is shown (untagged, or on a visible tag).
+    pub fn is_mesh_visible(&self, mesh: u64) -> bool {
+        self.mesh(mesh).is_some_and(|m| {
+            m.tag
+                .as_deref()
+                .is_none_or(|t| self.tags.get(t).copied().unwrap_or(true))
+        })
+    }
+
+    /// Materials by name.
+    pub fn materials(&self) -> &BTreeMap<String, Material> {
+        &self.materials
+    }
+
+    /// Saved views, in order.
+    pub fn scenes(&self) -> &[SceneDef] {
+        &self.scenes
     }
 
     /// Public ids of the sketches, in creation order.
@@ -849,6 +1002,68 @@ impl Model {
                 self.tags.insert(tag.clone(), *visible);
                 Ok(OpOutcome::TagSet)
             }
+            Op::Import {
+                items,
+                strokes,
+                materials,
+                scenes,
+                hidden_tags,
+            } => self.import(items, strokes, materials, scenes, hidden_tags),
+            Op::DefineMaterial {
+                name,
+                color,
+                texture,
+            } => {
+                check_name(name)?;
+                self.materials.insert(
+                    name.clone(),
+                    Material {
+                        color: *color,
+                        texture: texture.clone(),
+                    },
+                );
+                Ok(OpOutcome::MaterialSet)
+            }
+            Op::SetMaterial { object, material } => {
+                if let Some(m) = material
+                    && !self.materials.contains_key(m)
+                {
+                    return Err(DocumentError::NoSuchMaterial(m.clone()).into());
+                }
+                let o = self
+                    .objects
+                    .get_mut(from_public::<ObjectId>(*object))
+                    .ok_or(DocumentError::NoSuchObject(*object))?;
+                o.material = material.clone();
+                Ok(OpOutcome::MaterialSet)
+            }
+            Op::RenameObject { object, name } => {
+                if let Some(n) = name {
+                    check_name(n)?;
+                }
+                let o = self
+                    .objects
+                    .get_mut(from_public::<ObjectId>(*object))
+                    .ok_or(DocumentError::NoSuchObject(*object))?;
+                o.name = name.clone();
+                Ok(OpOutcome::Renamed)
+            }
+            Op::DeleteMesh { mesh } => {
+                let k = from_public::<MeshId>(*mesh);
+                if self.meshes.remove(k).is_none() {
+                    return Err(DocumentError::NoSuchMesh(*mesh).into());
+                }
+                self.mesh_order.retain(|&m| m != k);
+                Ok(OpOutcome::MeshDeleted)
+            }
+            Op::Restore { snapshot } => {
+                *self = Model::from_snapshot(snapshot)?;
+                Ok(OpOutcome::Restored {
+                    objects: self.object_order.len(),
+                    meshes: self.mesh_order.len(),
+                    sketches: self.sketch_order.len(),
+                })
+            }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
     }
@@ -1165,6 +1380,173 @@ impl Model {
         id
     }
 
+    /// [`Op::Import`]: everything or nothing (the caller validates and commits).
+    fn import(
+        &mut self,
+        items: &[ImportItem],
+        strokes: &[ImportStroke],
+        materials: &[MaterialDef],
+        scenes: &[SceneDef],
+        hidden_tags: &[String],
+    ) -> Result<OpOutcome, KernelError> {
+        let mut notes = Vec::new();
+        for m in materials {
+            self.materials.insert(
+                clip_name(&m.name, "Material"),
+                Material {
+                    color: m.color,
+                    texture: m.texture.clone(),
+                },
+            );
+        }
+        let (mut objects, mut meshes) = (Vec::new(), Vec::new());
+        let mut groups: Vec<(String, Vec<u64>)> = Vec::new();
+        for item in items {
+            let built = build_item(item)?;
+            notes.extend(built.notes);
+            let tag = item.tag.as_deref().map(|t| clip_name(t, "Untagged"));
+            if let Some(t) = &tag {
+                self.tags.entry(t.clone()).or_insert(true);
+            }
+            let material = match item.material.as_deref().map(|m| clip_name(m, "Material")) {
+                Some(m) if self.materials.contains_key(&m) => Some(m),
+                Some(m) => {
+                    notes.push(format!(
+                        "{}: material {m:?} is not defined, left unpainted",
+                        item.name
+                    ));
+                    None
+                }
+                None => None,
+            };
+            let base = clip_name(&item.name, "Imported");
+            let n = built.solids.len();
+            let mut made = Vec::new();
+            for (k, mut o) in built.solids.into_iter().enumerate() {
+                o.name = Some(if n == 1 {
+                    base.clone()
+                } else {
+                    clip_name(&format!("{base} {}", k + 1), "Imported")
+                });
+                o.tag = tag.clone();
+                o.material = material.clone();
+                let id = self.insert_object(o);
+                made.push(to_public(id));
+            }
+            if let Some(mut m) = built.loose {
+                m.name = base.clone();
+                m.tag = tag.clone();
+                m.material = material.clone();
+                let id = self.meshes.insert(m);
+                self.mesh_order.push(id);
+                meshes.push(to_public(id));
+            }
+            if let Some(g) = &item.group
+                && !made.is_empty()
+            {
+                let g = clip_name(g, "Group");
+                match groups.iter_mut().find(|(name, _)| *name == g) {
+                    Some((_, list)) => list.extend(&made),
+                    None => groups.push((g, made.clone())),
+                }
+            }
+            objects.extend(made);
+        }
+        let mut group_ids = Vec::new();
+        for (name, members) in groups {
+            let g = self.groups.insert(Group {
+                name,
+                objects: members,
+            });
+            group_ids.push(to_public(g));
+        }
+        let mut sketches = Vec::new();
+        let mut skipped = 0usize;
+        for st in strokes {
+            let pts: Vec<DVec3> = st.points.iter().map(|p| DVec3::from_array(*p)).collect();
+            if pts.len() < 2 || pts.iter().any(|p| !p.is_finite()) {
+                skipped += 1;
+                continue;
+            }
+            let plane = if pts.len() == 2 {
+                // A single segment lies on many planes: prefer the horizontal one.
+                Plane::new(pts[0], DVec3::Z).ok()
+            } else {
+                Plane::fit(&pts).ok().map(|p| {
+                    // Strokes on the ground face up, like drawn ones.
+                    if p.normal.z < 0.0 {
+                        Plane::new(p.origin, -p.normal).unwrap_or(p)
+                    } else {
+                        p
+                    }
+                })
+            };
+            let Some(plane) = plane.filter(|pl| {
+                pts.iter()
+                    .all(|p| pl.signed_distance(*p).abs() <= PLANARITY)
+            }) else {
+                skipped += 1;
+                continue;
+            };
+            let existed = self.sketch_order.len();
+            let sid = self.sketch_on(&plane);
+            match self.draw_in_sketch(sid, &pts, st.closed && pts.len() > 2) {
+                Ok(_) => {
+                    let p = to_public(sid);
+                    if !sketches.contains(&p) {
+                        sketches.push(p);
+                    }
+                }
+                Err(_) => {
+                    skipped += 1;
+                    if self.sketch_order.len() > existed && self.sketches[sid].edge_count() == 0 {
+                        self.sketches.remove(sid);
+                        self.sketch_order.retain(|&k| k != sid);
+                    }
+                }
+            }
+        }
+        if skipped > 0 {
+            notes.push(format!(
+                "skipped {skipped} stroke{} that were not flat or would not go into a sketch",
+                if skipped == 1 { "" } else { "s" }
+            ));
+        }
+        for sc in scenes {
+            let mut sc = sc.clone();
+            sc.name = clip_name(&sc.name, "Scene");
+            let finite = sc
+                .eye
+                .iter()
+                .chain(&sc.target)
+                .chain(&sc.up)
+                .all(|v| v.is_finite());
+            if finite && sc.fov.is_finite() {
+                self.scenes.push(sc);
+            } else {
+                notes.push(format!("scene {:?} has a broken camera, skipped", sc.name));
+            }
+        }
+        for t in hidden_tags {
+            self.tags.insert(clip_name(t, "Untagged"), false);
+        }
+        if objects.is_empty()
+            && meshes.is_empty()
+            && sketches.is_empty()
+            && materials.is_empty()
+            && scenes.is_empty()
+        {
+            return Err(DocumentError::NothingImported.into());
+        }
+        Ok(OpOutcome::Imported {
+            objects,
+            meshes,
+            groups: group_ids,
+            sketches,
+            notes,
+        })
+    }
+
     /// The sketch lying on `plane` (either facing, within the planarity tolerance), or a
     /// new one on it.
     fn sketch_on(&mut self, plane: &Plane) -> SketchId {
@@ -1281,6 +1663,23 @@ impl Model {
         for (_, o) in self.objects() {
             if o.tag().is_some_and(|t| !self.tags.contains_key(t)) {
                 return Err(dangling("object tag is not listed"));
+            }
+            if o.material()
+                .is_some_and(|m| !self.materials.contains_key(m))
+            {
+                return Err(dangling("object material is not defined"));
+            }
+        }
+        for (_, m) in self.meshes() {
+            if m.tag.as_deref().is_some_and(|t| !self.tags.contains_key(t))
+                || m.material
+                    .as_deref()
+                    .is_some_and(|x| !self.materials.contains_key(x))
+            {
+                return Err(dangling("mesh tag or material is not listed"));
+            }
+            if let Err(e) = m.check() {
+                return Err(dangling(e));
             }
         }
         for (_, o) in self.objects() {
@@ -1525,6 +1924,61 @@ mod tests {
             (lo, hi),
             (DVec3::new(3.0, 0.0, 0.0), DVec3::new(4.0, 1.0, 1.0))
         );
+    }
+
+    #[test]
+    fn display_numbers_survive_a_save_and_reopen() {
+        let mut m = Model::with_ground_sketch();
+        for x in [0.0, 3.0, 6.0] {
+            m.apply(&rect(x, 0.0, 1.0, 1.0)).unwrap();
+            m.apply(&Op::Extrude {
+                sketch: GROUND,
+                region: first_region(&m),
+                distance: 1.0,
+            })
+            .unwrap();
+        }
+        // Delete the last one: its number (3) must not come back after a reopen.
+        let last = *m.object_order.last().unwrap();
+        m.apply(&Op::DeleteObject {
+            object: to_public(last),
+        })
+        .unwrap();
+        let snap = m.snapshot();
+        assert_eq!(snap.last_number, 3);
+        let mut back = Model::from_snapshot(&snap).unwrap();
+        let numbers: Vec<u64> = back
+            .object_order
+            .iter()
+            .map(|&k| back.objects[k].number())
+            .collect();
+        assert_eq!(numbers, vec![1, 2]);
+        back.apply(&rect(9.0, 0.0, 1.0, 1.0)).unwrap();
+        let out = back
+            .apply(&Op::Extrude {
+                sketch: GROUND,
+                region: first_region(&back),
+                distance: 1.0,
+            })
+            .unwrap();
+        let OpOutcome::ObjectCreated { object } = out else {
+            panic!("{out:?}")
+        };
+        assert_eq!(back.object(object).unwrap().number(), 4);
+
+        // A file without numbers (an older writer) is numbered in saved order.
+        let mut bare = m.snapshot();
+        for o in &mut bare.objects {
+            o.number = None;
+        }
+        bare.last_number = 0;
+        let back = Model::from_snapshot(&bare).unwrap();
+        let numbers: Vec<u64> = back
+            .object_order
+            .iter()
+            .map(|&k| back.objects[k].number())
+            .collect();
+        assert_eq!(numbers, vec![1, 2]);
     }
 
     #[test]

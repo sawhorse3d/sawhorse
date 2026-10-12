@@ -127,6 +127,8 @@ export class ViewportEngine {
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
   private faces: THREE.Mesh | null = null;
+  /** Back sides of imported non-solid meshes, drawn in their own tone so an open shell reads as open. */
+  private backs: THREE.Mesh | null = null;
   private edges: THREE.LineSegments | null = null;
   private meshData: MeshData | null = null;
   private highlight: Highlight = NO_HIGHLIGHT;
@@ -298,6 +300,7 @@ export class ViewportEngine {
     const front = new THREE.Color(this.theme.face);
     const side = new THREE.Color(this.theme.faceSide);
     const sel = new THREE.Color(this.theme.sel);
+    const warn = new THREE.Color("#d9a33a");
     const tint = (c: THREE.Color, k: number) => c.clone().lerp(sel, k);
     const selected = new Set(this.highlight.selectedParts);
     const hovered = new Set(this.highlight.hoverParts);
@@ -317,6 +320,14 @@ export class ViewportEngine {
       const part = ids ? ids[t / 3] : -1;
       const kind = n.z > 0.5 ? 0 : n.z < -0.5 ? 2 : Math.abs(n.y) >= Math.abs(n.x) ? 1 : 2;
       let col = [top, front, side][kind];
+      const info = part >= 0 ? this.meshData?.parts[part] : undefined;
+      if (info?.color) {
+        // A material colour, shaded like the theme's three face tones.
+        const [r, g, b] = info.color;
+        col = new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace).multiplyScalar([1, 0.86, 0.72][kind]);
+      }
+      // Imported geometry that is not a solid reads amber-tinted: it cannot be pushed or printed.
+      if (info?.kind === "mesh") col = col.clone().lerp(warn, 0.3);
       if (selected.has(part)) col = tint(col, 0.45);
       else if (hovered.has(part)) col = tint(col, 0.2);
       for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
@@ -326,6 +337,8 @@ export class ViewportEngine {
 
   setMesh(mesh: MeshData | null): void {
     disposeObject(this.faces);
+    disposeObject(this.backs);
+    this.backs = null;
     disposeObject(this.edges);
     this.faces = null;
     this.edges = null;
@@ -347,6 +360,38 @@ export class ViewportEngine {
       this.faces = new THREE.Mesh(g, mat);
       this.faces.renderOrder = 2;
       this.scene.add(this.faces);
+      // A solid only ever shows its outsides; an imported mesh may be open, so its inner sides
+      // get their own tone (drawn as reversed triangles just in front of the faces).
+      const back: number[] = [];
+      for (let t = 0; t < mesh.faceIds.length; t++) {
+        if (mesh.parts[mesh.faceIds[t]]?.kind !== "mesh") continue;
+        back.push(mesh.indices[t * 3], mesh.indices[t * 3 + 2], mesh.indices[t * 3 + 1]);
+      }
+      if (back.length) {
+        const bg = new THREE.BufferGeometry();
+        const pos = g.getAttribute("position") as THREE.BufferAttribute;
+        bg.setAttribute("position", pos);
+        bg.setIndex(back);
+        // The inner tone, shaded by which way each inner side faces, like the outer faces.
+        const tone = new THREE.Color("#7f93ad");
+        const colors = new Float32Array(pos.count * 3);
+        const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+        for (let t = 0; t < back.length; t += 3) {
+          a.fromBufferAttribute(pos, back[t]);
+          b.fromBufferAttribute(pos, back[t + 1]);
+          c.fromBufferAttribute(pos, back[t + 2]);
+          n.subVectors(b, a).cross(c.sub(a)).normalize();
+          const k = n.z > 0.5 ? 1 : n.z < -0.5 ? 0.72 : Math.abs(n.y) >= Math.abs(n.x) ? 0.86 : 0.72;
+          const col = tone.clone().multiplyScalar(k);
+          for (const i of [back[t], back[t + 1], back[t + 2]]) col.toArray(colors, i * 3);
+        }
+        bg.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        // No depth offset: the faces are pushed back by theirs, so these win where an inner
+        // side faces the camera, and edges (drawn later) still show on top.
+        this.backs = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }));
+        this.backs.renderOrder = 2;
+        this.scene.add(this.backs);
+      }
     }
     if (mesh && mesh.edges.length > 0) {
       const eg = new THREE.BufferGeometry();
@@ -619,6 +664,66 @@ export class ViewportEngine {
       this.camera.right = this.frame * aspect;
     }
     this.camera.updateProjectionMatrix();
+  }
+
+  /** The camera as an SVG view drawing needs it (crates/export svg::ViewSpec). Metres. */
+  viewSpec(): { eye: Vec3; target: Vec3; up: Vec3; ortho: boolean; fov: number; half_height: number; width: number; height: number } {
+    const cam = this.camera;
+    const p = cam.position;
+    const t = this.controls.target;
+    const u = cam.up;
+    const base = { eye: [p.x, p.y, p.z] as Vec3, target: [t.x, t.y, t.z] as Vec3, up: [u.x, u.y, u.z] as Vec3, width: this.size.w, height: this.size.h };
+    if (cam instanceof THREE.PerspectiveCamera) {
+      // Zoom narrows the field of view.
+      const fov = (2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) / cam.zoom) * 180) / Math.PI;
+      return { ...base, ortho: false, fov, half_height: 0 };
+    }
+    return { ...base, ortho: true, fov: PERSPECTIVE_FOV_DEG, half_height: (cam.top - cam.bottom) / 2 / cam.zoom };
+  }
+
+  /** Look through a saved scene's camera (metres, Z up). */
+  lookAt(eye: Vec3, target: Vec3, up: Vec3, projection: Projection, fovDeg = PERSPECTIVE_FOV_DEG): void {
+    this.view = null;
+    this.useProjection(projection);
+    const e = new THREE.Vector3(...eye);
+    const t = new THREE.Vector3(...target);
+    const dist = Math.max(e.distanceTo(t), 1e-3);
+    const r = Math.max(this.contentBox().getBoundingSphere(new THREE.Sphere()).radius, 0.05);
+    this.camera.up.set(...up).normalize();
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.fov = fovDeg;
+      this.camera.zoom = 1;
+      this.camera.position.copy(e);
+      this.camera.near = Math.max(dist / 1000, 0.001);
+      this.camera.far = Math.max(dist, r) * 100;
+    } else {
+      // What a perspective camera at this distance would show at the target.
+      this.frame = dist * Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+      this.camera.zoom = 1;
+      const dir = e.clone().sub(t).normalize();
+      this.camera.position.copy(t).addScaledVector(dir, Math.max(dist, r * 20));
+      this.camera.near = -r * 100;
+      this.camera.far = r * 200 + dist;
+    }
+    this.controls.target.copy(t);
+    this.fitted = this.contentBox();
+    this.updateProjection();
+    this.controls.update();
+    this.updateGridVisibility();
+    this.requestRender();
+  }
+
+  /** A PNG of the current view, at most `max` pixels on its long side (.shz thumbnails). */
+  async snapshotPng(max = 512): Promise<Uint8Array> {
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const k = Math.min(1, max / Math.max(src.width, src.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(src.width * k));
+    c.height = Math.max(1, Math.round(src.height * k));
+    c.getContext("2d")?.drawImage(src, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/png"));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : new Uint8Array();
   }
 
   /** A compact description of the camera (tests and captures watch it change). */

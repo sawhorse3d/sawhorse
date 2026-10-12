@@ -36,6 +36,8 @@ slotmap::new_key_type! {
     pub struct GuideId;
     /// A linear dimension annotation.
     pub struct DimensionId;
+    /// An imported mesh that is not a valid solid (shown, never edited).
+    pub struct MeshId;
 }
 
 /// Public (serialisable) form of a key. Null keys map to 0.

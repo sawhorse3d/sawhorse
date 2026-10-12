@@ -1,0 +1,26 @@
+[package]
+name = "sawhorse-import"
+description = "Importers for Sawhorse: STL, OBJ, glTF/GLB, 3MF, DXF and SVG into one kernel import op."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sawhorse-kernel.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+threemf.workspace = true
+zip.workspace = true
+quick-xml.workspace = true
+
+[dev-dependencies]
+sawhorse-export.workspace = true
+
+[lints]
+workspace = true
