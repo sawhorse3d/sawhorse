@@ -1,0 +1,1608 @@
+{
+  "generator": "scripts/corpus-skp.mjs",
+  "openskp": "1.3.0",
+  "count": 200,
+  "bytes": 2246703,
+  "files": [
+    {
+      "name": "001-boxes.skp",
+      "family": "boxes",
+      "bytes": 10913,
+      "sha256": "7c9e1caf27ae3ec839d7c390cc2ffaddb43b89a2cf135698f0cb862b7f9467a6",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "002-table.skp",
+      "family": "table",
+      "bytes": 9881,
+      "sha256": "9ce11868d5a89833fc0721ad155c9c0f91d54776e0be6172dbb12c898868a8ee",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "003-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11782,
+      "sha256": "987bd69c76d3c431f157f74bfdbd08416fea9a85c0ecc7f142bb0cfbe462dea1",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "004-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "212358174cd1deb2e52cd3a4050967c0da759f34732f7b8e78d4602efa406d55",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "005-stairs.skp",
+      "family": "stairs",
+      "bytes": 9581,
+      "sha256": "c16587a635daa287e78f5b9d94420782ef29c0e15d602613b15dafd49b94b334",
+      "definitions": 1,
+      "faces": 14
+    },
+    {
+      "name": "006-curved.skp",
+      "family": "curved",
+      "bytes": 22448,
+      "sha256": "bd9db8e58bfbf573c2a1a4d7bafa99be9240fbbc621213e0c2a78fdea289aaa0",
+      "definitions": 1,
+      "faces": 66
+    },
+    {
+      "name": "007-nested.skp",
+      "family": "nested",
+      "bytes": 11949,
+      "sha256": "bf599ad4bd22e24a68a2139945e04e2d29df4d732777cbf3bb7be7338d4e0220",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "008-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "73eecf34acdffbce1881d288ff7ff8a0ddc38f71f979bbc0e9babc571d3f196b",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "009-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "86222e387b0062a5dbde205967201a13739f6093e9ee7219648113e05858b50b",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "010-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "2fd62ce48ee3bdd0c25fcd8ee32841aa543af775a8dd2e3da8433c1f4b6f1cc0",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "011-boxes.skp",
+      "family": "boxes",
+      "bytes": 9300,
+      "sha256": "a79f6f2e07d6b2608d20e91a7249458cde824bd4c26ae232743eea1c7873a9b3",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "012-table.skp",
+      "family": "table",
+      "bytes": 9895,
+      "sha256": "42d4cd5ed5cafbc97235b4597321885d26943be5d3148df93428877b8cec43e4",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "013-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11780,
+      "sha256": "89cc4988f28c7179ef258fcf6a99c41b12fbd147322ffeb71f4ca051ef5a96f9",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "014-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "528320c1146655a5b2dd0b40ca5aa2be74d3baad83fb7f61243795319b7db67f",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "015-stairs.skp",
+      "family": "stairs",
+      "bytes": 9184,
+      "sha256": "a00a543ae9d26fcc2fba091bdabb537d081af2b326e5964bb0f0f62c645d3b88",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "016-curved.skp",
+      "family": "curved",
+      "bytes": 19105,
+      "sha256": "426495bd0043c55243dc9d905180da14900306a9853300a07c8285a505b4644c",
+      "definitions": 1,
+      "faces": 54
+    },
+    {
+      "name": "017-nested.skp",
+      "family": "nested",
+      "bytes": 11631,
+      "sha256": "15e8d479dbbbd939a3bcf02c14d249fe8bf9cd7d8ab605d4e323c67988e3139d",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "018-loose.skp",
+      "family": "loose",
+      "bytes": 9433,
+      "sha256": "d4df52cf5c9345001046793d130123e9b0b9e2e18bdc85ad61c77ef915da3107",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "019-open.skp",
+      "family": "open",
+      "bytes": 7528,
+      "sha256": "41374bb727bb7097c505e580969a7560ad597648f21a5bafdb14793661f1021f",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "020-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "3256f215bb2ef9d6dd9b14740c52210df77462965c7c8f71cb9c18bc08056a1f",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "021-boxes.skp",
+      "family": "boxes",
+      "bytes": 7627,
+      "sha256": "b24a5c7d5db4284c6fa485657186e30ee1f33f1d16f3b52ab398b9f8fd8cc1eb",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "022-table.skp",
+      "family": "table",
+      "bytes": 9832,
+      "sha256": "551188ac18571fceb9d85c4d3dbf3814dfe66461c938c6c175fe46be42fc194f",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "023-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11623,
+      "sha256": "c619c7f46175cc8bc7c6bf5c27c3a34043c6917ef85a690458c14099e15923df",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "024-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "cc65998678b309ff93452a8b81b00baf6991edc7e5daff5f5c38e607490f791f",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "025-stairs.skp",
+      "family": "stairs",
+      "bytes": 9579,
+      "sha256": "b096266f06141793fa4a03e5e5bb2fe165522bf79967f7ce32267dbb10d56230",
+      "definitions": 1,
+      "faces": 14
+    },
+    {
+      "name": "026-curved.skp",
+      "family": "curved",
+      "bytes": 19434,
+      "sha256": "9b34aa33084de21bb847a0d867664b4340bd4e9b8697754823b544ccebb18e9d",
+      "definitions": 1,
+      "faces": 54
+    },
+    {
+      "name": "027-nested.skp",
+      "family": "nested",
+      "bytes": 11792,
+      "sha256": "71d0148b8c074793dc68fb9fb9381ad0a49bad160f6e32015ecf0850ac4dfecc",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "028-loose.skp",
+      "family": "loose",
+      "bytes": 9433,
+      "sha256": "165e6c4498505d848cf65cd6d13d841e473547139b8151389dc65af8d93fef9f",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "029-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "9912d6299984fafb427f86b3ea7cdffd239d79065f3be3d015d85c2344a67287",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "030-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "300af15ff4295c3f96d2ed458a110396ce15b626c4b450976eeb2b4ee1f2332a",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "031-boxes.skp",
+      "family": "boxes",
+      "bytes": 12668,
+      "sha256": "49de5d0265025862c238a50d8b1a43b09d1b22972109fb474d1d5d133875ad23",
+      "definitions": 4,
+      "faces": 24
+    },
+    {
+      "name": "032-table.skp",
+      "family": "table",
+      "bytes": 9879,
+      "sha256": "ce0d302dae5f14a4e822d83e624414bf222398df2ee5872986d99d9f2ac2f8cf",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "033-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11780,
+      "sha256": "7097cf80ab0c94a47add731f63d8a5113a23fd9b0ea46135cf791065e3134664",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "034-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "fbd5b00c19a602581252b6e46787d669ef4606257ff4c7b250ee1d56dcf25763",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "035-stairs.skp",
+      "family": "stairs",
+      "bytes": 9027,
+      "sha256": "969cca282377593bc111c4f7584ae2ab6395e70983fcf9877ed96a96bf7eaee1",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "036-curved.skp",
+      "family": "curved",
+      "bytes": 18099,
+      "sha256": "24902729470da436f749b3697fffe71ef7cee81457055d5e9c6aa1f08bc19654",
+      "definitions": 1,
+      "faces": 50
+    },
+    {
+      "name": "037-nested.skp",
+      "family": "nested",
+      "bytes": 11790,
+      "sha256": "524b39aa3ad29972a4323b02a46e09e5f131f4b4425648be7989607e60486354",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "038-loose.skp",
+      "family": "loose",
+      "bytes": 9429,
+      "sha256": "0e6e9ddbbf467304b94b5c061db08b15112017202c2681989c8be431f86561af",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "039-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "45db42280adc1feea2649ba8d3adfc05f75497e255268f8c95b1a7662c42d491",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "040-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "effc39a7ba750f103160c2c51b0057ec92d1b5830fc1263aac513c9a7e0e0ef7",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "041-boxes.skp",
+      "family": "boxes",
+      "bytes": 7725,
+      "sha256": "72e2af0822c751bbfd30563bbb8b0b99afb9e70cdc213225ef9bbfdb4221c93c",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "042-table.skp",
+      "family": "table",
+      "bytes": 9834,
+      "sha256": "19a9589b7ba246dc8e6f6f87f7a0f98f80aa7687157f2e865b75bf8befc778a7",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "043-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11623,
+      "sha256": "9782f833f9f2f8d6aae23b163c780dd7225f64716790e674e5164f6e326f90fa",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "044-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "f1454f7123021afeb1520934f99a174a076c18f867f0d281026ca7e3454baf27",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "045-stairs.skp",
+      "family": "stairs",
+      "bytes": 9089,
+      "sha256": "bb5a25ba8bd342ed32aa9f8053efbcaf5ac6c9ed73357ba97bfad2279a54e8c1",
+      "definitions": 1,
+      "faces": 12
+    },
+    {
+      "name": "046-curved.skp",
+      "family": "curved",
+      "bytes": 9581,
+      "sha256": "b17efb2ef665d937aada07b371066906573b8145f927f4196b461c448f6a2dc2",
+      "definitions": 1,
+      "faces": 14
+    },
+    {
+      "name": "047-nested.skp",
+      "family": "nested",
+      "bytes": 11647,
+      "sha256": "d587444b4ff55b3315470cc2e4ef8d2eda166d92d61579c84d25edb9de2be6f1",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "048-loose.skp",
+      "family": "loose",
+      "bytes": 9429,
+      "sha256": "579dcf3b9f1f9c4c9c60098b9ee770cf0f837e0b67d892feffd2420cfc735a9b",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "049-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "557e906adb743b97b443855228c4139f2c9797348c09f571dfe7f5155165fabf",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "050-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "f9c1d75043d986a9f6b1fed1936f19eff25ba467572ff1d3c2c4963b7d477cfe",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "051-boxes.skp",
+      "family": "boxes",
+      "bytes": 9240,
+      "sha256": "6554575a25c6d20970635f0d6a3b48f5ae1c251a11e2b33afcc414b19c07a6d7",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "052-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "2859159b266e60b29dd3e2a76483ceca8ec07eeafcac0b31064da2b339421f08",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "053-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11796,
+      "sha256": "26a4c9c76c2896d8dca96f723e293f6242c3a3fbe3d4c0080025a31759cb5b65",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "054-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "85a8392f47d15db5119a0251785e4a7ba9f77c7ef03daa35cc290c1aba3c875f",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "055-stairs.skp",
+      "family": "stairs",
+      "bytes": 8872,
+      "sha256": "fbb0ce4a4f2b1e3153fc88e7be32ed73101369fbecd0cf1f4c22670d8b9a952e",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "056-curved.skp",
+      "family": "curved",
+      "bytes": 12766,
+      "sha256": "c7d908c329f94001178c1d5838b475853376903bb6bf124da84e858a920ecdfe",
+      "definitions": 1,
+      "faces": 27
+    },
+    {
+      "name": "057-nested.skp",
+      "family": "nested",
+      "bytes": 11790,
+      "sha256": "d8ee6c730e237e25f8ce7cb2d49edf666b11f78c118e77dbcc2ab099e40e47fd",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "058-loose.skp",
+      "family": "loose",
+      "bytes": 9429,
+      "sha256": "6515c4b88f24040755f144bcff25ced80ce82507301d7e5450c3cfc88cc79b64",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "059-open.skp",
+      "family": "open",
+      "bytes": 7510,
+      "sha256": "53b08086c065ea02f94ce5c092db560697093e4df274d5c5bce11ea48a20a8ac",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "060-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "a14f5fcf6863f96f1263d2dd2ee325ac2f648be4292b41ce7cf92be4dfb2eea0",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "061-boxes.skp",
+      "family": "boxes",
+      "bytes": 12586,
+      "sha256": "efe2674fae9c9bfbec82a97132f3735b2e4feb6578027ebf82d57db0827e44fe",
+      "definitions": 4,
+      "faces": 24
+    },
+    {
+      "name": "062-table.skp",
+      "family": "table",
+      "bytes": 9895,
+      "sha256": "b3a20f9e9f14a2b1cd948163a53c3ffda9914e1d4a64b4f34cda1d676d19f24e",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "063-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11623,
+      "sha256": "3128bbbc37de96e865ad8d265c7d781ec91e772698811249137ddc4344754c04",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "064-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "c0c999e55bb14268080a54e9a808b9c936fbe37312f4f66c33bbcaa7fe910010",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "065-stairs.skp",
+      "family": "stairs",
+      "bytes": 9089,
+      "sha256": "992d6bc009c5e6fef63a6561289f06d0149ee78ec8d9ae630a76c3b55d6fa8df",
+      "definitions": 1,
+      "faces": 12
+    },
+    {
+      "name": "066-curved.skp",
+      "family": "curved",
+      "bytes": 28001,
+      "sha256": "ce4e41512864e0a9a68a46e2c2eea1d1c6f1773ba3c983ea589ccd36c3813ddf",
+      "definitions": 1,
+      "faces": 88
+    },
+    {
+      "name": "067-nested.skp",
+      "family": "nested",
+      "bytes": 11951,
+      "sha256": "a14da28796659cf5e9622ecb8524664c4a8d3ae8f6f81a9a285532643fd43528",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "068-loose.skp",
+      "family": "loose",
+      "bytes": 9427,
+      "sha256": "f732d05ff800ee69c2752cdc083c4c1a4dbdc1f7bfc51cb4e174c7b634a92ceb",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "069-open.skp",
+      "family": "open",
+      "bytes": 7514,
+      "sha256": "a248e81106a8c2c8e8e5c4e05e4cf598ff86dfe0743e497fbbfa26dc8c09bcab",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "070-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "6021797edf57cf216dc7de239b6b45e0a300de7f343602355e58ef2c67ed2b75",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "071-boxes.skp",
+      "family": "boxes",
+      "bytes": 9322,
+      "sha256": "d9f8637709de1eaf2b2b532a9ec220f2ca1e8569188abc200d081e234a300dc6",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "072-table.skp",
+      "family": "table",
+      "bytes": 9897,
+      "sha256": "1970d8bc4383544773b171321ccba570c56d52f256ab27b32338f1b5d22fe367",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "073-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11462,
+      "sha256": "9c139e34f27c47447e3d8499d0d0f956319d81431dd9dcc58890107eca84ca41",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "074-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "c58750cc019eeef916fafff81d4b882b5b39f7c5acbe83f72863e99df6b0d644",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "075-stairs.skp",
+      "family": "stairs",
+      "bytes": 8250,
+      "sha256": "6f4d73b3eb73a4bf0a54305bf3f8d06051e58d8e0c65c79f3506b67c7c6b2608",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "076-curved.skp",
+      "family": "curved",
+      "bytes": 14740,
+      "sha256": "0731230ba80c2c638a75170995a7d18911cf7b038e5621ee27b99ee420d8346c",
+      "definitions": 1,
+      "faces": 35
+    },
+    {
+      "name": "077-nested.skp",
+      "family": "nested",
+      "bytes": 11792,
+      "sha256": "7ac5d667f28b062f44a91f9e7cf15ad1fbfe042fbcb6bcdb933125ee54cee755",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "078-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "6c5f03f5f295ba23462bee012ab15a80a198b128df1dc47e0e7a2e028cda63e5",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "079-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "5231c94a15633a386b3255cbb816cb26f4f7038ba102a6159fc1ecd4d44b19bc",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "080-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "e2e1f5bbe27eab36cf2b4cbb408680e6464935cbd7a50ac5030ae4a6a47a8046",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "081-boxes.skp",
+      "family": "boxes",
+      "bytes": 10913,
+      "sha256": "46249bb9ea8c46f9f6a5c209d6ee9e223929f6dead0c32e4a7b3d162f6b83fc7",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "082-table.skp",
+      "family": "table",
+      "bytes": 9873,
+      "sha256": "1a3a9400bd3eef3ece091dc9d7377101e4404bd1396a98ab3306b62855c1d785",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "083-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11464,
+      "sha256": "5c2541df20b332313b3bc5849c3ba0bcb4ca59193a0e284b3a834df6ccb351de",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "084-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "d732ba926e946fb12feb4234a75f93d718aa2e47b3b80e96c0e2c186b20fd450",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "085-stairs.skp",
+      "family": "stairs",
+      "bytes": 9333,
+      "sha256": "040dd4730c099f3a863a7f5b4c355400b207498861a042c6d3f2bcc9bd530fe1",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "086-curved.skp",
+      "family": "curved",
+      "bytes": 24454,
+      "sha256": "0ede69348323f0db9f9929c3fe905a902643eb5dae917fffab12e7fe5d7398e0",
+      "definitions": 1,
+      "faces": 74
+    },
+    {
+      "name": "087-nested.skp",
+      "family": "nested",
+      "bytes": 11633,
+      "sha256": "2a9e0f84ecc8b9916badc58239bece8ffc1081c437038b4e2d094d990016ccf6",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "088-loose.skp",
+      "family": "loose",
+      "bytes": 9429,
+      "sha256": "d76a83a82f00dd1a20a1753998c4d5d5e0280625b692b0f5aded6ba340325c32",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "089-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "d0d1f5fa3274e4a45f9d3b9c1072ae3caa6764f6ca6ba0eeec834f4c678d87db",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "090-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "731a6850336191303e573dfa5ad9e856073facbd18227222cc7f5f5cce1253b1",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "091-boxes.skp",
+      "family": "boxes",
+      "bytes": 12642,
+      "sha256": "31498b8dba745c42ead1a6d09be5d40dca98d71562544ae09b2f24122522d6a2",
+      "definitions": 4,
+      "faces": 24
+    },
+    {
+      "name": "092-table.skp",
+      "family": "table",
+      "bytes": 9879,
+      "sha256": "25399b5581ff224db622508876558236ae7a7f64f9dddb7452243e806f8f03ec",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "093-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11778,
+      "sha256": "7734d03295e2fe36b59bfe07361c86df8eb7559e28cd606b9f0acef7131d0621",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "094-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "60a5109b264faac02a1cc4e34976e233c8a1b4615d6ad7cabc3e4d4045779e07",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "095-stairs.skp",
+      "family": "stairs",
+      "bytes": 11541,
+      "sha256": "d2e2a6a9b0c3c7383ae4706a1d9149b5d08cf145fe0fdbe8a367e483ab396191",
+      "definitions": 1,
+      "faces": 22
+    },
+    {
+      "name": "096-curved.skp",
+      "family": "curved",
+      "bytes": 29662,
+      "sha256": "5d98530f956b5c3e82d0b16ad074d6999c097c7858ce803efa0ab823d70f5124",
+      "definitions": 1,
+      "faces": 96
+    },
+    {
+      "name": "097-nested.skp",
+      "family": "nested",
+      "bytes": 11947,
+      "sha256": "39e15c1534e8eb6a8f047381112e29d804dafc53cbc23d49f01b3ad3cf1df453",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "098-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "eb1d4a85f4b45774fc091780a5d8a349bb1b54f3d7bbf99ebc5ea07096cec0d2",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "099-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "ae160f73574c54cef491fcdd04b347950ab5592cf94f135cf59c9a29552e119f",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "100-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "7b2b3a433aeeea25b1a42f6c3826bbf386a5b20c811950ff1670b21cc68a5475",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "101-boxes.skp",
+      "family": "boxes",
+      "bytes": 10913,
+      "sha256": "fdb61891440f5175b3b18e3bca22c921ad4482473f7c05b10127ae81af3a1f17",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "102-table.skp",
+      "family": "table",
+      "bytes": 9879,
+      "sha256": "6ce2fafb55f43a43e22861b6e4ed2e19958bc73e6daad8fa99a44d0af260fa8b",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "103-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11937,
+      "sha256": "b72dbcd14aef0c05476a864a64a11a04a9b936480eaea0bd1a78720ac14fa13d",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "104-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "027f656e96d8d63ecbfab097d5e9ce2e1303f3d62e3e8fd7d75d2fa5d4f0023b",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "105-stairs.skp",
+      "family": "stairs",
+      "bytes": 8595,
+      "sha256": "cfab8012bb797d36337bacc097990373b0f62c41a4a440e7491498a0ab30702d",
+      "definitions": 1,
+      "faces": 10
+    },
+    {
+      "name": "106-curved.skp",
+      "family": "curved",
+      "bytes": 25980,
+      "sha256": "fcd53363fd1705678e8e4d468302715a6fc27299ac5e1f96ce1192de8c373c82",
+      "definitions": 1,
+      "faces": 80
+    },
+    {
+      "name": "107-nested.skp",
+      "family": "nested",
+      "bytes": 11627,
+      "sha256": "51e4db6a1c5ac1ab7bbe8c0a409715a3978db3323d8c824590704b8e84a36455",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "108-loose.skp",
+      "family": "loose",
+      "bytes": 9427,
+      "sha256": "1710fd6316c9332d82d35460ffd5f04d2a42293013ca97e3db3c594e38c7d41e",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "109-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "f700f8d595d7cb17f5deac494af1305c0f883675596484a6e7d0294b2f532553",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "110-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "7746ed5a68d2466b1602c6c1515b45de5260c589e459c0b3f2bf31efc7096ba8",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "111-boxes.skp",
+      "family": "boxes",
+      "bytes": 9240,
+      "sha256": "2bad7b59c665a65f25d006de858be2b33a3e88e243dd74340d6e81bcffdd0768",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "112-table.skp",
+      "family": "table",
+      "bytes": 9879,
+      "sha256": "af5d57d0c97600b82bc73939c9d8a3cf01d75d14b45361c81fb4ebd973c339f9",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "113-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11933,
+      "sha256": "1176fabd33d1ec70ef7ac725d23ec2d73f3067544b90392c7b357b44f2ac87be",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "114-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "45157bf1117cdf168736a1760ece65082f1fccf23e0e6375dccdffbba25e000e",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "115-stairs.skp",
+      "family": "stairs",
+      "bytes": 11051,
+      "sha256": "2cb7be4f558d9c644e5cc0a979e4dd347170dda2386f7b8f4bcb3b133ea76308",
+      "definitions": 1,
+      "faces": 20
+    },
+    {
+      "name": "116-curved.skp",
+      "family": "curved",
+      "bytes": 14477,
+      "sha256": "d9e2183c366f64d3d561f6db4dd747645b69db00d47ac1debc60bd084bdd082c",
+      "definitions": 1,
+      "faces": 34
+    },
+    {
+      "name": "117-nested.skp",
+      "family": "nested",
+      "bytes": 11633,
+      "sha256": "dac846a18b9285978271e28555af979525cf76408a6043bca3e88de31e78ec74",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "118-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "84dd0a56a2f43a36514f5ae31c1f0dcc37f90efec0b2c2b559335860c8528a69",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "119-open.skp",
+      "family": "open",
+      "bytes": 7514,
+      "sha256": "8519b52d8478f33f2379afaf5e5dee02b0faf1fe0b281933a8efb6a920a1b5d5",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "120-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "1bad6026fb550877fbf135e4c39849c708c0f8e3c8391178493b8f78e1a69bae",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "121-boxes.skp",
+      "family": "boxes",
+      "bytes": 7567,
+      "sha256": "fc1d03dc26cf02f28c7262c293801db996272539e9a86e0972477f2859f79323",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "122-table.skp",
+      "family": "table",
+      "bytes": 9832,
+      "sha256": "0dd8db1ddb80bfc34e188cf958238f5df2e3f263ab6a72c689f085addd43b79d",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "123-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11782,
+      "sha256": "f0bdd02cd5397aef2a1196350c21cac709c0543adb8703216f2677f270ce8f3a",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "124-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "435e51e5cc4bc573b36d3652d1b06058ac57bd4437a6a68d875f3bbd07b8d7c3",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "125-stairs.skp",
+      "family": "stairs",
+      "bytes": 8717,
+      "sha256": "9e5339aa8f0787a5a77e6ada3fd8961ffd1ceae24c5bdb97cce83dbe2d3b999e",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "126-curved.skp",
+      "family": "curved",
+      "bytes": 17179,
+      "sha256": "eff0c2df749306ebe6fec3cf6495bdc0210715ec0edc3fb8f1c213d6ffef38a3",
+      "definitions": 1,
+      "faces": 45
+    },
+    {
+      "name": "127-nested.skp",
+      "family": "nested",
+      "bytes": 11792,
+      "sha256": "a4dfc14c013b04cac7a8ecc09e651ba467b1a519919b35b83ea033f13a97fe31",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "128-loose.skp",
+      "family": "loose",
+      "bytes": 9447,
+      "sha256": "64c02703fb0205746623a7b0465dcd95ef2758f928ebe559177a4cc3db79e08d",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "129-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "59aac58020b887c97e69b6f50081d7e2d07df088776bc2347f21ab88daca69f8",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "130-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "889f3574fe7c01723f3e1a9c61cb60bd6f1c11d7a42d5b85d9fb885e94b5f4ab",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "131-boxes.skp",
+      "family": "boxes",
+      "bytes": 7629,
+      "sha256": "17fa71745f3487b4e62d9998fb7788801c6acd2304e0764848d50f948c46dd03",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "132-table.skp",
+      "family": "table",
+      "bytes": 9881,
+      "sha256": "332534f15247d52cb205ba1536bb413debc745b6ad25513ed88d3d6007a03f94",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "133-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11796,
+      "sha256": "e7125ce09d6817d71463f7990a5eee4648dfeab63f7b157545a21a998b08da95",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "134-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "c33d47c14993468bc821e6e5f2176aac997a6e63a93bfa36a9999e6183296f3b",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "135-stairs.skp",
+      "family": "stairs",
+      "bytes": 7942,
+      "sha256": "9dfae29f3b03b6d50ab303b28a8be5a6682b3494df6f5f55cf7aead36fe107ac",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "136-curved.skp",
+      "family": "curved",
+      "bytes": 29991,
+      "sha256": "e519fbf576494ca746f65fc5587b4472d85caeb6cb012273666059bc4033af61",
+      "definitions": 1,
+      "faces": 96
+    },
+    {
+      "name": "137-nested.skp",
+      "family": "nested",
+      "bytes": 11790,
+      "sha256": "c149c588c7eed6b2bf98d110a260c1340ad32c35df335fd77fd5120b11b43cf9",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "138-loose.skp",
+      "family": "loose",
+      "bytes": 9429,
+      "sha256": "0d113a7cbfdc8c70c96051b19e0ed534d713489fe9d2dd2f5ab4c9f22b920932",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "139-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "9eb4d4962f480561b876d471c518a72073330937cf43f7d4fe4a2c8d5e9d5b26",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "140-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "365ee569a1cb0071e7edd94f65964311407589ff33e2625ea5be7b2c52da0129",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "141-boxes.skp",
+      "family": "boxes",
+      "bytes": 9302,
+      "sha256": "3b076355b460c24153eb4c9479fc4d8569ebb6bb2d88756ed3f9ee8ba49e61ab",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "142-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "386ab082e19522b2049b6f56072b3e9c491af6a22d9a934515a8d3492c55eb8c",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "143-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11776,
+      "sha256": "a69f362e16537bb4ac4896dbc1d5cac7389f1aaa198af7d106c99678a3667003",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "144-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "599709caa861fda80a30d1b2dac111ad486caabbd42cc8d670f1a88f74af99f9",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "145-stairs.skp",
+      "family": "stairs",
+      "bytes": 8597,
+      "sha256": "31b9a5c0f27361955878abb2b5eb568b8601e8e47f94192f7d62b7cd18dc384c",
+      "definitions": 1,
+      "faces": 10
+    },
+    {
+      "name": "146-curved.skp",
+      "family": "curved",
+      "bytes": 11800,
+      "sha256": "c56134331a646dd5db045edf4bc49a0c2f3550fbe2c0a1bfa1e4ce0c4b80c485",
+      "definitions": 1,
+      "faces": 23
+    },
+    {
+      "name": "147-nested.skp",
+      "family": "nested",
+      "bytes": 11790,
+      "sha256": "467f4ecba785ad672ed99ff4909cef5faf60bd99f6c808ead9f9b9bd06ebcff1",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "148-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "0d24072b1d46ae9892a00c78054614dd22fc53a675a6c78e900cb7cc44597d11",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "149-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "ee3541ace866b405963cd27d3b996ec9fadea56bf481b9ba2da7320d3338e4c0",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "150-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "8959d08de81da86c9877b43d4e0a8ff2497058dd3e9798bb2c8cc1f8c37429f8",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "151-boxes.skp",
+      "family": "boxes",
+      "bytes": 9384,
+      "sha256": "fb7bad6b76a66656f4aa13b0cf272b7f9230794170c8670bce7a849ab7e27a19",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "152-table.skp",
+      "family": "table",
+      "bytes": 9895,
+      "sha256": "25076867f7cea0a8ebe1d03fd9ca1aaad4dacd095eb82287d3a9268cdcaf872a",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "153-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11468,
+      "sha256": "e4c0ae0d93bcea149c6ef0528f9dc12b34378cd3abfeee5f76c08e38b8bd8c7c",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "154-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "e3b8ccdecdf5c39bd75c3784b5a3729e18dfa11b004a8b04190e2d8fd8aef47a",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "155-stairs.skp",
+      "family": "stairs",
+      "bytes": 8874,
+      "sha256": "b71855f0625b62ad6c29a9017ed3b98f532297402a1439963a6f3c27eb30f617",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "156-curved.skp",
+      "family": "curved",
+      "bytes": 13021,
+      "sha256": "53021c91cca5b72dfa03189718abb314e116012bd4942ddaaa47a96e0c8f8d20",
+      "definitions": 1,
+      "faces": 28
+    },
+    {
+      "name": "157-nested.skp",
+      "family": "nested",
+      "bytes": 11792,
+      "sha256": "4796e45b29560ccab3e35493e20548c9986185b33fa555d6dbcc1b474d89acea",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "158-loose.skp",
+      "family": "loose",
+      "bytes": 9433,
+      "sha256": "28fa66a9e27cf928ee80b92a90d1e02eed33cb552a884ad1b632ffecbe635f81",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "159-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "810ff44aabd9dd25180cb2a8ec2bdf21e0cddb4dac8370b8660ae2313888d2f4",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "160-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "8ad8521917df38e22117edfb8da0ab1a76fe34064d52ee7286fd7093002a9054",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "161-boxes.skp",
+      "family": "boxes",
+      "bytes": 9300,
+      "sha256": "b286ca8d61d4ab3c279cca627b522698c32711104211f428a2165b043127bf53",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "162-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "4191fcb83ddea88ba1468b0bdd7381c174b258488082374ff63bdd7fda1c9d67",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "163-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11778,
+      "sha256": "882b1cc87ed7eaf5a9411f8c8d6fbd0604235f85931ce386047ff25f20141d94",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "164-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "403e408b990b5f3957613fe4d5c1dc38f3a4ecee93b9bac1428db49398e355f7",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "165-stairs.skp",
+      "family": "stairs",
+      "bytes": 9577,
+      "sha256": "351d433004d3f79086c27f3bd3ba3e8ae4094ee170b75dffdc3d972898fec090",
+      "definitions": 1,
+      "faces": 14
+    },
+    {
+      "name": "166-curved.skp",
+      "family": "curved",
+      "bytes": 27981,
+      "sha256": "25dea2ad66ab1b3b3fb6a28a2bf9d11f41126465dc9d997ebc1648c7c73e95ba",
+      "definitions": 1,
+      "faces": 88
+    },
+    {
+      "name": "167-nested.skp",
+      "family": "nested",
+      "bytes": 11633,
+      "sha256": "d2f1a4191496d457cb8318be7a57b92e2929f78441efb9b4d2dbb9fd23645666",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "168-loose.skp",
+      "family": "loose",
+      "bytes": 9431,
+      "sha256": "fe6f661e9ba899b3c9e2872942149b76fc4340a061d1be8a8b1f848140415650",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "169-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "a93d3aaaa4cc2ae709ac19c2a6168020c09c447377db7ee74a03f05c87764805",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "170-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "1faf819180b209337c26df823b1a967e8bd270e6f03b9f0b420205fb716db063",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "171-boxes.skp",
+      "family": "boxes",
+      "bytes": 9380,
+      "sha256": "5644b1045d0a48f22d0e9c78e54787dc1c25c99833a45a949e0286320d4270ca",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "172-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "bcb91b8429d4aaac4a3ab71a333bda6e4e5e191be391664184bd87f79bb9879a",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "173-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11462,
+      "sha256": "2e5ba16b20cb5a3ff52df097b3d973f4eda76f7f437dbd340834948c53ca93d7",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "174-house.skp",
+      "family": "house",
+      "bytes": 14315,
+      "sha256": "d3dea8e85996ef1092ad5d79bb4bd4d5b33cd734079c6a37e522d1ecb8c9c6db",
+      "definitions": 5,
+      "faces": 29
+    },
+    {
+      "name": "175-stairs.skp",
+      "family": "stairs",
+      "bytes": 8562,
+      "sha256": "02291dd77a91d79eeca1551b6ee2db3dd21154d07a42a59a7bd32201cd53ab49",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "176-curved.skp",
+      "family": "curved",
+      "bytes": 10312,
+      "sha256": "b6f920f5dda3341559e0f2f0d6aed620fe9dcb5365905aaccbf941e86939da11",
+      "definitions": 1,
+      "faces": 17
+    },
+    {
+      "name": "177-nested.skp",
+      "family": "nested",
+      "bytes": 11790,
+      "sha256": "c200d861142065eb8ad1e11cce221270a2fb8078a5bb6d9eab4e0fff4ab0ddf7",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "178-loose.skp",
+      "family": "loose",
+      "bytes": 9427,
+      "sha256": "87a949414d22c979da4960cfcb60250f1300cb626bf06404beb155c63b174003",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "179-open.skp",
+      "family": "open",
+      "bytes": 7508,
+      "sha256": "1c07d7059746bb9131e96c7eb2e79f84944e2303ff5a2168edb66b4f76e11e95",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "180-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "8ca37feb5feed929a78baaf33922f99bcb7729e93cb9e905bd5e4fcfdbbfcf87",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "181-boxes.skp",
+      "family": "boxes",
+      "bytes": 12668,
+      "sha256": "b826be28c2e420dc63fa7e61f5dae000a810e766db2bc26862c6b623a68f2bfe",
+      "definitions": 4,
+      "faces": 24
+    },
+    {
+      "name": "182-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "6146e824896e6dab995d498cf03267694474af2460e60efcd6b4e921b4bd1a8d",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "183-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11464,
+      "sha256": "591c2f4ef3b523d4027d53bc78cdcb944a7b70be779556de6fa596a52b1fd301",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "184-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "17da673e8c555efb6fbb7c30ead373ec13c1b92e6a0b425ec92dfc3303113b75",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "185-stairs.skp",
+      "family": "stairs",
+      "bytes": 8254,
+      "sha256": "ce8c15211f8a660171f4e5b2439f127f84104481039909400ee6f71cad48c2c7",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "186-curved.skp",
+      "family": "curved",
+      "bytes": 25978,
+      "sha256": "a791d48b0e9ab1c19aabb30bfbd2df897526a1bacc8e18a96bc238297173235f",
+      "definitions": 1,
+      "faces": 80
+    },
+    {
+      "name": "187-nested.skp",
+      "family": "nested",
+      "bytes": 11965,
+      "sha256": "7a63efc5116c67172d389073247f8e7500e35cde8dcd769c004acdff9c2b8d91",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "188-loose.skp",
+      "family": "loose",
+      "bytes": 9427,
+      "sha256": "49776270e4c6fdcc73207c0dbb0dc5d32f1f2f36394784340f042ac90bc66c40",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "189-open.skp",
+      "family": "open",
+      "bytes": 7512,
+      "sha256": "6518d54901336deee3fe6a7dd44df589a1f7643f1185975bac2249f5adec7278",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "190-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "298840c6694c5b660e706eeb115fb74e8b4a3e38e20ab724aa72ece6b18420ff",
+      "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "191-boxes.skp",
+      "family": "boxes",
+      "bytes": 9300,
+      "sha256": "6ee9a190f070f59e2e72e55a5cf66a8f6079d2c71f8cba5f9f31e25ebe961fdf",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "192-table.skp",
+      "family": "table",
+      "bytes": 9877,
+      "sha256": "46659df0ec27a61404c3d410a203712cecea11d67312f1113ac9f0796fee5048",
+      "definitions": 2,
+      "faces": 12
+    },
+    {
+      "name": "193-bookshelf.skp",
+      "family": "bookshelf",
+      "bytes": 11619,
+      "sha256": "624b813111a465a45030b9a4a8cab73268f3051d0f05adf59ccb5fedbaf179c6",
+      "definitions": 3,
+      "faces": 18
+    },
+    {
+      "name": "194-house.skp",
+      "family": "house",
+      "bytes": 15313,
+      "sha256": "b39b54fd73d898d429a796e9b6919d7f4441150acec48338e19e0e5de600a6b3",
+      "definitions": 5,
+      "faces": 33
+    },
+    {
+      "name": "195-stairs.skp",
+      "family": "stairs",
+      "bytes": 13009,
+      "sha256": "1434363bfec1ce27cf136c69c21951beb4b7cde7d0a4a7388e764f64edd1d224",
+      "definitions": 1,
+      "faces": 28
+    },
+    {
+      "name": "196-curved.skp",
+      "family": "curved",
+      "bytes": 30146,
+      "sha256": "e03736a39ddf76a85bec1db7f3be37a2f8a347e3e08047c8e90c110c7cd7c0cd",
+      "definitions": 1,
+      "faces": 98
+    },
+    {
+      "name": "197-nested.skp",
+      "family": "nested",
+      "bytes": 11951,
+      "sha256": "6bc5fbd39f2e1e34812f285a31fa6d0c695f58f1f67dd42544051d5da8ee635c",
+      "definitions": 2,
+      "faces": 20
+    },
+    {
+      "name": "198-loose.skp",
+      "family": "loose",
+      "bytes": 9433,
+      "sha256": "45776b140b261dbf817ea263d0db6251b4a17955be0120551ca958be264b4440",
+      "definitions": 1,
+      "faces": 7
+    },
+    {
+      "name": "199-open.skp",
+      "family": "open",
+      "bytes": 7510,
+      "sha256": "62f9a6d4b2c48ad9926495086bbd58d83927b7b773386200bc2535df5bb8bd5d",
+      "definitions": 1,
+      "faces": 5
+    },
+    {
+      "name": "200-reversed.skp",
+      "family": "reversed",
+      "bytes": 7559,
+      "sha256": "fd1204a14936cf75f9de7db52e8d6d0bc034013f16a132fa17b616863056fc38",
+      "definitions": 1,
+      "faces": 6
+    }
+  ]
+}

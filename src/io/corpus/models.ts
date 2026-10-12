@@ -25,6 +25,38 @@ export function rng(seed: number): () => number {
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
 
+/** The timestamp written into every corpus file: 2026-10-11T00:00:00Z. */
+export const CORPUS_EPOCH_MS = Date.UTC(2026, 9, 11);
+
+/**
+ * Run openskp's writer reproducibly: it stamps each definition with a random GUID
+ * (crypto.getRandomValues) and the current time (Date.now). Both are seeded here for the
+ * duration of `fn` (the writer is synchronous), so a seed always gives the same bytes.
+ */
+export function reproducible<T>(seed: number, fn: () => T): T {
+  const r = rng(seed ^ 0x5eed5eed);
+  const realNow = Date.now;
+  const c = (globalThis as { crypto?: { getRandomValues: <A extends ArrayBufferView | null>(a: A) => A } }).crypto;
+  const realRandom = c?.getRandomValues;
+  const ownRandom = !!c && Object.prototype.hasOwnProperty.call(c, "getRandomValues");
+  const seeded = <A extends ArrayBufferView | null>(a: A): A => {
+    if (a) {
+      const b = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+      for (let i = 0; i < b.length; i++) b[i] = Math.floor(r() * 256);
+    }
+    return a;
+  };
+  Date.now = () => CORPUS_EPOCH_MS;
+  if (c) c.getRandomValues = seeded;
+  try {
+    return fn();
+  } finally {
+    Date.now = realNow;
+    if (c && ownRandom && realRandom) c.getRandomValues = realRandom;
+    else if (c) delete (c as { getRandomValues?: unknown }).getRandomValues;
+  }
+}
+
 function signedArea(p: P2[]): number {
   let a = 0;
   for (let i = 0; i < p.length; i++) {
@@ -375,7 +407,7 @@ export function corpus(count = 200): ModelSpec[] {
     return {
       name: `${String(i + 1).padStart(3, "0")}-${family}`,
       family,
-      build: () => FAMILIES[family](rng(1000 + i)).toBytes(),
+      build: () => reproducible(1000 + i, () => FAMILIES[family](rng(1000 + i)).toBytes()),
     };
   });
 }

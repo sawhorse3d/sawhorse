@@ -18,3 +18,6 @@ crates/kernel/fuzz/artifacts/
 crates/kernel/proptest-regressions/*.tmp
 *.log
 .DS_Store
+
+# Generated .skp corpus (npm run corpus:skp); only the manifest and golden images are committed.
+tests/corpus/skp/
