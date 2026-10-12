@@ -7,9 +7,12 @@
 //! and cutting), and (lane 5) groups and components: make group / component / unique,
 //! explode, delete, open and close (the editing context), node moves / copies / arrays,
 //! hide, lock, tags (create, rename, colour, delete, assign) and scenes (add, update,
-//! delete, activate), and (lane 7) grain and stock on cut-list parts, with undo / redo
-//! interleaved anywhere. After every accepted op the cut list is worked out and checked
-//! against a brute-force count of the world (`testing::check_cut_list`). While a group or component is
+//! delete, activate), and (lane 7) grain and stock on cut-list parts, and (lane 9) the stock
+//! library (define, replace, delete, per-material defaults, kerf / trim / algorithm, reset),
+//! with undo / redo interleaved anywhere. After every accepted op the cut list is worked out
+//! and checked against a brute-force count of the world (`testing::check_cut_list`), and the
+//! parts are nested with both algorithms and every layout invariant checked
+//! (`testing::check_nesting`). While a group or component is
 //! open, most intents pick what is in it, so edits propagate through definitions.
 //!
 //! `FUZZ_PLANE_SNAP=0` turns the boolean plane-snapping pass off for the run, so the same
@@ -138,6 +141,15 @@ enum Fuzz {
     Transform(u8, u8, XformPick),
     Copy(u8, XformPick),
     Array(u8, XformPick, u8),
+    /// Lane 9: add or replace a stock (kind, name pick, length / width / thickness picks,
+    /// no grain, the stock it replaces).
+    DefineStock(bool, u8, [u8; 3], bool, Option<u8>),
+    DeleteStock(u8),
+    /// A material's default stock (material pick, stock pick or automatic).
+    MaterialStock(u8, Option<u8>),
+    /// Kerf, trim (picks) and the algorithm.
+    NestSettings(u8, u8, bool),
+    ResetStock,
     /// Move part of a solid: a face's vertices (which 0), an edge (1) or a vertex (2) of
     /// face `face`, by the pick, with or without autofold.
     MoveGeometry {
@@ -297,7 +309,13 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
         2 => (0u8..4, 0u8..3, any::<u8>(), prop::option::of(any::<u8>())).prop_map(|(k, n, h, c)| Fuzz::Scene(k, n, h, c)),
         1 => (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(i, n)| Fuzz::Rename(i, n)),
         2 => (any::<u8>(), 0u8..3).prop_map(|(k, g)| Fuzz::Grain(k, g)),
-        2 => (any::<u8>(), prop::option::of(0u8..4), prop::option::of(any::<bool>())).prop_map(|(k, t, s)| Fuzz::Stock(k, t, s)),
+        2 => (any::<u8>(), prop::option::of(0u8..5), prop::option::of(any::<bool>())).prop_map(|(k, t, s)| Fuzz::Stock(k, t, s)),
+        2 => (any::<bool>(), any::<u8>(), any::<[u8; 3]>(), any::<bool>(), prop::option::of(any::<u8>()))
+            .prop_map(|(sheet, n, d, none, r)| Fuzz::DefineStock(sheet, n, d, none, r)),
+        1 => any::<u8>().prop_map(Fuzz::DeleteStock),
+        2 => (any::<u8>(), prop::option::of(any::<u8>())).prop_map(|(m, s)| Fuzz::MaterialStock(m, s)),
+        2 => (any::<u8>(), any::<u8>(), any::<bool>()).prop_map(|(k, t, a)| Fuzz::NestSettings(k, t, a)),
+        1 => Just(Fuzz::ResetStock),
     ]
 }
 
@@ -359,11 +377,51 @@ fn pick_ref<T>(items: &[T], k: u8) -> Option<&T> {
 
 const TAGS: [&str; 3] = ["Legs", "Top", "Jig"];
 /// Stock names the lane-7 intents set (one reads as sheet stock; one is blank; one too long).
-const STOCKS: [&str; 4] = [
+const STOCKS: [&str; 5] = [
     "White oak",
     "3/4 Baltic birch ply",
     "  ",
     "a stock name far longer than any name may be, sixty-four characters",
+    // Lane 9: a part naming a library stock is cut from it.
+    "4 x 8 MDF, 3/4",
+];
+/// Stock names the lane-9 intents define, replace, delete and default to: built-in ones,
+/// new ones, a blank and an over-long one.
+const STOCK_NAMES: [&str; 8] = [
+    "4 x 8 sheet, 3/4",
+    "4/4 x 12 x 96",
+    "5 x 5 Baltic birch, 1/2",
+    "Shop sheet",
+    "Short board",
+    "SHOP SHEET",
+    " ",
+    "a stock name far longer than any name may be, sixty-four characters",
+];
+/// Stock dimensions (metres): sheet and board sizes, tiny, huge, broken.
+const STOCK_SIZES: [f64; 12] = [
+    0.0254 * 0.25,
+    0.0254 * 0.75,
+    0.0254 * 4.0,
+    0.0254 * 12.0,
+    0.0254 * 48.0,
+    0.0254 * 96.0,
+    0.3,
+    1.5,
+    0.0005,
+    12.0,
+    -1.0,
+    f64::NAN,
+];
+/// Kerfs and trims (metres): none, 1/8 in, 3/32 in, 1/2 in, too wide, negative, NaN.
+const NEST_LENGTHS: [f64; 8] = [
+    0.0,
+    0.0254 / 8.0,
+    0.0254 * 3.0 / 32.0,
+    0.0254 / 2.0,
+    0.02,
+    0.2,
+    -0.001,
+    f64::NAN,
 ];
 /// Tags the lane-5 intents create, rename, colour and delete (the first two shared with
 /// the older intents, so renames and deletes hit tags in use).
@@ -819,6 +877,55 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             stock: t.map(|i| STOCKS[i as usize % STOCKS.len()].to_string()),
             sheet: *sheet,
         },
+        Fuzz::DefineStock(sheet, n, d, none, replace) => Op::DefineStock {
+            stock: sawhorse_kernel::stock::StockDef {
+                name: STOCK_NAMES[*n as usize % STOCK_NAMES.len()].to_string(),
+                kind: if *sheet {
+                    sawhorse_kernel::stock::StockKind::Sheet
+                } else {
+                    sawhorse_kernel::stock::StockKind::Board
+                },
+                length: STOCK_SIZES[d[0] as usize % STOCK_SIZES.len()],
+                width: STOCK_SIZES[d[1] as usize % STOCK_SIZES.len()],
+                thickness: STOCK_SIZES[d[2] as usize % 4],
+                nominal: (!*sheet).then(|| "4/4".to_string()),
+                grain: if *none {
+                    sawhorse_kernel::stock::StockGrain::None
+                } else {
+                    sawhorse_kernel::stock::StockGrain::Length
+                },
+            },
+            replace: replace.map(|r| STOCK_NAMES[r as usize % STOCK_NAMES.len()].to_string()),
+        },
+        Fuzz::DeleteStock(n) => Op::DeleteStock {
+            name: STOCK_NAMES[*n as usize % STOCK_NAMES.len()].to_string(),
+        },
+        Fuzz::MaterialStock(k, s) => {
+            // The model's own materials and stock texts, and some it does not have.
+            let mut names: Vec<String> = m
+                .cut_list(&Default::default())
+                .rows
+                .iter()
+                .filter_map(|r| r.material.clone())
+                .collect();
+            names.extend(["Oak", "3/4 Baltic birch ply", " "].map(String::from));
+            Op::SetMaterialStock {
+                material: names[*k as usize % names.len()].clone(),
+                stock: s.map(|i| STOCK_NAMES[i as usize % STOCK_NAMES.len()].to_string()),
+            }
+        }
+        Fuzz::NestSettings(k, t, maxrects) => Op::SetNestSettings {
+            settings: sawhorse_kernel::stock::NestSettings {
+                kerf: NEST_LENGTHS[*k as usize % NEST_LENGTHS.len()],
+                trim: NEST_LENGTHS[(*t as usize / 3) % NEST_LENGTHS.len()],
+                algorithm: if *maxrects {
+                    sawhorse_kernel::stock::NestAlgorithm::Maxrects
+                } else {
+                    sawhorse_kernel::stock::NestAlgorithm::Guillotine
+                },
+            },
+        },
+        Fuzz::ResetStock => Op::ResetStockLibrary,
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,
         Fuzz::Raw(op) => op.clone(),
