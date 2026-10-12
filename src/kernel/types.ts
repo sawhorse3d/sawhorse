@@ -336,7 +336,8 @@ export type RequestBody =
   | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
   | { kind: "export"; format: "stl" | "obj"; object: number }
   | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
-  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions };
+  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions }
+  | { kind: "importSkp"; name: string; bytes: Uint8Array };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */

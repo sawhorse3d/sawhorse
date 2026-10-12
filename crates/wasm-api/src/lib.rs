@@ -886,13 +886,7 @@ mod tests {
         assert_eq!(&d.export("glb", "").unwrap()[..4], b"glTF");
         let obj =
             String::from_utf8(d.export("obj", r#"{"mtl_file":"board.mtl"}"#).unwrap()).unwrap();
-        assert!(obj.contains(
-            "mtllib board.mtl
-o Board
-g Board
-usemtl Pine
-"
-        ));
+        assert!(obj.contains("mtllib board.mtl\no Board\ng Board\nusemtl Pine\n"));
         assert!(
             String::from_utf8(d.export("mtl", "").unwrap())
                 .unwrap()

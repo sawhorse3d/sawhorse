@@ -116,6 +116,12 @@ export class KernelClient {
     return { ...this.edit(r), notes: r.notes ?? [] };
   }
 
+  /** Import a SketchUp file (parsed by openskp in the worker) as one undoable step. */
+  async importSkp(name: string, bytes: Uint8Array): Promise<EditResult & { notes: string[] }> {
+    const r = await this.call({ kind: "importSkp", name, bytes });
+    return { ...this.edit(r), notes: r.notes ?? [] };
+  }
+
   private edit(r: WorkerResponse & { ok: true }): EditResult {
     if (!r.outcome || !r.scene) throw new Error("kernel returned no result");
     return { outcome: r.outcome, scene: r.scene };

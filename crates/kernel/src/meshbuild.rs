@@ -11,7 +11,8 @@
 //! kept as a visible, non-solid [`LooseMesh`] whose note says why. The only changes ever
 //! made to the input are the ones the item's notes list: welding coincident vertices
 //! (within [`POINT_MERGE`]), dropping degenerate and exactly repeated faces, turning a
-//! closed shell that is inside out the right way round, and merging coplanar triangles.
+//! closed shell that is inside out the right way round, turning reversed faces of a closed
+//! shell to match their neighbours, and merging coplanar triangles.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -259,6 +260,56 @@ fn triangulate_faces(
         }
     }
     Some((tris, from))
+}
+
+/// Which faces of a closed manifold shell to turn over so every edge is used once in each
+/// direction (the first face keeps its way). `None` for a one-sided surface.
+fn consistent_orientation(faces: &[Vec<Vec<u32>>]) -> Option<Vec<bool>> {
+    let mut by_edge: BTreeMap<(u32, u32), Vec<(usize, bool)>> = BTreeMap::new();
+    for (fi, f) in faces.iter().enumerate() {
+        for r in f {
+            for k in 0..r.len() {
+                let (a, b) = (r[k], r[(k + 1) % r.len()]);
+                by_edge
+                    .entry((a.min(b), a.max(b)))
+                    .or_default()
+                    .push((fi, a < b));
+            }
+        }
+    }
+    let mut turn: Vec<Option<bool>> = vec![None; faces.len()];
+    for seed in 0..faces.len() {
+        if turn[seed].is_some() {
+            continue;
+        }
+        turn[seed] = Some(false);
+        let mut stack = vec![seed];
+        while let Some(f) = stack.pop() {
+            let tf = turn[f]?;
+            for r in &faces[f] {
+                for k in 0..r.len() {
+                    let (a, b) = (r[k], r[(k + 1) % r.len()]);
+                    for &(g, fwd) in &by_edge[&(a.min(b), a.max(b))] {
+                        if g == f {
+                            continue;
+                        }
+                        // f uses the edge in direction (a < b) xor tf; g must use it the other way.
+                        let f_dir = (a < b) != tf;
+                        let need = fwd == f_dir; // same direction: g must turn
+                        match turn[g] {
+                            None => {
+                                turn[g] = Some(need);
+                                stack.push(g);
+                            }
+                            Some(t) if t != need => return None,
+                            Some(_) => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    turn.into_iter().collect()
 }
 
 fn signed_volume(tris: &[[u32; 3]], pts: &[DVec3]) -> f64 {
@@ -550,7 +601,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     let fail = |reasons: &mut BTreeMap<String, usize>, why: String| {
         *reasons.entry(why).or_default() += 1;
     };
-    let (mut flipped, mut merged_from, mut rebuilt) = (0usize, 0usize, 0usize);
+    let (mut flipped, mut merged_from, mut rebuilt, mut turned) = (0usize, 0usize, 0usize, 0usize);
     for members in shells.values() {
         let in_shell: BTreeSet<usize> = members.iter().copied().collect();
         let (mut open, mut over, mut orient) = (0usize, 0usize, 0usize);
@@ -568,6 +619,33 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
         let mut shell_faces: Vec<Vec<Vec<u32>>> =
             members.iter().map(|&fi| faces[fi].clone()).collect();
         let shell_labels: Vec<u32> = members.iter().map(|&fi| face_label[fi]).collect();
+        // A closed manifold shell whose faces disagree about which way they face (common in
+        // SketchUp models with reversed faces) has exactly one consistent orientation up to
+        // turning the whole shell over: find it, and say how many faces were turned.
+        if open == 0 && over == 0 && orient > 0 {
+            match consistent_orientation(&shell_faces) {
+                Some(turn) => {
+                    let n = turn.iter().filter(|&&t| t).count();
+                    for (f, t) in shell_faces.iter_mut().zip(&turn) {
+                        if *t {
+                            for r in f.iter_mut() {
+                                r.reverse();
+                            }
+                        }
+                    }
+                    turned += n;
+                    orient = 0;
+                }
+                None => {
+                    fail(
+                        &mut reasons,
+                        "a one-sided surface (it cannot face one way)".into(),
+                    );
+                    loose_faces.extend(shell_faces);
+                    continue;
+                }
+            }
+        }
         if open + over + orient > 0 {
             let mut why = Vec::new();
             if open > 0 {
@@ -662,6 +740,12 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
                 loose_faces.extend(shell_faces);
             }
         }
+    }
+    if turned > 0 {
+        notes.push(format!(
+            "{name}: turned {turned} reversed face{} to match their neighbours",
+            plural(turned)
+        ));
     }
     if flipped > 0 {
         notes.push(format!(
@@ -942,6 +1026,24 @@ mod tests {
         item.face_labels = vec![1; 12];
         item.face_labels.pop();
         assert!(build_item(&item).is_err(), "one label per face");
+    }
+
+    #[test]
+    fn reversed_faces_are_turned_to_match() {
+        let mut item = stl_box([0.0; 3], [1.0, 1.0, 1.0]);
+        // Reverse both triangles of one side (a SketchUp "reversed face").
+        item.faces[4][0].reverse();
+        item.faces[5][0].reverse();
+        let b = build_item(&item).unwrap();
+        assert_eq!(b.solids.len(), 1, "{:?}", b.notes);
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.contains("turned 2 reversed faces")),
+            "{:?}",
+            b.notes
+        );
+        assert!((b.solids[0].volume() - 1.0).abs() < 1e-12);
     }
 
     #[test]

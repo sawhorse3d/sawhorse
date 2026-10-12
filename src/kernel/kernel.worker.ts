@@ -104,6 +104,15 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, outcome: r.outcome, notes: r.notes, scene: scene(d) };
         break;
       }
+      case "importSkp": {
+        // openskp (MIT) parses SketchUp files here, off the UI thread, loaded on first use.
+        const { skpToOp } = await import("../io/skp");
+        const r = skpToOp(req.bytes, req.name);
+        const d = document(mod);
+        const outcome = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
+        res = { id: req.id, ok: true, outcome, notes: r.notes, scene: scene(d) };
+        break;
+      }
       case "exportFile": {
         const file = document(mod).export_file(req.format, JSON.stringify(req.options ?? {}));
         res = { id: req.id, ok: true, file };
