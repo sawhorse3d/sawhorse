@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { NestAlgorithm, Nesting, NestSettings, Placement, StockPiece } from "../kernel/types";
 import { parseLength, type UnitSystem } from "../lib/units";
 import { diagram } from "../nesting/diagram";
-import { ALGORITHMS, cutText, dims, lenU, type Units, nestNote, nestSummary, pieceNumber, pieceYield, reasonText } from "../nesting/format";
+import { ALGORITHMS, cutText, dims, fineU, type Units, nestNote, nestSummary, pieceNumber, pieceYield, reasonText } from "../nesting/format";
 
 export interface NestingSectionProps {
   nesting: Nesting | null;
@@ -34,7 +34,7 @@ export interface NestingSectionProps {
 
 /** Kerf or trim typed in a field: committed on Enter, on leaving the field, or after a pause. */
 function LengthField({ label, value, units, rounding, max, onCommit }: { label: string; value: number; units: UnitSystem; rounding: Units; max: number; onCommit: (m: number) => void }) {
-  const shown = lenU(value, rounding);
+  const shown = fineU(value, rounding);
   const [text, setText] = useState(shown);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => setText(shown), [shown]);
@@ -42,7 +42,7 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
     if (t.trim() === shown) return setErr(null);
     const r = parseLength(t, units);
     if (!r.ok) return setErr(r.error);
-    if (r.metres < 0 || r.metres > max) return setErr(`${label}: 0 to ${lenU(max, rounding)}.`);
+    if (r.metres < 0 || r.metres > max) return setErr(`${label}: 0 to ${fineU(max, rounding)}.`);
     setErr(null);
     if (Math.abs(r.metres - value) > 1e-9) onCommit(r.metres);
   };

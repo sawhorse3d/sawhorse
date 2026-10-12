@@ -7,13 +7,17 @@ import { CutListReport } from "./components/CutListReport";
 import { rowKey } from "./components/CutListPane";
 import { NestingSection } from "./components/NestingSection";
 import { StockDialog } from "./components/StockDialog";
+import { nestingPdf } from "./nesting/booklet";
+import { DXF_TYPE, nestingDxf, type DxfFlavour } from "./nesting/dxf";
+import { pieceTitle } from "./nesting/format";
+import { pieceFileName, pieceSvg, SVG_TYPE } from "./nesting/svg";
 import { grainOverlay } from "./cutlist/arrows";
 import { csvBytes, CSV_TYPE } from "./cutlist/csv";
 import { labelsPdf, reportPdf } from "./cutlist/documents";
 import { followRounding, GRAIN_WORDS, resolveRounding, sizeStyle, type RoundingChoice } from "./cutlist/format";
 import { loadCutRounding, saveCutRounding } from "./cutlist/rounding-store";
 import { PDF_TYPE } from "./cutlist/pdf";
-import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef } from "./kernel/types";
+import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef, StockPiece } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
@@ -1411,6 +1415,49 @@ export function App() {
     },
     [cutList, cutTitle],
   );
+  const saveNestSvg = useCallback(
+    async (piece: StockPiece | null) => {
+      const n = nesting;
+      if (!n) return;
+      const pieces = piece ? [piece] : n.pieces;
+      let saved = 0;
+      try {
+        for (const pc of pieces) {
+          const res = await saveFile(pieceFileName(cutTitle, pc), new TextEncoder().encode(pieceSvg(n, pc, { title: cutTitle, rounding: nestUnits })), SVG_TYPE);
+          if (!res) break;
+          saved += 1;
+        }
+        if (saved) setMessage({ text: `Saved ${saved === 1 ? `the cutting diagram of ${pieceTitle(pieces[0])}` : `${saved} cutting diagrams, one per sheet or board`} as SVG (1:1 in mm).`, error: false });
+      } catch (e) {
+        setMessage({ text: `Could not save the cutting diagrams: ${e instanceof Error ? e.message : String(e)}`, error: true });
+      }
+    },
+    [nesting, cutTitle, nestUnits],
+  );
+  const saveNestDxf = useCallback(
+    async (flavour: DxfFlavour) => {
+      const n = nesting;
+      if (!n) return;
+      try {
+        const res = await saveFile(`${cutTitle} nesting${flavour === "r12" ? " R12" : ""}.dxf`, new TextEncoder().encode(nestingDxf(n, flavour)), DXF_TYPE);
+        if (res) setMessage({ text: `Saved ${res.name}: ${n.pieces.length} ${n.pieces.length === 1 ? "sheet or board" : "sheets and boards"}, a layer each, a polyline per part, in millimetres.`, error: false });
+      } catch (e) {
+        setMessage({ text: `Could not save the DXF: ${e instanceof Error ? e.message : String(e)}`, error: true });
+      }
+    },
+    [nesting, cutTitle],
+  );
+  const saveNestPdf = useCallback(async () => {
+    const n = nesting;
+    if (!n) return;
+    try {
+      const res = await saveFile(`${cutTitle} nesting.pdf`, nestingPdf(n, cutTitle, nestUnits), PDF_TYPE);
+      if (res) setMessage({ text: `Saved ${res.name}: what to buy, then a page per sheet or board with its diagram and cut sequence.`, error: false });
+    } catch (e) {
+      setMessage({ text: `Could not save the nesting booklet: ${e instanceof Error ? e.message : String(e)}`, error: true });
+    }
+  }, [nesting, cutTitle, nestUnits]);
+
   const printCut = useCallback(() => {
     const body = document.body;
     const done = () => {
@@ -1897,6 +1944,9 @@ export function App() {
               onStock={() => setStockOpen(true)}
               onHover={hoverPlacement}
               onSelect={selectPlacement}
+              onSvg={(piece) => void saveNestSvg(piece)}
+              onDxf={(f) => void saveNestDxf(f)}
+              onPdf={() => void saveNestPdf()}
               lit={nestLit}
             />
           ) : null,

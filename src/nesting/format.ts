@@ -39,6 +39,27 @@ export function lenU(m: number, r: Units): string {
   return `${len(m, r)} ${sizeUnit(r)}`;
 }
 
+/** A small length the saw is set to (kerf, trim) with the precision it needs, whatever the
+ * cut list's rounding: inches to the nearest 1/64 ("3/32 in"), decimal inches to 0.001,
+ * millimetres to 0.01 ("2.38 mm"). */
+export function fineU(m: number, u: Units): string {
+  const r = roundingOf(u);
+  const style = styleOf(u);
+  if (r === "half_mm" || style === "mm") return `${Number((m * 1000).toFixed(2))} mm`;
+  const inches = m / M_PER_IN;
+  if (style === "decimal") return `${Number(inches.toFixed(3))} in`;
+  const n = Math.round(inches * 64);
+  const whole = Math.floor(n / 64);
+  let num = n - whole * 64;
+  let den = 64;
+  while (num && num % 2 === 0) {
+    num /= 2;
+    den /= 2;
+  }
+  const frac = num ? `${num}/${den}` : "";
+  return `${whole && frac ? `${whole} ${frac}` : whole ? whole : frac || "0"} in`;
+}
+
 /** "11 1/4 × 34 1/2" (width × length of a placed part, or of a stock). */
 export function dims(a: number, b: number, r: Units): string {
   return `${len(a, r)} × ${len(b, r)}`;
@@ -86,7 +107,7 @@ export function stockSize(s: Pick<StockDef, "width" | "length" | "thickness">, r
 /** One step of the cut sequence: "Rip to 11 1/4 in (96 in long)". */
 export function cutText(c: NestCut, r: Units): string {
   const run = len(c.to - c.from, r);
-  if (c.trim) return `Trim ${c.dir === "rip" ? "a long edge" : "an end"} (${lenU(c.size, r)} off)`;
+  if (c.trim) return `Trim ${c.dir === "rip" ? "a long edge" : "an end"} (${fineU(c.size, r)} off)`;
   return c.dir === "rip" ? `Rip to ${lenU(c.size, r)} (cut ${run} long)` : `Crosscut to ${lenU(c.size, r)} (cut ${run} across)`;
 }
 
@@ -135,7 +156,7 @@ export function nestSummary(n: Nesting, r: Units): NestSummary {
 /** The settings in one line: "Kerf 1/8 in · trim 0 · table saw". */
 export function settingsText(n: Nesting, r: Units): string {
   const alg = n.algorithm === "guillotine" ? "table saw" : "tightest layout (CNC)";
-  return `Kerf ${lenU(n.settings.kerf, r)} · trim ${n.settings.trim > 0 ? `${lenU(n.settings.trim, r)} per edge` : "none"} · ${alg}`;
+  return `Kerf ${fineU(n.settings.kerf, r)} · trim ${n.settings.trim > 0 ? `${fineU(n.settings.trim, r)} per edge` : "none"} · ${alg}`;
 }
 
 /** The footer every nesting output carries. */
