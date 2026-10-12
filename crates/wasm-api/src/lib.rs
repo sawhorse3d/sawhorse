@@ -1146,6 +1146,98 @@ mod tests {
     }
 
     #[test]
+    fn components_groups_and_the_scene_graph_through_json() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"draw","target":{"on":"plane","origin":[0,0,0],"normal":[0,0,1]},"points":[[0,0,0],[0.8509,0,0],[0.8509,0.28575,0],[0,0.28575,0]],"closed":true}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.01905}"#,
+        );
+        let out = op(
+            &mut d,
+            r#"{"op":"make_component","items":[{"object":1}],"name":"Shelf"}"#,
+        );
+        assert_eq!(out["kind"], "component_created");
+        assert_eq!(out["instance"], 1);
+        let out = op(
+            &mut d,
+            r#"{"op":"array","objects":[],"nodes":[1],"xform":{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[0,0,0.6]},"count":3}"#,
+        );
+        assert_eq!(out["kind"], "copied");
+        assert_eq!(out["nodes"], serde_json::json!([2, 3, 4]));
+        assert!(out.get("objects").is_some());
+        // Solids inside a closed component refuse edits, with a message, not an id.
+        let e = d
+            .apply_json(r#"{"op":"push_pull","object":2,"face":2,"distance":0.006}"#)
+            .unwrap_err();
+        assert!(e.contains("double-click"), "{e}");
+        let out = op(&mut d, r#"{"op":"set_context","node":2}"#);
+        assert_eq!(out["kind"], "context_changed");
+        assert_eq!(out["context"], 2);
+        op(
+            &mut d,
+            r#"{"op":"push_pull","object":2,"face":2,"distance":0.00635}"#,
+        );
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        let g = &st["graph"];
+        assert_eq!(g["context"], 2);
+        assert_eq!(g["path"], serde_json::json!([2]));
+        assert_eq!(g["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(g["nodes"][0]["kind"], "instance");
+        assert_eq!(g["nodes"][0]["label"], "Shelf");
+        assert_eq!(g["definitions"][0]["instances"], 4);
+        let thick = g["definitions"][0]["max"][2].as_f64().unwrap()
+            - g["definitions"][0]["min"][2].as_f64().unwrap();
+        assert!((thick - 0.0254).abs() < 1e-12, "every shelf is 1 in now");
+        for s in st["solids"].as_array().unwrap() {
+            let h = s["max"][2].as_f64().unwrap() - s["min"][2].as_f64().unwrap();
+            assert!((h - 0.0254).abs() < 1e-12);
+        }
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&d.scene_graph_json()).unwrap(),
+            st["graph"]
+        );
+        // Undo the push: back in the shelf, 3/4 in again; leaving is navigation only.
+        let depth = st["undo_depth"].as_u64().unwrap();
+        op(&mut d, r#"{"op":"leave_context"}"#);
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!(st["undo_depth"].as_u64().unwrap(), depth);
+        assert_eq!(st["graph"]["context"], serde_json::Value::Null);
+        d.undo().unwrap();
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!(st["graph"]["context"], 2);
+        // Tags with colours, scenes with a context.
+        op(
+            &mut d,
+            r##"{"op":"create_tag","name":"Shelves","color":[106,155,90]}"##,
+        );
+        op(
+            &mut d,
+            r#"{"op":"tag_items","items":[{"node":1},{"node":2}],"tag":"Shelves"}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"add_scene","scene":{"name":"Iso","eye":[3,-3,3],"target":[0,0,0],"up":[0,0,1],"fov":35,"parallel":false,"hidden_tags":["Shelves"],"context":null}}"#,
+        );
+        let out = op(&mut d, r#"{"op":"activate_scene","name":"Iso"}"#);
+        assert_eq!(out["kind"], "scene_activated");
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        assert_eq!(st["graph"]["tag_colors"]["Shelves"], "#6a9b5a");
+        assert_eq!(st["graph"]["nodes"][0]["visible"], false);
+        assert_eq!(st["tags"]["Shelves"], false);
+        assert_eq!(d.scene_mesh().unwrap().triangle_count(), 24, "two shelves hidden");
+        // Save and open: the same document.
+        let h = d.document().hash_hex();
+        let bytes = d.save_shz("frac-in", b"").unwrap();
+        let mut fresh = DocCore::default();
+        fresh.open_shz(&bytes).unwrap();
+        assert_eq!(fresh.document().hash_hex(), h);
+    }
+
+    #[test]
     fn replay_hash_matches_golden() {
         let text = include_str!("../../kernel/tests/golden/document_undo_redo.json");
         let v: serde_json::Value = serde_json::from_str(text).unwrap();

@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -108,6 +108,13 @@ export class KernelClient {
 
   async log(): Promise<KernelOp[]> {
     return (await this.call({ kind: "log" })).log ?? [];
+  }
+
+  /** The model's tree on its own (read-only): groups, instances, definitions, the context. */
+  async graph(): Promise<SceneGraph> {
+    const g = (await this.call({ kind: "graph" })).graph;
+    if (!g) throw new Error("kernel returned no scene graph");
+    return g;
   }
 
   async export(format: "stl" | "obj", object: number): Promise<Uint8Array | string> {

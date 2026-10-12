@@ -29,9 +29,9 @@ export type KernelOp =
   | { op: "delete_guides" }
   | { op: "add_dimension"; a: [number, number, number]; b: [number, number, number]; offset: [number, number, number] }
   | { op: "erase_dimension"; dimension: number }
-  | { op: "transform"; objects: number[]; xform: Xform }
-  | { op: "copy"; objects: number[]; xform: Xform }
-  | { op: "array"; objects: number[]; xform: Xform; count: number }
+  | { op: "transform"; objects: number[]; xform: Xform; nodes?: number[] }
+  | { op: "copy"; objects: number[]; xform: Xform; nodes?: number[] }
+  | { op: "array"; objects: number[]; xform: Xform; count: number; nodes?: number[] }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
   | { op: "offset"; source: OffsetSource; distance: number }
   | { op: "follow_me"; profile: Profile; path: V3[]; closed: boolean }
@@ -40,6 +40,27 @@ export type KernelOp =
   | { op: "delete_group"; group: number }
   | { op: "set_tag"; object: number; tag: string | null }
   | { op: "set_tag_visible"; tag: string; visible: boolean }
+  // Lane 5: groups, components, the editing context, tags, scenes.
+  | { op: "set_context"; node: number | null }
+  | { op: "leave_context" }
+  | { op: "make_group"; items: Item[]; name?: string | null }
+  | { op: "make_component"; items: Item[]; name: string }
+  | { op: "make_unique"; node: number }
+  | { op: "explode"; node: number }
+  | { op: "delete_node"; node: number }
+  | { op: "rename"; item: Item; name: string | null }
+  | { op: "rename_definition"; definition: number; name: string }
+  | { op: "set_hidden"; items: Item[]; hidden: boolean }
+  | { op: "set_locked"; items: Item[]; locked: boolean }
+  | { op: "tag_items"; items: Item[]; tag: string | null }
+  | { op: "create_tag"; name: string; color?: [number, number, number] | null }
+  | { op: "rename_tag"; tag: string; name: string }
+  | { op: "set_tag_color"; tag: string; color: [number, number, number] | null }
+  | { op: "delete_tag"; tag: string }
+  | { op: "add_scene"; scene: SceneDef }
+  | { op: "update_scene"; name: string; scene: SceneDef }
+  | { op: "delete_scene"; name: string }
+  | { op: "activate_scene"; name: string }
   | { op: "import"; items?: ImportItem[]; strokes?: ImportStroke[]; materials?: MaterialDef[]; scenes?: SceneDef[]; hidden_tags?: string[] }
   | { op: "define_material"; name: string; color: [number, number, number, number]; texture?: string | null }
   | { op: "set_material"; object: number; material: string | null }
@@ -47,6 +68,9 @@ export type KernelOp =
   | { op: "delete_mesh"; mesh: number }
   | { op: "undo" }
   | { op: "redo" };
+
+/** A solid, or a group or component instance, as ops name them (crates/kernel/src/nodes.rs `Item`). */
+export type Item = { object: number } | { node: number };
 
 /** What Offset acts on (crates/kernel/src/offset.rs `OffsetSource`). */
 export type OffsetSource =
@@ -105,6 +129,8 @@ export interface SceneDef {
   fov?: number;
   parallel?: boolean;
   hidden_tags?: string[];
+  /** The group or instance open when the scene was saved (null: the model). */
+  context?: number | null;
 }
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */
@@ -125,9 +151,18 @@ export type OpOutcome =
   | { kind: "batch"; outcomes: OpOutcome[] }
   | { kind: "group_created"; group: number }
   | { kind: "group_deleted" }
+  | { kind: "context_changed"; context: number | null }
+  | { kind: "component_created"; instance: number; definition: number }
+  | { kind: "made_unique"; definition: number }
+  | { kind: "exploded"; objects: number[]; nodes: number[] }
+  | { kind: "node_deleted" }
+  | { kind: "visibility_set" }
+  | { kind: "lock_set" }
+  | { kind: "scene_set" }
+  | { kind: "scene_activated"; context: number | null }
   | { kind: "tag_set" }
-  | { kind: "transformed"; objects: number[] }
-  | { kind: "copied"; objects: number[] }
+  | { kind: "transformed"; objects: number[]; nodes?: number[] }
+  | { kind: "copied"; objects: number[]; nodes?: number[] }
   | { kind: "geometry_moved"; faces: number[] }
   | { kind: "severed"; objects: number[] }
   | { kind: "swept"; objects: number[]; cut: boolean }
@@ -171,7 +206,10 @@ export interface DocState {
   solids: SolidInfo[];
   /** Every sketch with its plane frame (world <-> sketch coordinates). */
   sketches: SketchInfo[];
+  /** Groups (not instances): name and the solids directly in each. */
   groups: { id: number; name: string; objects: number[] }[];
+  /** The model's tree: groups, component instances and definitions, the open context. */
+  graph: SceneGraph;
   /** Guide lines (dir set) and guide points (dir null). */
   guides: { id: number; point: V3; dir: V3 | null }[];
   dimensions: { id: number; a: V3; b: V3; offset: V3; length: number }[];
@@ -185,6 +223,62 @@ export interface DocState {
 }
 
 export type V3 = [number, number, number];
+
+/** A group or component instance (crates/kernel/src/nodes.rs `GraphNode`). */
+export interface GraphNode {
+  id: number;
+  kind: "group" | "instance";
+  /** Its own name, if any. */
+  name: string | null;
+  /** What the Outliner shows: the name, else "Group" or the definition's name. */
+  label: string;
+  /** The definition (instances). */
+  definition: number | null;
+  parent: number | null;
+  tag: string | null;
+  hidden: boolean;
+  locked: boolean;
+  /** Drawn: not hidden, its tag and every ancestor shown. */
+  visible: boolean;
+  xform: Xform;
+  /** Part of a component definition (nested inside an instance). */
+  in_component: boolean;
+}
+
+/** Where a solid (or imported mesh) sits in the tree. */
+export interface GraphLeaf {
+  id: number;
+  parent: number | null;
+  hidden: boolean;
+  locked: boolean;
+  visible: boolean;
+}
+
+export interface GraphDefinition {
+  id: number;
+  name: string;
+  instances: number;
+  solids: number;
+  /** Size in its own axes (metres): what a cut list measures. */
+  min: V3;
+  max: V3;
+}
+
+/** The model's tree (crates/kernel/src/nodes.rs `Graph`). */
+export interface SceneGraph {
+  /** The open group or instance (null: the model). */
+  context: number | null;
+  /** From the outermost open node down to the context. */
+  path: number[];
+  nodes: GraphNode[];
+  objects: GraphLeaf[];
+  meshes: GraphLeaf[];
+  /** [sketch, parent]. */
+  sketches: [number, number | null][];
+  definitions: GraphDefinition[];
+  /** Tag colours as #rrggbb. */
+  tag_colors: Record<string, string>;
+}
 
 export interface SolidInfo {
   /** Public id (what ops use). */
@@ -351,6 +445,7 @@ export interface WasmDoc {
   log_hash(): string;
   op_log_json(): string;
   state_json(): string;
+  scene_graph(): string;
   pick(query: string): string;
   infer(query: string): string;
   faces_json(object: number): string;
@@ -382,6 +477,7 @@ export type RequestBody =
   | { kind: "undo" }
   | { kind: "redo" }
   | { kind: "log" }
+  | { kind: "graph" }
   | { kind: "pick"; query: PickQuery }
   | { kind: "infer"; query: InferQuery }
   | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
@@ -433,6 +529,7 @@ export type WorkerResponse =
       outcome?: OpOutcome;
       scene?: SceneData;
       log?: KernelOp[];
+      graph?: SceneGraph;
       picked?: Picked | null;
       inference?: Inference | null;
       rings?: V3[][];
