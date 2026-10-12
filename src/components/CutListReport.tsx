@@ -4,11 +4,12 @@
 // notes, the totals, and the scope note. Plain black on white, no app chrome.
 import { createPortal } from "react-dom";
 import type { CutList } from "../kernel/types";
-import { formatArea, formatBoardFeet, formatSteps, GRAIN_WORDS, materialText, rowNotes, scopeNote, sizeUnit, summary } from "../cutlist/format";
+import { formatArea, formatBoardFeet, formatSteps, GRAIN_WORDS, listStyle, materialText, rowNotes, scopeNote, sizeUnit, summary } from "../cutlist/format";
 
 export function CutListReport({ list, title }: { list: CutList | null; title: string }) {
   if (!list || typeof document === "undefined") return null;
   const r = list.rounding;
+  const style = listStyle(list);
   const s = summary(list);
   return createPortal(
     <article className="print-report" aria-hidden="true" data-testid="print-report">
@@ -40,7 +41,7 @@ export function CutListReport({ list, title }: { list: CutList | null; title: st
               <td className="n">{row.qty}</td>
               {row.steps.map((x, k) => (
                 <td key={k} className="n">
-                  {formatSteps(x, r)}
+                  {formatSteps(x, r, style)}
                 </td>
               ))}
               <td>
@@ -64,7 +65,7 @@ export function CutListReport({ list, title }: { list: CutList | null; title: st
           ))}
           {list.totals.sheets.map((x) => (
             <li key={`s:${x.material}:${x.steps}`}>
-              {x.sheets} sheet{x.sheets === 1 ? "" : "s"} 4×8, {x.material ?? "sheet stock"}, {formatSteps(x.steps, r)} {sizeUnit(r)} thick ({formatArea(x.area_m2, r)}
+              {x.sheets} sheet{x.sheets === 1 ? "" : "s"} 4×8, {x.material ?? "sheet stock"}, {formatSteps(x.steps, r, style)} {sizeUnit(r)} thick ({formatArea(x.area_m2, r)}
               {x.oversize ? "; a piece is larger than a sheet" : ""})
             </li>
           ))}

@@ -28,6 +28,31 @@ function props(over: Partial<CutListPaneProps> = {}): CutListPaneProps {
 }
 
 describe("Cut list pane", () => {
+  it("offers Follow units first (saying what it comes to), and a Pin for the choice", () => {
+    const p = props({ rounding: "follow", follows: "half_mm", onPin: vi.fn(), pinned: false });
+    render(<CutListPane {...p} />);
+    const sel = screen.getByLabelText("Round sizes to") as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Follow units (0.5 mm)", "1/16 in", "1/32 in", "0.5 mm"]);
+    expect(sel.value).toBe("follow");
+    // Nothing to pin while following the units.
+    expect((screen.getByRole("button", { name: "Pin" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(sel, { target: { value: "thirty_second" } });
+    expect(p.onRounding).toHaveBeenLastCalledWith("thirty_second");
+    cleanup();
+    const q = props({ rounding: "thirty_second", onPin: vi.fn(), pinned: false });
+    render(<CutListPane {...q} />);
+    const pin = screen.getByRole("button", { name: "Pin" });
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(pin);
+    expect(q.onPin).toHaveBeenLastCalledWith(true);
+  });
+
+  it("writes decimal inches when the list is in the decimal style", () => {
+    render(<CutListPane {...props({ list: { ...bookshelf(), style: "decimal" } })} />);
+    const row = screen.getByText("Side").closest("tr")!;
+    expect([...row.querySelectorAll("td")].slice(2, 5).map((td) => td.textContent)).toEqual(["0.75", "11.25", "71.25"]);
+  });
+
   it("is the mock's table and tiles: Part, Qty, T, W, L, Material; board feet and sheets", () => {
     render(<CutListPane {...props()} />);
     const table = screen.getByRole("table", { name: "Cut list" });

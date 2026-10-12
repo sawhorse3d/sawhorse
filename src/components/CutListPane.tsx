@@ -6,14 +6,20 @@
 // model; right-click sets the grain or the stock. Nesting is not built: its button says so.
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
-import { formatSteps, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary } from "../cutlist/format";
+import { formatSteps, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
 
 export interface CutListPaneProps {
   list: CutList | null;
   /** Why there is no list (the kernel is not ready, or it refused). */
   problem?: string | null;
-  rounding: Rounding;
-  onRounding: (r: Rounding) => void;
+  /** The Round to choice ("follow": follow the display units). */
+  rounding: RoundingChoice;
+  /** What "Follow units" comes to under the current units (shown in its label). */
+  follows?: Rounding;
+  onRounding: (r: RoundingChoice) => void;
+  /** The choice is kept for next time (otherwise it lasts for this session). */
+  pinned?: boolean;
+  onPin?: (pinned: boolean) => void;
   visibleOnly: boolean;
   onVisibleOnly: (v: boolean) => void;
   /** Row keys whose pieces are all selected. */
@@ -64,7 +70,8 @@ export function CutListPane(p: CutListPaneProps) {
     };
   }, [menu]);
 
-  const r = list?.rounding ?? p.rounding;
+  const r: Rounding = list?.rounding ?? (p.rounding === "follow" ? (p.follows ?? "sixteenth") : p.rounding);
+  const style = list ? listStyle(list) : "fraction";
   const s = list ? summary(list) : null;
   const empty = !!list && list.rows.length === 0;
   const openMenu = (e: ReactMouseEvent, row: CutRow) => {
@@ -77,14 +84,26 @@ export function CutListPane(p: CutListPaneProps) {
       <div className="cut-controls">
         <label title="How finished sizes are rounded">
           <span>Round to</span>
-          <select aria-label="Round sizes to" value={p.rounding} onChange={(e) => p.onRounding(e.currentTarget.value as Rounding)}>
+          <select aria-label="Round sizes to" value={p.rounding} onChange={(e) => p.onRounding(e.currentTarget.value as RoundingChoice)}>
             {ROUNDINGS.map((x) => (
               <option key={x.id} value={x.id} title={x.title}>
-                {x.label}
+                {x.id === "follow" && p.follows ? `${x.label} (${ROUNDINGS.find((y) => y.id === p.follows)?.label})` : x.label}
               </option>
             ))}
           </select>
         </label>
+        {p.onPin ? (
+          <button
+            type="button"
+            className={`pin${p.pinned ? " on" : ""}`}
+            aria-pressed={!!p.pinned}
+            disabled={p.rounding === "follow" && !p.pinned}
+            onClick={() => p.onPin?.(!p.pinned)}
+            title={p.pinned ? "Kept for next time. Click to keep it for this session only." : "Keep this rounding next time (otherwise it lasts for this session)"}
+          >
+            Pin
+          </button>
+        ) : null}
         <label className="check" title="Leave out hidden items, hidden tags and hidden groups">
           <input type="checkbox" checked={p.visibleOnly} onChange={(e) => p.onVisibleOnly(e.currentTarget.checked)} />
           <span>Visible only</span>
@@ -134,13 +153,13 @@ export function CutListPane(p: CutListPaneProps) {
                         {notes.length ? <small>{notes.join(" · ")}</small> : null}
                       </td>
                       <td className="n">{row.qty}</td>
-                      <td className="n">{formatSteps(row.steps[0], r)}</td>
+                      <td className="n">{formatSteps(row.steps[0], r, style)}</td>
                       <td className="n">
-                        {formatSteps(row.steps[1], r)}
+                        {formatSteps(row.steps[1], r, style)}
                         {mark(1)}
                       </td>
                       <td className="n">
-                        {formatSteps(row.steps[2], r)}
+                        {formatSteps(row.steps[2], r, style)}
                         {mark(2)}
                       </td>
                       <td className={`mat${row.stock_set ? " set" : ""}`}>{materialText(row)}</td>

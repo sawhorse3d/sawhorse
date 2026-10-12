@@ -11,7 +11,7 @@
 // Google Sheets all show it as the text 3/4). A plain CSV reader sees ="3/4";
 // `csvCellText` unwraps it. The decimal columns are plain numbers.
 import type { CutList } from "../kernel/types";
-import { decimalSteps, formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, rowNotes, SQ_FT, sizeUnit } from "./format";
+import { decimalSteps, formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, listStyle, rowNotes, SQ_FT, sizeUnit } from "./format";
 
 export const CSV_TYPE = { description: "Cut list (CSV)", mime: "text/csv", extensions: [".csv"] };
 
@@ -39,13 +39,14 @@ export function csvHeader(list: CutList): string[] {
 
 export function cutListCsv(list: CutList): string {
   const r = list.rounding;
+  const style = listStyle(list);
   const area = (m2: number) => (m2 ? (isMetric(r) ? m2 : m2 / SQ_FT).toFixed(2) : "");
   const lines: string[][] = [csvHeader(list)];
   for (const row of list.rows) {
     lines.push([
       row.name,
       String(row.qty),
-      ...row.steps.map((s) => textCell(formatSteps(s, r))),
+      ...row.steps.map((s) => textCell(formatSteps(s, r, style))),
       ...row.steps.map((s) => decimalSteps(s, r)),
       row.material ?? "",
       GRAIN_WORDS[row.grain],

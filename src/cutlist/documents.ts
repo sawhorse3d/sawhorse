@@ -3,7 +3,7 @@
 // 5160-style sheets: 30 labels, 3 across and 10 down, 2 5/8 x 1 in).
 import type { CutList, CutRow } from "../kernel/types";
 import { fit, LETTER, PdfDoc, type PdfPage } from "./pdf";
-import { formatArea, formatBoardFeet, formatSize, formatSteps, GRAIN_WORDS, materialText, rowNotes, scopeNote, sizeUnit, summary } from "./format";
+import { formatArea, formatBoardFeet, formatSize, formatSteps, GRAIN_WORDS, listStyle, materialText, rowNotes, scopeNote, sizeUnit, summary } from "./format";
 
 const IN = 72;
 
@@ -25,7 +25,7 @@ function cells(row: CutRow, list: CutList): string[] {
   return [
     row.name,
     String(row.qty),
-    ...row.steps.map((s) => formatSteps(s, r)),
+    ...row.steps.map((s) => formatSteps(s, r, listStyle(list))),
     `${materialText(row)}${row.sheet ? " (sheet)" : ""}`,
     row.grain === "length" ? "L" : row.grain === "width" ? "W" : "-",
     row.sheet ? "" : formatBoardFeet(row.board_feet),
@@ -84,7 +84,7 @@ export function reportPdf(list: CutList, title: string): Uint8Array {
     y -= 13;
   }
   for (const s of list.totals.sheets) {
-    page.text(48, y, `${s.sheets} sheet${s.sheets === 1 ? "" : "s"} 4x8, ${s.material ?? "sheet stock"}, ${formatSteps(s.steps, list.rounding)} ${sizeUnit(list.rounding)} thick (${formatArea(s.area_m2, list.rounding)}${s.oversize ? "; a piece is larger than a sheet" : ""})`, 9.5);
+    page.text(48, y, `${s.sheets} sheet${s.sheets === 1 ? "" : "s"} 4x8, ${s.material ?? "sheet stock"}, ${formatSteps(s.steps, list.rounding, listStyle(list))} ${sizeUnit(list.rounding)} thick (${formatArea(s.area_m2, list.rounding)}${s.oversize ? "; a piece is larger than a sheet" : ""})`, 9.5);
     y -= 13;
   }
   if (!list.totals.lumber.length && !list.totals.sheets.length) {
@@ -135,7 +135,7 @@ export function labelsPdf(list: CutList, title: string, opts: { outlines?: boole
     const pad = 9;
     p.text(x + pad, y + h - 17, fit(row.name, 11, w - 2 * pad - 34, true), 11, { bold: true });
     p.text(x + w - pad, y + h - 17, `×${row.qty}`, 11, { bold: true, align: "right" });
-    p.text(x + pad, y + h - 31, fit(formatSize(row, list.rounding), 9, w - 2 * pad), 9);
+    p.text(x + pad, y + h - 31, fit(formatSize(row, list.rounding, listStyle(list)), 9, w - 2 * pad), 9);
     p.text(x + pad, y + h - 44, fit(`${materialText(row)}${row.sheet ? " (sheet)" : ""}`, 8, w - 2 * pad), 8, { gray: 0.25 });
     const grain = `Grain ${GRAIN_WORDS[row.grain]}`;
     p.text(x + pad, y + 10, fit(grain, 7.5, w - 2 * pad - 50), 7.5, { gray: 0.25 });

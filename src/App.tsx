@@ -8,7 +8,8 @@ import { rowKey } from "./components/CutListPane";
 import { grainOverlay } from "./cutlist/arrows";
 import { csvBytes, CSV_TYPE } from "./cutlist/csv";
 import { labelsPdf, reportPdf } from "./cutlist/documents";
-import { defaultRounding, GRAIN_WORDS } from "./cutlist/format";
+import { followRounding, GRAIN_WORDS, resolveRounding, sizeStyle, type RoundingChoice } from "./cutlist/format";
+import { loadCutRounding, saveCutRounding } from "./cutlist/rounding-store";
 import { PDF_TYPE } from "./cutlist/pdf";
 import type { CutList, CutRow, Grain, Rounding } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
@@ -105,18 +106,6 @@ export const DEFAULT_DISTANCE = 12 * M_PER_IN;
 export const DEFAULT_RECT: [number, number] = [24 * M_PER_IN, 16 * M_PER_IN];
 
 const UNITS_KEY = "sawhorse.units";
-/** The cut list's rounding when someone picked one (otherwise it follows the units). */
-const CUT_ROUNDING_KEY = "sawhorse.cutRounding";
-
-function loadCutRounding(): Rounding | null {
-  try {
-    const v = localStorage.getItem(CUT_ROUNDING_KEY);
-    if (v === "sixteenth" || v === "thirty_second" || v === "half_mm") return v;
-  } catch {
-    /* storage blocked */
-  }
-  return null;
-}
 const IMPORT_UNITS_KEY = "sawhorse.importUnits";
 const IMPORT_UNITS: { id: ImportUnit; label: string }[] = [
   { id: "mm", label: "Millimetres" },
@@ -216,8 +205,11 @@ export function App() {
   // The cut list (lane 7): worked out by the kernel while its pane is open.
   const [pane, setPane] = useState<PaneId>("outliner");
   const cutOpen = pane === "cutlist";
-  const [cutPick, setCutPick] = useState<Rounding | null>(loadCutRounding);
-  const cutRounding = cutPick ?? defaultRounding(units);
+  const [cutStart] = useState(loadCutRounding);
+  const [cutPick, setCutPick] = useState<RoundingChoice>(cutStart.choice);
+  const [cutPinned, setCutPinned] = useState(cutStart.pinned);
+  const cutRounding = resolveRounding(cutPick, units);
+  const cutStyle = sizeStyle(cutRounding, units);
   const [cutVisibleOnly, setCutVisibleOnly] = useState(false);
   const [cutList, setCutList] = useState<CutList | null>(null);
   const [cutProblem, setCutProblem] = useState<string | null>(null);
@@ -675,14 +667,14 @@ export function App() {
       .then(() => k.cutList({ rounding: cutRounding, visible_only: cutVisibleOnly }))
       .then((l) => {
         if (stale) return;
-        setCutList(l);
+        setCutList(l ? { ...l, style: cutStyle } : l);
         setCutProblem(null);
       })
       .catch((e) => !stale && setCutProblem(`The cut list could not be worked out: ${friendlyError(e instanceof Error ? e.message : String(e))}`));
     return () => {
       stale = true;
     };
-  }, [cutOpen, scene, cutRounding, cutVisibleOnly]);
+  }, [cutOpen, scene, cutRounding, cutVisibleOnly, cutStyle]);
 
   // Read-only hook for tests: the cut list for any options, straight from the kernel.
   useEffect(() => {
@@ -696,14 +688,23 @@ export function App() {
     };
   }, []);
 
-  const setRounding = useCallback((r: Rounding) => {
-    setCutPick(r);
-    try {
-      localStorage.setItem(CUT_ROUNDING_KEY, r);
-    } catch {
-      /* per-viewer convenience only */
-    }
-  }, []);
+  const setRounding = useCallback(
+    (r: RoundingChoice) => {
+      setCutPick(r);
+      // A pinned choice follows the pick; back to Follow units unpins.
+      saveCutRounding(r, cutPinned && r !== "follow");
+      if (cutPinned && r === "follow") setCutPinned(false);
+    },
+    [cutPinned],
+  );
+  const pinRounding = useCallback(
+    (pin: boolean) => {
+      setCutPinned(pin);
+      saveCutRounding(cutPick, pin);
+      setMessage({ text: pin ? "Cut list rounding kept for next time." : "Cut list rounding kept for this session only.", error: false });
+    },
+    [cutPick],
+  );
 
   // ---- tools -----------------------------------------------------------------------------
 
@@ -1669,8 +1670,11 @@ export function App() {
         cutlist={{
           list: cutList,
           problem: cutProblem ?? (kernelState === "missing" || kernelState === "error" ? "The cut list is worked out by the kernel, which is not loaded." : null),
-          rounding: cutRounding,
+          rounding: cutPick,
+          follows: followRounding(units),
           onRounding: setRounding,
+          pinned: cutPinned,
+          onPin: pinRounding,
           visibleOnly: cutVisibleOnly,
           onVisibleOnly: setCutVisibleOnly,
           selected: cutSelected,

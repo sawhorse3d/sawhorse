@@ -645,4 +645,7 @@ export interface CutList {
   /** Width and length of the sheet the rough count assumes (metres). */
   sheet_size: [number, number];
   hash: string;
+  /** How the app writes the sizes (set by the app from the display units, never by the
+   * kernel; absent: fractions for inch roundings). Display only, like the rounding. */
+  style?: "fraction" | "decimal" | "mm";
 }

@@ -3,15 +3,51 @@
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
 import type { UnitSystem } from "../lib/units";
 
-export const ROUNDINGS: { id: Rounding; label: string; title: string }[] = [
+/** What the Round to menu offers: follow the display units (the default), or a fixed step. */
+export type RoundingChoice = Rounding | "follow";
+
+export const ROUNDINGS: { id: RoundingChoice; label: string; title: string }[] = [
+  { id: "follow", label: "Follow units", title: "1/16 in for fractional, decimal and ft-in units; 0.5 mm for metric" },
   { id: "sixteenth", label: "1/16 in", title: "Finished sizes to the nearest 1/16 in" },
   { id: "thirty_second", label: "1/32 in", title: "Finished sizes to the nearest 1/32 in" },
   { id: "half_mm", label: "0.5 mm", title: "Finished sizes to the nearest 0.5 mm" },
 ];
 
-/** The rounding a unit system starts with: 0.5 mm for metric, 1/16 in otherwise. */
-export function defaultRounding(units: UnitSystem): Rounding {
-  return units === "mm" || units === "cm" || units === "m" ? "half_mm" : "sixteenth";
+export function isMetricUnits(units: UnitSystem): boolean {
+  return units === "mm" || units === "cm" || units === "m";
+}
+
+/** The rounding "Follow units" means: 0.5 mm for metric, 1/16 in otherwise (fractional,
+ * decimal and ft-in inches). */
+export function followRounding(units: UnitSystem): Rounding {
+  return isMetricUnits(units) ? "half_mm" : "sixteenth";
+}
+
+/** @deprecated the old name of {@link followRounding}. */
+export const defaultRounding = followRounding;
+
+/** The rounding a choice comes to under the current units. */
+export function resolveRounding(choice: RoundingChoice, units: UnitSystem): Rounding {
+  return choice === "follow" ? followRounding(units) : choice;
+}
+
+export function isRoundingChoice(v: unknown): v is RoundingChoice {
+  return v === "follow" || v === "sixteenth" || v === "thirty_second" || v === "half_mm";
+}
+
+/** How sizes are written: shop fractions ("11 1/4"), decimal inches ("11.25") or mm. */
+export type SizeStyle = "fraction" | "decimal" | "mm";
+
+/** Metric roundings write mm; inch roundings write decimal inches when the display units
+ * are decimal inches or ft-in, and fractions otherwise. */
+export function sizeStyle(r: Rounding, units: UnitSystem): SizeStyle {
+  if (r === "half_mm") return "mm";
+  return units === "in" || units === "ft-in" ? "decimal" : "fraction";
+}
+
+/** The style a list is written in: what the app set on it, or the rounding's natural one. */
+export function listStyle(list: CutList): SizeStyle {
+  return list.rounding === "half_mm" ? "mm" : (list.style ?? "fraction");
 }
 
 export function isMetric(r: Rounding): boolean {
@@ -23,8 +59,10 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
-/** A size in rounding steps as a woodworker writes it: "11 1/4", "3/4", "72"; "19.5" (mm). */
-export function formatSteps(steps: number, r: Rounding): string {
+/** A size in rounding steps as a woodworker writes it: "11 1/4", "3/4", "72"; "19.5" (mm);
+ * "11.25" in the decimal style. */
+export function formatSteps(steps: number, r: Rounding, style: SizeStyle = "fraction"): string {
+  if (style === "decimal" && r !== "half_mm") return decimalSteps(steps, r);
   if (r === "half_mm") {
     const mm = steps / 2;
     return Number.isInteger(mm) ? String(mm) : mm.toFixed(1);
@@ -57,9 +95,9 @@ export function sizeUnit(r: Rounding): string {
   return isMetric(r) ? "mm" : "in";
 }
 
-/** "3/4 × 11 1/4 × 71 1/4 in". */
-export function formatSize(row: CutRow, r: Rounding): string {
-  return `${row.steps.map((s) => formatSteps(s, r)).join(" × ")} ${sizeUnit(r)}`;
+/** "3/4 × 11 1/4 × 71 1/4 in" ("0.75 × 11.25 × 71.25 in" in the decimal style). */
+export function formatSize(row: CutRow, r: Rounding, style: SizeStyle = "fraction"): string {
+  return `${row.steps.map((s) => formatSteps(s, r, style)).join(" × ")} ${sizeUnit(r)}`;
 }
 
 export const SQ_FT = 0.09290304;
@@ -96,12 +134,13 @@ export function summary(list: CutList): { boardFeet: string; boardFeetLabel: str
   const named = t.lumber.filter((l) => l.board_feet > 0);
   const species = named.length === 1 ? (named[0].material ? `, ${named[0].material}` : "") : named.length > 1 ? `, ${named.length} kinds` : "";
   const r = list.rounding;
+  const style = listStyle(list);
   const sheetKinds = t.sheets.filter((s) => s.sheets > 0);
   const sheetsLabel =
     sheetKinds.length === 0
       ? "sheets 4×8"
       : sheetKinds.length === 1
-        ? `sheet${sheetKinds[0].sheets === 1 ? "" : "s"} 4×8${sheetKinds[0].material ? ` ${sheetKinds[0].material}` : ""}, ${formatSteps(sheetKinds[0].steps, r)}${isMetric(r) ? " mm" : ""}`
+        ? `sheet${sheetKinds[0].sheets === 1 ? "" : "s"} 4×8${sheetKinds[0].material ? ` ${sheetKinds[0].material}` : ""}, ${formatSteps(sheetKinds[0].steps, r, style)}${isMetric(r) ? " mm" : ""}`
         : `sheets 4×8, ${sheetKinds.length} kinds`;
   return { boardFeet: formatBoardFeet(t.board_feet), boardFeetLabel: `board feet${species}`, sheets: String(t.sheet_count), sheetsLabel };
 }
