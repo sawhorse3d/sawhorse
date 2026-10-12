@@ -16,7 +16,7 @@ import { loadPackage, type PluginPackage, type PluginSource } from "./loader";
 import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selectionOf, solidsOf, statsOf, treeOf } from "./model";
 import { checkBody, patchFields, valuesOf, type FieldValue, type PanelField } from "./panel";
 import type { PluginPlatform } from "./platform";
-import { AppStore, DocStore, grantCovers, loadGrants, saveGrants, type Grant } from "./store";
+import { AppStore, DocStore, grantCovers, grantMatches, loadGrants, packageDigest, saveGrants, type Grant } from "./store";
 import { readPluginZip } from "./zip";
 
 /** Ops a plugin batch may not hold: history, nesting batches, navigation, whole-document replacement. */
@@ -56,6 +56,10 @@ export interface PluginEntry {
   version: string;
   source: PluginSource;
   pkg: PluginPackage | null;
+  /** SHA-256 of the package's files (store.ts packageDigest): what a grant is bound to. */
+  digest: string;
+  /** The bundled sample this plugin takes the place of (same id), by name. */
+  replaces?: string;
   /** Why the package cannot be used. */
   errors: string[];
   location?: string;
@@ -193,11 +197,21 @@ export class PluginManager {
     // A bundled sample never replaces what the person installed.
     if (prev && source === "bundled" && prev.source !== "bundled") return prev;
     const grant = this.grants[id];
+    const digest = r.ok ? packageDigest(r.pkg.files) : "";
+    // A plugin taking a bundled sample's place says so (the enable dialog and the pane).
+    const replaces = source !== "bundled" ? (prev?.source === "bundled" ? prev.name : prev?.replaces) : undefined;
+    const covers = r.ok && grantCovers(grant, r.pkg.manifest.permissions);
+    const matches = r.ok && grantMatches(grant, { digest, source, location });
     const entry: PluginEntry = r.ok
-      ? { id, name: r.pkg.manifest.name, version: r.pkg.manifest.version, source, pkg: r.pkg, errors: [], location, enabled: grantCovers(grant, r.pkg.manifest.permissions), status: "disabled", lastError: null, logs: prev?.logs ?? [] }
-      : { id, name: r.name, version: "", source, pkg: null, errors: r.errors, location, enabled: false, status: "invalid", lastError: r.errors[0] ?? null, logs: prev?.logs ?? [] };
+      ? { id, name: r.pkg.manifest.name, version: r.pkg.manifest.version, source, pkg: r.pkg, digest, errors: [], location, enabled: covers && matches, status: "disabled", lastError: null, logs: prev?.logs ?? [] }
+      : { id, name: r.name, version: "", source, pkg: null, digest, errors: r.errors, location, enabled: false, status: "invalid", lastError: r.errors[0] ?? null, logs: prev?.logs ?? [] };
+    if (replaces) entry.replaces = replaces;
     // Asking for more than was granted turns it off until granted again.
-    if (r.ok && grant && !entry.enabled) entry.lastError = `This version asks for more (${r.pkg.manifest.permissions.filter((p) => !grant.permissions.includes(p)).join(", ")}): enable it again to allow that.`;
+    if (r.ok && grant && !covers) entry.lastError = `This version asks for more (${r.pkg.manifest.permissions.filter((p) => !grant.permissions.includes(p)).join(", ")}): enable it again to allow that.`;
+    // A grant is for the package the person enabled, not for its id: other files with the
+    // same id (a replacement zip, an update, a zip claiming a bundled sample's id) wait for
+    // the person to enable them again and see what they ask for.
+    else if (r.ok && grant && !matches) entry.lastError = `These are not the files you enabled${replaces ? ` (it takes the place of the bundled ${replaces})` : ""}: enable it again to let it run.`;
     this.entries.set(id, entry);
     return entry;
   }
@@ -250,7 +264,7 @@ export class PluginManager {
   async enable(id: string): Promise<void> {
     const e = this.entries.get(id);
     if (!e?.pkg) throw new Error(e ? e.errors.join("; ") : `no plugin ${id}`);
-    this.grants[id] = { version: e.pkg.manifest.version, permissions: [...e.pkg.manifest.permissions] };
+    this.grants[id] = { version: e.pkg.manifest.version, permissions: [...e.pkg.manifest.permissions], digest: e.digest, source: e.source, ...(e.location ? { location: e.location } : {}) };
     saveGrants(this.grants);
     e.enabled = true;
     e.lastError = null;

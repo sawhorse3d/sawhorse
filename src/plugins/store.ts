@@ -1,7 +1,9 @@
 // What the plugin system keeps between sessions and inside documents:
 //
-// - which plugins are enabled, and the permissions the person granted each (localStorage,
-//   per device; a plugin that asks for more after an update is off until granted again);
+// - which plugins are enabled, and the permissions the person granted each, bound to the
+//   package they enabled by its SHA-256 (localStorage, per device; a plugin that asks for
+//   more after an update, or whose files are not the ones enabled, is off until granted
+//   again);
 // - each plugin's app-scoped store (localStorage, 256 KB per plugin);
 // - each plugin's document-scoped store: in memory for the open document, written into the
 //   .shz as `plugin-data.json` on save and read back on open (readers ignore entries they
@@ -12,6 +14,7 @@
 // Every storage access is wrapped: a blocked or full store degrades to "nothing kept".
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { Permission } from "../../packages/plugin-api/src/manifest.ts";
+import { sha256Hex } from "../lib/sha256";
 
 const ENABLED_KEY = "sawhorse.plugins.enabled";
 const KV_PREFIX = "sawhorse.plugin.";
@@ -22,6 +25,42 @@ export const DOC_ENTRY = "plugin-data.json";
 export interface Grant {
   version: string;
   permissions: Permission[];
+  /**
+   * SHA-256 of the package the person enabled (packageDigest). A grant is for that code, not
+   * for an id: a different package with the same id (a replacement zip, an update, a zip
+   * claiming a bundled sample's id) is off until the person enables it again.
+   */
+  digest?: string;
+  /** Where the enabled package came from. */
+  source?: "bundled" | "installed" | "unpacked" | "session";
+  /** The folder of an unpacked plugin (desktop). */
+  location?: string;
+}
+
+/**
+ * A digest of every file of a plugin package (paths and contents, in path order), so any
+ * change to its code, manifest or other files changes it.
+ */
+export function packageDigest(files: Record<string, string>): string {
+  const parts: string[] = [];
+  for (const path of Object.keys(files).sort()) parts.push(`${path.length}:${path}${files[path].length}:${files[path]}`);
+  return sha256Hex(parts.join(""));
+}
+
+/**
+ * Whether a grant was given to this package. The same digest always matches. Two cases
+ * keep a grant across a change of code, because the person chose the source and not a
+ * particular build of it: a bundled sample, updated with the app (it is the app's own
+ * code), and an unpacked folder on the desktop, re-read on Reload while its author edits
+ * it (the grant remembers the folder). A grant from before digests existed holds only for
+ * a bundled sample.
+ */
+export function grantMatches(g: Grant | undefined, pkg: { digest: string; source: Grant["source"]; location?: string }): boolean {
+  if (!g) return false;
+  if (g.digest && g.digest === pkg.digest) return true;
+  if (pkg.source === "bundled" && (g.source === "bundled" || (!g.source && !g.digest))) return true;
+  if (pkg.source === "unpacked" && g.source === "unpacked" && !!g.location && g.location === pkg.location) return true;
+  return false;
 }
 
 function readJson<T>(key: string, fallback: T): T {

@@ -167,6 +167,7 @@ export function usePlugins({ bridge, toolHost, scene, selection, toolId, units, 
         version: m.version,
         author: m.author,
         description: m.description,
+        ...(e.replaces ? { replaces: e.replaces } : {}),
         lines: permissionLines(m),
         resolve: (ok) => {
           if (ok) void manager.enable(id).catch((err) => bridge.status(`Could not enable ${m.name}: ${err instanceof Error ? err.message : String(err)}`, "error"));

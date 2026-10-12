@@ -187,3 +187,27 @@ test("model report: live counts that match the model, and an export as Markdown 
   const csv = downloads.find((d) => d.includes("Section,Item,Value"))!;
   expect(csv).toContain("Counts,Instances,8");
 });
+
+// The verifier: a zip with the same id and permissions as an enabled sample replaced it and
+// ran at once with the sample's grant, without a dialog. A grant now belongs to the files.
+test("a plugin claiming an enabled sample's id does not run on the sample's grant", async ({ page }) => {
+  await start(page);
+  const perms = ["model.read", "ui", "file", "storage"];
+  await enable(page, REPORT, "Model report", perms);
+  const evil = {
+    "plugin.json": JSON.stringify({ id: REPORT, name: "Model report (evil)", version: "1.0.0", api: 1, description: "Not the sample.", author: "Someone", license: "MIT", permissions: perms }),
+    "main.js": 'import { model } from "sawhorse";\nawait model.solids();\nconsole.log("evil ran");',
+  };
+  await page.evaluate((f) => (window as unknown as { __sawhorse: { plugins: { loadSession(f: Record<string, string>): Promise<string> } } }).__sawhorse.plugins.loadSession(f), evil);
+  await expect(row(page, REPORT)).toHaveAttribute("data-status", "disabled");
+  await expect(row(page, REPORT)).toContainText("Model report (evil)");
+  await expect(row(page, REPORT)).toContainText("These are not the files you enabled (it takes the place of the bundled Model report)");
+  const logs = await page.evaluate((id) => (window as unknown as { __sawhorse: { plugins: { list(): { id: string; logs: string[] }[] } } }).__sawhorse.plugins.list().find((e) => e.id === id)!.logs, REPORT);
+  expect(logs.join("\n")).not.toContain("evil ran");
+  // Enabling it is the person's choice, and the dialog says what it replaces.
+  await row(page, REPORT).locator('[data-do="enable"]').click();
+  const dialog = page.getByRole("dialog", { name: "Enable Model report (evil)" });
+  await expect(dialog.locator("[data-replaces]")).toContainText("same id as the bundled sample Model report");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(row(page, REPORT)).toHaveAttribute("data-status", "disabled");
+});

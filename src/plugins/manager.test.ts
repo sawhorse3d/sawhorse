@@ -6,6 +6,7 @@ import type { HostMessage } from "../../packages/plugin-api/src/rpc.ts";
 import type { DocState, SceneData } from "../kernel/types";
 import { fakeChannel, type FakeChannel } from "./fakeChannel";
 import { PluginManager, type AppBridge } from "./manager";
+import { grantMatches, packageDigest } from "./store";
 
 const flush = async () => {
   for (let i = 0; i < 6; i++) await Promise.resolve();
@@ -284,6 +285,86 @@ describe("loading and grants", () => {
     expect(more.enabled).toBe(false);
     expect(more.lastError).toContain("asks for more (model.write)");
     m.dispose();
+  });
+
+  // The verifier: a zip with the same id and the same permissions as an enabled plugin
+  // started Running at once with the old grant and no dialog. A grant is now bound to the
+  // files the person enabled.
+  it("a grant is for the files enabled: other files with the same id and permissions are off until enabled again", async () => {
+    const { m, id } = await running({ permissions: ["model.read"] });
+    const grant = JSON.parse(localStorage.getItem("sawhorse.plugins.enabled")!)[id];
+    expect(grant).toMatchObject({ permissions: ["model.read"], source: "session" });
+    expect(grant.digest).toMatch(/^[0-9a-f]{64}$/);
+    const again = setup();
+    const evil = await again.m.loadSession({ "plugin.json": manifest({ permissions: ["model.read"] }), "main.js": 'import { model } from "sawhorse";\nawait model.solids();' });
+    expect(evil.enabled).toBe(false);
+    expect(evil.status).toBe("disabled");
+    expect(evil.lastError).toContain("not the files you enabled");
+    expect(again.channels).toHaveLength(0);
+    // The person can still enable it, which binds the grant to these files.
+    await again.m.enable(id);
+    await flush();
+    expect(again.m.get(id)!.status).toBe("running");
+    expect(JSON.parse(localStorage.getItem("sawhorse.plugins.enabled")!)[id].digest).toBe(again.m.get(id)!.digest);
+    expect(again.m.get(id)!.digest).not.toBe(grant.digest);
+    m.dispose();
+    again.m.dispose();
+  });
+
+  it("a zip claiming a bundled sample's id does not inherit the sample's grant", async () => {
+    const SAMPLE = "com.sawhorse3d.model-report";
+    const first = setup();
+    await first.m.init();
+    await first.m.enable(SAMPLE);
+    await flush();
+    expect(first.m.get(SAMPLE)!.status).toBe("running");
+    first.m.dispose();
+    // Next start: the sample is enabled and starts again.
+    const t = setup();
+    await t.m.init();
+    await flush();
+    expect(t.m.get(SAMPLE)!.status).toBe("running");
+    const sample = t.m.get(SAMPLE)!;
+    const evilFiles = { ...sample.pkg!.files, "plugin.json": sample.pkg!.files["plugin.json"].replace('"Model report"', '"Model report (evil)"'), "main.js": 'import { model } from "sawhorse";\nconst s = await model.solids();' };
+    const evil = await t.m.loadSession(evilFiles);
+    expect(evil.name).toBe("Model report (evil)");
+    expect(evil.enabled).toBe(false);
+    expect(evil.status).toBe("disabled");
+    expect(evil.replaces).toBe("Model report");
+    expect(evil.lastError).toContain("takes the place of the bundled Model report");
+    // The sample's worker was stopped and nothing new started.
+    expect(t.channels.filter((c) => !c.terminated)).toHaveLength(0);
+    t.m.dispose();
+  });
+
+  it("a bundled sample keeps its grant when the app updates it; an unpacked folder keeps its grant while it is edited", () => {
+    const digest = "a".repeat(64);
+    // Same files: always.
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "installed" }, { digest, source: "installed" })).toBe(true);
+    // Installed or session: only the same files.
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "installed" }, { digest: "b".repeat(64), source: "installed" })).toBe(false);
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "bundled" }, { digest: "b".repeat(64), source: "session" })).toBe(false);
+    // Bundled: the app's own code, updated with the app.
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "bundled" }, { digest: "b".repeat(64), source: "bundled" })).toBe(true);
+    // A grant from before digests: bundled only.
+    expect(grantMatches({ version: "1", permissions: [] }, { digest, source: "bundled" })).toBe(true);
+    expect(grantMatches({ version: "1", permissions: [] }, { digest, source: "installed" })).toBe(false);
+    // Unpacked: the same folder, whatever its files are now.
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "unpacked", location: "/plugins/a" }, { digest: "c".repeat(64), source: "unpacked", location: "/plugins/a" })).toBe(true);
+    expect(grantMatches({ version: "1", permissions: [], digest, source: "unpacked", location: "/plugins/a" }, { digest: "c".repeat(64), source: "unpacked", location: "/plugins/b" })).toBe(false);
+    expect(grantMatches(undefined, { digest, source: "bundled" })).toBe(false);
+  });
+
+  it("the digest covers every file, its path and its contents", () => {
+    const base = { "plugin.json": "{}", "main.js": "export {};", "README.md": "# Hi" };
+    const d = packageDigest(base);
+    expect(packageDigest({ ...base })).toBe(d);
+    expect(packageDigest({ "README.md": "# Hi", "main.js": "export {};", "plugin.json": "{}" })).toBe(d);
+    expect(packageDigest({ ...base, "main.js": "export {}; " })).not.toBe(d);
+    expect(packageDigest({ ...base, "README.md": "# Hi!" })).not.toBe(d);
+    expect(packageDigest({ ...base, "lib/x.js": "" })).not.toBe(d);
+    // Moving text between a path and its contents changes it too.
+    expect(packageDigest({ ab: "c" })).not.toBe(packageDigest({ a: "bc" }));
   });
 });
 

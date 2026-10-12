@@ -12,6 +12,8 @@ export type PluginDialogState =
       version: string;
       author: string;
       description: string;
+      /** The bundled sample it takes the place of (same id), by name. */
+      replaces?: string;
       lines: { permission: string; title: string; detail: string }[];
       resolve: (ok: boolean) => void;
     }
@@ -38,6 +40,11 @@ export function PluginDialog({ state, onClose }: { state: PluginDialogState; onC
           </small>
         </header>
         {state.description ? <p className="plugin-desc">{state.description}</p> : null}
+        {state.replaces ? (
+          <p className="plugin-asks" data-replaces="">
+            It has the same id as the bundled sample <b>{state.replaces}</b> and takes its place. It is not the copy that came with Sawhorse.
+          </p>
+        ) : null}
         {state.lines.length ? (
           <>
             <p className="plugin-asks">It asks to:</p>
