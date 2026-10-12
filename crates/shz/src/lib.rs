@@ -405,6 +405,142 @@ mod tests {
         let o = opened.document.model().object(1).unwrap();
         assert_eq!(o.name(), Some("Box with a pocket"));
         assert_eq!(o.material(), Some("Oak"));
+        // Rebuilt in place: still in its group, with its id.
+        assert_eq!(o.membership().parent(), Some(1));
+        assert_eq!(opened.document.model().groups()[0].1.name, "Case parts");
+    }
+
+    /// A bookshelf of components (two sides, four shelves from an array), one shelf made
+    /// unique, a group, tags with colours, hidden and locked items, scenes (one opening a
+    /// group) and an open editing context.
+    fn structured() -> Document {
+        let mut d = Document::with_ground_sketch();
+        let x = |t: [f64; 3]| {
+            format!(
+                r#"{{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[{},{},{}]}}"#,
+                t[0], t[1], t[2]
+            )
+        };
+        for op in [
+            r#"{"op":"draw","target":{"on":"plane","origin":[0,0,0],"normal":[0,0,1]},"points":[[0,0,0],[0.01905,0,0],[0.01905,0.28575,0],[0,0.28575,0]],"closed":true}"#.to_string(),
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":1.8288}"#.into(),
+            r#"{"op":"make_component","items":[{"object":1}],"name":"Side"}"#.into(),
+            format!(r#"{{"op":"copy","objects":[],"nodes":[1],"xform":{}}}"#, x([0.86995, 0.0, 0.0])),
+            r#"{"op":"draw","target":{"on":"plane","origin":[0,0,0],"normal":[0,0,1]},"points":[[0.01905,0,0],[0.86995,0,0],[0.86995,0.28575,0],[0.01905,0.28575,0]],"closed":true}"#.into(),
+        ] {
+            d.apply(&serde_json::from_str::<Op>(&op).unwrap()).unwrap();
+        }
+        // The shelf region is the newest region of the ground sketch.
+        let region = d
+            .model()
+            .sketch(1)
+            .unwrap()
+            .regions()
+            .map(|(k, _)| sawhorse_kernel::ids::to_public(k))
+            .max()
+            .unwrap();
+        for op in [
+            format!(r#"{{"op":"extrude","sketch":1,"region":{region},"distance":0.01905}}"#),
+            r#"{"op":"make_component","items":[{"object":3}],"name":"Shelf"}"#.into(),
+            format!(r#"{{"op":"array","objects":[],"nodes":[3],"xform":{},"count":3}}"#, x([0.0, 0.0, 0.6])),
+            r#"{"op":"make_unique","node":6}"#.into(),
+            r#"{"op":"make_group","items":[{"node":1},{"node":2}],"name":"Carcass"}"#.into(),
+            r#"{"op":"create_tag","name":"Carcass","color":[196,138,42]}"#.into(),
+            r#"{"op":"create_tag","name":"Shelves","color":[106,155,90]}"#.into(),
+            r#"{"op":"tag_items","items":[{"node":7}],"tag":"Carcass"}"#.into(),
+            r#"{"op":"tag_items","items":[{"node":3},{"node":4},{"node":5},{"node":6}],"tag":"Shelves"}"#.into(),
+            r#"{"op":"set_hidden","items":[{"node":6}],"hidden":true}"#.into(),
+            r#"{"op":"set_locked","items":[{"node":5}],"locked":true}"#.into(),
+            r#"{"op":"add_scene","scene":{"name":"Front","eye":[0.4,-3,0.9],"target":[0.4,0,0.9],"up":[0,0,1],"fov":20,"parallel":true,"hidden_tags":["Shelves"]}}"#.into(),
+            r#"{"op":"add_scene","scene":{"name":"Iso","eye":[3,-3,3],"target":[0.4,0.14,0.9],"up":[0,0,1],"fov":35,"parallel":false,"context":7}}"#.into(),
+            r#"{"op":"set_context","node":7}"#.into(),
+        ] {
+            d.apply(&serde_json::from_str::<Op>(&op).unwrap())
+                .unwrap_or_else(|e| panic!("{op}: {e}"));
+        }
+        d
+    }
+
+    #[test]
+    fn groups_components_tags_and_scenes_round_trip() {
+        let d = structured();
+        let m = d.model();
+        assert_eq!(m.definitions().len(), 3, "Side, Shelf, Shelf (2)");
+        let bytes = write(m, &SaveOptions::default()).unwrap();
+        let o = read(&bytes).unwrap();
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        let s = &o.scene.model;
+        // Geometry is stored once per definition: only the definitions carry B-reps.
+        assert_eq!(s.definitions.len(), 3);
+        assert!(
+            s.objects
+                .iter()
+                .all(|x| x.brep.is_none() && x.slot.is_some())
+        );
+        assert_eq!(s.nodes.len(), 7);
+        assert_eq!(s.context, Some(7));
+        assert_eq!(s.tag_colors["Carcass"], "#c48a2a");
+        assert_eq!(s.scenes[1].context, Some(7));
+        // The same model: hash, tree, context, flags.
+        let back = o.document.model();
+        assert_eq!(o.document.hash(), d.hash());
+        assert_eq!(back.graph(), m.graph());
+        assert_eq!(back.context(), Some(7));
+        assert!(!back.node_visible(6));
+        assert!(back.node(5).unwrap().member.locked);
+        // And the instances still follow their definitions after opening: edit inside one
+        // shelf, its siblings change, the unique one does not.
+        let mut doc = o.document;
+        doc.apply(&Op::SetContext { node: Some(4) }).unwrap();
+        let solid = back_solid(&doc, 4);
+        doc.apply(&Op::PushPull {
+            object: solid,
+            face: 2,
+            distance: 0.00635,
+        })
+        .unwrap();
+        let h = |doc: &Document, n: u64| {
+            let o = doc.model().object(back_solid(doc, n)).unwrap();
+            let (lo, hi) = o.bounds();
+            hi.z - lo.z
+        };
+        for n in [3, 4, 5] {
+            assert!((h(&doc, n) - 0.0254).abs() < 1e-9, "shelf {n}");
+        }
+        assert!((h(&doc, 6) - 0.01905).abs() < 1e-9, "the unique shelf");
+        // Saving what was opened writes the same scene.json.
+        let again = read(&write(back_ref(&d), &SaveOptions::default()).unwrap()).unwrap();
+        assert_eq!(again.scene.model, *s);
+    }
+
+    fn back_solid(d: &Document, node: u64) -> u64 {
+        d.model()
+            .graph()
+            .objects
+            .iter()
+            .find(|o| o.parent == Some(node))
+            .unwrap()
+            .id
+    }
+
+    fn back_ref(d: &Document) -> &sawhorse_kernel::Model {
+        d.model()
+    }
+
+    #[test]
+    fn lane_6_files_with_flat_groups_still_open() {
+        // A lane-6 writer knew only `groups` (names and solid ids) and `tags` (visibility).
+        let d = sample();
+        let mut snap = d.model().snapshot();
+        snap.nodes.clear();
+        snap.tag_colors.clear();
+        for o in &mut snap.objects {
+            o.parent = None;
+        }
+        let m = sawhorse_kernel::Model::from_snapshot(&snap).unwrap();
+        assert_eq!(m.groups()[0].1.name, "Case parts");
+        assert_eq!(m.groups()[0].1.objects, vec![1]);
+        assert_eq!(m.hash(), d.model().hash(), "the same model");
     }
 
     #[test]

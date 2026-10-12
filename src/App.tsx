@@ -119,12 +119,22 @@ function loadImportUnits(): ImportUnit {
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** One line for the status bar after an import or open. */
-export function describeImport(name: string, o: OpOutcome): string {
+export function describeImport(name: string, o: OpOutcome, graph?: import("./kernel/types").SceneGraph | null): string {
   if (o.kind === "restored") return `Opened ${name}: ${plural(o.objects, "solid")}${o.meshes ? `, ${plural(o.meshes, "mesh")} (not solid)` : ""}.`;
   if (o.kind !== "imported") return `Imported ${name}.`;
   const parts = [plural(o.objects.length, "solid")];
   if (o.meshes.length) parts.push(`${plural(o.meshes.length, "mesh")} that ${o.meshes.length === 1 ? "is" : "are"} not solid`);
-  if (o.groups.length) parts.push(plural(o.groups.length, "group"));
+  if (o.groups.length) {
+    // Top-level groups and component instances (the graph tells which is which).
+    const kinds = o.groups.map((id) => graph?.nodes.find((n) => n.id === id)?.kind ?? "group");
+    const groups = kinds.filter((k) => k === "group").length;
+    const instances = kinds.length - groups;
+    if (groups) parts.push(plural(groups, "group"));
+    if (instances) {
+      const defs = new Set(o.groups.map((id) => graph?.nodes.find((n) => n.id === id)?.definition).filter((d) => d !== null && d !== undefined));
+      parts.push(`${plural(instances, "component instance")} (${plural(defs.size, "component")})`);
+    }
+  }
   if (o.sketches.length) parts.push(`strokes in ${plural(o.sketches.length, "sketch")}`);
   return `Imported ${name}: ${parts.join(", ")}.`;
 }
@@ -385,14 +395,14 @@ export function App() {
           return res;
         },
         null,
-        (res) => describeImport(f.name, res.outcome),
+        (res) => describeImport(f.name, res.outcome, res.scene.state.graph),
       );
       if (!r) {
         setReport({ title: `Could not import ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });
         return;
       }
       const kernelNotes = r.outcome.kind === "imported" ? r.outcome.notes : [];
-      setReport({ title: describeImport(f.name, r.outcome), lines: [...notes, ...kernelNotes] });
+      setReport({ title: describeImport(f.name, r.outcome, r.scene.state.graph), lines: [...notes, ...kernelNotes] });
       const w = window as unknown as { __sawhorse?: Record<string, unknown> };
       w.__sawhorse = { ...(w.__sawhorse ?? {}), lastImport: { name: f.name, outcome: r.outcome, notes: [...notes, ...kernelNotes] } };
       setFitSeq((n) => n + 1);
@@ -412,7 +422,7 @@ export function App() {
           return res;
         },
         null,
-        (res) => describeImport(f.name, res.outcome),
+        (res) => describeImport(f.name, res.outcome, res.scene.state.graph),
       );
       if (!r || !info) {
         setReport({ title: `Could not open ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });

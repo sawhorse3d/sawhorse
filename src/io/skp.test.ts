@@ -7,8 +7,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
 import { FAMILIES, corpus, rng } from "./corpus/models";
-import { HIDDEN_TAG, apply, compose, modelToOp, skpToOp } from "./skp";
-import type { WasmDoc } from "../kernel/types";
+import { apply, compose, isComponent, modelToOp, placementXform, skpToOp } from "./skp";
+import type { ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
 const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
@@ -32,28 +32,60 @@ describe("skp mapping", () => {
     expect(apply(both, [0, 0, 0])).toEqual([5, 0, 0]);
   });
 
-  it("a table: groups, components as separate placements, tags, materials, inches to metres", () => {
+  it("a table: the top a group, the legs instances of one component, tags, materials, inches to metres", () => {
     const r = skpToOp(bytesOf("table"), "Table.skp");
     if (r.op.op !== "import") throw new Error("not an import op");
-    const items = r.op.items ?? [];
-    expect(items.map((i) => i.name)).toEqual(["Top", "Leg", "Leg", "Leg", "Leg"]);
-    expect(items.map((i) => i.group)).toEqual(["Top", "Leg", "Leg #2", "Leg #3", "Leg #4"]);
-    expect(items[1].tag).toBe("Legs");
-    expect(items.every((i) => i.merge_coplanar === false)).toBe(true);
-    expect((r.op.materials ?? []).length).toBe(new Set(items.map((i) => i.material)).size);
-    // Inches -> metres: every coordinate is a multiple of 0.0254 / 1000 at most.
-    const top = items[0].positions;
-    expect(Math.max(...top.map((p) => p[2]))).toBeGreaterThan(0.6);
-    expect(Math.max(...top.map((p) => p[2]))).toBeLessThan(0.85);
-    expect(r.summary.placements).toBe(5);
-    expect(r.notes.some((n) => n.includes("separate copies"))).toBe(true);
+    expect(r.op.items ?? []).toEqual([]); // nothing loose at the top level
+    const nodes = r.op.nodes ?? [];
+    expect(nodes.map((n) => n.kind)).toEqual(["group", "instance", "instance", "instance", "instance"]);
+    const defs = r.op.definitions ?? [];
+    expect(defs.map((d) => d.name)).toEqual(["Leg"]);
+    expect(nodes.slice(1).every((n) => n.kind === "instance" && n.definition === 0)).toBe(true);
+    expect(nodes[1].tag).toBe("Legs");
+    const top = nodes[0];
+    if (top.kind !== "group") throw new Error();
+    expect(top.name).toBe("Top");
+    expect(top.items[0].merge_coplanar).toBe(false);
+    // Inches -> metres: the top (world coordinates) is 0.6 to 0.85 m up; a leg is in its
+    // definition's own frame, placed by its instance.
+    const z = top.items[0].positions.map((p) => p[2]);
+    expect(Math.max(...z)).toBeGreaterThan(0.6);
+    expect(Math.max(...z)).toBeLessThan(0.85);
+    const leg = defs[0].items[0].positions;
+    expect(Math.min(...leg.map((p) => p[0]))).toBe(0);
+    const legs = nodes.slice(1).map((n) => (n.kind === "instance" ? n.xform.translation : null));
+    expect(new Set(legs.map((t) => JSON.stringify(t))).size).toBe(4);
+    expect((r.op.materials ?? []).length).toBeGreaterThan(0);
+    expect(r.summary).toMatchObject({ placements: 5, components: 1, groups: 1 });
+    expect(r.notes.some((n) => n.includes("1 component placed more than once came in as components"))).toBe(true);
   });
 
-  it("hidden instances, nested and mirrored components, loose geometry", () => {
+  it("placements become kernel transforms (3x3 unitless, translation in metres); groups vs components", () => {
+    expect(placementXform([0, -1, 0, 1, 0, 0, 0, 0, 1, 10, 0, 20])).toEqual({
+      linear: [
+        [0, -1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+      translation: [0.254, 0, 0.508],
+    });
+    const def = { name: "Leg" } as never;
+    expect(isComponent(def, 4)).toBe(true);
+    expect(isComponent(def, 1)).toBe(false);
+    expect(isComponent({ name: "Group#7" } as never, 3)).toBe(false);
+  });
+
+  it("nested and mirrored components, loose geometry", () => {
     const n = skpToOp(bytesOf("nested"), "Chest.skp");
     if (n.op.op !== "import") throw new Error();
-    const names = (n.op.items ?? []).map((i) => i.name);
-    expect(names.filter((x) => x === "Knob").length).toBe(names.filter((x) => x === "Drawer").length);
+    // Drawer is a component placed several times (one mirrored); its knob, placed once in
+    // the drawer's definition, is a group inside that definition.
+    const defs = n.op.definitions ?? [];
+    expect(defs.map((d) => d.name)).toEqual(["Drawer"]);
+    expect(defs[0].children?.map((c) => [c.kind, c.name])).toEqual([["group", "Knob"]]);
+    const drawers = (n.op.nodes ?? []).filter((x) => x.kind === "instance");
+    expect(drawers.length).toBeGreaterThan(1);
+    expect(drawers.some((x) => x.kind === "instance" && x.xform.linear[0][0] === -1)).toBe(true);
     const l = skpToOp(bytesOf("loose"), "Yard.skp");
     if (l.op.op !== "import") throw new Error();
     const root = (l.op.items ?? []).find((i) => i.name === "Yard")!;
@@ -128,22 +160,24 @@ describe.skipIf(!built)("skp files through the kernel", () => {
   it("the window hole makes the front wall a genus-1 solid", async () => {
     const mod = await kernel();
     // The first house whose front wall has a window (a face with a hole loop).
+    const isWall = (n: ImportNode) => n.kind === "group" && n.name === "Front wall" && n.items.some((i) => i.faces.some((f) => f.length > 1));
     const r = corpus(200)
       .filter((s) => s.family === "house")
       .map((s) => skpToOp(s.build(), `${s.name}.skp`))
-      .find((x) => x.op.op === "import" && (x.op.items ?? []).some((i) => i.name === "Front wall" && i.faces.some((f) => f.length > 1)))!;
+      .find((x) => x.op.op === "import" && (x.op.nodes ?? []).some(isWall))!;
     if (r.op.op !== "import") throw new Error();
-    const wall = { ...r.op, items: (r.op.items ?? []).filter((i) => i.name === "Front wall") };
+    const wall = { ...r.op, items: [], nodes: (r.op.nodes ?? []).filter(isWall) };
     const d = mod.document_new();
     d.apply_op(JSON.stringify(wall));
     const st = JSON.parse(d.state_json());
     expect(st.stats.objects).toBe(1);
     expect(st.stats.genus).toBe(1);
-    expect(st.object_info[0].tag).toBe("Walls");
+    // The wall's layer is its group's tag.
+    expect(st.graph.nodes[0]).toMatchObject({ kind: "group", label: "Front wall", tag: "Walls" });
     d.free();
   });
 
-  it("a hidden placement comes in on a hidden tag", async () => {
+  it("a hidden placement comes in hidden; components come in as one definition with instances", async () => {
     const { create } = await import("openskp");
     const { box } = await import("./corpus/models");
     const b = create();
@@ -152,13 +186,24 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     b.addInstance(leg, { translation: [10, 0, 0], hidden: true });
     const r = skpToOp(b.toBytes(), "legs.skp");
     if (r.op.op !== "import") throw new Error();
-    expect(r.op.hidden_tags).toEqual([HIDDEN_TAG]);
+    expect(r.op.hidden_tags).toEqual([]);
+    expect((r.op.nodes ?? []).map((n) => n.hidden)).toEqual([false, true]);
     const mod = await kernel();
     const d = mod.document_new();
     d.apply_op(JSON.stringify(r.op));
     const st = JSON.parse(d.state_json());
     expect(st.stats.objects).toBe(2);
-    expect(st.tags[HIDDEN_TAG]).toBe(false);
+    expect(st.graph.definitions).toMatchObject([{ name: "Leg", instances: 2, solids: 1 }]);
+    expect(st.graph.nodes.map((n: { kind: string; hidden: boolean; visible: boolean }) => [n.kind, n.hidden, n.visible])).toEqual([
+      ["instance", false, true],
+      ["instance", true, false],
+    ]);
+    // Edit one leg's definition through the kernel: both legs change.
+    const solid = st.graph.objects.find((o: { parent: number }) => o.parent === st.graph.nodes[0].id).id;
+    d.apply_op(JSON.stringify({ op: "set_context", node: st.graph.nodes[0].id }));
+    d.apply_op(JSON.stringify({ op: "push_pull", object: solid, face: JSON.parse(d.faces_json(solid)).find((f: { normal: number[] }) => f.normal[2] > 0.9).id, distance: 0.0254 }));
+    const after = JSON.parse(d.state_json());
+    for (const s of after.solids) expect(s.max[2]).toBeCloseTo(11 * 0.0254, 9);
     d.free();
   });
 });

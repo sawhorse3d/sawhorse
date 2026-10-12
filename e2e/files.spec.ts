@@ -155,12 +155,14 @@ test("drag and drop: an SVG becomes sketch regions on the ground", async ({ page
   await expect(vp).toHaveAttribute("data-kernel", "ready");
 });
 
-test("a SketchUp file imports through openskp: groups, components, a hidden tag", async ({ page }) => {
+test("a SketchUp file imports through openskp: a group and a component's instances", async ({ page }) => {
   const vp = await ready(page);
   const bytes = Buffer.from(FAMILIES.table(rng(7)).toBytes());
   await pick(page, "table.skp", bytes);
   await expect(page.getByTestId("import-report")).toContainText("Imported table.skp: 5 solids", { timeout: 15_000 });
-  await expect(page.getByTestId("import-report")).toContainText("5 groups");
+  await expect(page.getByTestId("import-report")).toContainText("1 group, 4 component instances (1 component)");
+  // The Outliner shows the legs as one component placed four times.
+  await expect(page.locator(".outline li", { hasText: "component · 4 of 4" })).toBeVisible();
   await expect(vp).toHaveAttribute("data-objects", "5");
   await expect(vp).toHaveAttribute("data-watertight", "true");
 });

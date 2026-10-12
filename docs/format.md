@@ -1,6 +1,6 @@
 # The `.shz` file format, version 1
 
-Status: open specification, 2026-10-11 (lane 6). License: this document is CC0; the format is free to implement by anyone, for anything.
+Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
 
 A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or Stored entries) with these entries:
 
@@ -28,13 +28,19 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
   "objects": [],
   "meshes": [],
   "groups": [],
+  "nodes": [],
+  "definitions": [],
+  "context": 3,
   "tags": {},
+  "tag_colors": {},
   "materials": [],
   "scenes": [],
   "guides": [],
   "dimensions": []
 }
 ```
+
+(`nodes`, `definitions`, `context` and `tag_colors` are optional and left out when empty.)
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -62,6 +68,8 @@ A sketch is a planar graph of strokes whose closed circuits are regions.
 
 A region: `outer` (vertex indices, counter-clockwise seen from `normal`), `holes` (lists of vertex indices, clockwise), `anchor` (`[u, v]`, a point strictly inside), `pinched` (a hole touches the outer ring or another hole at a vertex; such a region cannot be extruded), `consumed` (it was extruded into a solid and is not drawn).
 
+`parent` (integer, optional): the node (`nodes[].id`) the sketch was drawn in. Strokes only join strokes of the same parent, so a sketch drawn inside a group never merges with one outside it.
+
 ### `objects[]`
 
 An object is a watertight solid.
@@ -73,7 +81,10 @@ An object is a watertight solid.
 | `next_face_id` | integer | The next persistent face id the object will hand out. Greater than every face id. |
 | `number` | integer, optional | Display number ("Solid 3"), at least 1. Kept on open when every solid has one and none repeats; otherwise every solid is renumbered in saved order. |
 | `source_sketch` | integer, optional | Index into `sketches` of the sketch it was extruded from. |
-| `brep` | B-rep, optional | Exact geometry (below). A writer that cannot produce it may leave it out; the reader then rebuilds the object from the `geometry.glb` node whose `extras.sawhorse.object` equals `id`. |
+| `brep` | B-rep, optional | Exact geometry (below). A writer that cannot produce it may leave it out; the reader then rebuilds the object from the `geometry.glb` node whose `extras.sawhorse.object` equals `id`. Never present for a solid with a `slot` (see components below). |
+| `parent` | integer, optional | The node (`nodes[].id`) the solid is in: a group or a component instance. Absent: the model's top level. |
+| `slot` | integer, optional | For a solid of a component instance: the definition member it is derived from (see below). |
+| `hidden`, `locked` | boolean, optional | Hidden (not drawn, not exported by default) and locked (not editable). Absent: false. |
 
 A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces.
 
@@ -81,16 +92,57 @@ The B-rep must be a valid solid: every edge shared by exactly two faces, once in
 
 ### `meshes[]`
 
-Imported geometry that is not a valid solid (kept so nothing is lost on import). `id`, `name`, `tag`, `material` as for objects; `note` (why it is not a solid, in plain words); `positions` (`[[x, y, z], ...]`); `faces` (each a list of rings, outer first, of indices into `positions`); `lines` (`[a, b]` pairs: edges with no face).
+Imported geometry that is not a valid solid (kept so nothing is lost on import). `id`, `name`, `tag`, `material` as for objects; `note` (why it is not a solid, in plain words); `positions` (`[[x, y, z], ...]`); `faces` (each a list of rings, outer first, of indices into `positions`); `lines` (`[a, b]` pairs: edges with no face). `parent`, `slot`, `hidden`, `locked` as for objects; a mesh with a `slot` (inside a component instance) has empty `positions`, `faces` and `lines`: it is derived from its definition.
+
+### `nodes[]`: groups and component instances
+
+The model is a tree. Its inner nodes are groups and component instances; solids, meshes and sketches are its leaves and say which node they are in with `parent`. Nodes are listed in id order; a reader reads them all before resolving `parent`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | integer | The id it had when saved. Unique among nodes. |
+| `kind` | `"group"` or `"instance"` | |
+| `definition` | integer | Instances only: index into `definitions`. |
+| `parent` | integer, optional | The node it is in. Absent: the top level. Parents form no cycle. |
+| `name` | string, optional | A group's name; an instance's own name (absent: it shows its definition's name). |
+| `tag` | string, optional | Tag (layer) name; must be a key of `tags`. Hiding the tag hides everything in the node. |
+| `hidden`, `locked` | boolean, optional | As for objects; hiding a node hides everything in it. |
+| `slot` | integer, optional | A node nested inside a component instance: its definition member. |
+| `xform` | transform, optional | Local axes to world: for an instance, its placement (definition coordinates to world); for a group, where its axes are (its contents are stored in world coordinates already). Absent: the identity. |
+
+A transform is `{ "linear": [[a, b, c], [d, e, f], [g, h, i]], "translation": [x, y, z] }`, mapping a point `p` to `linear * p + translation` (rows of the matrix; metres). It must be finite and not flatten anything (`|det(linear)| >= 1e-9`).
+
+### `definitions[]`: component definitions
+
+A component definition is geometry and structure its instances share, stored once, in its own coordinates.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Shown for every instance without a name of its own. |
+| `next_slot` | integer | Greater than every member's `slot`; slots are never reused. |
+| `members` | member[] | What the definition holds. |
+
+A member has `slot` (unique in the definition), `parent` (optional: the `slot` of the nested group member it is in), `name`, `tag`, `hidden`, `locked` (optional, as for nodes) and a `kind`:
+
+- `"solid"`: `material` (optional), `next_face_id`, `brep` (exactly as for objects, in definition coordinates).
+- `"mesh"`: `material`, `note`, `positions`, `faces`, `lines` (as for meshes, in definition coordinates).
+- `"group"`: `xform` (optional) of a nested group, in definition coordinates.
+- `"instance"`: `definition` (index into `definitions`) and `xform` (optional), a nested instance placed in definition coordinates. A definition must not contain itself, directly or through others.
+
+**Instances are derived.** Every instance contains exactly one item per member of its definition (a solid, mesh or node with that `slot`, in the right nested group), and every solid of an instance is its member's solid under the instance's `xform`: each point mapped, each face plane mapped (normals by the inverse transpose), loops reversed when the transform mirrors. Writers list those solids in `objects` (for their `id`, display `number`, `name`, `parent`, `slot`, flags) without a `brep`; readers derive their geometry. A reader refuses a file whose instances do not hold exactly their definitions' members.
+
+Nested node placements compose: a member node's `xform` in the world is its instance's `xform` after the member's own.
 
 ### Other tables
 
 | Field | Type | Meaning |
 |---|---|---|
-| `groups[]` | `{ "name", "objects": [id, ...] }` | Named sets of objects (by `objects[].id`). |
-| `tags` | `{ name: visible }` | Every tag used, and whether it is shown. |
+| `groups[]` | `{ "name", "objects": [id, ...] }` | Lane-6 groups: each group's name and the solids directly in it (by `objects[].id`). Still written, for readers that do not know `nodes`; a reader that finds `nodes` ignores `groups`. A file without `nodes` gets one top-level group per entry (a solid listed twice stays in the first). |
+| `context` | integer, optional | The node open for editing when the file was saved. |
+| `tags` | `{ name: visible }` | Every tag used, and whether it is shown. "Untagged" is not a tag: it is the absence of one. |
+| `tag_colors` | `{ name: "#rrggbb" }`, optional | Each tag's colour in the Tags pane. |
 | `materials[]` | `{ "name", "color": [r, g, b, a], "texture"? }` | sRGB colour with alpha, 0 to 255; `texture` names an image (a path inside `assets/`, or the original file name when the image was not kept). |
-| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"? }` | Saved views: camera in metres, vertical field of view in degrees, parallel or perspective projection, the tags the scene hides. |
+| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), and the node open for editing in it. Names are unique. |
 | `guides[]` | `{ "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). |
 | `dimensions[]` | `{ "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. |
 | `last_number` | integer, optional | The last display number handed out, so a deleted solid's number is not reused after a reopen. |
@@ -99,7 +151,7 @@ Imported geometry that is not a valid solid (kept so nothing is lost on import).
 
 glTF 2.0 binary. One node per object and per imported mesh, named after it, flat-shaded, with:
 
-- `extras.sawhorse`: `object` (the object id) or `mesh` (the mesh id); `solid` (true for objects); `tag`; `groups` (names); for meshes, `note`.
+- `extras.sawhorse`: `object` (the object id) or `mesh` (the mesh id); `solid` (true for objects); `tag`; `groups` (the names of the groups and components around it, outermost first); for meshes, `note`.
 - A custom vertex attribute `_FACE_ID` (FLOAT SCALAR): the persistent face id of the face each vertex belongs to, so faces (and the drawn edges between coplanar faces) can be rebuilt exactly.
 - Materials as `pbrMetallicRoughness.baseColorFactor` (linear), named after the model's materials.
 
@@ -112,4 +164,4 @@ glTF 2.0 binary. One node per object and per imported mesh, named after it, flat
 
 ## Reference implementation
 
-`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash; a file with no B-rep is rebuilt from `geometry.glb`; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips).
+`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).

@@ -311,7 +311,7 @@ pub struct Snapshot {
     /// readers that do not know `nodes`; ignored when `nodes` is present.
     #[serde(default)]
     pub groups: Vec<SnapGroup>,
-    /// Groups and component instances, parents before children.
+    /// Groups and component instances, in id order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<SnapNode>,
     /// Component definitions (instances refer to them by index).
@@ -559,11 +559,11 @@ impl Model {
         }
     }
 
-    /// Nodes in an order with parents first (depth, then id).
+    /// Nodes in id order (a reader resolves parents after reading them all), so a document
+    /// whose ids are compact reopens with the same ids.
     fn snap_nodes(&self, def_index: &BTreeMap<DefId, usize>) -> Vec<SnapNode> {
-        let mut keys: Vec<NodeId> = self.nodes.keys().collect();
-        keys.sort_by_key(|&k| (self.path_of(Some(k)).len(), k));
-        keys.into_iter()
+        self.nodes
+            .keys()
             .map(|k| {
                 let n = &self.nodes[k];
                 SnapNode {
@@ -984,13 +984,8 @@ mod tests {
             let m = Model::from_snapshot(&back).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
             // Ids are compact in these documents unless something was deleted.
             let compact = |ids: Vec<u64>| ids.iter().enumerate().all(|(i, &id)| id == i as u64 + 1);
-            let mut node_ids: Vec<u64> = d.model().nodes().iter().map(|(id, _)| *id).collect();
-            // Saved parents first: compact only if that is also id order.
-            let saved: Vec<u64> = d.model().snapshot().nodes.iter().map(|n| n.id).collect();
-            node_ids.sort_unstable();
             let ids_compact = compact(d.model().object_ids())
-                && compact(node_ids)
-                && saved.windows(2).all(|w| w[0] < w[1])
+                && compact(d.model().nodes().iter().map(|(id, _)| *id).collect())
                 && compact(d.model().definitions().iter().map(|(id, _)| *id).collect());
             if ids_compact {
                 assert_eq!(m.hash(), d.hash(), "{}", f.display());

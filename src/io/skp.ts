@@ -2,19 +2,22 @@
 //
 // openskp parses the file (SketchUp 2013-2020 "MFC" containers and 2021+ "VFF" ones) into
 // definitions, instances, faces, edges, layers, materials and scenes. This module maps
-// that model onto ONE kernel `import` op, so the kernel builds every group and component
-// placement through its own validated path: closed shells become solids, everything else a
-// visible non-solid mesh with a note. What is and is not carried over is listed in
-// docs/skp-compat.md; keep the two in step.
+// that model onto ONE kernel `import` op, so the kernel builds everything through its own
+// validated path: closed shells become solids, everything else a visible non-solid mesh
+// with a note. What is and is not carried over is listed in docs/skp-compat.md; keep the
+// two in step.
+//
+// Structure (lane 5): a SketchUp definition placed more than once becomes a component
+// definition, its placements instances of it (an edit inside one changes them all); a
+// definition placed once, or named like SketchUp's own group definitions ("Group#3"),
+// becomes a group. Nested placements nest the same way. Hidden placements come in hidden;
+// a placement's layer becomes its tag.
 //
 // Units: SketchUp stores inches, Z up. The kernel is metres, Z up. Nothing else changes.
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
-import type { ImportItem, KernelOp, MaterialDef, SceneDef, V3 } from "../kernel/types";
+import type { ImportDefinition, ImportItem, ImportNode, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
 
 export const M_PER_IN = 0.0254;
-
-/** The tag given to instances SketchUp had hidden (it comes in hidden). */
-export const HIDDEN_TAG = "Hidden in SketchUp";
 
 /** SketchUp's default layer: geometry on it is untagged. */
 const DEFAULT_LAYERS = new Set(["", "Layer0", "Untagged"]);
@@ -72,6 +75,10 @@ export interface SkpSummary {
   version: string;
   definitions: number;
   placements: number;
+  /** Definitions that came in as components (placed more than once). */
+  components: number;
+  /** Placements that came in as groups. */
+  groups: number;
   faces: number;
   looseEdges: number;
   materials: number;
@@ -95,8 +102,13 @@ interface Ctx {
   usedTags: Set<string>;
   hiddenTags: Set<string>;
   summary: SkpSummary;
-  groupNames: Map<string, number>;
   skipped: Map<string, number>;
+  /** How many times each definition is placed, anywhere in the file. */
+  placed: Map<number, number>;
+  /** Component definitions for the kernel, children before parents. */
+  defs: ImportDefinition[];
+  /** (definition id, inherited material) -> index into `defs`. */
+  defIndex: Map<string, number>;
 }
 
 function materialName(ctx: Ctx, id: number | null | undefined): string | null {
@@ -192,10 +204,50 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   };
 }
 
-function uniqueGroup(ctx: Ctx, name: string): string {
-  const n = (ctx.groupNames.get(name) ?? 0) + 1;
-  ctx.groupNames.set(name, n);
-  return n === 1 ? name : `${name} #${n}`;
+/** A SketchUp placement (inches) as a kernel transform (metres): the 3x3 is unitless, the
+ * translation scales. Definition geometry is converted to metres in its own frame. */
+export function placementXform(m: Placement): Xform {
+  return {
+    linear: [
+      [m[0], m[1], m[2]],
+      [m[3], m[4], m[5]],
+      [m[6], m[7], m[8]],
+    ],
+    translation: [m[9] * M_PER_IN, m[10] * M_PER_IN, m[11] * M_PER_IN],
+  };
+}
+
+/** SketchUp names its groups' hidden definitions "Group#1", "Group#2"... */
+const GROUP_DEF = /^Group#\d+$/;
+
+/** A definition comes in as a component when it is placed more than once (and is not one of
+ * SketchUp's group definitions); otherwise its placement is a group. */
+export function isComponent(def: Definition, placed: number): boolean {
+  return placed > 1 && !GROUP_DEF.test(def.name.trim());
+}
+
+/** True when some face of the definition takes its material from the placement. */
+function inherits(def: Definition): boolean {
+  return def.faces.some((f) => f.materialId === null || f.materialId === undefined);
+}
+
+function countPlacements(model: SkpModel): Map<number, number> {
+  const placed = new Map<number, number>();
+  const seen = new Set<number>();
+  const visit = (def: Definition, depth: number) => {
+    if (depth > 64) return;
+    for (const inst of def.instances) {
+      placed.set(inst.refIdx, (placed.get(inst.refIdx) ?? 0) + 1);
+      const child = model.definitions.get(inst.refIdx);
+      // A definition's own placements count once, however often it is placed.
+      if (child && !seen.has(child.id)) {
+        seen.add(child.id);
+        visit(child, depth + 1);
+      }
+    }
+  };
+  visit(model.root, 0);
+  return placed;
 }
 
 function layerTag(layer: string | undefined | null): string | null {
@@ -203,38 +255,75 @@ function layerTag(layer: string | undefined | null): string | null {
   return DEFAULT_LAYERS.has(l) ? null : l;
 }
 
-/** Place `def`'s instances (recursively) under placement `m`. */
-function walk(ctx: Ctx, def: Definition, m: Placement, depth: number, inherited: { group?: string; tag: string | null; material: number | null; hidden: boolean }) {
+function countSkipped(ctx: Ctx, def: Definition) {
+  for (const k of ["sectionPlanes", "texts", "dimensions", "constructionLines", "constructionPoints"] as const) {
+    const n = (def[k] as unknown[] | undefined)?.length ?? 0;
+    if (n) bump(ctx.skipped, k, n);
+  }
+}
+
+/**
+ * One placement as a kernel node, placed by `m` (inches) in the enclosing frame (the model,
+ * a component definition or a group's enclosing frame): an instance of a component
+ * definition, or a group holding the definition's geometry and its nested placements.
+ */
+function nodeFor(ctx: Ctx, inst: Instance, m: Placement, depth: number, inherited: number | null): ImportNode | null {
   if (depth > 64) {
     ctx.notes.add("components nested deeper than 64 levels were left out (a cycle?)");
-    return;
+    return null;
   }
-  for (const inst of def.instances) {
-    const child = ctx.model.definitions.get(inst.refIdx);
-    if (!child) {
-      bump(ctx.skipped, "instances of missing definitions");
-      continue;
-    }
-    if (child.isImage) {
-      bump(ctx.skipped, "images");
-      continue;
-    }
-    ctx.summary.placements++;
-    const mm = compose(m, placement(inst));
-    const name = (inst.name || child.name || "Component").trim() || "Component";
-    const group = depth === 0 ? uniqueGroup(ctx, name) : inherited.group;
-    const hidden = inherited.hidden || inst.hidden;
-    const tag = hidden ? HIDDEN_TAG : (layerTag(inst.layer) ?? inherited.tag);
-    if (hidden) ctx.hiddenTags.add(HIDDEN_TAG);
-    const material = inst.materialId ?? inherited.material;
-    const item = itemOf(ctx, child, mm, name, { group, tag, inherited: material });
-    if (item) ctx.items.push(item);
-    for (const k of ["sectionPlanes", "texts", "dimensions", "constructionLines", "constructionPoints"] as const) {
-      const n = (child[k] as unknown[] | undefined)?.length ?? 0;
-      if (n) bump(ctx.skipped, k);
-    }
-    walk(ctx, child, mm, depth + 1, { group, tag, material, hidden });
+  const child = ctx.model.definitions.get(inst.refIdx);
+  if (!child) {
+    bump(ctx.skipped, "instances of missing definitions");
+    return null;
   }
+  if (child.isImage) {
+    bump(ctx.skipped, "images");
+    return null;
+  }
+  ctx.summary.placements++;
+  const p = compose(m, placement(inst));
+  const material = inst.materialId ?? inherited;
+  const tag = layerTag(inst.layer);
+  if (tag) ctx.usedTags.add(tag);
+  const own = (inst.name ?? "").trim();
+  if (isComponent(child, ctx.placed.get(child.id) ?? 0)) {
+    const definition = defFor(ctx, child, material, depth + 1);
+    if (definition === null) return null;
+    return { name: own && own !== child.name ? own : null, tag, hidden: !!inst.hidden, kind: "instance", definition, xform: placementXform(p) };
+  }
+  ctx.summary.groups++;
+  countSkipped(ctx, child);
+  const name = own || child.name.trim() || "Group";
+  const item = itemOf(ctx, child, p, name, { inherited: material });
+  const children = child.instances.map((i) => nodeFor(ctx, i, p, depth + 1, material)).filter((n): n is ImportNode => n !== null);
+  return { name: GROUP_DEF.test(name) ? null : name, tag, hidden: !!inst.hidden, kind: "group", items: item ? [item] : [], children };
+}
+
+/** The component definition for `def` painted with `material` where its faces inherit
+ * (built once, its nested definitions first). Returns its index, null when too deep. */
+function defFor(ctx: Ctx, def: Definition, material: number | null, depth: number): number | null {
+  const key = `${def.id}|${inherits(def) ? (material ?? "") : ""}`;
+  const known = ctx.defIndex.get(key);
+  if (known !== undefined) return known;
+  if (depth > 64) {
+    ctx.notes.add("components nested deeper than 64 levels were left out (a cycle?)");
+    return null;
+  }
+  countSkipped(ctx, def);
+  const base = def.name.trim() || "Component";
+  // The same component painted differently in different places: one definition per paint.
+  const variant = [...ctx.defIndex.keys()].some((k) => k.startsWith(`${def.id}|`));
+  const paint = materialName(ctx, material);
+  const name = variant ? `${base} (${paint ?? "unpainted"})` : base;
+  if (variant) ctx.notes.add(`${base}: placed with different paint, so it came in as one component per paint`);
+  const item = itemOf(ctx, def, IDENTITY, base, { inherited: material });
+  const children = def.instances.map((i) => nodeFor(ctx, i, IDENTITY, depth + 1, material)).filter((n): n is ImportNode => n !== null);
+  ctx.defs.push({ name, items: item ? [item] : [], children });
+  const index = ctx.defs.length - 1;
+  ctx.defIndex.set(key, index);
+  ctx.summary.components++;
+  return index;
 }
 
 const SKIPPED_LABEL: Record<string, string> = {
@@ -255,12 +344,16 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     usedMaterials: new Set(),
     usedTags: new Set(),
     hiddenTags: new Set(),
-    groupNames: new Map(),
     skipped: new Map(),
+    placed: countPlacements(model),
+    defs: [],
+    defIndex: new Map(),
     summary: {
       version: model.version,
       definitions: Math.max(0, model.definitions.size),
       placements: 0,
+      components: 0,
+      groups: 0,
       faces: 0,
       looseEdges: 0,
       materials: model.materials.length,
@@ -272,11 +365,8 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   // Loose geometry drawn at the top level of the model.
   const root = itemOf(ctx, model.root, IDENTITY, stem, {});
   if (root) ctx.items.push(root);
-  for (const k of ["sectionPlanes", "texts", "dimensions", "constructionLines", "constructionPoints"] as const) {
-    const n = (model.root[k] as unknown[] | undefined)?.length ?? 0;
-    if (n) bump(ctx.skipped, k, n);
-  }
-  walk(ctx, model.root, IDENTITY, 0, { tag: null, material: null, hidden: false });
+  countSkipped(ctx, model.root);
+  const nodes = model.root.instances.map((i) => nodeFor(ctx, i, IDENTITY, 0, null)).filter((n): n is ImportNode => n !== null);
 
   const materials: MaterialDef[] = model.materials
     .filter((m) => ctx.usedMaterials.has(m.name))
@@ -298,13 +388,13 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     }));
   if (model.pages.length > scenes.length) ctx.notes.add(`${model.pages.length - scenes.length} scene(s) without a camera were left out`);
   if (ctx.summary.textures) ctx.notes.add(`${ctx.summary.textures} textured material(s): colours imported, textures kept as file-name references (not drawn yet)`);
-  if (ctx.groupNames.size && [...ctx.groupNames.values()].some((n) => n > 1))
-    ctx.notes.add("components placed more than once came in as separate copies (one group per placement; editing one does not change the others)");
+  if (ctx.summary.components)
+    ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} placed more than once came in as components: editing one copy changes them all`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   const hidden_tags = [...ctx.hiddenTags];
   return {
-    op: { op: "import", items: ctx.items, materials, scenes, hidden_tags },
+    op: { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes },
     notes: [...ctx.notes],
     summary: ctx.summary,
   };

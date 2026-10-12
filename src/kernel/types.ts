@@ -61,7 +61,7 @@ export type KernelOp =
   | { op: "update_scene"; name: string; scene: SceneDef }
   | { op: "delete_scene"; name: string }
   | { op: "activate_scene"; name: string }
-  | { op: "import"; items?: ImportItem[]; strokes?: ImportStroke[]; materials?: MaterialDef[]; scenes?: SceneDef[]; hidden_tags?: string[] }
+  | { op: "import"; items?: ImportItem[]; strokes?: ImportStroke[]; materials?: MaterialDef[]; scenes?: SceneDef[]; hidden_tags?: string[]; definitions?: ImportDefinition[]; nodes?: ImportNode[] }
   | { op: "define_material"; name: string; color: [number, number, number, number]; texture?: string | null }
   | { op: "set_material"; object: number; material: string | null }
   | { op: "rename_object"; object: number; name: string | null }
@@ -106,6 +106,21 @@ export interface ImportItem {
   /** Merge adjacent coplanar faces (triangle soups); false keeps drawn dividing edges. */
   merge_coplanar?: boolean;
 }
+
+/** A component definition in an import: geometry in its own coordinates, plus nested groups
+ * and instances (crates/kernel/src/model.rs `ImportDefinition`). */
+export interface ImportDefinition {
+  name: string;
+  items: ImportItem[];
+  children?: ImportNode[];
+}
+
+/** A group (geometry in the enclosing frame) or an instance of an import definition (index,
+ * placed by `xform` in the enclosing frame). */
+export type ImportNode = { name?: string | null; tag?: string | null; hidden?: boolean } & (
+  | { kind: "group"; items: ImportItem[]; children?: ImportNode[] }
+  | { kind: "instance"; definition: number; xform: Xform }
+);
 
 /** A stroke for a sketch (DXF lines, SVG paths): world points on one plane. */
 export interface ImportStroke {
