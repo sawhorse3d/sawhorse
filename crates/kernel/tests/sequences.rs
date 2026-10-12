@@ -361,7 +361,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
     // anything (so refusals of what is outside it are exercised too).
     let (ctx_sketches, ctx_objects) = (m.context_sketches(), m.context_objects());
     let sketch = |k: u8| {
-        if k % 8 != 0
+        if !k.is_multiple_of(8)
             && let Some(s) = pick(&ctx_sketches, k)
         {
             return s;
@@ -369,7 +369,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         pick(&sketches, k).unwrap_or(1)
     };
     let object = |k: u8| {
-        if k % 8 != 0
+        if !k.is_multiple_of(8)
             && let Some(o) = pick(&ctx_objects, k)
         {
             return o;
@@ -392,7 +392,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
     let all_nodes: Vec<u64> = m.nodes().iter().map(|(id, _)| *id).collect();
     let ctx_nodes = m.context_nodes();
     let node = |k: u8| {
-        if k % 8 != 0
+        if !k.is_multiple_of(8)
             && let Some(n) = pick(&ctx_nodes, k)
         {
             return n;
