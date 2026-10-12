@@ -3,7 +3,8 @@
 // buttons, and a note. Added around the mock's table: the rounding and "visible only"
 // controls, Print, a grain mark beside the size the grain runs along, and notes under a
 // part's name (shaped, handed, hidden, sheet). A click on a row selects its pieces in the
-// model; right-click sets the grain or the stock. Nesting is not built: its button says so.
+// model (Shift picks a range of rows, Ctrl toggles one); right-click sets the grain or the
+// stock of the row, or of every picked row at once. Nesting is not built: its button says so.
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
 import { formatSteps, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
@@ -22,11 +23,15 @@ export interface CutListPaneProps {
   onPin?: (pinned: boolean) => void;
   visibleOnly: boolean;
   onVisibleOnly: (v: boolean) => void;
-  /** Row keys whose pieces are all selected. */
+  /** Row keys whose pieces are all selected (the picked rows). */
   selected: Set<string>;
-  onSelectRow: (row: CutRow, mode: "replace" | "add" | "toggle") => void;
-  onGrain: (row: CutRow, grain: Grain) => void;
-  onStock: (row: CutRow, stock: string | null, sheet: boolean | null) => void;
+  /** Pick these rows (select their pieces); none clears the selection. */
+  onSelectRows: (rows: CutRow[]) => void;
+  /** Set the grain of these parts (one undo step). */
+  onGrain: (rows: CutRow[], grain: Grain) => void;
+  /** Set the stock of these parts (one undo step): text, null for the material's name, or
+   * "keep" for each part's own; `sheet` null means decide from the name and thickness. */
+  onStock: (rows: CutRow[], stock: string | null | "keep", sheet: boolean | null) => void;
   onCsv: () => void;
   onPdf: () => void;
   onPrint: () => void;
@@ -41,7 +46,37 @@ export function rowKey(row: CutRow): string {
 interface Menu {
   x: number;
   y: number;
-  row: CutRow;
+  /** The rows it acts on: the right-clicked row, or every picked row when it is one of them. */
+  rows: CutRow[];
+}
+
+/** "Side", or "3 parts". */
+function partsLabel(rows: CutRow[]): string {
+  return rows.length === 1 ? rows[0].name : `${rows.length} parts`;
+}
+
+/** The same value for every row, or undefined. */
+function common<T>(rows: CutRow[], f: (r: CutRow) => T): T | undefined {
+  return rows.length && rows.every((r) => f(r) === f(rows[0])) ? f(rows[0]) : undefined;
+}
+
+/** The rows a click picks: plain replaces, Ctrl toggles one, Shift picks the range from the
+ * anchor (Ctrl+Shift adds the range). In list order. */
+export function pickRows(rows: CutRow[], selected: Set<string>, clicked: CutRow, anchor: string | null, mods: { shift: boolean; toggle: boolean }): CutRow[] {
+  const keys = rows.map(rowKey);
+  const k = rowKey(clicked);
+  const at = keys.indexOf(k);
+  const from = anchor === null ? -1 : keys.indexOf(anchor);
+  let next: Set<string>;
+  if (mods.shift && from >= 0 && at >= 0) {
+    const range = keys.slice(Math.min(from, at), Math.max(from, at) + 1);
+    next = new Set(mods.toggle ? [...selected, ...range] : range);
+  } else if (mods.toggle) {
+    next = new Set(selected);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+  } else next = new Set([k]);
+  return rows.filter((r) => next.has(rowKey(r)));
 }
 
 /** Widest a size column grows (characters); longer sizes end in an ellipsis, in full in
@@ -74,7 +109,9 @@ const GRAIN_CHOICES: { grain: Grain; label: string }[] = [
 export function CutListPane(p: CutListPaneProps) {
   const { list } = p;
   const [menu, setMenu] = useState<Menu | null>(null);
-  const [stockFor, setStockFor] = useState<CutRow | null>(null);
+  const [stockFor, setStockFor] = useState<CutRow[] | null>(null);
+  /** Where a Shift-click range starts: the last row clicked without Shift. */
+  const [anchor, setAnchor] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -97,8 +134,17 @@ export function CutListPane(p: CutListPaneProps) {
   const empty = !!list && list.rows.length === 0;
   const openMenu = (e: ReactMouseEvent, row: CutRow) => {
     e.preventDefault();
-    setMenu({ x: e.clientX, y: e.clientY, row });
+    const k = rowKey(row);
+    const picked = p.selected.has(k) && p.selected.size > 1 && list ? list.rows.filter((x) => p.selected.has(rowKey(x))) : [row];
+    setMenu({ x: e.clientX, y: e.clientY, rows: picked });
   };
+  const clickRow = (e: ReactMouseEvent, row: CutRow) => {
+    if (!list) return;
+    const toggle = e.ctrlKey || e.metaKey;
+    p.onSelectRows(pickRows(list.rows, p.selected, row, anchor, { shift: e.shiftKey, toggle }));
+    if (!e.shiftKey) setAnchor(rowKey(row));
+  };
+  const menuKeys = new Set(menu?.rows.map(rowKey) ?? []);
 
   return (
     <div className="cutlist" data-testid="cutlist">
@@ -171,10 +217,11 @@ export function CutListPane(p: CutListPaneProps) {
                       data-row={k}
                       data-part={row.name}
                       aria-selected={sel}
-                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${menu && rowKey(menu.row) === k ? " menu" : ""}`}
-                      onClick={(e) => p.onSelectRow(row, e.ctrlKey || e.metaKey ? "toggle" : e.shiftKey ? "add" : "replace")}
+                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${menuKeys.has(k) ? " menu" : ""}`}
+                      onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                      onClick={(e) => clickRow(e, row)}
                       onContextMenu={(e) => openMenu(e, row)}
-                      title="Click to select its pieces in the model. Right-click to set the grain or the stock."
+                      title="Click to select its pieces in the model (Shift: a range of rows, Ctrl: one more). Right-click to set the grain or the stock of the picked rows."
                     >
                       <td className="part" title={notes.length ? `${row.name} (${notes.join(", ")})` : row.name}>
                         <span className="name">{row.name}</span>
@@ -233,32 +280,35 @@ export function CutListPane(p: CutListPaneProps) {
         {scopeNote(r)} Sizes in {sizeUnit(r)}.
       </p>
       {menu ? (
-        <div className="ctxmenu" ref={menuRef} role="menu" aria-label={`Cut list: ${menu.row.name}`} style={{ left: menu.x, top: menu.y }}>
-          <div className="ctxtitle" title={menu.row.name}>
-            {menu.row.name}
+        <div className="ctxmenu" ref={menuRef} role="menu" aria-label={`Cut list: ${partsLabel(menu.rows)}`} style={{ left: menu.x, top: menu.y }}>
+          <div className="ctxtitle" title={menu.rows.map((r) => r.name).join(", ")}>
+            {menu.rows.length === 1 ? menu.rows[0].name : `${menu.rows.length} parts: ${menu.rows.map((r) => r.name).join(", ")}`}
           </div>
-          {GRAIN_CHOICES.map((g) => (
-            <button
-              key={g.grain}
-              type="button"
-              role="menuitemradio"
-              aria-checked={menu.row.grain === g.grain}
-              onClick={() => {
-                setMenu(null);
-                p.onGrain(menu.row, g.grain);
-              }}
-            >
-              {g.label}
-              {menu.row.grain === g.grain ? <kbd>✓</kbd> : null}
-            </button>
-          ))}
+          {GRAIN_CHOICES.map((g) => {
+            const on = menu.rows.every((r) => r.grain === g.grain);
+            return (
+              <button
+                key={g.grain}
+                type="button"
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => {
+                  setMenu(null);
+                  p.onGrain(menu.rows, g.grain);
+                }}
+              >
+                {g.label}
+                {on ? <kbd>✓</kbd> : null}
+              </button>
+            );
+          })}
           <hr />
           <button
             type="button"
             role="menuitem"
             onClick={() => {
               setMenu(null);
-              setStockFor(menu.row);
+              setStockFor(menu.rows);
             }}
           >
             Stock / material…
@@ -268,41 +318,51 @@ export function CutListPane(p: CutListPaneProps) {
             role="menuitem"
             onClick={() => {
               setMenu(null);
-              p.onStock(menu.row, menu.row.stock_set ? menu.row.material : null, !menu.row.sheet);
+              p.onStock(menu.rows, "keep", !menu.rows.every((r) => r.sheet));
             }}
           >
-            {menu.row.sheet ? "Mark as solid lumber" : "Mark as sheet goods"}
+            {menu.rows.every((r) => r.sheet) ? "Mark as solid lumber" : "Mark as sheet goods"}
           </button>
           <button
             type="button"
             role="menuitem"
-            disabled={!menu.row.stock_set && !menu.row.sheet_set}
+            disabled={!menu.rows.some((r) => r.stock_set || r.sheet_set)}
             onClick={() => {
               setMenu(null);
-              p.onStock(menu.row, null, null);
+              p.onStock(menu.rows, null, null);
             }}
           >
             Use the material's name
           </button>
         </div>
       ) : null}
-      {stockFor ? <StockDialog row={stockFor} onClose={() => setStockFor(null)} onOk={(stock, sheet) => p.onStock(stockFor, stock, sheet)} /> : null}
+      {stockFor ? (
+        <StockDialog
+          rows={stockFor}
+          material={common(stockFor, (r) => r.material) ?? null}
+          kind={common(stockFor, (r) => (r.sheet_set ? (r.sheet ? "sheet" : "lumber") : "auto")) ?? "auto"}
+          onClose={() => setStockFor(null)}
+          onOk={(stock, sheet) => p.onStock(stockFor, stock, sheet)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function StockDialog({ row, onClose, onOk }: { row: CutRow; onClose: () => void; onOk: (stock: string | null, sheet: boolean | null) => void }) {
-  const [v, setV] = useState(row.stock_set ? (row.material ?? "") : (row.material ?? ""));
-  const [kind, setKind] = useState<"auto" | "lumber" | "sheet">(row.sheet_set ? (row.sheet ? "sheet" : "lumber") : "auto");
+function StockDialog({ rows, material, kind: initial, onClose, onOk }: { rows: CutRow[]; material: string | null; kind: "auto" | "lumber" | "sheet"; onClose: () => void; onOk: (stock: string | null, sheet: boolean | null) => void }) {
+  const [v, setV] = useState(material ?? "");
+  const [kind, setKind] = useState<"auto" | "lumber" | "sheet">(initial);
   const ok = () => {
     onClose();
     const text = v.trim();
     onOk(text ? text : null, kind === "auto" ? null : kind === "sheet");
   };
+  const who = partsLabel(rows);
   return (
-    <section className="name-dialog" role="dialog" aria-label={`Stock for ${row.name}`}>
+    <section className="name-dialog" role="dialog" aria-label={`Stock for ${who}`}>
       <header>
-        <b>Stock for {row.name}</b>
+        <b>Stock for {who}</b>
+        {rows.length > 1 ? <small title={rows.map((r) => r.name).join(", ")}>{rows.map((r) => r.name).join(", ")}</small> : null}
       </header>
       <label>
         <span>Species or sheet stock (shown in the Material column)</span>

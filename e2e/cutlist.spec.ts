@@ -223,26 +223,47 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   });
   expect(totals).toEqual([0, 1, 2].map(() => [18.994140625, 1, ["Back panel"]]));
 
-  // Stock from the right-click menu: the carcass and shelves are white oak, the back ply.
-  for (const name of ["Side", "Top", "Toe kick", "Shelf"]) {
-    await page.locator(".cutlist tbody tr", { hasText: name }).first().click({ button: "right" });
-    await page.getByRole("menuitem", { name: /Stock/ }).click();
-    const dialog = page.getByRole("dialog", { name: `Stock for ${name}` });
-    await dialog.getByRole("textbox").fill("White oak");
-    await dialog.getByRole("button", { name: "Set stock" }).click();
-    await expect(hint(page)).toContainText(`'${name}' is cut from White oak`);
-  }
+  // Stock from the right-click menu, for many rows at once: Side, then Shift+click Shelf
+  // picks the carcass and shelves (one range of four rows); one Stock sets them all, as one
+  // undo step. The back is ply.
+  const tr = (name: string) => page.locator(".cutlist tbody tr", { hasText: name }).first();
+  const undoDepth = async () => Number(/undo (\d+)/.exec(await page.locator(".vp .hud").innerText())?.[1]);
+  const before = await undoDepth();
+  await tr("Side").click();
+  await tr("Shelf").click({ modifiers: ["Shift"] });
+  await expect(hint(page)).toContainText("Selected 8 pieces of 4 parts");
+  for (const name of ["Side", "Top", "Toe kick", "Shelf"]) await expect(tr(name)).toHaveAttribute("aria-selected", "true");
+  await expect(tr("Back panel")).toHaveAttribute("aria-selected", "false");
+  await tr("Toe kick").click({ button: "right" });
+  await expect(page.getByRole("menu").locator(".ctxtitle")).toHaveText("4 parts: Side, Top, Toe kick, Shelf");
+  await page.getByRole("menuitem", { name: /Stock/ }).click();
+  const many = page.getByRole("dialog", { name: "Stock for 4 parts" });
+  await many.getByRole("textbox").fill("White oak");
+  await many.getByRole("button", { name: "Set stock" }).click();
+  await expect(hint(page)).toContainText("4 parts are cut from White oak");
+  expect(await undoDepth()).toBe(before + 1);
   await page.locator(".cutlist tbody tr", { hasText: "Back panel" }).click({ button: "right" });
   await page.getByRole("menuitem", { name: /Stock/ }).click();
   const dialog = page.getByRole("dialog", { name: "Stock for Back panel" });
   await dialog.getByRole("textbox").fill("1/4 birch ply");
   await dialog.getByLabel("Counted as").selectOption("sheet");
   await dialog.getByRole("button", { name: "Set stock" }).click();
-  // The top's grain across its width.
+  // The top's grain across its width (a plain click picks it alone first).
+  await tr("Top").click();
   await page.locator(".cutlist tbody tr", { hasText: "Top" }).click({ button: "right" });
   await page.getByRole("menuitemradio", { name: /across/ }).click();
   await expect(hint(page)).toContainText("Grain of 'Top': across W");
   await expect(page.locator(".cutlist tbody tr", { hasText: "Top" }).locator("td").nth(3).locator("i.grain")).toHaveCount(1);
+  // Ctrl+Z and Ctrl+Y work while the pane's controls have focus (the select, the checkbox).
+  await page.getByLabel("Round sizes to").focus();
+  await page.keyboard.press("Control+z");
+  await expect(hint(page)).toContainText("Undone.");
+  await expect(page.locator(".cutlist tbody tr", { hasText: "Top" }).locator("td").nth(4).locator("i.grain")).toHaveCount(1);
+  await page.getByLabel("Visible only").focus();
+  await page.keyboard.press("Control+y");
+  await expect(hint(page)).toContainText("Redone.");
+  await expect(page.locator(".cutlist tbody tr", { hasText: "Top" }).locator("td").nth(3).locator("i.grain")).toHaveCount(1);
+  await expect(page.getByLabel("Visible only")).not.toBeChecked();
   await expect.poll(async () => (await cutRows(page)).map((r) => r[5])).toEqual(["White oak", "White oak", "White oak", "White oak", "1/4 birch ply"]);
   await expect(page.getByTestId("tile-board-feet")).toHaveText("18.99board feet, White oak");
   await expect(page.getByTestId("tile-sheets")).toHaveText("1sheet 4×8 1/4 birch ply, 1/4");

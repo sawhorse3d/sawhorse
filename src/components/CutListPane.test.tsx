@@ -2,14 +2,17 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
-import { columnWidths, CutListPane, rowKey, type CutListPaneProps } from "./CutListPane";
+import { columnWidths, CutListPane, pickRows, rowKey, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
 import { REPORT_COLUMNS, reportCells } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
 import { reportPdf } from "../cutlist/documents";
-import type { CutList } from "../kernel/types";
+import type { CutList, CutRow } from "../kernel/types";
 
 afterEach(cleanup);
+
+/** The row names of a handler's last call. */
+const names = (fn: unknown) => ((fn as ReturnType<typeof vi.fn>).mock.lastCall![0] as CutRow[]).map((r) => r.name);
 
 function props(over: Partial<CutListPaneProps> = {}): CutListPaneProps {
   return {
@@ -19,7 +22,7 @@ function props(over: Partial<CutListPaneProps> = {}): CutListPaneProps {
     visibleOnly: false,
     onVisibleOnly: vi.fn(),
     selected: new Set(),
-    onSelectRow: vi.fn(),
+    onSelectRows: vi.fn(),
     onGrain: vi.fn(),
     onStock: vi.fn(),
     onCsv: vi.fn(),
@@ -86,14 +89,15 @@ describe("Cut list pane", () => {
     const shelf = screen.getByText("Shelf").closest("tr")!;
     expect(shelf.getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByText("Side").closest("tr")!);
-    expect(p.onSelectRow).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Side" }), "replace");
+    expect(names(p.onSelectRows)).toEqual(["Side"]);
+    // Ctrl toggles the shelf off (it was the selection).
     fireEvent.click(shelf, { ctrlKey: true });
-    expect(p.onSelectRow).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Shelf" }), "toggle");
+    expect(names(p.onSelectRows)).toEqual([]);
     fireEvent.contextMenu(screen.getByText("Top").closest("tr")!);
     const menu = screen.getByRole("menu", { name: "Cut list: Top" });
     expect(within(menu).getByRole("menuitemradio", { name: /across/ }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(within(menu).getByRole("menuitemradio", { name: /along the length/ }));
-    expect(p.onGrain).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Top" }), "length");
+    expect(p.onGrain).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Top" })], "length");
     // Stock: a dialog with the name and how it is counted.
     fireEvent.contextMenu(screen.getByText("Back panel").closest("tr")!);
     fireEvent.click(screen.getByRole("menuitem", { name: /Stock/ }));
@@ -103,11 +107,64 @@ describe("Cut list pane", () => {
     fireEvent.change(input, { target: { value: "1/4 Baltic birch ply" } });
     fireEvent.change(within(dialog).getByLabelText("Counted as"), { target: { value: "sheet" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Set stock" }));
-    expect(p.onStock).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Back panel" }), "1/4 Baltic birch ply", true);
+    expect(p.onStock).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Back panel" })], "1/4 Baltic birch ply", true);
     // Mark the sides as sheet goods (keeps their material's name).
     fireEvent.contextMenu(screen.getByText("Side").closest("tr")!);
     fireEvent.click(screen.getByRole("menuitem", { name: "Mark as sheet goods" }));
-    expect(p.onStock).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Side" }), null, true);
+    expect(p.onStock).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Side" })], "keep", true);
+  });
+
+  it("Shift picks a range of rows, Ctrl adds one; right-click on a picked row acts on them all", () => {
+    const list = bookshelf();
+    const p = props();
+    const { rerender } = render(<CutListPane {...p} />);
+    const tr = (name: string) => screen.getByText(name, { selector: ".name" }).closest("tr")!;
+    fireEvent.click(tr("Side"));
+    fireEvent.click(tr("Top"), { shiftKey: true });
+    expect(names(p.onSelectRows)).toEqual(["Side", "Shelf", "Top"]);
+    // The app selects their pieces; the rows come back picked.
+    const picked = new Set([0, 1, 2].map((k) => rowKey(list.rows[k])));
+    rerender(<CutListPane {...p} selected={picked} />);
+    fireEvent.click(tr("Back panel"), { ctrlKey: true });
+    expect(names(p.onSelectRows)).toEqual(["Side", "Shelf", "Top", "Back panel"]);
+    // Ctrl+Shift adds a range (from the last plain or Ctrl click).
+    fireEvent.click(tr("Toe kick"), { ctrlKey: true, shiftKey: true });
+    expect(names(p.onSelectRows)).toEqual(["Side", "Shelf", "Top", "Toe kick", "Back panel"]);
+    // Right-click a picked row: the menu is for all three, titled with them, all marked.
+    fireEvent.contextMenu(tr("Shelf"));
+    const menu = screen.getByRole("menu", { name: "Cut list: 3 parts" });
+    expect(menu.querySelector(".ctxtitle")?.textContent).toBe("3 parts: Side, Shelf, Top");
+    for (const n of ["Side", "Shelf", "Top"]) expect(tr(n).className).toContain("menu");
+    expect(tr("Toe kick").className).not.toContain("menu");
+    // Mixed grain: no choice is ticked.
+    expect(within(menu).getAllByRole("menuitemradio").map((b) => b.getAttribute("aria-checked"))).toEqual(["false", "false", "false"]);
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /No grain/ }));
+    expect((p.onGrain as ReturnType<typeof vi.fn>).mock.lastCall![0].map((r: CutRow) => r.name)).toEqual(["Side", "Shelf", "Top"]);
+    // Stock for all three in one dialog (they share Oak).
+    fireEvent.contextMenu(tr("Top"));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Stock/ }));
+    const dialog = screen.getByRole("dialog", { name: "Stock for 3 parts" });
+    const input = within(dialog).getByRole("textbox") as HTMLInputElement;
+    expect(input.value).toBe("Oak");
+    fireEvent.change(input, { target: { value: "White oak" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Set stock" }));
+    const [rows, stock, sheet] = (p.onStock as ReturnType<typeof vi.fn>).mock.lastCall!;
+    expect([rows.map((r: CutRow) => r.name), stock, sheet]).toEqual([["Side", "Shelf", "Top"], "White oak", null]);
+    // Right-click a row that is not picked: just that row.
+    fireEvent.contextMenu(tr("Toe kick"));
+    expect(screen.getByRole("menu", { name: "Cut list: Toe kick" })).toBeTruthy();
+  });
+
+  it("pickRows: plain, Ctrl, Shift, Ctrl+Shift", () => {
+    const rows = bookshelf().rows;
+    const k = (n: number) => rowKey(rows[n]);
+    const nm = (rs: CutRow[]) => rs.map((r) => r.name);
+    expect(nm(pickRows(rows, new Set([k(0)]), rows[3], k(0), { shift: false, toggle: false }))).toEqual(["Toe kick"]);
+    expect(nm(pickRows(rows, new Set([k(0)]), rows[3], k(0), { shift: true, toggle: false }))).toEqual(["Side", "Shelf", "Top", "Toe kick"]);
+    expect(nm(pickRows(rows, new Set([k(4)]), rows[1], k(4), { shift: true, toggle: false }))).toEqual(["Shelf", "Top", "Toe kick", "Back panel"]);
+    expect(nm(pickRows(rows, new Set([k(0)]), rows[0], k(0), { shift: false, toggle: true }))).toEqual([]);
+    expect(nm(pickRows(rows, new Set([k(0)]), rows[2], null, { shift: true, toggle: false }))).toEqual(["Top"]);
+    expect(nm(pickRows(rows, new Set([k(4)]), rows[1], k(0), { shift: true, toggle: true }))).toEqual(["Side", "Shelf", "Back panel"]);
   });
 
   it("rounding, visible only and the exports reach their handlers", () => {

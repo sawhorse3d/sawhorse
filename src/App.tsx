@@ -51,6 +51,7 @@ import { SceneTabs } from "./components/SceneTabs";
 import type { OutlineRow, OutlinerAction } from "./components/Outliner";
 import { TAG_PALETTE, hexToRgb } from "./components/TagsPane";
 import { applySelection } from "./lib/entities";
+import { isEditableText } from "./lib/focus";
 import type { Item, SceneDef } from "./kernel/types";
 import { useCredits } from "./credits/useCredits";
 import { storageNote } from "./credits/device";
@@ -170,6 +171,24 @@ function isTextEntry(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   return el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
+
+/** One op per part named (rows of one part, a scaled copy's, name it once); several are one
+ * batch, so one Undo puts them all back. */
+function partOps(rows: CutRow[], make: (row: CutRow) => KernelOp): KernelOp {
+  const seen = new Set<string>();
+  const ops: KernelOp[] = [];
+  for (const row of rows) {
+    const k = JSON.stringify(row.target);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    ops.push(make(row));
+  }
+  return ops.length === 1 ? ops[0] : { op: "batch", ops };
+}
+function partNames(rows: CutRow[]): string {
+  return rows.length === 1 ? quoted(rows[0].name) : `${rows.length} parts`;
+}
+
 
 type Message = StatusMessage | null;
 
@@ -1151,22 +1170,28 @@ export function App() {
     [apply, activeScene],
   );
 
-  /** A cut list row clicked: select its drawn pieces, opening what holds them when they share
-   * a closed group or component (as the Outliner does); pieces in several places select what
-   * holds each of them in the open context. */
-  const selectCutRow = useCallback(
-    (row: CutRow, mode: "replace" | "add" | "toggle") => {
+  /** Cut list rows picked (a click, Shift for a range, Ctrl to toggle): select their drawn
+   * pieces, opening what holds them when they share a closed group or component (as the
+   * Outliner does); pieces in several places select what holds each of them in the open
+   * context. No rows clears the selection. */
+  const selectCutRows = useCallback(
+    (rows: CutRow[]) => {
       const state = live.current.scene?.state;
       const g = graphOf(state);
-      const pieces: Entity[] = row.occurrences.filter((o) => o.visible).map((o) => ("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object }));
-      if (!pieces.length) return void setMessage({ text: `Every '${row.name}' is hidden: show it (the Outliner's eye or its tag) to select it.`, error: true });
+      if (!rows.length) {
+        select([]);
+        return;
+      }
+      const pieces: Entity[] = rows.flatMap((row) => row.occurrences.filter((o) => o.visible).map((o): Entity => ("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object })));
+      const names = rows.length === 1 ? quoted(rows[0].name) : `${rows.length} parts`;
+      if (!pieces.length) return void setMessage({ text: rows.length === 1 ? `Every '${rows[0].name}' is hidden: show it (the Outliner's eye or its tag) to select it.` : `Every piece of those ${rows.length} parts is hidden: show them to select them.`, error: true });
       const parentOf = (e: Entity) => (e.kind === "node" ? (g.nodes.find((n) => n.id === e.node)?.parent ?? null) : e.kind === "object" ? (g.objects.find((o) => o.id === e.object)?.parent ?? null) : null);
       const parents = new Set(pieces.map(parentOf));
-      const what = `${plural(pieces.length, "piece")} of ${quoted(row.name)}`;
+      const what = `${plural(pieces.length, "piece")} of ${names}`;
       if (parents.size === 1) {
         const p = [...parents][0];
         if (p === g.context) {
-          select(applySelection(live.current.selection, pieces, mode));
+          select(pieces);
           setMessage({ text: `Selected ${what}.`, error: false });
           return;
         }
@@ -1186,31 +1211,54 @@ export function App() {
           holders.push(s);
         }
       }
-      select(applySelection(live.current.selection, holders, mode));
+      select(holders);
       setMessage({ text: `The ${what} are in ${holders.length === 1 ? "one group or component" : `${holders.length} groups or components`}; selected ${holders.length === 1 ? "it" : "those"}.`, error: false });
     },
     [apply, select],
   );
 
+  /** Rows whose drawn pieces are all selected, or held by something selected (a row picked
+   * along with rows elsewhere selects the groups or components holding its pieces). */
   const cutSelected = useMemo(() => {
     const keys = new Set(selection.map(entityKey));
+    const g = graphOf(scene?.state);
+    const held = (e: Entity): boolean => {
+      if (keys.has(entityKey(e))) return true;
+      let at = e.kind === "node" ? (g.nodes.find((n) => n.id === e.node)?.parent ?? null) : e.kind === "object" ? (g.objects.find((o) => o.id === e.object)?.parent ?? null) : null;
+      for (let guard = 0; at !== null && guard < 64; guard++) {
+        if (keys.has(entityKey({ kind: "node", node: at }))) return true;
+        at = g.nodes.find((n) => n.id === at)?.parent ?? null;
+      }
+      return false;
+    };
     const out = new Set<string>();
+    if (!keys.size) return out;
     for (const row of cutList?.rows ?? []) {
       const vis = row.occurrences.filter((o) => o.visible);
-      if (vis.length && vis.every((o) => keys.has(entityKey("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object })))) out.add(rowKey(row));
+      if (vis.length && vis.every((o) => held("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object }))) out.add(rowKey(row));
     }
     return out;
-  }, [selection, cutList]);
+  }, [selection, cutList, scene]);
 
   const setGrain = useCallback(
-    (row: CutRow, grain: Grain) => void apply({ op: "set_grain", part: row.target, grain }, () => `Grain of ${quoted(row.name)}: ${GRAIN_WORDS[grain]}.`),
+    (rows: CutRow[], grain: Grain) => void apply(partOps(rows, (row) => ({ op: "set_grain", part: row.target, grain })), () => `Grain of ${partNames(rows)}: ${GRAIN_WORDS[grain]}.`),
     [apply],
   );
+  /** `stock`: the text to set, null to use the material's name, or "keep" for each part's own
+   * (marking sheet goods or lumber leaves the stock text alone). */
   const setStock = useCallback(
-    (row: CutRow, stock: string | null, sheet: boolean | null) =>
-      void apply({ op: "set_stock", part: row.target, stock, sheet }, () =>
-        stock ? `${quoted(row.name)} is cut from ${stock}${sheet === null ? "" : sheet ? " (sheet goods)" : " (solid lumber)"}.` : sheet === null ? `${quoted(row.name)} uses its material's name again.` : `${quoted(row.name)} counted as ${sheet ? "sheet goods" : "solid lumber"}.`,
-      ),
+    (rows: CutRow[], stock: string | null | "keep", sheet: boolean | null) => {
+      const own = (row: CutRow) => (stock === "keep" ? (row.stock_set ? row.material : null) : stock);
+      const who = partNames(rows);
+      const are = rows.length === 1 ? "is" : "are";
+      void apply(partOps(rows, (row) => ({ op: "set_stock", part: row.target, stock: own(row), sheet })), () =>
+        stock && stock !== "keep"
+          ? `${who} ${are} cut from ${stock}${sheet === null ? "" : sheet ? " (sheet goods)" : " (solid lumber)"}.`
+          : sheet === null
+            ? `${who} ${rows.length === 1 ? "uses its" : "use their"} material's name again.`
+            : `${who} counted as ${sheet ? "sheet goods" : "solid lumber"}.`,
+      );
+    },
     [apply],
   );
 
@@ -1289,7 +1337,9 @@ export function App() {
       // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
       const textEntry = isTextEntry(e.target) && !(inVcb && !live.current.vcbEditing);
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.altKey && (!isTextEntry(e.target) || inVcb)) {
+      // Undo, redo and the file shortcuts are the app's wherever focus is (a pane's select,
+      // checkbox or button too), unless a text field is being edited (it has its own undo).
+      if (mod && !e.altKey && (!isEditableText(e.target) || inVcb)) {
         const k = e.key.toLowerCase();
         if (k === "z" && !e.shiftKey) {
           e.preventDefault();
@@ -1678,7 +1728,7 @@ export function App() {
           visibleOnly: cutVisibleOnly,
           onVisibleOnly: setCutVisibleOnly,
           selected: cutSelected,
-          onSelectRow: selectCutRow,
+          onSelectRows: selectCutRows,
           onGrain: setGrain,
           onStock: setStock,
           onCsv: () => void saveCut(csvBytes, "cut list.csv", CSV_TYPE, "the cut list as a spreadsheet"),
