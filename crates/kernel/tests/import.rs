@@ -34,6 +34,7 @@ fn quad_box(name: &str, min: [f64; 3], s: [f64; 3]) -> ImportItem {
         .collect(),
         lines: vec![],
         merge_coplanar: false,
+        face_labels: vec![],
     }
 }
 

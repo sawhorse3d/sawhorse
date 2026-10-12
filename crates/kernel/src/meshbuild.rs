@@ -52,6 +52,11 @@ pub struct ImportItem {
     /// STL; wrong for `.skp` faces, whose dividing edges were drawn on purpose).
     #[serde(default)]
     pub merge_coplanar: bool,
+    /// With `merge_coplanar`: a label per face; only faces with the same label merge (a
+    /// GLB written by Sawhorse carries each triangle's face id, so drawn edges between
+    /// coplanar faces survive the round trip). Empty: any coplanar neighbours merge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_labels: Vec<u32>,
 }
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
@@ -233,10 +238,15 @@ fn find(parent: &mut [usize], mut x: usize) -> usize {
     x
 }
 
-/// Triangles of a set of faces (global indices). `None` when a face will not triangulate.
-fn triangulate_faces(faces: &[&Vec<Vec<u32>>], pts: &[DVec3]) -> Option<Vec<[u32; 3]>> {
+/// Triangles of a set of faces (global indices) and the face each came from. `None` when a
+/// face will not triangulate.
+fn triangulate_faces(
+    faces: &[&Vec<Vec<u32>>],
+    pts: &[DVec3],
+) -> Option<(Vec<[u32; 3]>, Vec<usize>)> {
     let mut tris = Vec::new();
-    for f in faces {
+    let mut from = Vec::new();
+    for (fi, f) in faces.iter().enumerate() {
         let plane = Plane::fit(&ring_points(&f[0], pts)).ok()?;
         let flat: Vec<u32> = f.iter().flatten().copied().collect();
         let ring = |r: &Vec<u32>| -> Vec<DVec2> {
@@ -245,9 +255,10 @@ fn triangulate_faces(faces: &[&Vec<Vec<u32>>], pts: &[DVec3]) -> Option<Vec<[u32
         let holes: Vec<Vec<DVec2>> = f[1..].iter().map(ring).collect();
         for t in triangulate(&ring(&f[0]), &holes).ok()? {
             tris.push(t.map(|k| flat[k as usize]));
+            from.push(fi);
         }
     }
-    Some(tris)
+    Some((tris, from))
 }
 
 fn signed_volume(tris: &[[u32; 3]], pts: &[DVec3]) -> f64 {
@@ -262,7 +273,11 @@ fn signed_volume(tris: &[[u32; 3]], pts: &[DVec3]) -> f64 {
 /// Group triangles into coplanar, edge-connected clusters: a label per triangle and a plane
 /// per label. A neighbour joins when all its vertices lie within [`PLANARITY`] of the
 /// cluster's plane and it faces the same way.
-fn coplanar_clusters(tris: &[[u32; 3]], pts: &[DVec3]) -> (Vec<u32>, Vec<Plane>) {
+fn coplanar_clusters(
+    tris: &[[u32; 3]],
+    pts: &[DVec3],
+    labels: Option<&[u32]>,
+) -> (Vec<u32>, Vec<Plane>) {
     let mut by_edge: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
     for (ti, t) in tris.iter().enumerate() {
         for k in 0..3 {
@@ -296,7 +311,8 @@ fn coplanar_clusters(tris: &[[u32; 3]], pts: &[DVec3]) -> (Vec<u32>, Vec<Plane>)
                     let on_plane = tris[u]
                         .iter()
                         .all(|&v| plane.signed_distance(pts[v as usize]).abs() <= PLANARITY);
-                    if on_plane && normal(&tris[u]).dot(n0) > 1.0 - 1e-6 {
+                    let same = labels.is_none_or(|l| l[u] == l[seed]);
+                    if same && on_plane && normal(&tris[u]).dot(n0) > 1.0 - 1e-6 {
                         label[u] = id;
                         stack.push(u);
                     }
@@ -351,15 +367,37 @@ fn shell_polys(faces: &[Vec<Vec<u32>>], pts: Vec<DVec3>) -> Polys {
 
 /// Merge coplanar triangles of one closed shell into n-gons (through the boolean path's
 /// re-polygoniser, which also heals vertices left running straight through an edge).
-fn merged_polys(tris: &[[u32; 3]], pts: &[DVec3]) -> Option<Polys> {
-    let (labels, planes) = coplanar_clusters(tris, pts);
+fn merged_polys(tris: &[[u32; 3]], pts: &[DVec3], tri_labels: Option<&[u32]>) -> Option<Polys> {
+    let (labels, planes) = coplanar_clusters(tris, pts, tri_labels);
+    // With labels, an edge between two differently labelled coplanar faces is a drawn
+    // edge: keep it (the re-polygoniser merges coplanar neighbours across anything else).
+    let mut preserved = Vec::new();
+    if tri_labels.is_some() {
+        let mut by_edge: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+        for (t, tri) in tris.iter().enumerate() {
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                if let Some(&s) = by_edge.get(&(b, a)) {
+                    let (pa, pb) = (planes[labels[t] as usize], planes[labels[s] as usize]);
+                    if labels[t] != labels[s]
+                        && pa.normal.dot(pb.normal) > 1.0 - 1e-9
+                        && pa.signed_distance(pb.origin).abs() <= PLANARITY
+                    {
+                        preserved.push((pts[a as usize], pts[b as usize]));
+                    }
+                } else {
+                    by_edge.insert((a, b), t);
+                }
+            }
+        }
+    }
     let solid = TriSolid {
         positions: pts.to_vec(),
         triangles: tris.to_vec(),
         face_ids: labels,
     };
     let ids = vec![None; planes.len()];
-    let mut p = repolygonise(&solid, &planes, &ids, &[]).ok()?;
+    let mut p = repolygonise(&solid, &planes, &ids, &preserved).ok()?;
     for f in &mut p.faces {
         f.id = None;
     }
@@ -422,7 +460,16 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     let mut pinched_faces: Vec<Vec<Vec<u32>>> = Vec::new();
     let mut seen: BTreeSet<Vec<Vec<u32>>> = BTreeSet::new();
     let mut faces: Vec<Vec<Vec<u32>>> = Vec::new();
-    for f in &item.faces {
+    let mut face_label: Vec<u32> = Vec::new();
+    let labelled = item.face_labels.len() == item.faces.len() && !item.faces.is_empty();
+    if !item.face_labels.is_empty() && !labelled {
+        return Err(bad(format!(
+            "{name}: {} face labels for {} faces",
+            item.face_labels.len(),
+            item.faces.len()
+        )));
+    }
+    for (src, f) in item.faces.iter().enumerate() {
         if f.is_empty() {
             degenerate += 1;
             continue;
@@ -450,6 +497,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             continue;
         }
         faces.push(rings);
+        face_label.push(if labelled { item.face_labels[src] } else { 0 });
     }
     if degenerate > 0 {
         notes.push(format!(
@@ -519,6 +567,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
         }
         let mut shell_faces: Vec<Vec<Vec<u32>>> =
             members.iter().map(|&fi| faces[fi].clone()).collect();
+        let shell_labels: Vec<u32> = members.iter().map(|&fi| face_label[fi]).collect();
         if open + over + orient > 0 {
             let mut why = Vec::new();
             if open > 0 {
@@ -541,7 +590,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             continue;
         }
         let refs: Vec<&Vec<Vec<u32>>> = shell_faces.iter().collect();
-        let Some(mut tris) = triangulate_faces(&refs, &pts) else {
+        let Some((mut tris, tri_face)) = triangulate_faces(&refs, &pts) else {
             fail(&mut reasons, "a face that will not triangulate".into());
             loose_faces.extend(shell_faces);
             continue;
@@ -582,8 +631,10 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             })
             .collect();
         let ltris: Vec<[u32; 3]> = tris.iter().map(|t| t.map(|v| local[&v])).collect();
+        let tri_labels: Vec<u32> = tri_face.iter().map(|&f| shell_labels[f]).collect();
+        let tri_labels = labelled.then_some(tri_labels.as_slice());
         let attempt = if item.merge_coplanar {
-            match merged_polys(&ltris, &lp) {
+            match merged_polys(&ltris, &lp, tri_labels) {
                 Some(p) => {
                     merged_from += ltris.len();
                     as_solid(&p)
@@ -595,7 +646,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
                 Ok(o) => Ok(o),
                 // Faces a little off planar (common in exported files) are rebuilt from
                 // their triangles, merged only where they are truly coplanar.
-                Err(first) => match merged_polys(&ltris, &lp).map(|p| as_solid(&p)) {
+                Err(first) => match merged_polys(&ltris, &lp, None).map(|p| as_solid(&p)) {
                     Some(Ok(o)) => {
                         rebuilt += 1;
                         Ok(o)
@@ -738,6 +789,7 @@ mod tests {
             faces,
             lines: vec![],
             merge_coplanar: true,
+            face_labels: vec![],
         }
     }
 
@@ -857,6 +909,7 @@ mod tests {
             faces,
             lines: vec![],
             merge_coplanar: false,
+            face_labels: vec![],
         };
         let b = build_item(&item).unwrap();
         assert_eq!(b.solids.len(), 1, "{:?}", b.notes);
@@ -867,6 +920,28 @@ mod tests {
             1,
             "the line across the top is a drawn edge"
         );
+    }
+
+    #[test]
+    fn face_labels_keep_coplanar_faces_apart() {
+        // The box's top (two triangles) labelled as two different faces: a drawn diagonal.
+        let mut item = stl_box([0.0; 3], [1.0, 1.0, 1.0]);
+        item.face_labels = vec![1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 7, 7];
+        let b = build_item(&item).unwrap();
+        let p = b.solids[0].brep().to_polys();
+        assert_eq!(p.faces.len(), 7);
+        assert_eq!(
+            p.user_edges.len(),
+            1,
+            "the diagonal between the labels is a drawn edge"
+        );
+        // Without labels the top is one face again.
+        item.face_labels.clear();
+        let one = build_item(&item).unwrap().solids[0].brep().to_polys();
+        assert_eq!((one.faces.len(), one.user_edges.len()), (6, 0));
+        item.face_labels = vec![1; 12];
+        item.face_labels.pop();
+        assert!(build_item(&item).is_err(), "one label per face");
     }
 
     #[test]

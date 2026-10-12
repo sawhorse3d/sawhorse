@@ -313,6 +313,7 @@ export interface WasmDoc {
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
   export_file(format: string, options: string): Uint8Array;
+  import_file(name: string, bytes: Uint8Array, options: string): string;
   free(): void;
 }
 
@@ -334,7 +335,8 @@ export type RequestBody =
   | { kind: "infer"; query: InferQuery }
   | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
   | { kind: "export"; format: "stl" | "obj"; object: number }
-  | { kind: "exportFile"; format: ExportFormat; options: ExportOptions };
+  | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
+  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -350,6 +352,14 @@ export interface ViewSpec {
   half_height: number;
   width: number;
   height: number;
+}
+
+/** Units for files that do not say (STL, OBJ, a DXF without $INSUNITS). */
+export type ImportUnit = "mm" | "cm" | "m" | "in" | "ft";
+
+export interface ImportOptions {
+  units?: ImportUnit;
+  name?: string;
 }
 
 export interface ExportOptions {
@@ -372,5 +382,7 @@ export type WorkerResponse =
       inference?: Inference | null;
       rings?: V3[][];
       file?: Uint8Array | string;
+      /** Reader notes from an import (units assumed, entities skipped). */
+      notes?: string[];
     }
   | { id: number; ok: false; error: string; missing?: boolean };

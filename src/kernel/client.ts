@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { ExportFormat, ExportOptions, Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -108,6 +108,12 @@ export class KernelClient {
     const r = await this.call({ kind: "exportFile", format, options });
     if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no file");
     return r.file;
+  }
+
+  /** Import a file (format from its name, else its bytes) as one undoable step. */
+  async importFile(name: string, bytes: Uint8Array, options: ImportOptions = {}): Promise<EditResult & { notes: string[] }> {
+    const r = await this.call({ kind: "importFile", name, bytes, options });
+    return { ...this.edit(r), notes: r.notes ?? [] };
   }
 
   private edit(r: WorkerResponse & { ok: true }): EditResult {

@@ -426,6 +426,31 @@ impl DocCore {
         }
     }
 
+    /// Read a file (`name` picks the format by extension, else the bytes do) and apply it
+    /// as one import op. Returns `{"outcome": ..., "notes": [...]}` as JSON: the kernel's
+    /// outcome (with its own notes on healing and non-solid meshes) and the reader's notes
+    /// (units assumed, entities skipped).
+    pub fn import(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        options_json: &str,
+    ) -> Result<String, String> {
+        let mut opts: sawhorse_import::ImportOptions = if options_json.trim().is_empty() {
+            sawhorse_import::ImportOptions::default()
+        } else {
+            serde_json::from_str(options_json).map_err(|e| format!("bad import options: {e}"))?
+        };
+        if opts.name.is_empty() {
+            opts.name = name.to_string();
+        }
+        let parsed = sawhorse_import::read(None, bytes, &opts).map_err(|e| e.to_string())?;
+        let out = self.doc.apply(&parsed.op()).map_err(|e| e.to_string())?;
+        self.scene.replace(None);
+        serde_json::to_string(&serde_json::json!({ "outcome": out, "notes": parsed.notes }))
+            .map_err(|e| e.to_string())
+    }
+
     /// Write the document (or a scope of it) in `format`: `stl`, `3mf`, `glb`, `obj`,
     /// `mtl`, `dxf`, `dxf-outline`, `svg-view`, `svg-outline`. Options as JSON (see
     /// [`ExportOptions`]); an empty string means the defaults.
@@ -643,6 +668,16 @@ impl Doc {
     /// Wavefront OBJ (mm, Z-up) of one object.
     pub fn export_obj(&self, object_id: f64) -> Result<String, JsError> {
         self.core.obj(id(object_id)?).map_err(js)
+    }
+
+    /// Import a file into the document as one undoable step (see [`DocCore::import`]).
+    pub fn import_file(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        options_json: &str,
+    ) -> Result<String, JsError> {
+        self.core.import(name, bytes, options_json).map_err(js)
     }
 
     /// The document in `format` (`stl`, `3mf`, `glb`, `obj`, `mtl`, `dxf`, `dxf-outline`,
@@ -899,6 +934,47 @@ usemtl Pine
         assert_eq!(
             st["materials"][0]["color"],
             serde_json::json!([230, 200, 150, 255])
+        );
+    }
+
+    #[test]
+    fn imports_files_through_the_doc() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        );
+        let stl = d.export("stl", "").unwrap();
+        let mut fresh = DocCore::default();
+        let r: serde_json::Value =
+            serde_json::from_str(&fresh.import("part.stl", &stl, "").unwrap()).unwrap();
+        assert_eq!(r["outcome"]["kind"], "imported");
+        assert_eq!(r["outcome"]["objects"], serde_json::json!([1]));
+        assert!(r["notes"][0].as_str().unwrap().contains("millimetres"));
+        let st: serde_json::Value = serde_json::from_str(&fresh.state_json()).unwrap();
+        assert_eq!(st["object_info"][0]["name"], "part");
+        assert!((st["stats"]["volume_m3"].as_f64().unwrap() - 0.006).abs() < 1e-9);
+        // In inches, the same bytes come in 25.4 times bigger.
+        let mut inch = DocCore::default();
+        inch.import("part.stl", &stl, r#"{"units":"in"}"#).unwrap();
+        let st: serde_json::Value = serde_json::from_str(&inch.state_json()).unwrap();
+        assert!(
+            (st["stats"]["volume_m3"].as_f64().unwrap() - 0.006 * 25.4f64.powi(3)).abs() < 1e-6
+        );
+        assert!(
+            fresh
+                .import("x.bin", b"nope", "")
+                .unwrap_err()
+                .contains("not a file")
+        );
+        fresh.undo().unwrap();
+        assert!(
+            fresh.document().model().objects().is_empty(),
+            "one undo step"
         );
     }
 

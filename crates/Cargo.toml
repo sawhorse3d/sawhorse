@@ -4,7 +4,7 @@
 # Never commit a target-dir here; CARGO_TARGET_DIR comes from scripts/env.sh.
 [workspace]
 resolver = "3"
-members = ["kernel", "tessellate", "inference", "export", "wasm-api"]
+members = ["kernel", "tessellate", "inference", "export", "import", "wasm-api"]
 # cargo-fuzz harness: needs nightly + libFuzzer, so it is its own workspace.
 exclude = ["kernel/fuzz"]
 

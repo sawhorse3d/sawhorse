@@ -306,6 +306,7 @@ pub(crate) mod fixtures {
                     faces: vec![vec![vec![0, 1, 2, 3]]],
                     lines: vec![],
                     merge_coplanar: false,
+                    face_labels: vec![],
                 }],
                 strokes: vec![],
                 materials: vec![],
