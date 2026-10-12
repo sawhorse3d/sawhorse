@@ -1,9 +1,9 @@
 // Our own tool glyphs, drawn for the approved mock (ADR-0003: own glyphs, no copied icons).
 // 24x24 viewBox, stroked with currentColor by the .tool svg rule.
 import type { ReactElement } from "react";
-import type { ToolId } from "../lib/tools";
+import type { BuiltinToolId } from "../lib/tools";
 
-export const TOOL_GLYPHS: Record<ToolId, ReactElement> = {
+export const TOOL_GLYPHS: Record<BuiltinToolId, ReactElement> = {
   select: <path d="M5 3l14 9-6 1-3 6z" />,
   erase: <path d="M4 16l9-9 6 6-9 9H8z M13 7l4-4" />,
   line: (
@@ -85,3 +85,6 @@ export function PanelGlyph({ name }: { name: "eye" | "eye-off" | "lock" | "unloc
     </svg>
   );
 }
+
+/** A plugin tool without its own icon: a puzzle piece (ours). */
+export const PLUGIN_GLYPH = <path d="M5 9h3a2 2 0 1 1 4 0h3v3a2 2 0 1 1 0 4v3h-3a2 2 0 1 0-4 0H5v-3a2 2 0 1 0 0-4z" />;

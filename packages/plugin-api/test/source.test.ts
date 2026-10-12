@@ -3,10 +3,11 @@ import { checkPackage, maskComments, normalisePath, resolveSpecifier, scanModule
 
 describe("scanModule", () => {
   it("finds static imports and re-exports with their positions", () => {
-    const src = `import api, { model } from "sawhorse";\nimport "./side.js";\nexport { a } from './lib/a.js';\nexport * from "./b.js";\nconst s = "import x from 'nope'";`;
+    const src = `import api, { model } from "sawhorse";\nimport "./side.js";\nexport { a } from './lib/a.js';\nexport * from "./b.js";\nconst s = "import x from 'nope'"; const t = \`importScripts \${"import('y')"}\`; const k = self["import" + "Scripts"];`;
     const r = scanModule("main.js", src);
     expect(r.problems).toEqual([]);
-    expect(r.imports.map((i) => i.spec)).toEqual(["sawhorse", "./side.js", "./lib/a.js", "./b.js", "nope"]);
+    // Text inside strings never counts as an import or a forbidden word.
+    expect(r.imports.map((i) => i.spec)).toEqual(["sawhorse", "./side.js", "./lib/a.js", "./b.js"]);
     for (const i of r.imports) expect(src.slice(i.start, i.end)).toBe(i.spec);
   });
 
@@ -30,6 +31,10 @@ describe("maskComments", () => {
     const src = 'const a = "//not a comment"; const r = /\\/\\*x/g; const t = `a${"}"}b//c`; // gone\n/* gone */ x';
     const m = maskComments(src);
     expect(m.length).toBe(src.length);
+    const bare = maskComments(src, true);
+    expect(bare.length).toBe(src.length);
+    expect(bare).not.toContain("not a comment");
+    expect(bare.slice(0, 11)).toBe('const a = "');
     expect(m).toContain('"//not a comment"');
     expect(m).toContain("/\\/\\*x/g");
     expect(m).toContain('`a${"}"}b//c`');

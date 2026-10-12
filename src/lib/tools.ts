@@ -1,11 +1,16 @@
 // The tool rail. Keys are the SketchUp-2017 defaults people's hands already know
 // (ADR-0003); glyphs are our own (see components/glyphs.tsx).
 
-export type ToolId =
+export type BuiltinToolId =
   | "select" | "erase"
   | "line" | "rect" | "circle" | "arc"
   | "pushpull" | "move" | "rotate" | "scale" | "offset" | "follow"
   | "tape" | "dim" | "paint";
+
+/** A plugin's tool (lane 11): `plugin:<plugin id>/<tool id>`. */
+export type PluginToolId = `plugin:${string}`;
+
+export type ToolId = BuiltinToolId | PluginToolId;
 
 export interface ToolDef {
   id: ToolId;
@@ -19,6 +24,9 @@ export interface ToolDef {
   hint: string;
   /** Value Control Box label, or null when the tool takes no typed value. */
   vcb: string | null;
+  /** Plugin tools: an SVG path (24 x 24) for the rail, and the plugin's name. */
+  icon?: string;
+  plugin?: string;
 }
 
 export const TOOL_GROUPS: ToolDef[][] = [
@@ -56,10 +64,27 @@ export function toolForKey(key: string): ToolDef | undefined {
   return BY_KEY.get(key.length === 1 ? key.toLowerCase() : key);
 }
 
+/** Plugin tools on the rail (the plugin group), set by the plugin system as plugins start and stop. */
+let pluginDefs = new Map<string, ToolDef>();
+
+export function setPluginTools(defs: ToolDef[]): void {
+  pluginDefs = new Map(defs.map((d) => [d.id, d]));
+}
+
+export function pluginTools(): ToolDef[] {
+  return [...pluginDefs.values()];
+}
+
+export function isPluginTool(id: ToolId): id is PluginToolId {
+  return id.startsWith("plugin:");
+}
+
 export function toolById(id: ToolId): ToolDef {
-  const t = BY_ID.get(id);
-  if (!t) throw new Error(`unknown tool ${id}`);
-  return t;
+  const t = BY_ID.get(id) ?? pluginDefs.get(id);
+  if (t) return t;
+  // A plugin tool whose plugin just stopped: a neutral stand-in until the app switches away.
+  if (isPluginTool(id)) return { id, label: "Plugin tool", key: "", keyCap: "", hint: "This plugin is not running.", vcb: null };
+  throw new Error(`unknown tool ${id}`);
 }
 
 /**

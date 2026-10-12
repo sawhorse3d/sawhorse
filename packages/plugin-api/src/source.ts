@@ -29,19 +29,35 @@ export const API_MODULE = "sawhorse";
 const isIdent = (c: string) => /[A-Za-z0-9_$]/.test(c);
 
 /**
- * The source with comments blanked out (same length, so positions still match). Strings
- * and template text are kept. Regular-expression literals are recognised well enough that
- * a quote or a slash inside one does not start a string or a comment.
+ * The source with comments blanked out (same length, so positions still match), and with
+ * `strings` also the text inside strings, templates and regular expressions (the quotes
+ * stay). Regular-expression literals are recognised well enough that a quote or a slash
+ * inside one does not start a string or a comment.
  */
-export function maskComments(src: string): string {
+export function maskComments(src: string, strings = false): string {
   const out = src.split("");
   let i = 0;
   let lastSig = "";
   let lastWord = "";
   const blank = (a: number, b: number) => {
-    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " ";
+    for (let k = a; k < b && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
   };
   const templates: number[] = [];
+  /** Template text from `i` to its end or its next `${`. */
+  const templateText = () => {
+    const from = i;
+    while (i < src.length && src[i] !== "`") {
+      if (src[i] === "\\") i += 2;
+      else if (src[i] === "$" && src[i + 1] === "{") {
+        if (strings) blank(from, i);
+        templates.push(0);
+        i += 2;
+        return;
+      } else i++;
+    }
+    if (strings) blank(from, i);
+    if (src[i] === "`") i++;
+  };
   while (i < src.length) {
     const c = src[i];
     const d = src[i + 1];
@@ -61,7 +77,9 @@ export function maskComments(src: string): string {
     }
     if (c === '"' || c === "'") {
       i++;
+      const from = i;
       while (i < src.length && src[i] !== c && src[i] !== "\n") i += src[i] === "\\" ? 2 : 1;
+      if (strings) blank(from, i);
       i++;
       lastSig = c;
       lastWord = "";
@@ -69,15 +87,7 @@ export function maskComments(src: string): string {
     }
     if (c === "`") {
       i++;
-      while (i < src.length && src[i] !== "`") {
-        if (src[i] === "\\") i += 2;
-        else if (src[i] === "$" && src[i + 1] === "{") {
-          templates.push(0);
-          i += 2;
-          break;
-        } else i++;
-      }
-      if (src[i] === "`") i++;
+      templateText();
       lastSig = "`";
       lastWord = "";
       continue;
@@ -86,15 +96,7 @@ export function maskComments(src: string): string {
       // Back into the template's text.
       templates.pop();
       i++;
-      while (i < src.length && src[i] !== "`") {
-        if (src[i] === "\\") i += 2;
-        else if (src[i] === "$" && src[i + 1] === "{") {
-          templates.push(0);
-          i += 2;
-          break;
-        } else i++;
-      }
-      if (src[i] === "`") i++;
+      templateText();
       continue;
     }
     if (c === "{" && templates.length) templates[templates.length - 1]++;
@@ -103,6 +105,7 @@ export function maskComments(src: string): string {
       const regexAllowed = lastSig === "" || "(,=:[!&|?{};+-*%<>~^".includes(lastSig) || ["return", "typeof", "case", "do", "else", "in", "of", "void", "yield", "await"].includes(lastWord);
       if (regexAllowed) {
         i++;
+        const from = i;
         let inClass = false;
         while (i < src.length && src[i] !== "\n") {
           if (src[i] === "\\") i += 2;
@@ -111,6 +114,7 @@ export function maskComments(src: string): string {
           else if (src[i] === "/" && !inClass) break;
           else i++;
         }
+        if (strings) blank(from, i);
         i++;
         while (i < src.length && isIdent(src[i])) i++;
         lastSig = "/";
@@ -135,8 +139,10 @@ export function maskComments(src: string): string {
   return out.join("");
 }
 
-const STATIC_IMPORT = /\bimport\s*(?:[\w$*{}\s,]+?\s*\bfrom\s*)?(["'])([^"'\n]+)\1/g;
-const STATIC_EXPORT = /\bexport\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]*\})\s*from\s*(["'])([^"'\n]+)\1/g;
+// Run on the source with string contents blanked (text inside strings never counts); the
+// specifier is then read from the original at the same positions.
+const STATIC_IMPORT = /\bimport\s*(?:[\w$*{}\s,]+?\s*\bfrom\s*)?(["'])( +)\1/g;
+const STATIC_EXPORT = /\bexport\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]*\})\s*from\s*(["'])( +)\1/g;
 
 function lineOf(src: string, at: number): number {
   let n = 1;
@@ -146,7 +152,7 @@ function lineOf(src: string, at: number): number {
 
 /** The imports of one module and anything in it that is not allowed. */
 export function scanModule(path: string, src: string): ModuleScan {
-  const code = maskComments(src);
+  const code = maskComments(src, true);
   const problems: string[] = [];
   const imports: ImportRef[] = [];
   for (const m of code.matchAll(/\bimport\s*\(/g)) problems.push(`${path}:${lineOf(src, m.index ?? 0)}: dynamic import() is not allowed in a plugin (import modules statically from the plugin's own folder)`);
@@ -154,10 +160,10 @@ export function scanModule(path: string, src: string): ModuleScan {
   for (const re of [STATIC_IMPORT, STATIC_EXPORT]) {
     re.lastIndex = 0;
     for (const m of code.matchAll(re)) {
-      const quote = m[1];
-      const spec = m[2];
       const whole = m.index ?? 0;
-      const start = whole + m[0].lastIndexOf(quote + spec + quote) + 1;
+      const start = whole + m[0].length - 1 - m[2].length;
+      const spec = src.slice(start, start + m[2].length);
+      if (!spec.trim()) continue;
       imports.push({ spec, start, end: start + spec.length });
     }
   }
@@ -231,5 +237,5 @@ export function checkPackage(files: Record<string, string>, entry: string): Pack
   };
   if (!(entry in files)) problems.push(`the entry ${entry} is missing from the plugin`);
   else visit(entry, []);
-  return { order, links, problems };
+  return { order, links, problems: [...new Set(problems)] };
 }

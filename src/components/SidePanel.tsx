@@ -4,6 +4,8 @@ import type { CreditsHandle } from "../credits/useCredits";
 import type { RenderPasses } from "../render/passes";
 import { MaterialsPane, type MaterialsPaneProps } from "./MaterialsPane";
 import { Outliner, type OutlinerProps } from "./Outliner";
+import { PluginsPane, type PluginsPaneProps } from "./PluginsPane";
+import { PLUGIN_GLYPH } from "./glyphs";
 import { RenderPane } from "./RenderPane";
 import { StylesPane, type StylesPaneProps } from "./StylesPane";
 import { TagsPane, type TagsPaneProps } from "./TagsPane";
@@ -12,15 +14,17 @@ import { TagsPane, type TagsPaneProps } from "./TagsPane";
 // Tags panes (lane 5), the Cut list (lane 7) and the Render pane (lane 8) are all live;
 // Materials and Styles (with the sun) came in lane 10.
 
-export type PaneId = "outliner" | "tags" | "cutlist" | "materials" | "styles" | "render";
+export type PaneId = "outliner" | "tags" | "cutlist" | "materials" | "styles" | "render" | "plugins";
 
-const TABS: { id: PaneId; label: string }[] = [
+// Plugins (lane 11) is a glyph tab at the end, so the named tabs keep the mock's widths.
+const TABS: { id: PaneId; label: string; glyph?: boolean }[] = [
   { id: "outliner", label: "Outliner" },
   { id: "tags", label: "Tags" },
   { id: "cutlist", label: "Cut list" },
   { id: "materials", label: "Materials" },
   { id: "styles", label: "Styles" },
   { id: "render", label: "Render" },
+  { id: "plugins", label: "Plugins", glyph: true },
 ];
 
 export interface SidePanelProps {
@@ -38,11 +42,14 @@ export interface SidePanelProps {
   styles: StylesPaneProps;
   /** Bumped to bring the Materials pane forward (the Paint tool chosen with no material). */
   focusMaterials?: number;
+  plugins: PluginsPaneProps;
+  /** Bumped to bring the Plugins pane forward (the Plugins menu's Manage, an install). */
+  focusPlugins?: number;
   /** The pane shown changed (the viewport draws grain arrows while the Cut list is open). */
   onPane?: (pane: PaneId) => void;
 }
 
-export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, onPane }: SidePanelProps) {
+export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, plugins, focusPlugins = 0, onPane }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
   useEffect(() => {
     onPane?.(pane);
@@ -56,6 +63,9 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
   useEffect(() => {
     if (focusMaterials > 0) setPane("materials");
   }, [focusMaterials]);
+  useEffect(() => {
+    if (focusPlugins > 0) setPane("plugins");
+  }, [focusPlugins]);
 
   return (
     <aside className="side" aria-label="Panels">
@@ -69,9 +79,18 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
             aria-selected={pane === t.id}
             aria-controls={`pane-${t.id}`}
             data-pane={t.id}
+            className={t.glyph ? "glyph-tab" : undefined}
+            aria-label={t.glyph ? t.label : undefined}
+            title={t.glyph ? t.label : undefined}
             onClick={() => setPane(t.id)}
           >
-            {t.label}
+            {t.glyph ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                {PLUGIN_GLYPH}
+              </svg>
+            ) : (
+              t.label
+            )}
           </button>
         ))}
       </div>
@@ -113,6 +132,13 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
 
       <section className="pane" id="pane-render" role="tabpanel" aria-labelledby="tab-render" hidden={pane !== "render"}>
         <RenderPane credits={credits} capture={capture} />
+      </section>
+
+      <section className="pane" id="pane-plugins" role="tabpanel" aria-labelledby="tab-plugins" hidden={pane !== "plugins"}>
+        <h3>
+          Plugins <small>sandboxed, with permissions</small>
+        </h3>
+        <PluginsPane {...plugins} />
       </section>
     </aside>
   );

@@ -194,6 +194,16 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "texture":
         res = { id: req.id, ok: true, file: document(mod).texture(req.path) };
         break;
+      case "faces":
+        res = { id: req.id, ok: true, faces: JSON.parse(document(mod).faces_json(req.object)) };
+        break;
+      case "namedBatch": {
+        // A plugin's batch (lane 11): placeholders resolved, applied as one op (one undo step).
+        const d = document(mod);
+        const outcome = JSON.parse(d.apply_named_batch(JSON.stringify({ name: req.name, ops: req.ops }))) as OpOutcome;
+        res = { id: req.id, ok: true, outcome, scene: scene(d) };
+        break;
+      }
       case "export": {
         const d = document(mod);
         const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);

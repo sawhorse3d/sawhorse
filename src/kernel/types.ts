@@ -637,6 +637,8 @@ export interface WasmDoc {
   /** The nesting (lane 9) for NestOptions JSON, as JSON (crates/kernel/src/nesting.rs). */
   nest(options: string): string;
   import_file(name: string, bytes: Uint8Array, options: string): string;
+  /** Lane 11: a named batch whose ops may hold placeholders ({"$ref": i, "path": "..."}), applied as one op (crates/kernel/src/refbatch.rs). */
+  apply_named_batch(json: string): string;
   save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
   open_shz(bytes: Uint8Array): string;
   /** The material a face shows (the Paint tool's sample), as JSON. */
@@ -690,7 +692,10 @@ export type RequestBody =
   | { kind: "library" }
   | { kind: "libraryOps"; name: string; asName: string }
   | { kind: "libraryTexture"; name: string }
-  | { kind: "texture"; path: string };
+  | { kind: "texture"; path: string }
+  /** Lane 11 (plugins): a solid's faces by persistent id; a named batch with placeholders, one undo step. */
+  | { kind: "faces"; object: number }
+  | { kind: "namedBatch"; name: string; ops: unknown[] };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -749,8 +754,18 @@ export type WorkerResponse =
       uvs?: Float32Array;
       library?: LibraryEntry[];
       ops?: KernelOp[];
+      faces?: FaceInfo[];
     }
   | { id: number; ok: false; error: string; missing?: boolean };
+
+/** One face of a solid (Doc.faces_json): persistent id, plane and size. */
+export interface FaceInfo {
+  id: number;
+  normal: V3;
+  origin: V3;
+  centroid: V3;
+  area: number;
+}
 
 // ---- cut list (lane 7; crates/kernel/src/cutlist.rs) --------------------------------------
 

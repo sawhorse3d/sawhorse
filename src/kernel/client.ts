@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { CutList, CutOptions, Nesting, NestOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, LibraryEntry, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, UvXform, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { FaceInfo, CutList, CutOptions, Nesting, NestOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, LibraryEntry, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, UvXform, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -201,6 +201,16 @@ export class KernelClient {
     const r = await this.call({ kind: "texture", path });
     if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no image");
     return r.file;
+  }
+
+  /** A solid's faces by persistent id (read-only; plugins). */
+  async faces(object: number): Promise<FaceInfo[]> {
+    return (await this.call({ kind: "faces", object })).faces ?? [];
+  }
+
+  /** A plugin's named batch: ops with placeholders, applied as ONE op (one undo step). Throws KernelRefusal when any op is refused (nothing changes). */
+  async namedBatch(name: string, ops: unknown[]): Promise<EditResult> {
+    return this.edit(await this.call({ kind: "namedBatch", name, ops }));
   }
 
   /** A fresh document (ground sketch only), as an edit result. */

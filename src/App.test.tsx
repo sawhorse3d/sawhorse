@@ -51,10 +51,10 @@ describe("App shell", () => {
     expect(pressed("select")).toBe(true);
   });
 
-  it("has the right-panel tabs: a live Outliner, Tags, Cut list, Materials and Styles", () => {
+  it("has the right-panel tabs: a live Outliner, Tags, Cut list, Materials, Styles, Render, and the Plugins glyph tab", () => {
     render(<App />);
-    const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-    expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render"]);
+    const tabs = screen.getAllByRole("tab").map((t) => t.getAttribute("aria-label") ?? t.textContent);
+    expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render", "Plugins"]);
     // No example content: an empty model has an empty Outliner, and Tags has its default.
     expect(screen.queryByText("Side L")).toBeNull();
     expect(screen.getByText(/Nothing yet/)).toBeTruthy();

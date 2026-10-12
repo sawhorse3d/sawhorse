@@ -68,6 +68,9 @@ import { PaintTool, type PaintContext } from "./tools/paint";
 import type { ActiveRef } from "./components/MaterialsPane";
 import type { LibraryEntry, MaterialInfo, Shadows } from "./kernel/types";
 import { materialNameFor, sniffImage, texturePathFor, toBase64 } from "./lib/looks";
+import { usePlugins } from "./plugins/usePlugins";
+import { pickFile as pickAnyFile } from "./io/files";
+import type { AppBridge } from "./plugins/manager";
 
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
@@ -326,6 +329,8 @@ export function App() {
     if (prev.target !== target) live.current.target = target;
     seen.current = next;
   }
+  // The plugin system (lane 11; set further down, read by callbacks and toolFor).
+  const pluginsRef = useRef<ReturnType<typeof usePlugins> | null>(null);
   // Edits run one at a time, in order.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const editsPending = useRef(0);
@@ -420,20 +425,32 @@ export function App() {
   );
 
   const apply = useCallback((op: KernelOp, describe?: (r: EditResult) => string) => run((k) => k.apply(op), op, describe), [run]);
+  // Plugin batches are named undo steps (lane 11): the step is known by its depth and the
+  // model hash right after it, so a name is only shown for exactly that state.
+  const namedSteps = useRef<{ depth: number; hash: string; name: string }[]>([]);
+  const stepName = (depth: number | undefined, hash: string | undefined) => namedSteps.current.find((n) => n.depth === depth && n.hash === hash)?.name ?? null;
   const undo = useCallback(
-    () =>
-      run((k) => k.undo(), null, (r) => `Undone. ${r.scene.state.undo_depth} more step(s) to undo.`).then((r) => {
+    () => {
+      const before = live.current.scene?.state;
+      const name = stepName(before?.undo_depth, before?.stats.hash);
+      return run((k) => k.undo(), null, (r) => `Undone${name ? `: ${name}` : ""}. ${r.scene.state.undo_depth} more step(s) to undo.`).then((r) => {
         if (r) afterHistoryRef.current();
         return r;
-      }),
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [run],
   );
   const redo = useCallback(
     () =>
-      run((k) => k.redo(), null, (r) => `Redone. ${r.scene.state.redo_depth} more step(s) to redo.`).then((r) => {
+      run((k) => k.redo(), null, (r) => {
+        const name = stepName(r.scene.state.undo_depth, r.scene.state.stats.hash);
+        return `Redone${name ? `: ${name}` : ""}. ${r.scene.state.redo_depth} more step(s) to redo.`;
+      }).then((r) => {
         if (r) afterHistoryRef.current();
         return r;
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [run],
   );
 
@@ -529,6 +546,7 @@ export function App() {
         return;
       }
       const opened = info as { notes: string[]; opened: { display_units: string | null } };
+      pluginsRef.current?.documentOpened(f.name, f.bytes);
       setDocName(f.name);
       fileHandle.current = f.handle;
       setSavedLogLen(r.scene.state.log_len);
@@ -561,6 +579,7 @@ export function App() {
     if (!confirmDiscard()) return;
     const r = await run((k) => k.newDocument(), null, () => "New model.");
     if (r) {
+      pluginsRef.current?.documentOpened(null);
       setDocName(null);
       fileHandle.current = undefined;
       setSavedLogLen(r.scene.state.log_len);
@@ -595,7 +614,9 @@ export function App() {
       try {
         await queue.current;
         const png = (await engineRef.current?.snapshotPng(512)) ?? new Uint8Array();
-        const bytes = await k.saveShz(live.current.units, png);
+        // Plugins' document-scoped stores ride along as plugin-data.json (lane 11).
+        const raw = await k.saveShz(live.current.units, png);
+        const bytes = pluginsRef.current?.manager.doc.attach(raw) ?? raw;
         const name = `${docName ? stem(docName) : "Untitled"}.shz`;
         const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current);
         if (!res) return;
@@ -959,7 +980,7 @@ export function App() {
       ["paint", new PaintTool(host, paintCtx)],
     ]);
   }
-  const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;
+  const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? pluginsRef.current?.toolFor(id) ?? null;
   const paintTool = toolsRef.current.get("paint") as PaintTool;
   const active = toolFor(toolId);
   activeRef.current = active;
@@ -986,6 +1007,43 @@ export function App() {
       () => activeRef.current ?? (toolsRef.current!.get("select") as Tool),
     );
   }
+  // ---- plugins (lane 11) -------------------------------------------------------------------
+  const docNameRef = useRef(docName);
+  docNameRef.current = docName;
+  const selectToolRef = useRef<(id: ToolId) => void>(() => undefined);
+  const [focusPlugins, setFocusPlugins] = useState(0);
+  const pluginBridge = useMemo<Omit<AppBridge, "dialog">>(
+    () => ({
+      scene: () => live.current.scene,
+      kernel: () => kernelRef.current,
+      settled: () => queue.current,
+      units: () => live.current.units,
+      docName: () => docNameRef.current,
+      selection: () => live.current.selection,
+      select: (es) => {
+        live.current.selection = es;
+        setSelection(es);
+      },
+      applyBatch: async (name, ops, plugin) => {
+        const r = await run((k) => k.namedBatch(name, ops), null, () => `${plugin}: ${name}. Ctrl+Z undoes it in one step.`);
+        if (!r) throw new Error(live.current.lastError ?? "refused");
+        namedSteps.current = [...namedSteps.current.filter((n) => n.depth !== r.scene.state.undo_depth).slice(-199), { depth: r.scene.state.undo_depth, hash: r.scene.state.stats.hash, name }];
+        return r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];
+      },
+      status: (text, kind, actions) => setMessage({ text, error: kind === "error" || kind === "warning", actions }),
+      saveFile: (name, bytes, type) => saveFile(name, bytes, type),
+      pickFile: (types) => pickAnyFile(types),
+      activateTool: (id) => selectToolRef.current(id as ToolId),
+      activeTool: () => toolIdRef.current,
+      fetch: (url, init) => window.fetch(url, init),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run],
+  );
+  const showPlugins = useCallback(() => setFocusPlugins((n) => n + 1), []);
+  const plugins = usePlugins({ bridge: pluginBridge, toolHost: host, scene, selection, toolId, units, showPane: showPlugins });
+  pluginsRef.current = plugins;
+
   const onPointer = useCallback((p: ViewportPointer) => {
     if (!activeRef.current) {
       if (p.type === "up" && p.button === 0) setMessage({ text: `${toolById(toolIdRef.current).label} arrives in a later lane.`, error: false });
@@ -1045,6 +1103,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [defaultValue],
   );
+  selectToolRef.current = selectTool;
 
 
   /** A swatch image: a library texture (fetched when the Materials pane first shows it) or
@@ -1727,6 +1786,8 @@ export function App() {
       // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
       const textEntry = isTextEntry(e.target) && !(inVcb && !live.current.vcbEditing);
       const mod = e.ctrlKey || e.metaKey;
+      // A plugin's shortcut (always with Ctrl, Alt or Meta; built-in keys win, see usePlugins).
+      if (!textEntry && !inVcb && pluginsRef.current?.shortcut(e)) return;
       // Undo, redo and the file shortcuts are the app's wherever focus is (a pane's select,
       // checkbox or button too), unless a text field is being edited (it has its own undo).
       if (mod && !e.altKey && (!isEditableText(e.target) || inVcb)) {
@@ -1949,7 +2010,7 @@ export function App() {
         },
       ],
       Edit: [
-        { label: "Undo", keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
+        { label: `Undo${stepName(st?.undo_depth, st?.stats.hash) ? ` ${stepName(st?.undo_depth, st?.stats.hash)}` : ""}`, keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
         { label: "Redo", keys: "Ctrl+Y", disabled: !st?.can_redo, onSelect: () => void redo() },
         "-",
         { label: "Select All", keys: "Ctrl+A", onSelect: selectAll },
@@ -2004,6 +2065,7 @@ export function App() {
             ]
           : []),
       ],
+      Plugins: plugins.menu,
       // The browser demo's way back to the site (the desktop app has no Help entries yet).
       ...(isWebDemo()
         ? {
@@ -2017,7 +2079,7 @@ export function App() {
           }
         : {}),
     }),
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, makeGroup, makeComponent, explode, addScene, goScene, activeScene],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -2076,6 +2138,7 @@ export function App() {
       {isWebDemo() ? <DemoBanner /> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
+      {plugins.dialogs}
       <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
       {stockOpen && nesting ? (
         <StockDialog
@@ -2099,7 +2162,7 @@ export function App() {
         onCredits={() => setRenderFocus((n) => n + 1)}
         menus={menus}
       />
-      <ToolRail active={toolId} onSelect={selectTool} />
+      <ToolRail active={toolId} onSelect={selectTool} plugins={plugins.toolDefs} />
       <SceneTabs scenes={st?.scenes ?? []} active={activeScene} onGo={goScene} onAdd={addScene} onUpdate={updateScene} onRename={renameScene} onDelete={deleteScene} />
       <Viewport
         mesh={scene?.mesh ?? null}
@@ -2135,6 +2198,8 @@ export function App() {
         focusRender={renderFocus}
         focusTags={focusTags}
         onPane={setPane}
+        plugins={plugins.pane}
+        focusPlugins={focusPlugins}
         cutlist={{
           list: cutList,
           problem: cutProblem ?? (kernelState === "missing" || kernelState === "error" ? "The cut list is worked out by the kernel, which is not loaded." : null),

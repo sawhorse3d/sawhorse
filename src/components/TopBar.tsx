@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "./glyphs";
 import { VIEWS, type ViewId } from "../viewport/camera";
 
-const MENUS = ["File", "Edit", "View", "Draw", "Tools", "Window", "Help"];
+// "Plugins" (lane 11) sits after Tools: commands from enabled plugins, and managing them.
+const MENUS = ["File", "Edit", "View", "Draw", "Tools", "Plugins", "Window", "Help"];
 
 /** One entry in a drop-down menu ("-" is a separator; `items` opens a submenu). */
 export type MenuItem =
