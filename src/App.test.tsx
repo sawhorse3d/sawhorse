@@ -51,15 +51,21 @@ describe("App shell", () => {
     expect(pressed("select")).toBe(true);
   });
 
-  it("has the four right-panel tabs with the mock's content", () => {
+  it("has the four right-panel tabs: a live Outliner and Tags, a cut list that says it is not built yet", () => {
     render(<App />);
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
     expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Render"]);
-    expect(screen.getByText("Side L")).toBeTruthy();
+    // No example content: an empty model has an empty Outliner, and Tags has its default.
+    expect(screen.queryByText("Side L")).toBeNull();
+    expect(screen.getByText(/Nothing yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "Tags" }));
+    expect(screen.getByText("Untagged")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New tag/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Cut list" }));
     expect(document.getElementById("pane-cutlist")?.hidden).toBe(false);
     expect(document.getElementById("pane-outliner")?.hidden).toBe(true);
-    expect(screen.getByText("board feet, solid oak")).toBeTruthy();
+    expect(screen.getByTestId("cutlist-placeholder").textContent).toMatch(/not built yet/);
+    expect(screen.queryByText("board feet, solid oak")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: "Render" }));
     fireEvent.click(screen.getByRole("button", { name: /Kitchen/ }));
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toMatch(/warm kitchen/);

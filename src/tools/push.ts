@@ -63,6 +63,8 @@ export class PushTool extends Tool {
   /** The press that started the current gesture (its click does not commit). */
   private fresh = false;
   private ctrl = false;
+  /** The last press was on a face the editing context does not offer. */
+  private refused = false;
   /** The last committed signed distance (double-click repeats it). */
   last: number | null = null;
 
@@ -128,6 +130,7 @@ export class PushTool extends Tool {
         }
         if (!pushable(t, h.state())) {
           this.fresh = false;
+          this.refused = true;
           h.status(CLOSED, true);
           return;
         }
@@ -153,7 +156,9 @@ export class PushTool extends Tool {
       case "click": {
         const g = this.g;
         if (!g) {
-          h.status("Click a face or a region of a sketch to push or pull it.", false);
+          // The press was refused (a closed group's face): its reason stays up.
+          if (this.refused) this.refused = false;
+          else h.status("Click a face or a region of a sketch to push or pull it.", false);
           return;
         }
         if (this.fresh) {

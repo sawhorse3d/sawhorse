@@ -9,6 +9,7 @@ import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
 import { contextTrail, describeNode, graphOf, scopeEntity, solidsIn } from "./lib/scope";
+import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
 import { formatLength, M_PER_IN, nextUnitSystem, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
@@ -36,9 +37,40 @@ import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, 
 import { EXPORTS, MTL_TYPE, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
+import { NameDialog, type NameRequest } from "./components/NameDialog";
+import { SceneTabs } from "./components/SceneTabs";
+import type { OutlineRow, OutlinerAction } from "./components/Outliner";
+import { TAG_PALETTE, hexToRgb } from "./components/TagsPane";
+import { applySelection } from "./lib/entities";
+import type { Item, SceneDef } from "./kernel/types";
 import { useCredits } from "./credits/useCredits";
 import { storageNote } from "./credits/device";
 import { NothingToRenderError, renderPasses } from "./render/passes";
+
+/** The solids, groups and components a selection stands for (a face or edge stands for its
+ * solid), each once, in selection order. */
+export function itemsOf(es: Entity[]): Item[] {
+  const out: Item[] = [];
+  const seen = new Set<string>();
+  const push = (it: Item) => {
+    const k = JSON.stringify(it);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(it);
+    }
+  };
+  for (const e of es) {
+    if (e.kind === "node") push({ node: e.node });
+    else if (e.kind === "object" || e.kind === "face") push({ object: e.object });
+    else if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") push({ object: e.owner.id });
+  }
+  return out;
+}
+
+/** A name not in `taken`: "Scene 1", "Scene 2"... */
+export function nextName(stem: string, taken: string[]): string {
+  for (let k = taken.length + 1; ; k++) if (!taken.includes(`${stem} ${k}`)) return `${stem} ${k}`;
+}
 
 /** The dashed box around the open group or component (nothing at the model level). */
 export function contextBoxOverlay(st: import("./kernel/types").DocState | null): OverlayItem[] {
@@ -146,6 +178,10 @@ export function App() {
   const fileHandle = useRef<FileHandle | undefined>(undefined);
   const [savedLogLen, setSavedLogLen] = useState<number | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  const [nameRequest, setNameRequest] = useState<NameRequest | null>(null);
+  const [activeScene, setActiveScene] = useState<string | null>(null);
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [focusTags, setFocusTags] = useState(0);
   const [importUnits, setImportUnits] = useState<ImportUnit>(loadImportUnits);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -788,6 +824,241 @@ export function App() {
     });
   }, [apply]);
 
+  // ---- groups, components, tags, scenes (lane 5) ------------------------------------------
+
+  /** Open `parent` (null: the model) first when it is not the editing context: grouping,
+   * exploding and deleting act on what is directly in the open context. */
+  const inContext = useCallback(
+    async (parent: number | null): Promise<boolean> => {
+      const ctx = live.current.scene?.state.graph?.context ?? null;
+      if (ctx === parent) return true;
+      return !!(await apply({ op: "set_context", node: parent }));
+    },
+    [apply],
+  );
+
+  const parentOfItem = useCallback((it: Item): number | null => {
+    const g = graphOf(live.current.scene?.state);
+    if ("node" in it) return g.nodes.find((n) => n.id === it.node)?.parent ?? null;
+    return g.objects.find((o) => o.id === it.object)?.parent ?? null;
+  }, []);
+
+  const select = useCallback((es: Entity[]) => {
+    live.current.selection = es;
+    setSelection(es);
+  }, []);
+
+  /** Make Group from the selection (Ctrl+G). */
+  const makeGroup = useCallback(
+    async (items: Item[]) => {
+      if (!items.length) return void setMessage({ text: "Select the solids, groups or components to group first.", error: true });
+      if (!(await inContext(parentOfItem(items[0])))) return;
+      const r = await apply({ op: "make_group", items }, () => `Grouped ${plural(items.length, "item")}. Double-click the group to edit inside it.`);
+      if (r?.outcome.kind === "group_created") select([{ kind: "node", node: r.outcome.group }]);
+    },
+    [apply, inContext, parentOfItem, select],
+  );
+
+  /** Make Component from the selection: asks for its name first. */
+  const makeComponent = useCallback(
+    (items: Item[]) => {
+      if (!items.length) return void setMessage({ text: "Select the solids, groups or components to make a component of first.", error: true });
+      const taken = (live.current.scene?.state.graph?.definitions ?? []).map((d) => d.name);
+      setNameRequest({
+        title: "Make Component",
+        label: "Name",
+        value: nextName("Component", taken),
+        ok: "Make Component",
+        onOk: (name) =>
+          void (async () => {
+            if (!(await inContext(parentOfItem(items[0])))) return;
+            const r = await apply({ op: "make_component", items, name }, () => `Made component ${name}. Copies of it (Move with Ctrl) are instances: edit one, they all change.`);
+            if (r?.outcome.kind === "component_created") select([{ kind: "node", node: r.outcome.instance }]);
+          })(),
+      });
+    },
+    [apply, inContext, parentOfItem, select],
+  );
+
+  const explode = useCallback(
+    async (nodes: number[]) => {
+      if (!nodes.length) return void setMessage({ text: "Select a group or component to explode.", error: true });
+      if (!(await inContext(parentOfItem({ node: nodes[0] })))) return;
+      const ops: KernelOp[] = nodes.map((node) => ({ op: "explode", node }));
+      const what = nodes.length === 1 ? "it" : `${nodes.length} groups and components`;
+      const r = await apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Exploded ${what}: what was inside is now loose here.`);
+      if (r) {
+        const outs = r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];
+        select(outs.flatMap((o) => (o.kind === "exploded" ? [...o.objects.map((object) => ({ kind: "object" as const, object })), ...o.nodes.map((node) => ({ kind: "node" as const, node }))] : [])));
+      }
+    },
+    [apply, inContext, parentOfItem, select],
+  );
+
+  const outlinerAction = useCallback(
+    (action: OutlinerAction, rows: OutlineRow[]) => {
+      const entities = rows.flatMap((r) => (r.entity ? [r.entity] : []));
+      const items = itemsOf(entities);
+      const nodes = items.flatMap((it) => ("node" in it ? [it.node] : []));
+      switch (action) {
+        case "edit":
+          if (nodes[0] !== undefined) void apply({ op: "set_context", node: nodes[0] }, (r) => `Editing ${describeNode(r.scene.state.graph, nodes[0])}. Esc closes it.`);
+          return;
+        case "group":
+          void makeGroup(items);
+          return;
+        case "component":
+          makeComponent(items);
+          return;
+        case "unique":
+          if (nodes[0] !== undefined) void apply({ op: "make_unique", node: nodes[0] }, () => "Made unique: this copy has its own definition now; editing it changes no other copy.");
+          return;
+        case "explode":
+          void explode(nodes);
+          return;
+        case "hide":
+        case "show":
+          void apply({ op: "set_hidden", items, hidden: action === "hide" }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(items.length, "item")}.`);
+          return;
+        case "lock":
+        case "unlock":
+          void apply({ op: "set_locked", items, locked: action === "lock" }, () => `${action === "lock" ? "Locked" : "Unlocked"} ${plural(items.length, "item")}.`);
+          return;
+        case "delete": {
+          const parents = new Set(items.map(parentOfItem));
+          if (parents.size !== 1) return void setMessage({ text: "Delete things from one group or component at a time.", error: true });
+          void (async () => {
+            if (!(await inContext(parentOfItem(items[0])))) return;
+            const ops: KernelOp[] = items.map((it) => ("node" in it ? { op: "delete_node", node: it.node } : { op: "delete_object", object: it.object }));
+            const r = await apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Deleted ${plural(items.length, "item")}.`);
+            if (r) select([]);
+          })();
+          return;
+        }
+      }
+    },
+    [apply, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
+  );
+
+  /** A row clicked in the Outliner: select it, opening what holds it when that is not open. */
+  const outlinerSelect = useCallback(
+    (row: OutlineRow, mode: "replace" | "add" | "toggle") => {
+      const e = row.entity;
+      if (!e) return;
+      const ctx = live.current.scene?.state.graph?.context ?? null;
+      if (row.parent === ctx) {
+        select(applySelection(live.current.selection, [e], mode));
+        setMessage({ text: describe(e, live.current.scene?.state), error: false });
+        return;
+      }
+      void apply({ op: "set_context", node: row.parent }).then((r) => {
+        if (!r) return;
+        select([e]);
+        setMessage({ text: describe(e, r.scene.state), error: false });
+      });
+    },
+    [apply, select],
+  );
+
+  const outlinerRename = useCallback(
+    (row: OutlineRow, name: string | null) => {
+      const e = row.entity;
+      if (!e) return;
+      const g = graphOf(live.current.scene?.state);
+      if (e.kind === "node") {
+        const n = g.nodes.find((x) => x.id === e.node);
+        // A component is renamed as a whole (every copy shows the new name); a group by itself.
+        if (n?.kind === "instance" && n.definition !== null && name) {
+          void apply({ op: "rename_definition", definition: n.definition, name }, () => `Renamed the component to ${name}.`);
+          return;
+        }
+        void apply({ op: "rename", item: { node: e.node }, name }, () => (name ? `Renamed to ${name}.` : "Name cleared."));
+        return;
+      }
+      if (e.kind === "object") void apply({ op: "rename", item: { object: e.object }, name }, () => (name ? `Renamed to ${name}.` : "Name cleared."));
+    },
+    [apply],
+  );
+
+  const createTag = useCallback(async () => {
+    const tags = Object.keys(live.current.scene?.state.tags ?? {});
+    const name = nextName("Tag", tags);
+    const color = hexToRgb(TAG_PALETTE[tags.length % TAG_PALETTE.length]);
+    const r = await apply({ op: "create_tag", name, color }, () => `Tag ${name} created: type its name.`);
+    if (r) {
+      setEditingTag(name);
+      setFocusTags((n) => n + 1);
+    }
+  }, [apply]);
+
+  /** The current camera as a scene (with the hidden tags and the open context). */
+  const sceneHere = useCallback((name: string): SceneDef | null => {
+    const e = engineRef.current;
+    const st = live.current.scene?.state;
+    if (!e || !st) return null;
+    const v = e.viewSpec();
+    const dist = Math.hypot(v.eye[0] - v.target[0], v.eye[1] - v.target[1], v.eye[2] - v.target[2]) || 1;
+    // A parallel view keeps its zoom as the field of view a perspective camera at that
+    // distance would have (what lookAt reads back).
+    const fov = v.ortho ? (2 * Math.atan(v.half_height / dist) * 180) / Math.PI : v.fov;
+    return {
+      name,
+      eye: v.eye,
+      target: v.target,
+      up: v.up,
+      fov,
+      parallel: v.ortho,
+      hidden_tags: Object.entries(st.tags)
+        .filter(([, vis]) => !vis)
+        .map(([t]) => t),
+      context: st.graph?.context ?? null,
+    };
+  }, []);
+
+  const goScene = useCallback(
+    (name: string) => {
+      const sc = live.current.scene?.state.scenes.find((s) => s.name === name);
+      if (!sc) return;
+      const p: Projection = sc.parallel ? "parallel" : "perspective";
+      engineRef.current?.lookAt(sc.eye, sc.target, sc.up, p, sc.fov ?? 35);
+      setProjection(p);
+      setCamView(null);
+      setActiveScene(name);
+      void apply({ op: "activate_scene", name }, () => `Scene ${name}${sc.hidden_tags?.length ? `: hides ${sc.hidden_tags.join(", ")}` : ""}.`);
+    },
+    [apply],
+  );
+
+  const addScene = useCallback(() => {
+    const taken = (live.current.scene?.state.scenes ?? []).map((s) => s.name);
+    const sc = sceneHere(nextName("Scene", taken));
+    if (!sc) return;
+    void apply({ op: "add_scene", scene: sc }, () => `Saved scene ${sc.name}: this view, ${sc.hidden_tags?.length ? `hiding ${sc.hidden_tags.join(", ")}` : "every tag shown"}. Right-click its tab to update it.`).then((r) => r && setActiveScene(sc.name));
+  }, [apply, sceneHere]);
+
+  const updateScene = useCallback(
+    (name: string) => {
+      const sc = sceneHere(name);
+      if (sc) void apply({ op: "update_scene", name, scene: sc }, () => `Scene ${name} updated to this view.`).then((r) => r && setActiveScene(name));
+    },
+    [apply, sceneHere],
+  );
+
+  const renameScene = useCallback(
+    (name: string, next: string) => {
+      const sc = live.current.scene?.state.scenes.find((s) => s.name === name);
+      if (sc) void apply({ op: "update_scene", name, scene: { ...sc, name: next } }, () => `Scene renamed to ${next}.`).then((r) => r && activeScene === name && setActiveScene(next));
+    },
+    [apply, activeScene],
+  );
+
+  const deleteScene = useCallback(
+    (name: string) => {
+      void apply({ op: "delete_scene", name }, () => `Scene ${name} deleted.`).then((r) => r && activeScene === name && setActiveScene(null));
+    },
+    [apply, activeScene],
+  );
+
   const selectAll = useCallback(() => {
     const m = live.current.scene?.mesh;
     const state = live.current.scene?.state;
@@ -867,6 +1138,15 @@ export function App() {
         if (k === "a" && !inVcb) {
           e.preventDefault();
           void afterPointer(selectAll);
+          return;
+        }
+        if (k === "g" && !inVcb) {
+          e.preventDefault();
+          void afterPointer(() => {
+            const sel = live.current.selection;
+            if (e.shiftKey) void explode(sel.flatMap((x) => (x.kind === "node" ? [x.node] : [])));
+            else void makeGroup(itemsOf(sel));
+          });
           return;
         }
       }
@@ -968,7 +1248,7 @@ export function App() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer, save, openDialog, importDialog]);
+  }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer, save, openDialog, importDialog, makeGroup, explode]);
 
   const cycleUnits = () => {
     const next = nextUnitSystem(units);
@@ -1052,6 +1332,23 @@ export function App() {
         { label: "Select None", keys: "Esc", onSelect: () => setSelection([]) },
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
         { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
+        "-",
+        { label: "Make Group", keys: "Ctrl+G", disabled: !itemsOf(selection).length, onSelect: () => void makeGroup(itemsOf(selection)) },
+        { label: "Make Component…", disabled: !itemsOf(selection).length, onSelect: () => makeComponent(itemsOf(selection)) },
+        {
+          label: "Make Unique",
+          disabled: !(selection.length === 1 && selection[0].kind === "node" && (st?.graph?.nodes.find((n) => n.id === (selection[0] as { node: number }).node)?.kind ?? "") === "instance"),
+          onSelect: () => selection[0]?.kind === "node" && void apply({ op: "make_unique", node: selection[0].node }, () => "Made unique: this copy has its own definition now."),
+        },
+        { label: "Explode", keys: "Ctrl+Shift+G", disabled: !selection.some((x) => x.kind === "node"), onSelect: () => void explode(selection.flatMap((x) => (x.kind === "node" ? [x.node] : []))) },
+        { label: "Hide", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_hidden", items: itemsOf(selection), hidden: true }, () => `Hid ${plural(itemsOf(selection).length, "item")} (the Outliner's eye shows them again).`) },
+        { label: "Lock", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_locked", items: itemsOf(selection), locked: true }, () => `Locked ${plural(itemsOf(selection).length, "item")}.`) },
+        {
+          label: "Close Group / Component",
+          keys: "Esc",
+          disabled: (st?.graph?.context ?? null) === null,
+          onSelect: () => void apply({ op: "leave_context" }, (r) => `Closed it. Editing ${contextTrail(r.scene.state.graph)}.`),
+        },
         {
           label: "Delete Imported Meshes",
           title: "Imported geometry that is not a solid",
@@ -1070,24 +1367,21 @@ export function App() {
         { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
         "-",
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
+        "-",
+        { label: "Add Scene", title: "Save this view (camera, hidden tags, open group) as a scene tab", onSelect: addScene },
         ...(st?.scenes?.length
           ? [
               "-" as const,
               ...st.scenes.map((sc) => ({
                 label: `Scene: ${sc.name}`,
-                onSelect: () => {
-                  const p: Projection = sc.parallel ? "parallel" : "perspective";
-                  engineRef.current?.lookAt(sc.eye, sc.target, sc.up, p, sc.fov ?? 35);
-                  setProjection(p);
-                  setCamView(null);
-                  if (sc.hidden_tags?.length) setMessage({ text: `Scene ${sc.name} hides tags: ${sc.hidden_tags.join(", ")}.`, error: false });
-                },
+                checked: activeScene === sc.name,
+                onSelect: () => goScene(sc.name),
               })),
             ]
           : []),
       ],
     }),
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection.length, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, makeGroup, makeComponent, explode, addScene, goScene, activeScene],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -1144,6 +1438,7 @@ export function App() {
       />
       {dragging ? <div className="drop-hint">Drop a .shz to open it, or a SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG file to import it</div> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
+      {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
       <TopBar
         view={camView}
         onView={setView}
@@ -1154,6 +1449,7 @@ export function App() {
         menus={menus}
       />
       <ToolRail active={toolId} onSelect={selectTool} />
+      <SceneTabs scenes={st?.scenes ?? []} active={activeScene} onGo={goScene} onAdd={addScene} onUpdate={updateScene} onRename={renameScene} onDelete={deleteScene} />
       <Viewport
         mesh={scene?.mesh ?? null}
         units={units}
@@ -1181,7 +1477,28 @@ export function App() {
           engineRef.current = e;
         }}
       />
-      <SidePanel credits={credits} capture={capture} focusRender={renderFocus} />
+      <SidePanel
+        credits={credits}
+        capture={capture}
+        focusRender={renderFocus}
+        focusTags={focusTags}
+        outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
+        tags={{
+          state: st ?? null,
+          canTag: itemsOf(selection).length > 0,
+          onCreate: () => void createTag(),
+          onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${tag} ${visible ? "shown" : "hidden"}.`),
+          onColor: (tag, color) => void apply({ op: "set_tag_color", tag, color: hexToRgb(color) }),
+          onRename: (tag, name) => void apply({ op: "rename_tag", tag, name }, () => `Tag renamed to ${name}.`),
+          onDelete: (tag) => void apply({ op: "delete_tag", tag }, () => `Tag ${tag} deleted: what was on it is untagged now.`),
+          onAssign: (tag) => {
+            const items = itemsOf(live.current.selection);
+            void apply({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ?? "Untagged"}.`);
+          },
+          editing: editingTag,
+          onEdited: () => setEditingTag(null),
+        }}
+      />
       <ValueBar
         ref={vcbRef}
         tool={valueLabel ? { ...tool, vcb: valueLabel } : tool}

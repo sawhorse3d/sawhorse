@@ -65,3 +65,23 @@ export function BrandMark() {
     </svg>
   );
 }
+
+/** Small panel glyphs (Outliner, Tags, scene tabs): 16x16, stroked with currentColor. */
+export function PanelGlyph({ name }: { name: "eye" | "eye-off" | "lock" | "unlock" | "open" | "closed" | "plus" | "tag" | "trash" }) {
+  const d: Record<typeof name, string> = {
+    eye: "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z M8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z",
+    "eye-off": "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z M2.5 13.5l11-11",
+    lock: "M4 7.5h8v6H4z M5.5 7.5V5.2a2.5 2.5 0 0 1 5 0v2.3",
+    unlock: "M4 7.5h8v6H4z M5.5 7.5V5.2a2.5 2.5 0 0 1 4.8-1",
+    open: "M4 6l4 4 4-4",
+    closed: "M6 4l4 4-4 4",
+    plus: "M8 3v10M3 8h10",
+    tag: "M2.5 2.5h5.5l5.5 5.5-5.5 5.5-5.5-5.5z M5.2 5.2h.1",
+    trash: "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5",
+  };
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" className="pg">
+      <path d={d[name]} stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

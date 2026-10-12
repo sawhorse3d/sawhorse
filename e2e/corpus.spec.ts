@@ -45,8 +45,9 @@ async function ready(page: Page) {
   await page.goto("/?io=basic&theme=light");
   const vp = page.locator("main.vp");
   await expect(vp).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
-  // Only the model: no HUD, tips, axes label or report over the canvas.
-  await page.addStyleTag({ content: ".vp .hud,.vp .tip,.vp .axes,.vp .legend,.import-report,.drop-hint{visibility:hidden!important}" });
+  // Only the model: no HUD, tips, axes label or report over the canvas, and no scene-tab
+  // row above it (so the canvas keeps the size the references were rendered at).
+  await page.addStyleTag({ content: ".vp .hud,.vp .tip,.vp .axes,.vp .legend,.import-report,.drop-hint{visibility:hidden!important}.scenes{display:none!important}" });
   return vp;
 }
 
