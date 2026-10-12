@@ -1,0 +1,133 @@
+{
+  "name": "2026-10-12-cut-list-board-feet-overflow",
+  "error": "(fixed) op 9: cut list panicked: attempt to multiply with overflow. A solid offset 5,000 m across has sizes of millions of sixteenths; their product overflowed an i64 in the board feet. Board feet are now multiplied in f64.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "add_guide",
+      "point": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dir": null
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 1
+      },
+      "distance": 5000.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 2,
+      "region": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "array",
+      "objects": [
+        4
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.7071067811865476,
+            0.7071067811865475
+          ],
+          [
+            0.0,
+            -0.7071067811865475,
+            0.7071067811865476
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 1
+    }
+  ]
+}

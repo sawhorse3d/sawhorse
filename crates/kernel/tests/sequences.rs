@@ -7,7 +7,9 @@
 //! and cutting), and (lane 5) groups and components: make group / component / unique,
 //! explode, delete, open and close (the editing context), node moves / copies / arrays,
 //! hide, lock, tags (create, rename, colour, delete, assign) and scenes (add, update,
-//! delete, activate), with undo / redo interleaved anywhere. While a group or component is
+//! delete, activate), and (lane 7) grain and stock on cut-list parts, with undo / redo
+//! interleaved anywhere. After every accepted op the cut list is worked out and checked
+//! against a brute-force count of the world (`testing::check_cut_list`). While a group or component is
 //! open, most intents pick what is in it, so edits propagate through definitions.
 //!
 //! `FUZZ_PLANE_SNAP=0` turns the boolean plane-snapping pass off for the run, so the same
@@ -31,6 +33,7 @@ use glam::{DVec2, DVec3};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use sawhorse_kernel::Document;
+use sawhorse_kernel::cutlist::{Grain, PartRef};
 use sawhorse_kernel::model::{Op, SceneDef};
 use sawhorse_kernel::nodes::Item;
 use sawhorse_kernel::testing::{check_sequence, write_repro};
@@ -187,6 +190,11 @@ enum Fuzz {
     /// node (or the model).
     Scene(u8, u8, u8, Option<u8>),
     Rename(u8, Option<u8>),
+    /// Lane 7: grain (0 along L, 1 across, 2 none) on a part the cut list lists (or a solid,
+    /// group or definition picked anywhere, or an unknown id).
+    Grain(u8, u8),
+    /// Lane 7: stock (a name index, or none) and sheet / lumber / decide.
+    Stock(u8, Option<u8>, Option<bool>),
 }
 
 /// A transform, as an intent.
@@ -288,6 +296,8 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
         1 => (0u8..5, color()).prop_map(|(t, c)| Fuzz::TagColor(t, c)),
         2 => (0u8..4, 0u8..3, any::<u8>(), prop::option::of(any::<u8>())).prop_map(|(k, n, h, c)| Fuzz::Scene(k, n, h, c)),
         1 => (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(i, n)| Fuzz::Rename(i, n)),
+        2 => (any::<u8>(), 0u8..3).prop_map(|(k, g)| Fuzz::Grain(k, g)),
+        2 => (any::<u8>(), prop::option::of(0u8..4), prop::option::of(any::<bool>())).prop_map(|(k, t, s)| Fuzz::Stock(k, t, s)),
     ]
 }
 
@@ -348,6 +358,13 @@ fn pick_ref<T>(items: &[T], k: u8) -> Option<&T> {
 }
 
 const TAGS: [&str; 3] = ["Legs", "Top", "Jig"];
+/// Stock names the lane-7 intents set (one reads as sheet stock; one is blank; one too long).
+const STOCKS: [&str; 4] = [
+    "White oak",
+    "3/4 Baltic birch ply",
+    "  ",
+    "a stock name far longer than any name may be, sixty-four characters",
+];
 /// Tags the lane-5 intents create, rename, colour and delete (the first two shared with
 /// the older intents, so renames and deletes hit tags in use).
 const NODE_TAGS: [&str; 5] = ["Legs", "Top", "Carcass", "Shelves", "Untagged"];
@@ -398,6 +415,22 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             return n;
         }
         pick(&all_nodes, k).unwrap_or(1)
+    };
+    // A part the cut list lists (mostly), else a solid, node or definition picked anywhere,
+    // sometimes an id that does not exist.
+    let parts: Vec<PartRef> = m
+        .cut_list(&Default::default())
+        .rows
+        .iter()
+        .map(|r| r.target)
+        .collect();
+    let defs: Vec<u64> = m.definitions().iter().map(|(id, _)| *id).collect();
+    let part = |k: u8| match k % 8 {
+        0 => PartRef::Object(object(k / 8)),
+        1 => PartRef::Node(node(k / 8)),
+        2 => PartRef::Definition(pick(&defs, k / 8).unwrap_or(99)),
+        3 if k > 200 => PartRef::Definition(9999),
+        _ => pick(&parts, k / 8).unwrap_or(PartRef::Object(object(k))),
     };
     // Outer ring (world) and plane of a face, if it exists.
     // Faces are addressed by persistent id: pick the k-th face, send its id.
@@ -776,6 +809,15 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         Fuzz::Rename(k, n) => Op::Rename {
             item: item(*k),
             name: n.map(|n| format!("Name {n}")),
+        },
+        Fuzz::Grain(k, g) => Op::SetGrain {
+            part: part(*k),
+            grain: [Grain::Length, Grain::Width, Grain::None][*g as usize % 3],
+        },
+        Fuzz::Stock(k, t, sheet) => Op::SetStock {
+            part: part(*k),
+            stock: t.map(|i| STOCKS[i as usize % STOCKS.len()].to_string()),
+            sheet: *sheet,
         },
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,

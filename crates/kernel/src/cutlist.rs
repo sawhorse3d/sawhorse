@@ -1094,7 +1094,10 @@ impl Model {
             let board_feet = if sheet {
                 0.0
             } else {
-                (steps[0] * steps[1] * steps[2]) as f64 / (per_in * per_in * per_in * 144.0)
+                // In f64: a 10 km solid has steps whose product overflows an i64 (found by
+                // the fuzzer). Up to 2^53 the product is still exact.
+                (steps[0] as f64 * steps[1] as f64 * steps[2] as f64)
+                    / (per_in * per_in * per_in * 144.0)
                     * qty as f64
             };
             let area_m2 = if sheet {

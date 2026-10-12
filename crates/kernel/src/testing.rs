@@ -9,6 +9,8 @@
 //! - nothing panics (in debug builds the per-mutation validator panics on corruption);
 //! - (lane 5) the tree validates too: every component instance holds exactly its
 //!   definition, each solid its definition's solid under the instance's placement;
+//! - (lane 7) the cut list works out without panicking and agrees with a brute-force
+//!   count of the world ([`check_cut_list`]);
 //!
 //! and finally that replaying the same sequence again gives the same hash (determinism).
 //! Failing sequences are written as JSON by [`write_repro`] and replayed forever after by
@@ -61,6 +63,164 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     let mesh = view_mesh(m).map_err(|e| format!("view mesh: {e}"))?;
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {
         return Err("render mesh index/face-id mismatch".into());
+    }
+    check_cut_list(m)
+}
+
+/// The placement determinant of the innermost component instance around node `n` (or `n`
+/// itself), if there is one.
+fn instance_det(m: &Model, mut at: Option<u64>) -> Option<f64> {
+    use crate::nodes::NodeKind;
+    while let Some(n) = at {
+        let node = m.node(n)?;
+        if matches!(node.kind, NodeKind::Instance(_)) {
+            return Some(node.xform.determinant());
+        }
+        at = node.member.parent();
+    }
+    None
+}
+
+/// The cut list (lane 7) of any committed model: it never panics, it is deterministic, and
+/// it agrees with a brute-force reading of the world: every solid is in exactly one piece;
+/// a component part's quantity is the number of its instances in the world (and the
+/// roll-up through definitions); a piece is drawn exactly when the model draws it; handed
+/// pieces are the mirrored instances; sizes are finite and in lumber order; Visible only
+/// counts exactly the drawn pieces.
+pub fn check_cut_list(m: &Model) -> Result<(), String> {
+    use crate::cutlist::{CutOptions, PartKey, Rounding};
+    use crate::nodes::{Item, NodeKind};
+    use std::collections::{BTreeMap, BTreeSet};
+    let run = |o: CutOptions| {
+        catch_unwind(AssertUnwindSafe(|| m.cut_list(&o)))
+            .map_err(|p| format!("cut list panicked: {}", panic_message(p)))
+    };
+    let all = run(CutOptions::default())?;
+    if run(CutOptions::default())?.hash != all.hash {
+        return Err("cut list: not deterministic".into());
+    }
+    let visible = run(CutOptions {
+        visible_only: true,
+        ..Default::default()
+    })?;
+    run(CutOptions {
+        rounding: Rounding::HalfMm,
+        visible_only: false,
+    })?;
+    let g = m.graph();
+    let counts = m.part_counts();
+    let mut seen = BTreeSet::new();
+    let mut per_def: BTreeMap<u64, usize> = BTreeMap::new();
+    for row in &all.rows {
+        let bad = |what: &str| Err(format!("cut list row {:?}: {what}", row.name));
+        if row.total != row.occurrences.len() || row.qty != row.total {
+            return bad("quantity is not its pieces");
+        }
+        let shown = row.occurrences.iter().filter(|o| o.visible).count();
+        if row.hidden != row.total - shown {
+            return bad("hidden count is wrong");
+        }
+        let ordered = row.size.iter().all(|s| s.is_finite() && *s >= 0.0)
+            && row.size[0] <= row.size[1]
+            && row.size[1] <= row.size[2]
+            && row.steps[0] <= row.steps[1]
+            && row.steps[1] <= row.steps[2];
+        if !ordered {
+            return bad("sizes are not finite thickness <= width <= length");
+        }
+        if !(row.board_feet.is_finite() && row.board_feet >= 0.0 && row.area_m2 >= 0.0)
+            || (row.sheet && row.board_feet != 0.0)
+        {
+            return bad("board feet or area is wrong");
+        }
+        let mut handed = 0;
+        for o in &row.occurrences {
+            let (drawn, det) = match o.item {
+                Item::Object(id) => {
+                    if !seen.insert(id) {
+                        return bad("a solid is in two pieces");
+                    }
+                    let obj = m
+                        .object(id)
+                        .ok_or_else(|| "cut list names a missing solid".to_string())?;
+                    let det = match row.key {
+                        PartKey::Member { .. } => instance_det(m, obj.membership().parent()),
+                        _ => None,
+                    };
+                    (m.is_visible(id), det)
+                }
+                Item::Node(n) => {
+                    let node = m
+                        .node(n)
+                        .ok_or_else(|| "cut list names a missing node".to_string())?;
+                    let solids: Vec<u64> = g
+                        .objects
+                        .iter()
+                        .filter(|o| o.parent == Some(n))
+                        .map(|o| o.id)
+                        .collect();
+                    if solids.is_empty() || g.nodes.iter().any(|x| x.parent == Some(n)) {
+                        return bad("a piece's group or instance is not solids only");
+                    }
+                    for id in solids {
+                        if !seen.insert(id) {
+                            return bad("a solid is in two pieces");
+                        }
+                    }
+                    let det = match (row.key, node.kind) {
+                        (PartKey::Definition(d), NodeKind::Instance(e)) => {
+                            if m.definition_id(e) != d {
+                                return bad("an instance of another definition");
+                            }
+                            *per_def.entry(d).or_default() += 1;
+                            Some(node.xform.determinant())
+                        }
+                        (PartKey::Member { .. }, NodeKind::Group) => {
+                            instance_det(m, node.member.parent())
+                        }
+                        (PartKey::Node(_), NodeKind::Group) => None,
+                        _ => return bad("a piece of the wrong kind"),
+                    };
+                    (m.node_visible(n), det)
+                }
+            };
+            if drawn != o.visible {
+                return bad("a piece's visibility is not the model's");
+            }
+            if det.is_some_and(|d| d < 0.0) {
+                handed += 1;
+            }
+        }
+        if handed != row.handed {
+            return bad("handed count is not the mirrored instances");
+        }
+    }
+    let solids: BTreeSet<u64> = m.object_ids().into_iter().collect();
+    if seen != solids {
+        return Err(format!(
+            "cut list: pieces cover {} solids, the model has {}",
+            seen.len(),
+            solids.len()
+        ));
+    }
+    // Brute force: every instance of a part definition in the world is one piece, and the
+    // roll-up through definitions says the same.
+    for (d, n) in &per_def {
+        let world = m
+            .nodes()
+            .iter()
+            .filter(|(_, x)| matches!(x.kind, NodeKind::Instance(e) if m.definition_id(e) == *d))
+            .count();
+        if world != *n || counts.get(d) != Some(n) {
+            return Err(format!(
+                "cut list: definition {d} has {n} pieces, {world} instances in the world, roll-up {:?}",
+                counts.get(d)
+            ));
+        }
+    }
+    let drawn: usize = all.rows.iter().map(|r| r.total - r.hidden).sum();
+    if visible.totals.pieces != drawn || visible.rows.iter().any(|r| r.qty == 0 || r.hidden != 0) {
+        return Err("cut list: Visible only does not count exactly the drawn pieces".into());
     }
     Ok(())
 }
