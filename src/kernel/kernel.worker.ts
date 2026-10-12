@@ -98,6 +98,11 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "log":
         res = { id: req.id, ok: true, log: JSON.parse(document(mod).op_log_json()) as KernelOp[] };
         break;
+      case "exportFile": {
+        const file = document(mod).export_file(req.format, JSON.stringify(req.options ?? {}));
+        res = { id: req.id, ok: true, file };
+        break;
+      }
       case "export": {
         const d = document(mod);
         const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);

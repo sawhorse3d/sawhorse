@@ -22,6 +22,7 @@ sawhorse-kernel = { path = "kernel" }
 sawhorse-tessellate = { path = "tessellate" }
 sawhorse-inference = { path = "inference" }
 sawhorse-export = { path = "export" }
+sawhorse-import = { path = "import" }
 
 # Math: f64 everywhere inside the kernel.
 glam = { version = "0.34", default-features = false, features = ["std", "f64"] }
@@ -35,8 +36,13 @@ earcut = "0.4.11"
 i_overlay = "9.0"
 # 3D booleans. Pure-Rust port of Manifold, Apache-2.0. Pinned EXACTLY (ADR-0001).
 manifold-rust = { version = "=0.16.0", default-features = false }
-# 3MF export.
+# 3MF: our writer is hand-made (crates/export/src/three_mf.rs); threemf reads it back in
+# tests and reads 3MF imports.
 threemf = "0.8"
+# Zip containers (3MF, .shz). Already in the tree through threemf; same features.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+# XML for SVG import. Already in the tree through threemf.
+quick-xml = "0.39"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

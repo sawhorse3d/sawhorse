@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { ExportFormat, ExportOptions, Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -100,6 +100,13 @@ export class KernelClient {
   async export(format: "stl" | "obj", object: number): Promise<Uint8Array | string> {
     const r = await this.call({ kind: "export", format, object });
     if (r.file === undefined) throw new Error("kernel returned no file");
+    return r.file;
+  }
+
+  /** The document (or a scope of it) as a file in `format`. Throws KernelRefusal with a plain message when refused. */
+  async exportFile(format: ExportFormat, options: ExportOptions = {}): Promise<Uint8Array> {
+    const r = await this.call({ kind: "exportFile", format, options });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no file");
     return r.file;
   }
 

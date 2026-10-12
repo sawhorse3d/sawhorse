@@ -298,6 +298,7 @@ export class ViewportEngine {
     const front = new THREE.Color(this.theme.face);
     const side = new THREE.Color(this.theme.faceSide);
     const sel = new THREE.Color(this.theme.sel);
+    const warn = new THREE.Color("#d9a33a");
     const tint = (c: THREE.Color, k: number) => c.clone().lerp(sel, k);
     const selected = new Set(this.highlight.selectedParts);
     const hovered = new Set(this.highlight.hoverParts);
@@ -317,6 +318,14 @@ export class ViewportEngine {
       const part = ids ? ids[t / 3] : -1;
       const kind = n.z > 0.5 ? 0 : n.z < -0.5 ? 2 : Math.abs(n.y) >= Math.abs(n.x) ? 1 : 2;
       let col = [top, front, side][kind];
+      const info = part >= 0 ? this.meshData?.parts[part] : undefined;
+      if (info?.color) {
+        // A material colour, shaded like the theme's three face tones.
+        const [r, g, b] = info.color;
+        col = new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace).multiplyScalar([1, 0.86, 0.72][kind]);
+      }
+      // Imported geometry that is not a solid reads amber-tinted: it cannot be pushed or printed.
+      if (info?.kind === "mesh") col = col.clone().lerp(warn, 0.3);
       if (selected.has(part)) col = tint(col, 0.45);
       else if (hovered.has(part)) col = tint(col, 0.2);
       for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);

@@ -527,10 +527,14 @@ name = "sawhorse-export"
 version = "0.0.1"
 dependencies = [
  "glam",
+ "sawhorse-inference",
  "sawhorse-kernel",
  "sawhorse-tessellate",
+ "serde",
+ "serde_json",
  "thiserror",
  "threemf",
+ "zip",
 ]
 
 [[package]]

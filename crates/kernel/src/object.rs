@@ -31,6 +31,10 @@ pub struct Object {
     pub(crate) source: Option<Provenance>,
     /// Tag (layer) name; `None` is untagged. Hidden tags hide the object in the view.
     pub(crate) tag: Option<String>,
+    /// Display name (the Outliner, export file object names); `None` is unnamed.
+    pub(crate) name: Option<String>,
+    /// Material name (a key of the model's material table); `None` is the default look.
+    pub(crate) material: Option<String>,
     /// Next persistent face id to hand out. Face ids start at 1 and are never reused, so an
     /// id the UI holds either names the same face (possibly reshaped) or no face at all.
     pub(crate) next_face_id: u64,
@@ -153,6 +157,8 @@ impl Object {
             watertight: false,
             source: None,
             tag: None,
+            name: None,
+            material: None,
             next_face_id: faces.len() as u64 + 1,
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
@@ -173,6 +179,22 @@ impl Object {
 
     pub fn tag(&self) -> Option<&str> {
         self.tag.as_deref()
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn material(&self) -> Option<&str> {
+        self.material.as_deref()
+    }
+
+    /// Carry provenance, tag, name and material over from the object this one replaces.
+    pub(crate) fn copy_meta(&mut self, from: &Object) {
+        self.source = from.source.clone();
+        self.tag = from.tag.clone();
+        self.name = from.name.clone();
+        self.material = from.material.clone();
     }
 
     /// Faces in deterministic order (index = the face ordinal).
@@ -203,8 +225,7 @@ impl Object {
         let brep = Brep::build(&p)?;
         let mut o = Object::from_brep(brep);
         o.next_face_id = o.next_face_id.max(next);
-        o.source = self.source.clone();
-        o.tag = self.tag.clone();
+        o.copy_meta(self);
         Ok(o)
     }
 
@@ -255,8 +276,7 @@ impl Object {
     pub fn push_pull(&mut self, face: usize, distance: f64) -> Result<PushOutcome, PushError> {
         let (outcome, next) = crate::push::push_pull(self, face, distance)?;
         if let Some(mut next) = next {
-            next.source = self.source.clone();
-            next.tag = self.tag.clone();
+            next.copy_meta(self);
             *self = next;
         }
         Ok(outcome)
@@ -274,8 +294,7 @@ impl Object {
             .ok_or(PushError::NoSuchFace(face_id))?;
         let (outcome, next) = crate::push::push_pull_with(self, fi, distance, true)?;
         if let Some(mut next) = next {
-            next.source = self.source.clone();
-            next.tag = self.tag.clone();
+            next.copy_meta(self);
             *self = next;
         }
         Ok(outcome)
@@ -305,6 +324,8 @@ impl Object {
             watertight,
             source: None,
             tag: None,
+            name: None,
+            material: None,
             next_face_id: next,
         }
     }

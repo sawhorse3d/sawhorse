@@ -24,6 +24,7 @@ pub mod hash;
 pub mod ids;
 pub mod intersect;
 pub mod mesh;
+pub mod meshbuild;
 pub mod model;
 pub mod object;
 pub mod plane;

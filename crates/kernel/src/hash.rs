@@ -199,6 +199,12 @@ pub fn model_hash(m: &Model) -> u64 {
             h.usize(y);
         }
         h.u64(u64::from(o.is_watertight()));
+        // Names and materials only when set, so older documents keep their hashes.
+        if o.name().is_some() || o.material().is_some() {
+            h.tag("meta");
+            h.tag(o.name().unwrap_or(""));
+            h.tag(o.material().unwrap_or(""));
+        }
     }
     // Annotations are hashed only when there are any, so documents without guides keep
     // their hashes.
@@ -236,6 +242,56 @@ pub fn model_hash(m: &Model) -> u64 {
     for (t, visible) in m.tags() {
         h.tag(t);
         h.u64(u64::from(*visible));
+    }
+    // Imported meshes, materials and scenes: hashed only when present (lane 6), so documents
+    // without them keep their hashes.
+    let meshes = m.meshes();
+    if !meshes.is_empty() || !m.materials().is_empty() || !m.scenes().is_empty() {
+        h.tag("imports");
+        h.usize(meshes.len());
+        for (id, mesh) in meshes {
+            h.u64(id);
+            h.tag(&mesh.name);
+            h.tag(mesh.tag.as_deref().unwrap_or(""));
+            h.tag(mesh.material.as_deref().unwrap_or(""));
+            h.tag(&mesh.note);
+            h.usize(mesh.positions.len());
+            for p in &mesh.positions {
+                h.len(p.x);
+                h.len(p.y);
+                h.len(p.z);
+            }
+            h.usize(mesh.faces.len());
+            for f in &mesh.faces {
+                h.usize(f.len());
+                for r in f {
+                    h.usize(r.len());
+                    r.iter().for_each(|&i| h.u64(u64::from(i)));
+                }
+            }
+            h.usize(mesh.lines.len());
+            for l in &mesh.lines {
+                h.u64(u64::from(l[0]));
+                h.u64(u64::from(l[1]));
+            }
+        }
+        h.usize(m.materials().len());
+        for (name, mat) in m.materials() {
+            h.tag(name);
+            h.bytes(&mat.color);
+            h.tag(mat.texture.as_deref().unwrap_or(""));
+        }
+        h.usize(m.scenes().len());
+        for sc in m.scenes() {
+            h.tag(&sc.name);
+            for v in [sc.eye, sc.target, sc.up] {
+                v.iter().for_each(|&x| h.len(x));
+            }
+            h.len(sc.fov * 1e-3);
+            h.u64(u64::from(sc.parallel));
+            h.usize(sc.hidden_tags.len());
+            sc.hidden_tags.iter().for_each(|t| h.tag(t));
+        }
     }
     h.finish()
 }
