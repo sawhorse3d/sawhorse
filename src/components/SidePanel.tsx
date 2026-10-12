@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
+import { CutListPane, type CutListPaneProps } from "./CutListPane";
 import type { CreditsHandle } from "../credits/useCredits";
 import type { RenderPasses } from "../render/passes";
 import { Outliner, type OutlinerProps } from "./Outliner";
 import { RenderPane } from "./RenderPane";
 import { TagsPane, type TagsPaneProps } from "./TagsPane";
 
-// Right panel: Outliner / Tags / Cut list / Render. The Outliner and Tags panes are live
-// (lane 5: groups, components, tags), the Render pane too (lane 8). The cut list is not
-// built yet (lane 7) and says so.
+// Right panel: Outliner / Tags / Cut list / Render, as the approved mock. The Outliner and
+// Tags panes (lane 5), the Cut list (lane 7) and the Render pane (lane 8) are all live.
 
 export type PaneId = "outliner" | "tags" | "cutlist" | "render";
 
@@ -28,17 +28,22 @@ export interface SidePanelProps {
   tags: TagsPaneProps;
   /** Bumped to bring the Tags pane forward (a tag just created from elsewhere). */
   focusTags?: number;
+  cutlist: CutListPaneProps;
+  /** The pane shown changed (the viewport draws grain arrows while the Cut list is open). */
+  onPane?: (pane: PaneId) => void;
 }
 
-export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, focusTags = 0 }: SidePanelProps) {
+export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, onPane }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
+  useEffect(() => {
+    onPane?.(pane);
+  }, [pane, onPane]);
   useEffect(() => {
     if (focusRender > 0) setPane("render");
   }, [focusRender]);
   useEffect(() => {
     if (focusTags > 0) setPane("tags");
   }, [focusTags]);
-  const defs = outliner.state?.graph?.definitions ?? [];
 
   return (
     <aside className="side" aria-label="Panels">
@@ -75,27 +80,9 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
 
       <section className="pane" id="pane-cutlist" role="tabpanel" aria-labelledby="tab-cutlist" hidden={pane !== "cutlist"}>
         <h3>
-          Cut list <small>not built yet</small>
+          Cut list <small>from components</small>
         </h3>
-        <p className="placeholder" data-testid="cutlist-placeholder">
-          The cut list is not built yet. When it is, it will list every component as a part, with how many, its size in lumber terms (thickness, width, length), grain direction and material, and save it as CSV, PDF or labels.
-        </p>
-        <p className="note">
-          {defs.length
-            ? `Your model has ${defs.length} component${defs.length === 1 ? "" : "s"} so far (${defs.map((d) => `${d.name} ×${d.instances}`).join(", ")}): those will be its parts.`
-            : "Make your parts components (select, then Make Component) and they will become its rows."}
-        </p>
-        <div className="btnrow">
-          <button type="button" className="btn" disabled title="Arrives with the cut list">
-            CSV
-          </button>
-          <button type="button" className="btn" disabled title="Arrives with the cut list">
-            PDF
-          </button>
-          <button type="button" className="btn" disabled title="Arrives with the cut list">
-            Labels
-          </button>
-        </div>
+        <CutListPane {...cutlist} />
       </section>
 
       <section className="pane" id="pane-render" role="tabpanel" aria-labelledby="tab-render" hidden={pane !== "render"}>

@@ -51,7 +51,7 @@ describe("App shell", () => {
     expect(pressed("select")).toBe(true);
   });
 
-  it("has the four right-panel tabs: a live Outliner and Tags, a cut list that says it is not built yet", () => {
+  it("has the four right-panel tabs: a live Outliner, Tags and Cut list", () => {
     render(<App />);
     const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
     expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Render"]);
@@ -64,8 +64,14 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Cut list" }));
     expect(document.getElementById("pane-cutlist")?.hidden).toBe(false);
     expect(document.getElementById("pane-outliner")?.hidden).toBe(true);
-    expect(screen.getByTestId("cutlist-placeholder").textContent).toMatch(/not built yet/);
+    // No example rows: without a kernel (jsdom) the pane says why it is empty, and its
+    // exports wait for a list.
+    expect(screen.getByTestId("cutlist")).toBeTruthy();
+    expect(screen.getByText(/worked out by the kernel/)).toBeTruthy();
     expect(screen.queryByText("board feet, solid oak")).toBeNull();
+    expect((screen.getByRole("button", { name: "CSV" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Nesting/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("cutlist-note").textContent).toMatch(/edge banding and nesting/);
     fireEvent.click(screen.getByRole("tab", { name: "Render" }));
     fireEvent.click(screen.getByRole("button", { name: /Kitchen/ }));
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toMatch(/warm kitchen/);

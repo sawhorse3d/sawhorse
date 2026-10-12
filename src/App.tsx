@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TopBar, type MenuItem } from "./components/TopBar";
 import { ToolRail } from "./components/ToolRail";
 import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
-import { SidePanel } from "./components/SidePanel";
+import { SidePanel, type PaneId } from "./components/SidePanel";
+import { rowKey } from "./components/CutListPane";
+import { grainOverlay } from "./cutlist/arrows";
+import { defaultRounding, GRAIN_WORDS } from "./cutlist/format";
+import type { CutList, CutRow, Grain, Rounding } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
@@ -97,6 +101,18 @@ export const DEFAULT_DISTANCE = 12 * M_PER_IN;
 export const DEFAULT_RECT: [number, number] = [24 * M_PER_IN, 16 * M_PER_IN];
 
 const UNITS_KEY = "sawhorse.units";
+/** The cut list's rounding when someone picked one (otherwise it follows the units). */
+const CUT_ROUNDING_KEY = "sawhorse.cutRounding";
+
+function loadCutRounding(): Rounding | null {
+  try {
+    const v = localStorage.getItem(CUT_ROUNDING_KEY);
+    if (v === "sixteenth" || v === "thirty_second" || v === "half_mm") return v;
+  } catch {
+    /* storage blocked */
+  }
+  return null;
+}
 const IMPORT_UNITS_KEY = "sawhorse.importUnits";
 const IMPORT_UNITS: { id: ImportUnit; label: string }[] = [
   { id: "mm", label: "Millimetres" },
@@ -193,6 +209,14 @@ export function App() {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [focusTags, setFocusTags] = useState(0);
   const [importUnits, setImportUnits] = useState<ImportUnit>(loadImportUnits);
+  // The cut list (lane 7): worked out by the kernel while its pane is open.
+  const [pane, setPane] = useState<PaneId>("outliner");
+  const cutOpen = pane === "cutlist";
+  const [cutPick, setCutPick] = useState<Rounding | null>(loadCutRounding);
+  const cutRounding = cutPick ?? defaultRounding(units);
+  const [cutVisibleOnly, setCutVisibleOnly] = useState(false);
+  const [cutList, setCutList] = useState<CutList | null>(null);
+  const [cutProblem, setCutProblem] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Camera: the requested standard view (re-applied when viewSeq changes), the projection,
@@ -633,6 +657,48 @@ export function App() {
   useEffect(() => {
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), solids: () => live.current.scene?.state.solids ?? [], graph: () => live.current.scene?.state.graph ?? null };
+  }, []);
+
+  // ---- cut list (lane 7) ------------------------------------------------------------------
+
+  // Worked out again after every edit while the pane is open (read-only; never an undo step).
+  useEffect(() => {
+    if (!cutOpen || !scene) return;
+    const k = kernelRef.current;
+    if (!k) return;
+    let stale = false;
+    void queue.current
+      .then(() => k.cutList({ rounding: cutRounding, visible_only: cutVisibleOnly }))
+      .then((l) => {
+        if (stale) return;
+        setCutList(l);
+        setCutProblem(null);
+      })
+      .catch((e) => !stale && setCutProblem(`The cut list could not be worked out: ${friendlyError(e instanceof Error ? e.message : String(e))}`));
+    return () => {
+      stale = true;
+    };
+  }, [cutOpen, scene, cutRounding, cutVisibleOnly]);
+
+  // Read-only hook for tests: the cut list for any options, straight from the kernel.
+  useEffect(() => {
+    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+    w.__sawhorse = {
+      ...(w.__sawhorse ?? {}),
+      cutList: async (o?: { rounding?: Rounding; visible_only?: boolean }) => {
+        await queue.current;
+        return kernelRef.current?.cutList({ rounding: o?.rounding ?? "sixteenth", visible_only: !!o?.visible_only }) ?? null;
+      },
+    };
+  }, []);
+
+  const setRounding = useCallback((r: Rounding) => {
+    setCutPick(r);
+    try {
+      localStorage.setItem(CUT_ROUNDING_KEY, r);
+    } catch {
+      /* per-viewer convenience only */
+    }
   }, []);
 
   // ---- tools -----------------------------------------------------------------------------
@@ -1080,6 +1146,72 @@ export function App() {
     [apply, activeScene],
   );
 
+  /** A cut list row clicked: select its drawn pieces, opening what holds them when they share
+   * a closed group or component (as the Outliner does); pieces in several places select what
+   * holds each of them in the open context. */
+  const selectCutRow = useCallback(
+    (row: CutRow, mode: "replace" | "add" | "toggle") => {
+      const state = live.current.scene?.state;
+      const g = graphOf(state);
+      const pieces: Entity[] = row.occurrences.filter((o) => o.visible).map((o) => ("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object }));
+      if (!pieces.length) return void setMessage({ text: `Every '${row.name}' is hidden: show it (the Outliner's eye or its tag) to select it.`, error: true });
+      const parentOf = (e: Entity) => (e.kind === "node" ? (g.nodes.find((n) => n.id === e.node)?.parent ?? null) : e.kind === "object" ? (g.objects.find((o) => o.id === e.object)?.parent ?? null) : null);
+      const parents = new Set(pieces.map(parentOf));
+      const what = `${plural(pieces.length, "piece")} of ${quoted(row.name)}`;
+      if (parents.size === 1) {
+        const p = [...parents][0];
+        if (p === g.context) {
+          select(applySelection(live.current.selection, pieces, mode));
+          setMessage({ text: `Selected ${what}.`, error: false });
+          return;
+        }
+        void apply({ op: "set_context", node: p }).then((r) => {
+          if (!r) return;
+          select(pieces);
+          setMessage({ text: `Selected ${what} (opened ${describeNode(r.scene.state.graph, p as number)} to reach them).`, error: false });
+        });
+        return;
+      }
+      const seen = new Set<string>();
+      const holders: Entity[] = [];
+      for (const e of pieces) {
+        const s = scopeEntity(e, state);
+        if (s && !seen.has(entityKey(s))) {
+          seen.add(entityKey(s));
+          holders.push(s);
+        }
+      }
+      select(applySelection(live.current.selection, holders, mode));
+      setMessage({ text: `The ${what} are in ${holders.length === 1 ? "one group or component" : `${holders.length} groups or components`}; selected ${holders.length === 1 ? "it" : "those"}.`, error: false });
+    },
+    [apply, select],
+  );
+
+  const cutSelected = useMemo(() => {
+    const keys = new Set(selection.map(entityKey));
+    const out = new Set<string>();
+    for (const row of cutList?.rows ?? []) {
+      const vis = row.occurrences.filter((o) => o.visible);
+      if (vis.length && vis.every((o) => keys.has(entityKey("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object })))) out.add(rowKey(row));
+    }
+    return out;
+  }, [selection, cutList]);
+
+  const setGrain = useCallback(
+    (row: CutRow, grain: Grain) => void apply({ op: "set_grain", part: row.target, grain }, () => `Grain of ${quoted(row.name)}: ${GRAIN_WORDS[grain]}.`),
+    [apply],
+  );
+  const setStock = useCallback(
+    (row: CutRow, stock: string | null, sheet: boolean | null) =>
+      void apply({ op: "set_stock", part: row.target, stock, sheet }, () =>
+        stock ? `${quoted(row.name)} is cut from ${stock}${sheet === null ? "" : sheet ? " (sheet goods)" : " (solid lumber)"}.` : sheet === null ? `${quoted(row.name)} uses its material's name again.` : `${quoted(row.name)} counted as ${sheet ? "sheet goods" : "solid lumber"}.`,
+      ),
+    [apply],
+  );
+
+  // CSV, PDF, Print and Labels arrive with the exports (the next step of this lane).
+  const exportsSoon = useCallback(() => setMessage({ text: "Cut list exports arrive with the next step.", error: false }), []);
+
   const selectAll = useCallback(() => {
     const m = live.current.scene?.mesh;
     const state = live.current.scene?.state;
@@ -1313,7 +1445,9 @@ export function App() {
   const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);
   // The open group or component: a dashed box around what is in it (SketchUp-like).
   const contextBox = useMemo(() => contextBoxOverlay(st ?? null), [st]);
-  const overlay = useMemo(() => [...contextBox, ...annotations.overlay, ...toolView.overlay], [contextBox, annotations, toolView.overlay]);
+  // Grain arrows on every drawn piece while the Cut list pane is open.
+  const grain = useMemo(() => (cutOpen ? grainOverlay(cutList) : []), [cutOpen, cutList]);
+  const overlay = useMemo(() => [...contextBox, ...grain, ...annotations.overlay, ...toolView.overlay], [contextBox, grain, annotations, toolView.overlay]);
   const labels = useMemo(() => [...annotations.labels, ...toolView.labels], [annotations, toolView.labels]);
 
   const menus = useMemo<Record<string, MenuItem[]>>(
@@ -1503,6 +1637,23 @@ export function App() {
         capture={capture}
         focusRender={renderFocus}
         focusTags={focusTags}
+        onPane={setPane}
+        cutlist={{
+          list: cutList,
+          problem: cutProblem ?? (kernelState === "missing" || kernelState === "error" ? "The cut list is worked out by the kernel, which is not loaded." : null),
+          rounding: cutRounding,
+          onRounding: setRounding,
+          visibleOnly: cutVisibleOnly,
+          onVisibleOnly: setCutVisibleOnly,
+          selected: cutSelected,
+          onSelectRow: selectCutRow,
+          onGrain: setGrain,
+          onStock: setStock,
+          onCsv: exportsSoon,
+          onPdf: exportsSoon,
+          onPrint: exportsSoon,
+          onLabels: exportsSoon,
+        }}
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{
           state: st ?? null,

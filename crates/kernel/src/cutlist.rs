@@ -36,7 +36,8 @@
 //! Sheet goods report their area and a rough count of 4 x 8 ft sheets (true nesting, kerf
 //! and edge banding are later work).
 //!
-//! The whole list is deterministic and carries a hash ([`CutList::hash`]).
+//! Rows run in Outliner order of their first piece, solid lumber before sheet goods. The
+//! whole list is deterministic and carries a hash ([`CutList::hash`]).
 
 use std::collections::BTreeMap;
 
@@ -1140,6 +1141,9 @@ impl Model {
         if opts.visible_only {
             rows.retain(|r| r.qty > 0);
         }
+        // Solid lumber first, then sheet goods (each in Outliner order): the order a shop
+        // works through them, and the sheets sit together for the rough sheet count.
+        rows.sort_by_key(|r| r.sheet);
         let totals = totals(&rows, r);
         let mut list = CutList {
             rounding: r,
