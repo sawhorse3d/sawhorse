@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 5): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes. Paint is on the tool rail but says "arrives in a later lane"; the Cut list pane says it is not built yet.
+Sawhorse is pre-alpha. This page covers what works today (lane 7): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, and the cut list. Paint is on the tool rail but says "arrives in a later lane".
 
 ## The first ten minutes
 
@@ -190,6 +190,47 @@ Tags control what you see, nothing else: geometry stays where it is and in its g
 ## Scenes
 
 A scene remembers the camera, which tags are hidden and which group or component is open. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+
+## Cut list
+
+The Cut list pane (right panel, **Cut list**) turns the model into the list of boards you cut: one row per part, with how many, its finished size in lumber terms and its material, two tiles for board feet and sheets, and the files a shop needs.
+
+**What is a part.**
+- A component is a part, and its quantity is the number of its copies. Copies inside other components multiply: a Drawer used three times, holding two Drawer side copies, gives Drawer side x 6.
+- A plain solid is a part of its own, named as the Outliner names it ("Solid 3", or the name you gave it).
+- A group of solids (a glue-up) is one part.
+- A component that holds other components or groups is an assembly: its pieces are listed, not the assembly.
+
+So make the boards you repeat components (select, Edit > Make Component): six identical sides become one row, "Side, 2".
+
+**Sizes** are finished sizes: thickness, width and length (T is the smallest, L the largest), rounded to the nearest 1/16 in. **Round to** offers 1/32 in, and 0.5 mm (the default when your units are metric; sizes are then in mm). A part made of rectangles (a board, a dadoed side, a tenon) is measured exactly. A part that is not (a tapered leg, a moulding) is noted **shaped** and shows the box it comes out of. A mirrored copy counts in the same row, noted **handed** ("handed: 1 of 2 mirrored").
+
+**Grain** runs along the length; a small arrow beside L shows it. While the pane is open the view draws a grain arrow on every part. To change it, right-click a row: **Grain along the length**, **Grain across (along the width)** (the arrow moves to W, and the view's arrow turns), or **No grain** (MDF, a painted part).
+
+**Material and stock.** The Material column shows the part's material (its first solid's), or a dash. Right-click a row and choose **Stock / material...** to name what it is cut from ("White oak", "1/4 birch ply") and whether it counts as solid lumber, sheet goods, or (the default) whichever its name and thickness say. Names with ply, MDF, HDF, OSB, particle board, melamine or hardboard in them are sheet goods, and so is anything 1/4 in thick or thinner. **Mark as sheet goods** / **Mark as solid lumber** switches one row; **Use the material's name** undoes the naming. Stock belongs to the component, so it is the same in every copy.
+
+**The tiles.** Board feet = T x W x L / 144 (inches) for each lumber part times its quantity, from the rounded sizes, with the species when there is one. Sheet goods are counted as a rough number of 4 x 8 sheets (their area divided by a sheet's, rounded up), with the stock and thickness. Kerf, edge banding and nesting (laying parts out on sheets) are not included yet; the pane says so.
+
+**Hidden parts** (the Outliner's eye, a hidden tag, a hidden group) stay in the list with a "hidden" note. Tick **Visible only** to leave them out of the rows and the totals.
+
+**A row click** selects that part's pieces in the model (Shift adds, Ctrl toggles). When they all sit inside one closed group or component, it opens that first, as the Outliner does.
+
+**Files.**
+- **CSV** saves a spreadsheet: Part, Qty, T, W, L, Material, Grain, Stock (lumber or sheet), Board feet, Area, Notes, and a Total row.
+- **PDF** saves the cut list report as a PDF (Letter pages: the table with grain and board feet, the totals and the note).
+- **Print** prints that report on its own, without the window around it (the print preview shows only the report).
+- **Labels** saves a PDF of labels, one per part, laid out for Avery 5160-size sheets (30 to a page, 2 5/8 x 1 in): name and quantity, size, stock and the grain as words and an arrow.
+
+Each file is offered through the same save dialog as an export, named after your model ("Bookshelf cut list.csv", "Bookshelf labels.pdf").
+
+**The bookshelf as components.** This builds the bookshelf the cut list tests use. Sizes in inches; typed values need no click first.
+1. The back panel, while there is room: `R`, `34 1/2, 71 1/4`, Enter; `P`, `1/4`, Enter. Double-click it, `Q`, Right arrow, click its corner at the origin, click along its long edge, type `90` (or `-90` if it turned down into the ground): it stands up. Move it (`M`) 3/4 along red and back along green to 11. Edit > Make Component, `Back panel`.
+2. Sides: `R`, `3/4, 11 1/4`; `P`, `71 1/4`. Double-click it, Make Component `Side`. `M`, tap Ctrl, click its front bottom corner, Right arrow, `35 1/4`.
+3. Top: `R`, `36, 11 1/4`; `P`, `3/4`; double-click it, `M`, Up arrow, `71 1/4`. Make Component `Top`.
+4. Toe kick: `R`, `34 1/2, 3/4`; `P`, `3 1/2`; move it 3/4 along red and 2 along green. Make Component `Toe kick`.
+5. Shelves: `R`, `34 1/2, 11`; `P`, `3/4`; move it 3/4 along red and 3 1/2 up. Make Component `Shelf`. `M`, tap Ctrl, click a corner, Up arrow, `18`, then `x3`.
+
+The Cut list then reads: Side 2, 3/4 x 11 1/4 x 71 1/4; Top 1, 3/4 x 11 1/4 x 36; Toe kick 1, 3/4 x 3 1/2 x 34 1/2; Shelf 4, 3/4 x 11 x 34 1/2; Back panel 1, 1/4 x 34 1/2 x 71 1/4 (sheet). That is 2,735.15625 cubic inches of lumber, **18.99 board feet**, and **1 sheet** of 1/4 in stock. Right-click the Top, Grain across: its arrow turns. Right-click the Back panel, Stock, `1/4 birch ply`, Sheet goods. Then CSV, PDF, Print and Labels.
 
 ## When a cut goes all the way through
 

@@ -9,8 +9,9 @@ The seed record of 2026-10-11 has been split into one file per decision under `d
 | [0003](adr/0003-ui-shell.md) | UI shell: exactly the approved mock, SketchUp-2017 keys, our glyphs and inference colours, Tauri 2 + Vite + React + three.js | Accepted; shell built in lane 1; navigation, selection, inference, VCB grammar and the draw / push / tape tools in lane 3; Move, Rotate, Scale, Offset, Follow Me, the dev autosave and friendly names in lane 4; the File menu, drag-and-drop and the import report in lane 6 |
 | [0004](adr/0004-credits.md) | Credits and render service: no accounts, device keys, Stripe packs, server-side keys only | Accepted; lane 8 built the app side (device key, signed client, Render pane, passes) and `../render-service` (tested, not deployed); go-live checklist in `docs/LAUNCH-CREDITS.md` |
 | [0005](adr/0005-groups-components.md) | Groups, components, tags and scenes: a tree of nodes over world-space solids; definitions as templates, instance solids derived bit for bit; edits captured and re-derived; the editing context as model state, opening and closing it not an undo step | Accepted; lane 5 built the kernel, the scene graph across the worker, context-aware selection and tools, the Outliner, Tags pane and scene tabs, `.shz` and `.skp` mapping |
+| [0006](adr/0006-cut-list.md) | The cut list: parts from components (quantities multiplied through nesting), plain solids and solid-only groups; minimal oriented boxes as T x W x L (exact when rectilinear, "shaped" otherwise); grain and stock as part attributes with ops; lumber in board feet, sheet goods in rough 4 x 8 sheets; computed in the kernel, deterministic, hashed | Accepted; lane 7 built the kernel module, the ops, the Cut list pane with grain arrows, CSV, the printable report and PDF, and the label sheet |
 
-New decisions get the next number (`docs/adr/0005-*.md`) with Status, Context, Decision, Consequences.
+New decisions get the next number (`docs/adr/0007-*.md`) with Status, Context, Decision, Consequences.
 
 ## Day-1 spike result (2026-10-11, lane 1)
 

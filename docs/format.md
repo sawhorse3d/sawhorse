@@ -1,6 +1,6 @@
 # The `.shz` file format, version 1
 
-Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
+Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
 
 A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or Stored entries) with these entries:
 
@@ -85,6 +85,7 @@ An object is a watertight solid.
 | `parent` | integer, optional | The node (`nodes[].id`) the solid is in: a group or a component instance. Absent: the model's top level. |
 | `slot` | integer, optional | For a solid of a component instance: the definition member it is derived from (see below). |
 | `hidden`, `locked` | boolean, optional | Hidden (not drawn, not exported by default) and locked (not editable). Absent: false. |
+| `part` | part attributes, optional | What was said about the solid as a cut-list part (below). For a solid with a `slot` it repeats its definition member's. |
 
 A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces.
 
@@ -109,6 +110,7 @@ The model is a tree. Its inner nodes are groups and component instances; solids,
 | `hidden`, `locked` | boolean, optional | As for objects; hiding a node hides everything in it. |
 | `slot` | integer, optional | A node nested inside a component instance: its definition member. |
 | `xform` | transform, optional | Local axes to world: for an instance, its placement (definition coordinates to world); for a group, where its axes are (its contents are stored in world coordinates already). Absent: the identity. |
+| `part` | part attributes, optional | A group's cut-list attributes (below). Instances carry none: theirs are their definition's. |
 
 A transform is `{ "linear": [[a, b, c], [d, e, f], [g, h, i]], "translation": [x, y, z] }`, mapping a point `p` to `linear * p + translation` (rows of the matrix; metres). It must be finite and not flatten anything (`|det(linear)| >= 1e-9`).
 
@@ -121,8 +123,9 @@ A component definition is geometry and structure its instances share, stored onc
 | `name` | string | Shown for every instance without a name of its own. |
 | `next_slot` | integer | Greater than every member's `slot`; slots are never reused. |
 | `members` | member[] | What the definition holds. |
+| `part` | part attributes, optional | The component's cut-list attributes (below): what every instance is cut from and which way its grain runs. |
 
-A member has `slot` (unique in the definition), `parent` (optional: the `slot` of the nested group member it is in), `name`, `tag`, `hidden`, `locked` (optional, as for nodes) and a `kind`:
+A member has `slot` (unique in the definition), `parent` (optional: the `slot` of the nested group member it is in), `name`, `tag`, `hidden`, `locked` (optional, as for nodes), `part` (optional: the cut-list attributes of a solid or nested group member) and a `kind`:
 
 - `"solid"`: `material` (optional), `next_face_id`, `brep` (exactly as for objects, in definition coordinates).
 - `"mesh"`: `material`, `note`, `positions`, `faces`, `lines` (as for meshes, in definition coordinates).
@@ -132,6 +135,18 @@ A member has `slot` (unique in the definition), `parent` (optional: the `slot` o
 **Instances are derived.** Every instance contains exactly one item per member of its definition (a solid, mesh or node with that `slot`, in the right nested group), and every solid of an instance is its member's solid under the instance's `xform`: each point mapped, each face plane mapped (normals by the inverse transpose), loops reversed when the transform mirrors. Writers list those solids in `objects` (for their `id`, display `number`, `name`, `parent`, `slot`, flags) without a `brep`; readers derive their geometry. A reader refuses a file whose instances do not hold exactly their definitions' members.
 
 Nested node placements compose: a member node's `xform` in the world is its instance's `xform` after the member's own.
+
+### Part attributes (cut list)
+
+An object, all optional (absent, or `{}`: nothing said). Written on definitions, groups and solids (`objects[]`, `nodes[]` of kind group, `definitions[]`, `definitions[].members[]` of kind solid or group). Readers that do not know them lose nothing but the cut list's overrides.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `grain` | `"length"`, `"width"` or `"none"` | Which way the grain runs: along the part's length (the default; writers leave it out), across it (along its width), or no grain (MDF, painted). Length, width and thickness are the part's minimal box, sorted. |
+| `stock` | string | What the part is cut from, in words ("White oak", "3/4 Baltic birch ply"), at most 64 characters. The cut list shows it instead of the material's name. |
+| `sheet` | boolean | Sheet goods (true) or solid lumber (false). Absent: sheet when the stock or material name reads as sheet stock (ply, MDF, HDF, OSB, particle, melamine, hardboard) or the part is 1/4 in thick or less. |
+
+Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`.
 
 ### Other tables
 

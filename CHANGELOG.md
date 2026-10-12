@@ -4,6 +4,27 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 7, the cut list, 2026-10-12)
+
+- **Cut list pane** (replaces the placeholder), as the approved mock: Part, Qty, T, W, L, Material; a board feet tile (with the species) and a 4 x 8 sheets tile (with the stock and thickness); CSV, PDF, Print, Labels; Nesting shown disabled; a note that kerf, edge banding and nesting are not included. Added around it: Round to (1/16 in, 1/32 in, 0.5 mm; metric units start at 0.5 mm), Visible only, a grain mark beside L (or W), notes under a part's name (sheet, shaped, handed, hidden, scaled copy).
+- **What a part is** (ADR-0006): a component definition holding solids (quantity = its instances, multiplied through every component it is nested in), a solid-only group, or a plain solid; assemblies (components holding components or groups) list their pieces. Mirrored copies count in the same row as handed.
+- **Sizes**: the minimal oriented bounding box as T <= W <= L, exact for parts made of rectangles, the blank it comes out of for shaped parts (tapered legs, mouldings); finished sizes in whole rounding steps, so every output writes the same fractions.
+- **Grain and stock**: right-click a row for grain along the length, across (along the width) or none; Stock / material... (species or sheet stock, lumber / sheet / decide); Mark as sheet goods / solid lumber; Use the material's name. Ops `set_grain` and `set_stock`; attributes on definitions, groups and solids, saved in `.shz` (`docs/format.md`), reaching every copy of a component.
+- **Grain arrows** in the viewport while the pane is open, on both broad faces of every drawn piece (walnut along L, copper across; new `--grain` tokens).
+- **A row click selects its pieces** in the model (opening the group or component that holds them, as the Outliner does); Shift adds, Ctrl toggles.
+- **Exports**, through lane 6's save pickers: CSV (RFC 4180, UTF-8 with BOM, a Total row); the printable report (Print shows only the report through a print stylesheet, in the browser and in Tauri); the report as a PDF from our own small PDF 1.4 writer; labels, one per part, on Avery 5160-size sheets (name, quantity, size, stock, grain in words and an arrow).
+- **Kernel**: `crates/kernel/src/cutlist.rs` (`Model::cut_list`, `Model::part_counts`, `PartAttrs`, deterministic and hashed); `wasm-api` `Doc.cut_list` and `replay_cut_list`; the worker's `cutList` request.
+- **Tests**: `crates/kernel/tests/cutlist.rs` (the bookshelf as components: Side x2 3/4 x 11 1/4 x 71 1/4, Shelf x4 3/4 x 11 x 34 1/2, Top 3/4 x 11 1/4 x 36, Toe kick 3/4 x 3 1/2 x 34 1/2, Back panel 1/4 x 34 1/2 x 71 1/4 sheet; 2,735.15625 in^3 = 18.994140625 board feet exactly; grain, stock, hidden, handed, rotated, scaled, nested, groups, a tapered leg, rounding, the snapshot); every golden records its cut list hash and the new `cutlist.json` golden replays the bookshelf (WASM == native for models and cut lists); the fuzzer checks the cut list against a brute-force count after every op (20,000 sequences clean); Vitest for the pane, the report, the arrows, CSV / PDF / labels round trips; `e2e/cutlist.spec.ts` builds the bookshelf through the UI and checks every row, the totals and the CSV. `scripts/capture-lane07.mjs` is the lane-end walk-through.
+
+### Fixed (lane 7)
+
+- Outliner rename starts with the old name selected.
+- Hiding what is selected (Edit > Hide, the Outliner's eye, a tag or a scene) drops it from the selection, so Delete cannot erase what nobody can see.
+- Status lines quote names after their noun, so default names never double it ("Saved scene 'Front'", "Tag 'Shelves' created", "component 'Side' (2 of 2)").
+- Move with Ctrl says "Copying ..." for the whole gesture, along a locked axis too.
+- Make Component on a single group turns the group itself into the instance (Model > Side > Solid, not Model > Side > Group > Solid), keeping its id, tag and flags; the definition takes the group's axes.
+- The fuzzer found a board feet overflow on a solid kilometres across (now in f64; `tests/repro/2026-10-12-cut-list-board-feet-overflow.json`).
+
 ### Added (lane 5, groups, components, tags and scenes, 2026-10-11)
 
 - **Groups**: Ctrl+G (Edit > Make Group) groups the selection. A click on anything in a closed group selects the whole group; Move, Rotate and Scale move it as a unit (face ids inside unchanged, the group's axes follow); double-click opens it for editing, with the rest of the model faded, a dashed box round it and the trail in the HUD ("Edit: Model › Carcass"); Esc closes it; a click outside closes it and selects what was clicked. Strokes drawn inside a group stick only to that group's strokes. Ctrl+Shift+G (Edit > Explode) takes it apart.
