@@ -31,7 +31,7 @@ pub struct Scene {
     pub format: String,
     /// Schema version of the model data (`SNAPSHOT_VERSION`).
     pub version: u32,
-    /// Who wrote the file, e.g. `Sawhorse 0.0.1`.
+    /// Who wrote the file, e.g. `Sawhorse 0.1.0-alpha.1`.
     #[serde(default)]
     pub generator: String,
     #[serde(default)]
@@ -95,7 +95,7 @@ pub struct SaveOptions {
     /// PNG bytes of a picture of the model.
     #[serde(skip)]
     pub thumbnail_png: Option<Vec<u8>>,
-    /// e.g. `Sawhorse 0.0.1`.
+    /// e.g. `Sawhorse 0.1.0-alpha.1`.
     #[serde(default)]
     pub generator: Option<String>,
 }

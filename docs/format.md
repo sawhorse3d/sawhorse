@@ -20,7 +20,7 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
 {
   "format": "sawhorse-shz",
   "version": 1,
-  "generator": "Sawhorse 0.0.1",
+  "generator": "Sawhorse 0.1.0-alpha.1",
   "units": { "length": "metre", "up": "Z", "display": "frac-in" },
   "geometry": "geometry.glb",
   "thumbnail": "thumbnail.png",

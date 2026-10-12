@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-export"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glam",
  "sawhorse-inference",
@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-import"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glam",
  "quick-xml",
@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-inference"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glam",
  "sawhorse-kernel",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-kernel"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "arbitrary",
  "cavalier_contours",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-shz"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "sawhorse-export",
  "sawhorse-import",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-tessellate"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "earcut",
  "glam",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-wasm"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 dependencies = [
  "console_error_panic_hook",
  "glam",

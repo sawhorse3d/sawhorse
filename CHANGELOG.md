@@ -4,6 +4,10 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed (lane 14, version 0.1.0-alpha.1, 2026-10-12)
+
+- **Version 0.1.0-alpha.1** everywhere it is declared: `package.json`, `src-tauri/tauri.conf.json`, the `crates/` workspace and the desktop crates (with their lock files). Installers from the next tag carry it in their names; the files of the `v0.1.0-alpha.1` pre-release still say 0.0.1 because they were built before the bump. Windows Installer accepts only numeric versions, so the MSI is versioned `0.1.0.1` (`bundle.windows.wix.version`). Saved `.shz` files now record `"generator": "Sawhorse 0.1.0-alpha.1"`.
+
 ### Added (lane 9, nesting and cutting diagrams, 2026-10-12)
 
 - **Nesting section** in the Cut list pane (the mock's "Nesting ›" button, now live): the cut list's pieces laid out on real sheets and boards, worked out again 200 ms after every edit. Saw (Table saw = guillotine, the default; Tightest (CNC) = maxrects), Kerf (1/8 in to start; typed lengths such as 3/32) and Trim per edge; tiles for sheets (by stock), boards (by nominal size, with board feet bought) and the overall yield; parts on no stock with the reason; a to-scale diagram per sheet or board with every part tagged by its cut-list row ("4c"), hover to light it up in the model (and the model's hovered part lights up in its diagram), click to select it; the cut sequence in shop words ("Rip to 11 1/4 in") and the parts under each diagram. ADR-0007.
