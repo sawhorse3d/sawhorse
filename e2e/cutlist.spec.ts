@@ -241,7 +241,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   // The top's grain across its width.
   await page.locator(".cutlist tbody tr", { hasText: "Top" }).click({ button: "right" });
   await page.getByRole("menuitemradio", { name: /across/ }).click();
-  await expect(hint(page)).toContainText("Grain of 'Top': along W (across)");
+  await expect(hint(page)).toContainText("Grain of 'Top': across W");
   await expect(page.locator(".cutlist tbody tr", { hasText: "Top" }).locator("td").nth(3).locator("i.grain")).toHaveCount(1);
   await expect.poll(async () => (await cutRows(page)).map((r) => r[5])).toEqual(["White oak", "White oak", "White oak", "White oak", "1/4 birch ply"]);
   await expect(page.getByTestId("tile-board-feet")).toHaveText("18.99board feet, White oak");
@@ -263,7 +263,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   expect(text).toContain('"=""3/4"""');
   expect(lines.slice(1).map((l) => [...l.slice(0, 13), l[14]])).toEqual([
     ["Side", "2", "3/4", "11 1/4", "71 1/4", "0.75", "11.25", "71.25", "White oak", "along L", "Lumber", "8.35", "", ""],
-    ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "White oak", "along W (across)", "Lumber", "2.11", "", ""],
+    ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "White oak", "across W", "Lumber", "2.11", "", ""],
     ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "0.75", "3.5", "34.5", "White oak", "along L", "Lumber", "0.63", "", ""],
     ["Shelf", "4", "3/4", "11", "34 1/2", "0.75", "11", "34.5", "White oak", "along L", "Lumber", "7.91", "", ""],
     ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "0.25", "34.5", "71.25", "1/4 birch ply", "along L", "Sheet", "", "17.07", ""],

@@ -1,10 +1,14 @@
 // The printable cut list (lane 7): what Print sends to the printer. It lives outside the
 // app's layout (a portal on <body>), hidden on screen; while printing, the print stylesheet
-// hides the app and shows only this: a title, the summary, the full table with grain and
-// notes, the totals, and the scope note. Plain black on white, no app chrome.
+// hides the app and shows only this: a title, the summary, the full table (the same columns
+// and cells as the PDF: board feet for lumber, area for sheets, grain, notes), the totals,
+// and the scope note. Plain black on white, no app chrome.
 import { createPortal } from "react-dom";
 import type { CutList } from "../kernel/types";
-import { formatArea, formatBoardFeet, formatSteps, GRAIN_WORDS, listStyle, materialText, rowNotes, scopeNote, sizeUnit, summary } from "../cutlist/format";
+import { formatArea, formatBoardFeet, formatSteps, listStyle, REPORT_COLUMNS, reportCells, scopeNote, sizeUnit, summary } from "../cutlist/format";
+
+/** Right-aligned columns: Qty, T, W, L, Bd ft / area (as in the PDF). */
+const NUMERIC = new Set([1, 2, 3, 4, 7]);
 
 export function CutListReport({ list, title }: { list: CutList | null; title: string }) {
   if (!list || typeof document === "undefined") return null;
@@ -23,34 +27,21 @@ export function CutListReport({ list, title }: { list: CutList | null; title: st
       <table>
         <thead>
           <tr>
-            <th>Part</th>
-            <th className="n">Qty</th>
-            <th className="n">T</th>
-            <th className="n">W</th>
-            <th className="n">L</th>
-            <th>Material</th>
-            <th>Grain</th>
-            <th className="n">Board feet</th>
-            <th>Notes</th>
+            {REPORT_COLUMNS.map((c, k) => (
+              <th key={c} className={NUMERIC.has(k) ? "n" : undefined}>
+                {c}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {list.rows.map((row) => (
             <tr key={`${JSON.stringify(row.key)}:${row.steps.join("x")}`}>
-              <td>{row.name}</td>
-              <td className="n">{row.qty}</td>
-              {row.steps.map((x, k) => (
-                <td key={k} className="n">
-                  {formatSteps(x, r, style)}
+              {reportCells(row, list).map((c, k) => (
+                <td key={k} className={NUMERIC.has(k) ? "n" : undefined}>
+                  {c}
                 </td>
               ))}
-              <td>
-                {materialText(row)}
-                {row.sheet ? " (sheet)" : ""}
-              </td>
-              <td>{GRAIN_WORDS[row.grain]}</td>
-              <td className="n">{row.sheet ? formatArea(row.area_m2, r) : formatBoardFeet(row.board_feet)}</td>
-              <td>{rowNotes(row).join("; ")}</td>
             </tr>
           ))}
         </tbody>

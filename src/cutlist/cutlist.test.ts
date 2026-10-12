@@ -24,7 +24,10 @@ describe("cut list formatting", () => {
     expect(list.totals.board_feet).toBe(2735.15625 / 144);
     const s = summary(list);
     expect(s).toEqual({ boardFeet: "18.99", boardFeetLabel: "board feet, Oak", sheets: "1", sheetsLabel: "sheet 4×8 1/4 birch ply, 1/4" });
-    expect(rowNotes({ ...list.rows[0], handed: 1, total: 2, hidden: 1, shaped: true })).toEqual(["shaped (box it comes out of)", "handed: 1 of 2 mirrored", "1 hidden"]);
+    expect(rowNotes({ ...list.rows[0], handed: 1, total: 2, hidden: 1, shaped: true })).toEqual(["shaped", "1 of 2 handed", "1 hidden"]);
+    expect(rowNotes({ ...list.rows[2], scaled: true, hidden: 1, total: 1 })).toEqual(["grain across W", "hidden", "scaled"]);
+    expect(rowNotes({ ...list.rows[0], grain: "none", grain_set: true })).toEqual(["no grain"]);
+    expect(rowNotes(list.rows[0])).toEqual([]);
   });
 });
 
@@ -139,7 +142,7 @@ describe("PDF writer", () => {
     expect(t).toEqual([
       "Side", "×2", "3/4 × 11 1/4 × 71 1/4 in", "Oak", "Grain along L",
       "Shelf", "×4", "3/4 × 11 × 34 1/2 in", "Oak", "Grain along L",
-      "Top", "×1", "3/4 × 11 1/4 × 36 in", "Oak", "Grain along W (across)",
+      "Top", "×1", "3/4 × 11 1/4 × 36 in", "Oak", "Grain across W",
       "Toe kick", "×1", "3/4 × 3 1/2 × 34 1/2 in", "Oak", "Grain along L",
       "Back panel", "×1", "1/4 × 34 1/2 × 71 1/4 in", "1/4 birch ply (sheet)", "Grain along L",
     ]);

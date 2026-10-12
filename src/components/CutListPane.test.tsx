@@ -4,6 +4,9 @@ import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
 import { CutListPane, rowKey, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
+import { REPORT_COLUMNS, reportCells } from "../cutlist/format";
+import { readPdf } from "../cutlist/pdf";
+import { reportPdf } from "../cutlist/documents";
 import type { CutList } from "../kernel/types";
 
 afterEach(cleanup);
@@ -137,7 +140,9 @@ describe("Printable report", () => {
     expect(report.parentElement).toBe(document.body);
     expect(report.querySelector("h1")?.textContent).toBe("Cut list: Bookshelf");
     const rows = [...report.querySelectorAll("tbody tr")].map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent));
-    expect(rows[2]).toEqual(["Top", "1", "3/4", "11 1/4", "36", "Oak", "along W (across)", "2.11", ""]);
+    expect([...report.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Part", "Qty", "T", "W", "L", "Material", "Grain", "Bd ft / area", "Notes"]);
+    expect(rows[2]).toEqual(["Top", "1", "3/4", "11 1/4", "36", "Oak", "across W", "2.11 bd ft", "grain across W"]);
+    expect(rows[0].slice(6)).toEqual(["along L", "8.35 bd ft", ""]);
     expect(rows[4][5]).toBe("1/4 birch ply (sheet)");
     expect(rows[4][7]).toBe("17.07 sq ft");
     expect(report.querySelector(".totals")?.textContent).toContain("18.99 board feet, Oak");
@@ -170,3 +175,29 @@ describe("Grain arrows", () => {
     expect(grainOverlay(null)).toEqual([]);
   });
 });
+
+describe("Report consistency", () => {
+  it("the PDF and the print view write the same columns and the same cells", () => {
+    const list = bookshelf();
+    list.rows[1] = { ...list.rows[1], hidden: 1, shaped: true, scaled: true };
+    list.rows[3] = { ...list.rows[3], grain: "none", grain_set: true };
+    render(<CutListReport list={list} title="Bookshelf" />);
+    const report = screen.getByTestId("print-report");
+    const head = [...report.querySelectorAll("thead th")].map((th) => th.textContent);
+    expect(head).toEqual([...REPORT_COLUMNS]);
+    const printed = [...report.querySelectorAll("tbody tr")].map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent));
+    expect(printed).toEqual(list.rows.map((r) => reportCells(r, list)));
+    expect(printed[1][8]).toBe("shaped; 1 hidden; scaled");
+    expect(printed[3][8]).toBe("no grain");
+    expect(printed[3][6]).toBe("none");
+    const pdf = readPdf(reportPdf(list, "Bookshelf")).text.flat();
+    for (const c of REPORT_COLUMNS) expect(pdf, c).toContain(c.toUpperCase());
+    for (const row of printed)
+      for (const cell of row.filter(Boolean)) {
+        // The PDF wraps long notes over lines; every word is there.
+        const found = pdf.includes(cell) || cell.split(" ").every((w) => pdf.some((t) => t.split(" ").includes(w)));
+        expect(found, cell).toBe(true);
+      }
+  });
+});
+

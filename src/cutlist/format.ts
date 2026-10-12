@@ -111,15 +111,18 @@ export function formatBoardFeet(bf: number): string {
   return bf.toFixed(2);
 }
 
-export const GRAIN_WORDS: Record<Grain, string> = { length: "along L", width: "along W (across)", none: "none" };
+export const GRAIN_WORDS: Record<Grain, string> = { length: "along L", width: "across W", none: "none" };
 
-/** Plain-language notes for a row: shaped, handed, hidden, scaled. */
+/** Plain-language notes for a row, the same in the pane, the CSV, the print view and the
+ * PDF: a grain set on the part ("grain across W", "no grain"; the default, along L, set
+ * explicitly too), shaped, handed, hidden, scaled. */
 export function rowNotes(row: CutRow): string[] {
   const notes: string[] = [];
-  if (row.shaped) notes.push("shaped (box it comes out of)");
-  if (row.handed) notes.push(row.handed === row.total ? "handed (all mirrored)" : `handed: ${row.handed} of ${row.total} mirrored`);
+  if (row.grain_set) notes.push(row.grain === "none" ? "no grain" : `grain ${GRAIN_WORDS[row.grain]}`);
+  if (row.shaped) notes.push("shaped");
+  if (row.handed) notes.push(row.handed === row.total ? "handed" : `${row.handed} of ${row.total} handed`);
   if (row.hidden) notes.push(row.hidden === row.total ? "hidden" : `${row.hidden} hidden`);
-  if (row.scaled) notes.push("scaled copy");
+  if (row.scaled) notes.push("scaled");
   return notes;
 }
 
@@ -143,6 +146,31 @@ export function summary(list: CutList): { boardFeet: string; boardFeetLabel: str
         ? `sheet${sheetKinds[0].sheets === 1 ? "" : "s"} 4×8${sheetKinds[0].material ? ` ${sheetKinds[0].material}` : ""}, ${formatSteps(sheetKinds[0].steps, r, style)}${isMetric(r) ? " mm" : ""}`
         : `sheets 4×8, ${sheetKinds.length} kinds`;
   return { boardFeet: formatBoardFeet(t.board_feet), boardFeetLabel: `board feet${species}`, sheets: String(t.sheet_count), sheetsLabel };
+}
+
+/** Board feet for a lumber row, area for a sheet row, with its unit: "8.35 bd ft",
+ * "17.07 sq ft", "1.59 m²". */
+export function amountText(row: CutRow, r: Rounding): string {
+  return row.sheet ? formatArea(row.area_m2, r) : `${formatBoardFeet(row.board_feet)} bd ft`;
+}
+
+/** The report's columns, the same in the print view and the PDF. */
+export const REPORT_COLUMNS = ["Part", "Qty", "T", "W", "L", "Material", "Grain", "Bd ft / area", "Notes"] as const;
+
+/** One report row's cells, in {@link REPORT_COLUMNS} order: the print view and the PDF
+ * both write exactly these. */
+export function reportCells(row: CutRow, list: CutList): string[] {
+  const r = list.rounding;
+  const style = listStyle(list);
+  return [
+    row.name,
+    String(row.qty),
+    ...row.steps.map((s) => formatSteps(s, r, style)),
+    `${materialText(row)}${row.sheet ? " (sheet)" : ""}`,
+    GRAIN_WORDS[row.grain],
+    amountText(row, r),
+    rowNotes(row).join("; "),
+  ];
 }
 
 /** The footer every output carries. */

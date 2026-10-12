@@ -1,36 +1,43 @@
 // The cut list as paper (lane 7): a report PDF (the table, the totals and the notes, as many
 // Letter pages as it takes) and a label sheet PDF (one label per part, laid out for Avery
 // 5160-style sheets: 30 labels, 3 across and 10 down, 2 5/8 x 1 in).
-import type { CutList, CutRow } from "../kernel/types";
-import { fit, LETTER, PdfDoc, type PdfPage } from "./pdf";
-import { formatArea, formatBoardFeet, formatSize, formatSteps, GRAIN_WORDS, listStyle, materialText, rowNotes, scopeNote, sizeUnit, summary } from "./format";
+import type { CutList } from "../kernel/types";
+import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "./pdf";
+import { formatArea, formatBoardFeet, formatSize, formatSteps, GRAIN_WORDS, listStyle, materialText, REPORT_COLUMNS, reportCells, scopeNote, sizeUnit, summary } from "./format";
 
 const IN = 72;
 
-/** The report's columns: label, x (left edge), width, right-aligned. */
-const COLUMNS: [string, number, number, boolean][] = [
-  ["Part", 40, 120, false],
-  ["Qty", 160, 28, true],
-  ["T", 188, 46, true],
-  ["W", 234, 50, true],
-  ["L", 284, 56, true],
-  ["Material", 346, 94, false],
-  ["Grain", 440, 34, false],
-  ["Bd ft", 474, 42, true],
-  ["Notes", 520, 52, false],
+/** The report's columns ({@link REPORT_COLUMNS}): x (left edge), width, right-aligned,
+ * font size. The print view has the same columns (CutListReport). Part, Material and Notes
+ * wrap onto more lines rather than lose words; the rest are short. */
+const LAYOUT: [number, number, boolean, number][] = [
+  [40, 100, false, 9.5], // Part
+  [140, 26, true, 9.5], // Qty
+  [166, 42, true, 9.5], // T
+  [208, 46, true, 9.5], // W
+  [254, 50, true, 9.5], // L
+  [310, 86, false, 9.5], // Material
+  [396, 44, false, 8.5], // Grain
+  [440, 62, true, 8.5], // Bd ft / area
+  [508, 64, false, 7.5], // Notes (wraps)
 ];
 
-function cells(row: CutRow, list: CutList): string[] {
-  const r = list.rounding;
-  return [
-    row.name,
-    String(row.qty),
-    ...row.steps.map((s) => formatSteps(s, r, listStyle(list))),
-    `${materialText(row)}${row.sheet ? " (sheet)" : ""}`,
-    row.grain === "length" ? "L" : row.grain === "width" ? "W" : "-",
-    row.sheet ? "" : formatBoardFeet(row.board_feet),
-    rowNotes(row).join("; "),
-  ];
+/** Columns that wrap: Part, Material, Notes. */
+const WRAPS = new Set([0, 5, 8]);
+
+/** `text` broken into lines that fit `width` points (a word too long for a line is cut). */
+export function wrap(text: string, size: number, width: number, bold = false): string[] {
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (cur && textWidth(next, size, bold) > width) {
+      lines.push(cur);
+      cur = fit(w, size, width, bold);
+    } else cur = textWidth(next, size, bold) > width ? fit(next, size, width, bold) : next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
 }
 
 /** The printable report as a PDF. `title`: the model's name. */
@@ -51,25 +58,29 @@ export function reportPdf(list: CutList, title: string): Uint8Array {
       p.text(40, y, `${list.totals.parts} parts, ${list.totals.pieces} pieces · ${s.boardFeet} ${s.boardFeetLabel} · ${s.sheets} ${s.sheetsLabel} · sizes in ${sizeUnit(list.rounding)}`, 9, { gray: 0.35 });
       y -= 22;
     } else y -= 8;
-    for (const [label, x, w, right] of COLUMNS) p.text(right ? x + w - 4 : x, y, label.toUpperCase(), 8, { bold: true, align: right ? "right" : "left", gray: 0.35 });
+    REPORT_COLUMNS.forEach((label, k) => {
+      const [x, w, right] = LAYOUT[k];
+      p.text(right ? x + w - 4 : x, y, label.toUpperCase(), 7, { bold: true, align: right ? "right" : "left", gray: 0.35 });
+    });
     y -= 6;
     p.line(40, y, W - 40, y, 0.75);
     y -= rowH - 4;
   };
   header(page, true);
   for (const row of list.rows) {
-    if (y < bottom + rowH) {
+    const cells = reportCells(row, list);
+    const lines = cells.map((c, k) => (WRAPS.has(k) ? wrap(c, LAYOUT[k][3], LAYOUT[k][1] - 6, k === 0).slice(0, 4) : [c]));
+    const h = rowH + Math.max(0, ...lines.map((l) => l.length - 1)) * 10;
+    if (y < bottom + h) {
       page = doc.page();
       header(page, false);
     }
-    cells(row, list).forEach((c, k) => {
-      const [, x, w, right] = COLUMNS[k];
-      const size = k === 8 ? 7.5 : 9.5;
-      const t = fit(c, size, w - 6, k === 0);
-      page.text(right ? x + w - 4 : x, y, t, size, { bold: k === 0, align: right ? "right" : "left" });
+    lines.forEach((ls, k) => {
+      const [x, w, right, size] = LAYOUT[k];
+      ls.forEach((l, i) => page.text(right ? x + w - 4 : x, y - i * 10, fit(l, size, w - 6, k === 0), size, { bold: k === 0, align: right ? "right" : "left" }));
     });
-    page.line(40, y - 5, W - 40, y - 5, 0.25, 0.7);
-    y -= rowH;
+    page.line(40, y - h + 11, W - 40, y - h + 11, 0.25, 0.7);
+    y -= h;
   }
   // Totals.
   if (y < bottom + 70) {
@@ -93,17 +104,7 @@ export function reportPdf(list: CutList, title: string): Uint8Array {
   }
   // The note, on every page's foot.
   doc.pages.forEach((p, i) => {
-    const words = scopeNote(list.rounding).split(" ");
-    const lines: string[] = [];
-    let cur = "";
-    for (const w of words) {
-      const next = cur ? `${cur} ${w}` : w;
-      if (fit(next, 7.5, W - 80) !== next) {
-        lines.push(cur);
-        cur = w;
-      } else cur = next;
-    }
-    if (cur) lines.push(cur);
+    const lines = wrap(scopeNote(list.rounding), 7.5, W - 80);
     lines.forEach((l, k) => p.text(40, 40 - k * 10 + (lines.length - 1) * 10, l, 7.5, { gray: 0.4 }));
     p.text(W - 40, 22, `Page ${i + 1} of ${doc.pages.length} · Sawhorse`, 7.5, { align: "right", gray: 0.4 });
   });
