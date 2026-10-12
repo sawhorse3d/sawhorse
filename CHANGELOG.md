@@ -4,6 +4,20 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (lane 7b, the lane-7 verifier's findings, 2026-10-12)
+
+- **Rounding no longer changes totals.** Sheet goods were decided by comparing the *rounded* thickness with 1/4 in, so a 0.26 in panel was sheet goods at 1/16 in and lumber at 0.5 mm. The kernel now classifies on the exact thickness (1/4 in + 1 um), and board feet, areas, the sheet grouping (by exact thickness) and the sheet count all come from the exact sizes (snapped to a 24 nm grid only to drop float noise). Every golden keeps its cut-list hash; `every_rounding_classifies_and_totals_the_same` (the bookshelf: 18.994140625 board feet and one sheet at 1/16 in, 1/32 in and 0.5 mm) and `the_quarter_inch_line_uses_the_exact_thickness` pin it, and the cut-list e2e checks it through the WASM kernel.
+- **CSV**: decimal T, W, L columns (inches or mm) beside the shown ones; shown fractions written as `="3/4"` so spreadsheets keep them as text (not a date); empty cells instead of a dash; the Total row's sheet count in its own Summary column (not under Stock). Round-trip tests read every cell back.
+- **Report consistency**: the PDF and the print view are built from one `reportCells()`: Part, Qty, T, W, L, Material, Grain ("along L" / "across W" / "none"), Bd ft / area (board feet for lumber rows, area for sheet rows), Notes (grain set on the part, shaped, handed, hidden, scaled, in short words). The PDF wraps Part, Material and Notes rather than cutting words off.
+- **The pane fits 300 px**: fixed column widths (sizes as wide as their longest value, capped, the grain mark reserved only where used), tabular figures, Part and Material ending in an ellipsis with the full text as a tooltip; a Playwright test walks every rounding, grain and display unit at the pane's width and asserts nothing scrolls sideways. The right-click menu is titled with the row's name and the row stays marked while it is open.
+- **Ctrl+Z / Ctrl+Y** (and the file shortcuts) work while focus is on a pane's select, checkbox or button; only an editable text field keeps them (`src/lib/focus.ts`).
+- **Render-service noise**: while the service is unreachable the balance poll backs off (10 s, 30 s, 60 s, then every 5 min, was every 10 s), a window focus right after a failure does not ask again, and each attempt is a `console.debug` line, never a console error.
+
+### Added (lane 7b)
+
+- **Round to: Follow units** (the default): 1/16 in for fractional, decimal and ft-in units, 0.5 mm for metric, saying which in the menu. Decimal-inch and ft-in units write the cut list in decimal inches (pane, CSV, report, PDF, labels). A picked rounding lasts for the session; **Pin** keeps it for next time (`src/cutlist/rounding-store.ts`).
+- **Bulk stock and grain**: rows pick like a list (click, Shift+click a range, Ctrl+click one more); right-click a picked row to set the grain, the stock, or sheet / lumber for every picked row as one batch (one undo step).
+
 ### Added (lane 7, the cut list, 2026-10-12)
 
 - **Cut list pane** (replaces the placeholder), as the approved mock: Part, Qty, T, W, L, Material; a board feet tile (with the species) and a 4 x 8 sheets tile (with the stock and thickness); CSV, PDF, Print, Labels; Nesting shown disabled; a note that kerf, edge banding and nesting are not included. Added around it: Round to (1/16 in, 1/32 in, 0.5 mm; metric units start at 0.5 mm), Visible only, a grain mark beside L (or W), notes under a part's name (sheet, shaped, handed, hidden, scaled copy).

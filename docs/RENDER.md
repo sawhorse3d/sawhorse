@@ -12,7 +12,7 @@ How the Render pane, the Credits chip and the render service fit together (ADR-0
   - **History** opens a gallery of this balance's recent renders.
   - **$10 / $25 / $50** open Stripe Checkout in the system browser. The chip follows the payment by polling for up to ten minutes and on window focus.
   - **Move credits** asks for the checkout email, emails a claim code, and moves the balance to this device. A balance can be on two devices at most; a third claim unlinks the device used least recently.
-- **When the service cannot be reached**, the pane says "Render service not connected (URL)". Nothing is charged or simulated. The app retries every 10 seconds, so starting the service later connects without a reload.
+- **When the service cannot be reached**, the pane says "Render service not connected (URL)". Nothing is charged or simulated. The app asks again after 10 s, 30 s and 60 s, then every 5 minutes (and when you come back to the window), so starting the service later connects without a reload. These attempts are logged at debug level only (`[credits] ...`); the browser may still print its own line for each failed request, which the back-off keeps to a handful an hour.
 
 ## What leaves the machine
 
