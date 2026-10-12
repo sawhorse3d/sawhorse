@@ -163,7 +163,8 @@ function loadImportUnits(): ImportUnit {
   return "mm";
 }
 
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+/** "1 solid", "2 solids", "2 meshes", "3 sketches": words ending in s, x, sh or ch take "es". */
+export const plural = (n: number, w: string) => `${n} ${n === 1 ? w : /(?:s|x|sh|ch)$/.test(w) ? `${w}es` : `${w}s`}`;
 
 /** One line for the status bar after an import or open. */
 export function describeImport(name: string, o: OpOutcome, graph?: import("./kernel/types").SceneGraph | null): string {

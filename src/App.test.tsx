@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { App } from "./App";
+import { App, describeImport, plural } from "./App";
 import { TOOLS } from "./lib/tools";
 
 afterEach(cleanup);
@@ -130,5 +130,30 @@ describe("App shell", () => {
     });
     expect(pressed("paint")).toBe(true);
     expect(document.getElementById("pane-materials")?.hidden).toBe(false);
+  });
+});
+
+describe("plural and the import line", () => {
+  it("adds s, and es after s, x, sh and ch (not 'meshs' or 'sketchs')", () => {
+    expect(plural(1, "mesh")).toBe("1 mesh");
+    expect(plural(2, "mesh")).toBe("2 meshes");
+    expect(plural(37, "mesh")).toBe("37 meshes");
+    expect(plural(0, "mesh")).toBe("0 meshes");
+    expect(plural(3, "sketch")).toBe("3 sketches");
+    expect(plural(2, "box")).toBe("2 boxes");
+    expect(plural(2, "class")).toBe("2 classes");
+    expect(plural(1, "solid")).toBe("1 solid");
+    expect(plural(2, "solid")).toBe("2 solids");
+    expect(plural(2, "component instance")).toBe("2 component instances");
+    expect(plural(2, "imported mesh")).toBe("2 imported meshes");
+  });
+
+  it("describeImport says '37 meshes that are not solid'", () => {
+    const outcome = { kind: "imported", objects: [1, 2], meshes: Array.from({ length: 37 }, (_, i) => i + 10), groups: [], sketches: [], notes: [] } as unknown as Parameters<typeof describeImport>[1];
+    expect(describeImport("Untitled.skp", outcome)).toBe("Imported Untitled.skp: 2 solids, 37 meshes that are not solid.");
+    const one = { ...outcome, meshes: [10] } as typeof outcome;
+    expect(describeImport("a.skp", one)).toBe("Imported a.skp: 2 solids, 1 mesh that is not solid.");
+    const restored = { kind: "restored", objects: 3, meshes: 4 } as unknown as Parameters<typeof describeImport>[1];
+    expect(describeImport("a.shz", restored)).toBe("Opened a.shz: 3 solids, 4 meshes (not solid).");
   });
 });

@@ -10,9 +10,9 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 
 | SketchUp | Container | Read? | Notes |
 |---|---|---|---|
-| 2013 to 2020 | classic MFC `CArchive` | yes | Our corpus is written in this format (SketchUp 2017, `{17.0.1}`) and every family round-trips. Saved scenes are not stored in a way openskp reads from these files, so they come in with none. |
-| 2021 to 2025 | VFF (zip-based) | yes, via openskp | Scenes (pages) are read. Per-instance layers are not resolved by openskp for VFF, so instances inherit no tag from their own layer override; layer visibility is not stored in VFF either (layers come in visible). Not exercised by a committed fixture (we ship no SketchUp-authored files). |
-| 2012 and older | older formats | no | Outside openskp's stated range (2013 onwards). Not tested here (we hold no such file); a file openskp cannot parse is refused with "could not read the SketchUp file" and changes nothing. |
+| 2013 to 2020 | classic MFC `CArchive` | yes | Our corpus is written in this format (SketchUp 2017, `{17.0.1}`) and every family round-trips. Saved scenes are not stored in a way openskp reads from these files, so they come in with none. **Not every save in this range reads:** SketchUp 2017 saves (`{17.0.1}`, `{17.0.18899}`) and a 2014 file read, but a real SketchUp 2018 save (`{18.0.16975}`, openskp's own test file `zero_material_custom_layer_v18.skp`) is refused by openskp 1.3.0 with "legacy .skp parse failed: base probe: anchor resolved to null". The app shows that message and changes nothing. |
+| 2021 to 2025 | VFF (zip-based) | yes, via openskp | Scenes (pages) are read. Per-instance layers are not resolved by openskp for VFF, so instances inherit no tag from their own layer override; layer visibility is not stored in VFF either (layers come in visible). Not exercised by a committed fixture (we ship no SketchUp-authored files). SketchUp 25 and 26.2 saves import in the maintainer's private fixtures run (`e2e/private-fixtures.spec.ts`), whose files are never committed. |
+| 2012 and older | older formats | no | Outside openskp's stated range (2013 onwards). openskp's synthetic SketchUp 3, 6 and 7 test files (`{3.0.1}`, `{6.0.1}`, `{7.0.1}`) are refused by openskp 1.3.0 with "legacy .skp parse failed: ..." ("expected a string record", "back-ref to unwalked slot", "definition list misaligned"); a file openskp cannot parse is refused with "could not read the SketchUp file: ..." and changes nothing. |
 
 ## What is supported
 
@@ -53,7 +53,7 @@ Each of these is counted in the import notes when present, never silently droppe
 
 The kernel never repairs geometry silently. For each piece it may weld vertices closer than 0.01 mm, drop faces with no area or exact repeats, turn a closed shell that is inside out the right way round, turn reversed faces on a closed shell, and separate closed solids that touch along an edge or a face; every such change is listed in the import notes. A piece that is still not a valid solid (open edges, an edge shared by three or more faces, a self-intersection, no volume) comes in as a visible non-solid mesh, tinted amber in the viewport, with its reason in the notes and in the document state (`meshes[].note`). STL and 3MF export refuse such a mesh by name; GLB, OBJ and DXF export it, marked as not solid.
 
-A file openskp cannot parse is refused with its message and changes nothing.
+A file openskp cannot parse is refused with its message and changes nothing ("could not read the SketchUp file: legacy .skp parse failed: ..." for openskp 1.3.0's refusals of a SketchUp 2018 save and of the pre-2013 files above). A model with nothing in it (no faces, no loose edges, no placements: a blank template) is refused too, with "the file has nothing Sawhorse can import", and the document is untouched.
 
 ## Corpus
 
