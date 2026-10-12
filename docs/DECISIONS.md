@@ -1,6 +1,6 @@
 # Sawhorse: architecture decisions (index)
 
-The seed record of 2026-10-11 has been split into one file per decision under `docs/adr/`. This file stays as the index and keeps the build rules. Source of truth for the plan: the vault note `the maintainer's notes`.
+The seed record of 2026-10-11 has been split into one file per decision under `docs/adr/`. This file stays as the index and keeps the build rules.
 
 | ADR | Decision | Status |
 |---|---|---|

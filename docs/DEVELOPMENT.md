@@ -1,6 +1,6 @@
 # Developing Sawhorse
 
-Three places run the code: the maintainer's Windows machine (no MSVC), WSL Ubuntu on that machine (all Rust work), and GitHub Actions (everything, plus the installers). Commands below are exact; run them from the repo root (`%USERPROFILE%\Desktop\sawhorse\app`) in Git Bash unless a section says otherwise.
+Three places run the code: the maintainer's Windows machine (no MSVC), WSL Ubuntu on that machine (all Rust work), and GitHub Actions (everything, plus the installers). Commands below are exact; run them from the repo root (`%USERPROFILE%\Desktop\sawhorse\app`, or wherever you cloned it) in Git Bash unless a section says otherwise.
 
 ## The two rules that shape everything
 
@@ -96,7 +96,7 @@ The same through `just`: `just check-wasm`, `just test`, `just clippy`, `just fm
 
 ```bash
 wsl.exe
-cd /mnt$HOME/Desktop/sawhorse/app
+cd /mnt/c/Users/<you>/Desktop/sawhorse/app
 . scripts/env.sh            # cargo + ~/.local/bin on PATH, CARGO_TARGET_DIR=/mnt/d/build-cache/sawhorse/wsl
 cd crates
 cargo test --workspace
@@ -124,7 +124,7 @@ When the fuzzer fails it writes the shrunk sequence to `crates/kernel/tests/repr
 Fuzzer knobs (all forwarded into WSL by `scripts/cargo.sh`): `FUZZ_CASES` (count), `FUZZ_SEED` (deterministic shard seed; the repro is then `pending-long_fuzz_seed<N>.json`), `FUZZ_REPORT=1` (per-op accepted/refused table and the top refusal reasons). Shards run in parallel from WSL, e.g. eight of 6,250:
 
 ```bash
-wsl.exe bash -lc 'cd /mnt$HOME/Desktop/sawhorse/app/crates && . ../scripts/env.sh && for s in 1 2 3 4 5 6 7 8; do FUZZ_CASES=6250 FUZZ_SEED=$s cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture > /tmp/fuzz$s.log 2>&1 & done; wait; grep -h long_fuzz_seed /tmp/fuzz*.log'
+wsl.exe bash -lc 'cd /mnt/c/Users/<you>/Desktop/sawhorse/app/crates && . ../scripts/env.sh && for s in 1 2 3 4 5 6 7 8; do FUZZ_CASES=6250 FUZZ_SEED=$s cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture > /tmp/fuzz$s.log 2>&1 & done; wait; grep -h long_fuzz_seed /tmp/fuzz*.log'
 ```
 
 Run that from PowerShell or cmd. From Git Bash, put the loop in a script file and run `MSYS_NO_PATHCONV=1 wsl.exe bash /mnt/c/.../fuzz8.sh`: Git Bash rewrites `/mnt/...` arguments into Windows paths and can mangle `$s` in an inline `bash -lc` string, which silently runs all eight shards on one seed into one log (seen in lane 3). With `FUZZ_REPORT=1` the report also prints `boolean-path refusals (not a valid solid): N`, the typed refusal the lane reports quote.
