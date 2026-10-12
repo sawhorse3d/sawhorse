@@ -1,0 +1,24 @@
+{
+  "$schema": "../../packages/plugin-api/manifest.schema.json",
+  "id": "com.sawhorse3d.shelf-pin-holes",
+  "name": "Shelf pin holes",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "A tool that drills a column of shelf pin holes into a cabinet side: hover a face to see the column, click to drill. Type count, pitch, diameter (8, 32mm, 5mm).",
+  "author": "Sawhorse",
+  "license": "MIT",
+  "permissions": ["model.read", "model.write", "ui", "storage"],
+  "contributes": {
+    "tools": [
+      {
+        "id": "drill",
+        "title": "Pins",
+        "hint": "Hover a face: the column of holes shows. Click to drill it. Type count, pitch, diameter (8, 32mm, 5mm). Esc clears the preview.",
+        "vcb": "Count, pitch, dia",
+        "icon": "M6 3h12v18H6z M11 6.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0 M11 11a1 1 0 1 0 2 0a1 1 0 1 0 -2 0 M11 15.5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"
+      }
+    ],
+    "shortcuts": [{ "tool": "drill", "key": "Alt+Shift+P" }]
+  },
+  "entry": "main.js"
+}

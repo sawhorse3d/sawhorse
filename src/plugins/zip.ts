@@ -7,7 +7,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 export const PACKAGE_LIMITS = { files: 2000, bytes: 50 * 1024 * 1024, fileBytes: 8 * 1024 * 1024 };
 
 /** Files read as text (the rest are listed by name only). */
-const TEXT = /\.(m?js|json|md|txt)$/i;
+const TEXT = /\.(m?js|json|md|txt)$|(^|\/)(LICEN[CS]E|NOTICE|COPYING)$/i;
 
 export class PackageError extends Error {
   constructor(message: string) {

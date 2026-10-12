@@ -1,0 +1,18 @@
+{
+  "$schema": "../../packages/plugin-api/manifest.schema.json",
+  "id": "com.sawhorse3d.cabinet-generator",
+  "name": "Cabinet generator",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "A frameless cabinet from its sizes: sides, top, bottom, shelves, a back and a toe kick, each a named component, so the cut list reads it straight away.",
+  "author": "Sawhorse",
+  "license": "MIT",
+  "permissions": ["model.read", "model.write", "ui", "storage"],
+  "contributes": {
+    "panels": [{ "id": "cabinet", "title": "Cabinet" }],
+    "commands": [{ "id": "generate", "title": "Generate Cabinet" }],
+    "menus": [{ "command": "generate" }],
+    "shortcuts": [{ "command": "generate", "key": "Alt+Shift+C" }]
+  },
+  "entry": "main.js"
+}

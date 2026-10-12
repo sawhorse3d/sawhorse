@@ -32,7 +32,7 @@ export interface PluginPlatform {
   openFolder?(location: string): Promise<void>;
 }
 
-const TEXT = /\.(m?js|json|md|txt)$/i;
+const TEXT = /\.(m?js|json|md|txt)$|(^|\/)(LICEN[CS]E|NOTICE|COPYING)$/i;
 
 async function tauriFs() {
   return import("@tauri-apps/plugin-fs");

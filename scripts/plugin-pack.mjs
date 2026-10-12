@@ -15,7 +15,7 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const args = process.argv.slice(2);
 const outAt = args.indexOf("--out");
 const out = outAt >= 0 ? args[outAt + 1] : null;
-const dir = args.find((a, i) => !a.startsWith("--") && i !== outAt + 1);
+const dir = args.find((a, i) => !a.startsWith("--") && (outAt < 0 || i !== outAt + 1));
 if (!dir) {
   console.error("usage: npm run plugin:pack -- <plugin folder> [--out file.zip]");
   process.exitCode = 2;

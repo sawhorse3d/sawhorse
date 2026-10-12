@@ -1,0 +1,17 @@
+{
+  "$schema": "../../packages/plugin-api/manifest.schema.json",
+  "id": "com.sawhorse3d.model-report",
+  "name": "Model report",
+  "version": "1.0.0",
+  "api": 1,
+  "description": "A live report of the model: counts, overall size, volume, board feet by material from the cut list, and warnings. Export it as Markdown and CSV.",
+  "author": "Sawhorse",
+  "license": "MIT",
+  "permissions": ["model.read", "ui", "file", "storage"],
+  "contributes": {
+    "panels": [{ "id": "report", "title": "Report" }],
+    "commands": [{ "id": "export", "title": "Export Report…" }],
+    "menus": [{ "command": "export" }]
+  },
+  "entry": "main.js"
+}

@@ -1,0 +1,18 @@
+{
+  // npm run plugin:check type-checks the sample plugins against the published API
+  // (packages/plugin-api/index.d.ts). Each sample is plain JavaScript with // @ts-check.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "skipLibCheck": true
+  },
+  "include": ["*/**/*.js", "../packages/plugin-api/index.d.ts"]
+}
