@@ -204,8 +204,9 @@ export class Batch {
   op(op: { op: string; [k: string]: unknown }): Ref {
     if (this.done) throw new Error(`batch "${this.name}" was already committed`);
     if (!op || typeof op.op !== "string") throw new TypeError('an op is an object with an "op" field, like { op: "rename", item: { object: 3 }, name: "Top" }');
-    checkData(op, `op ${this.ops.length}`);
-    this.ops.push(op);
+    const clean = plain(op) as { op: string };
+    checkData(clean, `op ${this.ops.length}`);
+    this.ops.push(clean);
     return new Ref(this.ops.length - 1, op.op);
   }
 
@@ -274,6 +275,18 @@ export class Batch {
   }
 }
 
+/** Plain data as JSON would make it: object fields that are undefined are left out, undefined in lists is null. */
+export function plain(v: unknown): unknown {
+  if (v === undefined) return null;
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return v.map((x) => (x === undefined ? null : plain(x)));
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = plain(x);
+  return out;
+}
+
 export interface Runtime {
   api: Record<string, unknown>;
   receive(msg: HostMessage): void;
@@ -301,7 +314,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
   const send = (msg: PluginMessage) => opts.send(msg);
   const request = (method: string, params: unknown = null): Promise<Data> => {
     const id = nextId++;
-    const data = checkData(params, `${method} params`);
+    const data = checkData(plain(params), `${method} params`);
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
       send({ t: "req", id, method, params: data });

@@ -254,6 +254,19 @@ impl DocCore {
         self.apply_json(r#"{"op":"undo"}"#)
     }
 
+    /// A plugin's named batch (lane 11): `{name, ops}` where ops may hold placeholders
+    /// (`{"$ref": i, "path": "regions.0"}`). Applied as one op, one undo step (see
+    /// `sawhorse_kernel::refbatch`). Returns the batch's outcome as JSON; a refusal names
+    /// the op and changes nothing.
+    pub fn apply_named_batch_json(&mut self, json: &str) -> Result<String, String> {
+        let batch: sawhorse_kernel::refbatch::NamedBatch =
+            serde_json::from_str(json).map_err(|e| format!("bad batch: {e}"))?;
+        let (out, _) =
+            sawhorse_kernel::refbatch::apply(&mut self.doc, &batch).map_err(|e| e.to_string())?;
+        self.scene.replace(None);
+        serde_json::to_string(&out).map_err(|e| e.to_string())
+    }
+
     /// What an offset would draw, without drawing it: `{source, distance}` in (the
     /// `Op::Offset` fields), `{loops: [[[x,y,z]...]...], closed}` out (world, metres). A
     /// refusal (too far inward, off-plane edges) is an error with the kernel's message.
@@ -882,6 +895,12 @@ impl Doc {
         self.core.undo().map_err(js)
     }
 
+    /// A plugin's named batch with placeholders, applied as one op (see
+    /// [`DocCore::apply_named_batch_json`]).
+    pub fn apply_named_batch(&mut self, json: &str) -> Result<String, JsError> {
+        self.core.apply_named_batch_json(json).map_err(js)
+    }
+
     /// What is under the cursor: query `{origin, dir, px, point_px?, edge_px?}` as JSON;
     /// returns `{entity, point, surface}` as JSON, or `null`.
     pub fn pick(&self, query_json: &str) -> Result<String, JsError> {
@@ -1081,6 +1100,38 @@ mod tests {
 
     fn op(d: &mut DocCore, json: &str) -> serde_json::Value {
         serde_json::from_str(&d.apply_json(json).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_named_batch_is_one_undo_step_and_refusals_change_nothing() {
+        let mut d = DocCore::default();
+        let out: serde_json::Value = serde_json::from_str(
+            &d.apply_named_batch_json(
+                r#"{"name":"Box","ops":[
+                    {"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.6096,"h":0.4064},
+                    {"op":"extrude","sketch":1,"region":{"$ref":0,"path":"regions.0"},"distance":0.3048}]}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out["kind"], "batch");
+        assert_eq!(out["outcomes"][1]["kind"], "object_created");
+        assert_eq!(d.document().depth().0, 1);
+        let before = (d.document().hash(), d.log_json());
+        let err = d
+            .apply_named_batch_json(
+                r#"{"name":"Bad","ops":[{"op":"erase_face","object":1,"face":999}]}"#,
+            )
+            .unwrap_err();
+        assert!(err.starts_with("op 0 (erase_face)"), "{err}");
+        assert_eq!((d.document().hash(), d.log_json()), before);
+        assert!(
+            d.apply_named_batch_json("not json")
+                .unwrap_err()
+                .starts_with("bad batch")
+        );
+        d.undo().unwrap();
+        assert_eq!(d.document().model().objects().len(), 0);
     }
 
     #[test]

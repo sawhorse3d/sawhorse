@@ -45,6 +45,15 @@ describe("requests", () => {
     await expect(p).rejects.toMatchObject({ message: "needs model.read", code: "permission" });
   });
 
+  it("leave out undefined fields, as JSON would", () => {
+    const { api, last } = setup();
+    void api.ui.notify("hi", undefined);
+    void (api.ui.registerTool as (s: unknown) => Promise<{ setView(v: unknown): unknown }>)({ id: "t" });
+    expect(last()).toMatchObject({ t: "req", method: "ui.registerTool", params: { id: "t" } });
+    const m = last() as Extract<PluginMessage, { t: "req" }>;
+    expect(m.params).toEqual({ id: "t" });
+  });
+
   it("refuse arguments that are not plain data before sending", () => {
     const { api, sent } = setup();
     expect(() => (api.storage as unknown as { app: { set(k: string, v: unknown): unknown } }).app.set("k", () => 1)).toThrow("is a function");

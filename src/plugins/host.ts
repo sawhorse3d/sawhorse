@@ -51,11 +51,13 @@ export const METHODS: Record<string, Permission | null> = {
 };
 
 /** The events a plugin may listen to, and what each needs. */
-export const EVENTS: Record<string, Permission> = {
+export const EVENTS: Record<string, Permission | null> = {
   selectionChanged: "model.read",
   documentChanged: "model.read",
   documentOpened: "model.read",
   toolChanged: "ui",
+  // Every plugin follows the display units (sawhorse.units); listening needs nothing.
+  unitsChanged: null,
 };
 
 /** Why a request was refused, for the plugin (`error.code`). */
@@ -208,7 +210,8 @@ export class PluginHost {
 
   /** Deliver an event the plugin listens to (and is allowed to). */
   emit(name: string, payload: Data): void {
-    if (!this.alive || !this.subscriptions.has(name)) return;
+    // The units always go (sawhorse.units follows them); the rest only when listened to.
+    if (!this.alive || (name !== "unitsChanged" && !this.subscriptions.has(name))) return;
     this.post({ t: "evt", name, payload });
   }
 

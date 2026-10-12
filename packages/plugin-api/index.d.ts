@@ -511,6 +511,8 @@ declare module "sawhorse" {
     documentOpened: { name: string | null };
     /** ui. The active tool changed ("select", "pushpull", or "plugin:<plugin id>/<tool id>"). */
     toolChanged: { tool: string };
+    /** No permission. The display units changed (sawhorse.units already follows them). */
+    unitsChanged: { units: string };
   }
 
   export const events: {
