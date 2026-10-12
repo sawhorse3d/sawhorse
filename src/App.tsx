@@ -18,6 +18,7 @@ import { EraseTool } from "./tools/erase";
 import { RectTool } from "./tools/rect";
 import { PushTool } from "./tools/push";
 import { MoveTool } from "./tools/move";
+import { RotateTool } from "./tools/rotate";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
@@ -345,6 +346,7 @@ export function App() {
       ["dim", new DimensionTool(host)],
       ["pushpull", new PushTool(host)],
       ["move", new MoveTool(host)],
+      ["rotate", new RotateTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;
