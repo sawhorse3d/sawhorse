@@ -7,7 +7,7 @@
 // Tools are plain classes with no React and no three.js, so their logic is unit-tested
 // with a fake host (src/tools/*.test.ts).
 import type { EditResult } from "../kernel/client";
-import type { DocState, Entity, KernelOp, MeshData, Picked, SceneData, SurfaceHit, V3 } from "../kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, OffsetPreview, OffsetSource, Picked, SceneData, SurfaceHit, V3 } from "../kernel/types";
 import { INFERENCE_STYLES, type InferenceKind } from "../lib/inferenceStyle";
 import type { ToolId } from "../lib/tools";
 import type { UnitSystem } from "../lib/units";
@@ -111,6 +111,8 @@ export interface ToolHost {
   setTarget(t: Target | null): void;
   /** World rings of a face or region (empty when it is gone). */
   outline(t: Target): Promise<V3[][]>;
+  /** What an offset would draw, or the kernel's reason it would be refused. */
+  offsetPreview(source: OffsetSource, distance: number): Promise<OffsetPreview | string>;
 }
 
 export abstract class Tool {

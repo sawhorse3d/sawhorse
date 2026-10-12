@@ -20,6 +20,7 @@ import { PushTool } from "./tools/push";
 import { MoveTool } from "./tools/move";
 import { RotateTool } from "./tools/rotate";
 import { ScaleTool } from "./tools/scale";
+import { OffsetTool } from "./tools/offset";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
@@ -332,6 +333,15 @@ export function App() {
         live.current.target = t;
         setTarget(t);
       },
+      offsetPreview: async (source, distance) => {
+        const k = kernelRef.current;
+        if (!k) return "The kernel is not ready.";
+        try {
+          return await k.offsetPreview(source, distance);
+        } catch (err) {
+          return friendlyError(err instanceof Error ? err.message : String(err));
+        }
+      },
     }),
     [apply],
   );
@@ -349,6 +359,7 @@ export function App() {
       ["move", new MoveTool(host)],
       ["rotate", new RotateTool(host)],
       ["scale", new ScaleTool(host)],
+      ["offset", new OffsetTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;

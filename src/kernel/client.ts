@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { Inference, InferQuery, KernelOp, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -93,6 +93,12 @@ export class KernelClient {
   /** World rings (outer first) of a face or region: what Push/Pull previews. */
   async outline(part: "face" | "region", owner: number, index: number): Promise<V3[][]> {
     return (await this.call({ kind: "outline", part, owner, index })).rings ?? [];
+  }
+
+  /** What an offset would draw (read-only). Throws KernelRefusal when it would be refused. */
+  async offsetPreview(source: OffsetSource, distance: number): Promise<OffsetPreview> {
+    const r = await this.call({ kind: "offsetPreview", source, distance });
+    return r.preview ?? { loops: [], closed: true };
   }
 
   /** Where the cursor snaps for a drawing tool (read-only). */

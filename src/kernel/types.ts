@@ -33,6 +33,7 @@ export type KernelOp =
   | { op: "copy"; objects: number[]; xform: Xform }
   | { op: "array"; objects: number[]; xform: Xform; count: number }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
+  | { op: "offset"; source: OffsetSource; distance: number }
   | { op: "delete_object"; object: number }
   | { op: "create_group"; name: string; objects: number[] }
   | { op: "delete_group"; group: number }
@@ -40,6 +41,18 @@ export type KernelOp =
   | { op: "set_tag_visible"; tag: string; visible: boolean }
   | { op: "undo" }
   | { op: "redo" };
+
+/** What Offset acts on (crates/kernel/src/offset.rs `OffsetSource`). */
+export type OffsetSource =
+  | { of: "face"; object: number; face: number }
+  | { of: "region"; sketch: number; region: number }
+  | { of: "edges"; points: V3[]; closed: boolean; normal: V3; object: number | null };
+
+/** What an offset would draw (Doc.offset_preview). */
+export interface OffsetPreview {
+  loops: V3[][];
+  closed: boolean;
+}
 
 /** An affine map (crates/kernel/src/transform.rs `Xform`): p -> linear * p + translation, row-major. */
 export interface Xform {
@@ -281,6 +294,7 @@ export interface WasmDoc {
   infer(query: string): string;
   faces_json(object: number): string;
   outline(kind: string, owner: number, index: number): string;
+  offset_preview(query: string): string;
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
   free(): void;
@@ -306,6 +320,7 @@ export type RequestBody =
   | { kind: "pick"; query: PickQuery }
   | { kind: "infer"; query: InferQuery }
   | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
+  | { kind: "offsetPreview"; source: OffsetSource; distance: number }
   | { kind: "export"; format: "stl" | "obj"; object: number };
 export type WorkerRequest = RequestBody & { id: number };
 
@@ -320,6 +335,7 @@ export type WorkerResponse =
       picked?: Picked | null;
       inference?: Inference | null;
       rings?: V3[][];
+      preview?: OffsetPreview;
       file?: Uint8Array | string;
     }
   | { id: number; ok: false; error: string; missing?: boolean };

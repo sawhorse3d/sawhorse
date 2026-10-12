@@ -19,12 +19,13 @@ use slotmap::SlotMap;
 use std::collections::BTreeMap;
 
 use crate::error::{
-    DocumentError, FaceEditError, KernelError, PushError, SketchError, TransformError,
+    DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError, TransformError,
 };
 use crate::ids::{
     DimensionId, GroupId, GuideId, ObjectId, RegionId, SketchId, from_public, to_public,
 };
 use crate::object::{Object, Provenance, PushOutcome};
+use crate::offset::OffsetSource;
 use crate::plane::Plane;
 use crate::sketch::Sketch;
 use crate::tolerance::PLANARITY;
@@ -171,6 +172,11 @@ pub enum Op {
         xform: Xform,
         autofold: bool,
     },
+    /// Offset a face, a sketch region or a chain of edges by `distance` (positive grows;
+    /// for an open chain, positive is to its left). The result is drawn like a stroke: on
+    /// the solid when it lies on its faces (imprints, cuts), else into a sketch on the plane
+    /// (see [`crate::offset`]).
+    Offset { source: OffsetSource, distance: f64 },
     /// Delete an object (it also leaves any group).
     DeleteObject { object: u64 },
     /// Group objects under a name.
@@ -765,6 +771,7 @@ impl Model {
                 self.objects[k] = next;
                 Ok(OpOutcome::GeometryMoved { faces })
             }
+            Op::Offset { source, distance } => self.offset(source, *distance),
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);
                 if self.objects.remove(k).is_none() {
@@ -823,6 +830,150 @@ impl Model {
             }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }
+    }
+
+    /// The loops an offset makes (world points, closed or not) and the plane they are on,
+    /// plus where they go: a solid's face on that plane (object key, face ordinal) or a
+    /// sketch (when they reach off the solid, or the source is a sketch region).
+    pub fn offset_result(
+        &self,
+        source: &OffsetSource,
+        distance: f64,
+    ) -> Result<(Vec<Vec<DVec3>>, bool, Plane), KernelError> {
+        use crate::offset::{chain_on_plane, check_distance, offset_chain, offset_rings};
+        check_distance(distance)?;
+        let wind = |rings: Vec<Vec<DVec2>>| -> Vec<Vec<DVec2>> {
+            rings
+                .into_iter()
+                .enumerate()
+                .map(|(k, mut r)| {
+                    let a = sawhorse_tessellate::signed_area(&r);
+                    if (k == 0) == (a < 0.0) {
+                        r.reverse();
+                    }
+                    r
+                })
+                .collect()
+        };
+        let (plane, loops, closed) = match source {
+            OffsetSource::Face { object, face } => {
+                let o = self
+                    .object(*object)
+                    .ok_or(FaceEditError::NoSuchObject(*object))?;
+                let fi = o
+                    .face_ordinal(*face)
+                    .ok_or(FaceEditError::NoSuchFace(*face))?;
+                let p = o.brep().to_polys();
+                let plane = p.plane(fi).ok_or(OffsetError::NotPlanar)?;
+                let rings: Vec<Vec<DVec2>> = p.faces[fi]
+                    .rings()
+                    .map(|r| r.iter().map(|&i| plane.to_local(p.points[i])).collect())
+                    .collect();
+                (plane, offset_rings(&wind(rings), distance), true)
+            }
+            OffsetSource::Region { sketch, region } => {
+                let s = self
+                    .sketch(*sketch)
+                    .ok_or(SketchError::NoSuchSketch(*sketch))?;
+                let r = s
+                    .region(from_public::<RegionId>(*region))
+                    .ok_or(SketchError::NoSuchRegion(*region))?;
+                let (o, h) = s.region_rings(r);
+                let rings: Vec<Vec<DVec2>> = std::iter::once(o).chain(h).collect();
+                (*s.plane(), offset_rings(&wind(rings), distance), true)
+            }
+            OffsetSource::Edges {
+                points,
+                closed,
+                normal,
+                ..
+            } => {
+                let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                if pts.len() < 2 || (*closed && pts.len() < 3) {
+                    return Err(OffsetError::TooFewPoints.into());
+                }
+                let (plane, q) = chain_on_plane(&pts, DVec3::from_array(*normal))?;
+                if *closed {
+                    (plane, offset_rings(&wind(vec![q]), distance), true)
+                } else {
+                    (plane, offset_chain(&q, distance), false)
+                }
+            }
+        };
+        if loops.is_empty() {
+            return Err(OffsetError::Vanishes.into());
+        }
+        let world = loops
+            .iter()
+            .map(|r| r.iter().map(|&q| plane.to_world(q)).collect())
+            .collect();
+        Ok((world, closed, plane))
+    }
+
+    /// Apply an offset (see [`Op::Offset`]).
+    fn offset(&mut self, source: &OffsetSource, distance: f64) -> Result<OpOutcome, KernelError> {
+        let (loops, closed, plane) = self.offset_result(source, distance)?;
+        // On a solid: the face it came from, or the given solid's face on the chain's plane.
+        let solid = match source {
+            OffsetSource::Face { object, face } => Some((*object, *face)),
+            OffsetSource::Edges {
+                object: Some(object),
+                ..
+            } => self.object(*object).and_then(|o| {
+                let p = o.brep().to_polys();
+                crate::draw::face_on(&p, &plane)
+                    .and_then(|fi| o.face_id_at(fi).map(|id| (*object, id)))
+            }),
+            _ => None,
+        };
+        if let Some((object, face)) = solid {
+            let o = self
+                .object(object)
+                .ok_or(FaceEditError::NoSuchObject(object))?;
+            let p = o.brep().to_polys();
+            let on_solid = loops
+                .iter()
+                .flatten()
+                .all(|&q| crate::draw::covers(&p, &plane, plane.to_local(q)));
+            if on_solid {
+                let mut faces: Vec<u64> = Vec::new();
+                let mut inside = None;
+                for (k, ring) in loops.iter().enumerate() {
+                    let (o, fi) = self.face_edit_target(object, face)?;
+                    let (made, enclosed) = o.draw(fi, ring, closed)?;
+                    faces.extend(made);
+                    if k == 0 {
+                        inside = enclosed;
+                    }
+                }
+                faces.sort_unstable();
+                faces.dedup();
+                return Ok(OpOutcome::Drawn {
+                    sketch: None,
+                    regions: Vec::new(),
+                    faces,
+                    inside,
+                });
+            }
+        }
+        // Into a sketch: the region's own, or the sketch on the plane.
+        let sid = match source {
+            OffsetSource::Region { sketch, .. } => self.sketch_key(*sketch)?,
+            _ => self.sketch_on(&plane),
+        };
+        let mut regions: Vec<RegionId> = Vec::new();
+        for ring in &loops {
+            regions.extend(self.draw_in_sketch(sid, ring, closed)?);
+        }
+        regions.sort_unstable();
+        regions.dedup();
+        let inside = self.region_inside(sid, &loops[0], closed);
+        Ok(OpOutcome::Drawn {
+            sketch: Some(to_public(sid)),
+            regions: regions.into_iter().map(to_public).collect(),
+            faces: Vec::new(),
+            inside,
+        })
     }
 
     /// The live objects named by `objects` (duplicates dropped, order kept).

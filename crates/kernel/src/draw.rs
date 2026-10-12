@@ -87,6 +87,17 @@ impl View {
     }
 }
 
+/// True when `q` (plane frame) lies on the faces of `p` on `plane`: inside one, or on an edge.
+pub fn covers(p: &Polys, plane: &Plane, q: DVec2) -> bool {
+    let v = View::new(p, plane);
+    v.on_boundary(q) || v.face_at(q).is_some()
+}
+
+/// A face of `p` lying on `plane` (same plane, same facing), if any.
+pub fn face_on(p: &Polys, plane: &Plane) -> Option<usize> {
+    faces_on(p, plane).first().copied()
+}
+
 /// The face of `p` on `plane` whose interior holds `q` (plane frame), if any.
 pub fn face_containing(p: &Polys, plane: &Plane, q: DVec2) -> Option<usize> {
     View::new(p, plane).face_at(q)

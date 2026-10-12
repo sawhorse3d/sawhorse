@@ -21,6 +21,7 @@ sawhorse-tessellate.workspace = true
 glam.workspace = true
 slotmap.workspace = true
 robust.workspace = true
+cavalier_contours.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

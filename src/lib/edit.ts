@@ -130,6 +130,15 @@ export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | 
     case "object_collapsed":
       return null;
     case "drawn": {
+      if (op.op === "offset") {
+        // An offset: the face it made on the solid, or the region it made in a sketch.
+        if (outcome.sketch !== null) {
+          const region = outcome.inside ?? outcome.regions[0];
+          return region !== undefined ? { kind: "region", sketch: outcome.sketch, region } : previous;
+        }
+        const object = op.source.of === "face" ? op.source.object : op.source.of === "edges" ? op.source.object : null;
+        return object !== null && outcome.inside !== null ? { kind: "face", object, face: outcome.inside } : previous;
+      }
       // A closed stroke: what it encloses. An open one that formed a region: that region.
       if (op.op !== "draw") return previous;
       if (outcome.sketch !== null) {

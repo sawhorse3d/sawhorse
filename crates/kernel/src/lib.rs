@@ -26,6 +26,7 @@ pub mod intersect;
 pub mod mesh;
 pub mod model;
 pub mod object;
+pub mod offset;
 pub mod plane;
 pub mod push;
 pub mod sever;
@@ -39,7 +40,8 @@ pub mod validate;
 
 pub use document::Document;
 pub use error::{
-    BuildError, DocumentError, FaceEditError, KernelError, PushError, SketchError, TransformError,
+    BuildError, DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError,
+    TransformError,
 };
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};

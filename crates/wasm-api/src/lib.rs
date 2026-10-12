@@ -165,6 +165,29 @@ impl DocCore {
         self.apply_json(r#"{"op":"undo"}"#)
     }
 
+    /// What an offset would draw, without drawing it: `{source, distance}` in (the
+    /// `Op::Offset` fields), `{loops: [[[x,y,z]...]...], closed}` out (world, metres). A
+    /// refusal (too far inward, off-plane edges) is an error with the kernel's message.
+    pub fn offset_preview_json(&self, query_json: &str) -> Result<String, String> {
+        #[derive(serde::Deserialize)]
+        struct Query {
+            source: sawhorse_kernel::offset::OffsetSource,
+            distance: f64,
+        }
+        let q: Query =
+            serde_json::from_str(query_json).map_err(|e| format!("bad offset query: {e}"))?;
+        let (loops, closed, _) = self
+            .doc
+            .model()
+            .offset_result(&q.source, q.distance)
+            .map_err(|e| e.to_string())?;
+        let loops: Vec<Vec<[f64; 3]>> = loops
+            .iter()
+            .map(|r| r.iter().map(|p| p.to_array()).collect())
+            .collect();
+        Ok(serde_json::json!({ "loops": loops, "closed": closed }).to_string())
+    }
+
     pub fn redo(&mut self) -> Result<String, String> {
         self.apply_json(r#"{"op":"redo"}"#)
     }
@@ -439,6 +462,11 @@ impl Doc {
         self.core.redo().map_err(js)
     }
 
+    /// The loops an offset would draw (see [`DocCore::offset_preview_json`]).
+    pub fn offset_preview(&self, query_json: &str) -> Result<String, JsError> {
+        self.core.offset_preview_json(query_json).map_err(js)
+    }
+
     /// View mesh of one object.
     pub fn get_view_mesh(&self, object_id: f64) -> Result<Mesh, JsError> {
         self.core
@@ -649,6 +677,34 @@ mod tests {
         let m = d.scene_mesh().unwrap();
         assert_eq!(m.edge_owner.len() * 6, m.edges.len());
         assert_eq!(m.edge_owners[0].kind, "object");
+    }
+
+    #[test]
+    fn offset_preview_draws_nothing() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":1,"h":1}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.5}"#,
+        );
+        let h = d.document().hash_hex();
+        let v: serde_json::Value = serde_json::from_str(
+            &d.offset_preview_json(
+                r#"{"source":{"of":"face","object":1,"face":2},"distance":-0.25}"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["closed"], true);
+        assert_eq!(v["loops"][0].as_array().unwrap().len(), 4);
+        assert_eq!(d.document().hash_hex(), h, "a preview changes nothing");
+        let e = d
+            .offset_preview_json(r#"{"source":{"of":"face","object":1,"face":2},"distance":-0.6}"#)
+            .unwrap_err();
+        assert!(e.contains("nothing"), "{e}");
     }
 
     #[test]

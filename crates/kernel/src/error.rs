@@ -142,6 +142,21 @@ pub enum TransformError {
     InvalidResult(String),
 }
 
+/// Errors from the Offset tool (lane 4). Nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum OffsetError {
+    #[error("offset distance must be at least 0.01 mm")]
+    ZeroDistance,
+    #[error("a distance or point is not finite or is beyond 10 km")]
+    OutOfBounds,
+    #[error("the offset shrinks the shape to nothing; try a smaller distance")]
+    Vanishes,
+    #[error("the edges are not all on one plane")]
+    NotPlanar,
+    #[error("an offset needs at least two points")]
+    TooFewPoints,
+}
+
 /// Errors from document-level commands (undo, redo, groups, tags, deleting objects).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DocumentError {
@@ -183,6 +198,8 @@ pub enum KernelError {
     Document(#[from] DocumentError),
     #[error(transparent)]
     Transform(#[from] TransformError),
+    #[error(transparent)]
+    Offset(#[from] OffsetError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
     #[error(transparent)]

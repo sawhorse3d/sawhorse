@@ -35,6 +35,8 @@ earcut = "0.4.11"
 i_overlay = "9.0"
 # 3D booleans. Pure-Rust port of Manifold, Apache-2.0. Pinned EXACTLY (ADR-0001).
 manifold-rust = { version = "=0.16.0", default-features = false }
+# 2D polyline offsets (Offset tool; ADR-0001). MIT OR Apache-2.0, pure Rust.
+cavalier_contours = { version = "0.9", default-features = false }
 # 3MF export.
 threemf = "0.8"
 serde = { version = "1", features = ["derive"] }

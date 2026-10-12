@@ -1,0 +1,115 @@
+{
+  "name": "offset",
+  "description": "Lane 4: a board's top offset inward (imprint) and pulled into a tenon, its tenon top offset outward (a sketch on that plane), a ground region offset inward, and a front edge offset across the top (a cut), all through cavalier_contours with mitered corners.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.3048,
+      "h": 0.2032
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.1016
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 2
+      },
+      "distance": -0.0254
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 7,
+      "distance": 0.0254
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 7
+      },
+      "distance": 0.0127
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.5,
+      "y": 0.0,
+      "w": 0.254,
+      "h": 0.254
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "region",
+        "sketch": 1,
+        "region": 4294967297
+      },
+      "distance": -0.0508
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "edges",
+        "points": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.3048,
+            0.0,
+            0.0
+          ]
+        ],
+        "closed": false,
+        "normal": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "object": 1
+      },
+      "distance": -0.0254
+    }
+  ],
+  "hash": "ca7a872feffa0cb2",
+  "stats": {
+    "objects": 1,
+    "faces": 12,
+    "edges": 27,
+    "vertices": 18,
+    "genus": 0,
+    "watertight": true
+  }
+}

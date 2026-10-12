@@ -74,6 +74,20 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
     setTarget: (t) => {
       h._target = t;
     },
+    offsetPreview: async (_source, distance) =>
+      distance < -0.45
+        ? "the offset shrinks the shape to nothing; try a smaller distance"
+        : {
+            closed: true,
+            loops: [
+              [
+                [-distance, -distance, 1],
+                [1 + distance, -distance, 1],
+                [1 + distance, 1 + distance, 1],
+                [-distance, 1 + distance, 1],
+              ],
+            ],
+          },
     ...over,
   };
   return h;
