@@ -32,6 +32,7 @@ pub mod nesting;
 pub mod nodes;
 pub mod object;
 pub mod offset;
+pub mod paper;
 pub mod plane;
 pub mod push;
 pub mod refbatch;

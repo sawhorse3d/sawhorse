@@ -1416,6 +1416,15 @@ impl Model {
         })
     }
 
+    /// The model as scene `name` shows it (lane 12): its tag visibility, its style and
+    /// shadows, its section planes. Read-only: drawing sheets show scenes without changing
+    /// the document.
+    pub fn as_scene(&self, name: &str) -> Result<Model, KernelError> {
+        let mut m = self.clone();
+        m.activate_scene(name)?;
+        Ok(m)
+    }
+
     // ---- transforms and copies of nodes ----------------------------------------------
 
     /// Move / rotate / scale a node as a unit: its `xform` composes the map; a group's
