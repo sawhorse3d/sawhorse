@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Replays every crates/kernel/tests/golden/*.json through the WASM kernel (src/wasm/pkg)
-// and compares hashes (and cut list and nesting hashes) with the natively computed goldens. Passing proves the browser
+// and compares hashes (and cut list, nesting and section cut hashes) with the natively computed goldens. Passing proves the browser
 // kernel and the native kernel agree bit for bit. Run after `npm run wasm`.
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -25,10 +25,13 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
   const cut = g.cut_list ? JSON.parse(mod.replay_cut_list(ops, "{}")).hash : null;
   // And the nesting (lane 9): the same sheets and boards, placements and cuts.
   const nest = g.nesting ? JSON.parse(mod.replay_nesting(ops, "{}")).hash : null;
-  const ok = got === g.hash && cut === (g.cut_list ?? null) && nest === (g.nesting ?? null);
+  // And every section plane's cut (lane 12): the same caps and outlines, plane by plane.
+  const cuts = g.sections ? JSON.parse(mod.replay_sections(ops)) : null;
+  const sameCuts = JSON.stringify(cuts) === JSON.stringify(g.sections ?? null);
+  const ok = got === g.hash && cut === (g.cut_list ?? null) && nest === (g.nesting ?? null) && sameCuts;
   if (!ok) bad++;
   console.log(
-    `${ok ? "ok  " : "FAIL"} ${f.padEnd(24)} wasm ${got}  native ${g.hash}${g.cut_list ? `  cut list ${cut}${cut === g.cut_list ? "" : ` (native ${g.cut_list})`}` : ""}${g.nesting ? `  nesting ${nest}${nest === g.nesting ? "" : ` (native ${g.nesting})`}` : ""}`,
+    `${ok ? "ok  " : "FAIL"} ${f.padEnd(24)} wasm ${got}  native ${g.hash}${g.cut_list ? `  cut list ${cut}${cut === g.cut_list ? "" : ` (native ${g.cut_list})`}` : ""}${g.nesting ? `  nesting ${nest}${nest === g.nesting ? "" : ` (native ${g.nesting})`}` : ""}${g.sections ? `  sections ${cuts.join(",")}${sameCuts ? "" : ` (native ${g.sections.join(",")})`}` : ""}`,
   );
 }
 console.log(`kernel ${mod.kernel_version()}: ${bad === 0 ? "WASM matches native goldens" : `${bad} mismatch(es)`}`);

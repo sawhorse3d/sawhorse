@@ -476,6 +476,67 @@ pub enum Op {
     },
     /// Nesting: back to the built-in stock library and settings.
     ResetStockLibrary,
+    /// Section planes (lane 12): a new plane in the open context through `origin`, keeping
+    /// the side `normal` points to; active by default (the other planes of its context are
+    /// then deactivated).
+    AddSection {
+        origin: [f64; 3],
+        normal: [f64; 3],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        active: bool,
+    },
+    /// Put a section plane exactly here (it must be in the open context).
+    PlaceSection {
+        section: u64,
+        origin: [f64; 3],
+        normal: [f64; 3],
+    },
+    /// Keep the other side (the plane must be in the open context).
+    FlipSection {
+        section: u64,
+    },
+    /// Activate a section plane (the others of its context are deactivated), or deactivate
+    /// it. Allowed anywhere, like the Outliner's flags.
+    SetSectionActive {
+        section: u64,
+        active: bool,
+    },
+    RenameSection {
+        section: u64,
+        name: String,
+    },
+    /// Hide or show a section plane (an active hidden plane still cuts).
+    SetSectionHidden {
+        section: u64,
+        hidden: bool,
+    },
+    /// Delete a section plane (in the open context).
+    DeleteSection {
+        section: u64,
+    },
+    /// Move, turn or mirror section planes (Move / Rotate / Scale; in the open context). A
+    /// selection of solids and planes moves as one batch of [`Op::Transform`] and this.
+    MoveSections {
+        sections: Vec<u64>,
+        xform: Xform,
+    },
+    /// `count` copies of each plane, copy k mapped by `xform` k times (Ctrl with Move or
+    /// Rotate, arrays). The copies start inactive.
+    CopySections {
+        sections: Vec<u64>,
+        xform: Xform,
+        #[serde(default = "one")]
+        count: u32,
+    },
+    /// Create Group from Slice: the plane's cut outline drawn into a sketch on the plane,
+    /// in a new group in the open context (closed loops become faces).
+    SliceToGroup {
+        section: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
     /// edit; refused (typed) when the snapshot does not validate.
     Restore {
@@ -576,6 +637,18 @@ pub(crate) fn is_zero2(x: &[f64; 2]) -> bool {
     *x == [0.0, 0.0]
 }
 
+fn yes() -> bool {
+    true
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
 /// A saved view (SketchUp "scene"): camera in metres, Z up, and the tags it hides.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -601,6 +674,10 @@ pub struct SceneDef {
     /// The sun and shadows saved with the scene, likewise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<crate::looks::Shadows>,
+    /// The active and hidden section planes saved with the scene (lane 12); activating
+    /// the scene brings them back. Absent: the scene leaves the sections alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sections: Option<Box<crate::section::SceneSections>>,
 }
 
 fn default_fov() -> f64 {
@@ -784,6 +861,25 @@ pub enum OpOutcome {
         meshes: usize,
         sketches: usize,
     },
+    /// A section plane was added (lane 12).
+    SectionAdded {
+        section: u64,
+    },
+    /// A section plane was placed, flipped, (de)activated, renamed, hidden or shown.
+    SectionSet,
+    SectionDeleted,
+    /// Section planes moved (the same ids) or copied (the new ids, in creation order).
+    SectionsMoved {
+        sections: Vec<u64>,
+    },
+    SectionsCopied {
+        sections: Vec<u64>,
+    },
+    /// Create Group from Slice: the new group and the sketch in it.
+    Sliced {
+        group: u64,
+        sketch: u64,
+    },
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -827,6 +923,8 @@ pub struct Model {
     pub(crate) last_number: u64,
     /// The stock library and nesting settings (lane 9); `None`: the built-in library.
     pub(crate) stock: Option<crate::stock::StockLibrary>,
+    /// Section planes (lane 12), see [`crate::section`].
+    pub(crate) sections: SlotMap<crate::ids::SectionId, crate::section::SectionPlane>,
 }
 
 /// A material: sRGB colour with alpha; a texture (a path in the model's texture table, or a
@@ -1695,6 +1793,50 @@ impl Model {
                 self.stock = None;
                 Ok(OpOutcome::StockSet)
             }
+            Op::AddSection {
+                origin,
+                normal,
+                name,
+                active,
+            } => self.add_section(origin, normal, name.as_deref(), *active),
+            Op::PlaceSection {
+                section,
+                origin,
+                normal,
+            } => self.place_section(*section, origin, normal),
+            Op::FlipSection { section } => self.flip_section(*section),
+            Op::SetSectionActive { section, active } => self.set_section_active(*section, *active),
+            Op::RenameSection { section, name } => self.rename_section(*section, name),
+            Op::SetSectionHidden { section, hidden } => self.set_section_hidden(*section, *hidden),
+            Op::DeleteSection { section } => self.delete_section(*section),
+            Op::MoveSections { sections, xform } => {
+                if sections.is_empty() {
+                    return Err(TransformError::NothingSelected.into());
+                }
+                xform.check()?;
+                let keys = self.section_targets(sections)?;
+                self.transform_sections(&keys, xform)?;
+                Ok(OpOutcome::SectionsMoved {
+                    sections: keys.into_iter().map(to_public).collect(),
+                })
+            }
+            Op::CopySections {
+                sections,
+                xform,
+                count,
+            } => {
+                if sections.is_empty() {
+                    return Err(TransformError::NothingSelected.into());
+                }
+                if *count == 0 || *count > MAX_ARRAY {
+                    return Err(TransformError::BadCount.into());
+                }
+                xform.check()?;
+                let keys = self.section_targets(sections)?;
+                let sections = self.copy_sections(&keys, xform, *count)?;
+                Ok(OpOutcome::SectionsCopied { sections })
+            }
+            Op::SliceToGroup { section, name } => self.slice_to_group(*section, name.as_deref()),
             Op::Restore { snapshot } => {
                 *self = Model::from_snapshot(snapshot)?;
                 Ok(OpOutcome::Restored {
@@ -2631,7 +2773,11 @@ impl Model {
             violations: vec![Violation::DanglingKey(what)],
             report: Default::default(),
         };
-        if let Err(e) = self.check_structure().and_then(|_| self.check_looks()) {
+        if let Err(e) = self
+            .check_structure()
+            .and_then(|_| self.check_looks())
+            .and_then(|_| self.check_sections())
+        {
             return Err(TopologyError {
                 violations: vec![Violation::Structure(e)],
                 report: Default::default(),

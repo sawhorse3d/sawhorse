@@ -68,7 +68,90 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     }
     check_looks(m, &mesh)?;
     check_cut_list(m)?;
-    check_nesting(m)
+    check_nesting(m)?;
+    check_sections(m)
+}
+
+/// Every section plane's cut (lane 12) of any committed model: it never fails, it is
+/// deterministic, its caps are closed rings with the material on the left (outers
+/// counter-clockwise, holes clockwise, holes inside their outer), its area is the caps'
+/// sum, its outline has an edge per ring edge (less those lying on another plane's cut),
+/// and the halves a plane and its flip keep add up to the solids it reaches.
+pub fn check_sections(m: &Model) -> Result<(), String> {
+    use glam::DVec2;
+    for (id, s) in m.sections() {
+        let cut = m
+            .section_cut(id)
+            .map_err(|e| format!("section {id}: the cut failed: {e}"))?;
+        let again = m.section_cut(id).map_err(|e| e.to_string())?;
+        if again != cut {
+            return Err(format!("section {id}: the cut is not deterministic"));
+        }
+        let mut area = 0.0;
+        for c in &cut.caps {
+            let outer: Vec<DVec2> = c.outer.iter().map(|p| DVec2::from_array(*p)).collect();
+            if outer.len() < 3 || !outer.iter().all(|p| p.is_finite()) {
+                return Err(format!("section {id}: a cap's outer ring is degenerate"));
+            }
+            let a = sawhorse_tessellate::signed_area(&outer);
+            if a <= 0.0 {
+                return Err(format!(
+                    "section {id}: a cap's outer ring is clockwise ({a})"
+                ));
+            }
+            let mut sum = a;
+            for h in &c.holes {
+                let ring: Vec<DVec2> = h.iter().map(|p| DVec2::from_array(*p)).collect();
+                let ha = sawhorse_tessellate::signed_area(&ring);
+                if ha >= 0.0 {
+                    return Err(format!("section {id}: a cap's hole is counter-clockwise"));
+                }
+                sum += ha;
+            }
+            if (sum - c.area).abs() > 1e-12 * (1.0 + sum.abs()) || c.area <= 0.0 {
+                return Err(format!(
+                    "section {id}: a cap's area {} is not its rings' {sum}",
+                    c.area
+                ));
+            }
+            area += c.area;
+        }
+        if (area - cut.area).abs() > 1e-12 * (1.0 + area.abs()) {
+            return Err(format!("section {id}: the total area is not the caps' sum"));
+        }
+        let ring_edges: usize = cut
+            .caps
+            .iter()
+            .map(|c| c.outer.len() + c.holes.iter().map(Vec::len).sum::<usize>())
+            .sum();
+        if cut.outline.len() > ring_edges {
+            return Err(format!("section {id}: more outline edges than ring edges"));
+        }
+        // The two halves: kept(plane) + kept(flipped) = the volume of what it reaches.
+        let mut flipped = m.clone();
+        let k = crate::ids::from_public::<crate::ids::SectionId>(id);
+        flipped.sections[k].normal = -s.normal;
+        let (a, b) = (
+            m.kept_volume(id).map_err(|e| e.to_string())?,
+            flipped.kept_volume(id).map_err(|e| e.to_string())?,
+        );
+        let reached: f64 = m
+            .objects()
+            .into_iter()
+            .filter(|(o, x)| {
+                m.is_visible(*o)
+                    && s.parent
+                        .is_none_or(|p| m.path_of(x.member.parent).contains(&p))
+            })
+            .map(|(_, x)| x.volume())
+            .sum();
+        if (a + b - reached).abs() > 1e-6 * (1.0 + reached) || a < -1e-9 || b < -1e-9 {
+            return Err(format!(
+                "section {id}: the halves kept {a} + {b} do not make the whole {reached}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The nesting (lane 9) of any committed model: with both algorithms, everything and the

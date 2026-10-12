@@ -28,6 +28,10 @@ struct Golden {
     /// WASM build must lay out the same stock (lane 9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nesting: Option<String>,
+    /// Each section plane's cut hash, in id order (lane 12): the WASM build must cut the same
+    /// caps and outlines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sections: Option<Vec<String>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -77,19 +81,27 @@ fn golden_hashes() {
         let nest = m
             .nest(&sawhorse_kernel::nesting::NestOptions::default())
             .hash;
+        let cuts: Vec<String> = m
+            .sections()
+            .into_iter()
+            .map(|(id, _)| m.section_cut(id).unwrap().hash)
+            .collect();
+        let cuts = (!cuts.is_empty()).then_some(cuts);
         if update {
             g.hash = hash;
             g.stats = stats;
             g.cut_list = Some(cut);
             g.nesting = Some(nest);
+            g.sections = cuts;
             std::fs::write(&f, serde_json::to_string_pretty(&g).unwrap() + "\n").unwrap();
         } else if g.hash != hash
             || g.stats != stats
             || g.cut_list.as_ref() != Some(&cut)
             || g.nesting.as_ref() != Some(&nest)
+            || g.sections != cuts
         {
             mismatches.push(format!(
-                "{}: hash {} (golden {}), stats {:?} (golden {:?}), cut list {} (golden {:?}), nesting {} (golden {:?})",
+                "{}: hash {} (golden {}), stats {:?} (golden {:?}), cut list {} (golden {:?}), nesting {} (golden {:?}), sections {:?} (golden {:?})",
                 f.display(),
                 hash,
                 g.hash,
@@ -98,7 +110,9 @@ fn golden_hashes() {
                 cut,
                 g.cut_list,
                 nest,
-                g.nesting
+                g.nesting,
+                cuts,
+                g.sections
             ));
         }
     }

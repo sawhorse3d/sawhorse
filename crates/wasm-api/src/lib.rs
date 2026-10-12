@@ -19,6 +19,8 @@
 //! ```
 //! Ids cross the boundary as JS numbers (public ids; exact below 2^53).
 
+mod drawings;
+
 use sawhorse_kernel::document::Document;
 use sawhorse_kernel::mesh::{ViewMesh, object_view_mesh, view_mesh};
 use sawhorse_kernel::model::Op;

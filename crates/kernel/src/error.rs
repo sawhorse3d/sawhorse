@@ -287,6 +287,23 @@ pub enum StockError {
     BadSettings(&'static str),
 }
 
+/// Section planes (lane 12). Refusals of bad input; nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum SectionError {
+    #[error("no section plane #{0}")]
+    NoSuchSection(u64),
+    #[error("a section plane needs a finite point and a direction")]
+    BadPlane,
+    #[error("the section plane cuts nothing here, so there is no slice to make")]
+    NothingToSlice,
+    #[error(
+        "a slice cannot be made inside a component (it would not reach the other copies): close the component first"
+    )]
+    SliceInComponent,
+    #[error("a scene names section plane #{0}, which does not exist")]
+    SceneSection(u64),
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
@@ -313,6 +330,8 @@ pub enum KernelError {
     Tessellate(#[from] TessellateError),
     #[error(transparent)]
     Looks(crate::looks::LooksError),
+    #[error(transparent)]
+    Section(#[from] SectionError),
     /// The validator rejected the result of an operation. Always a kernel bug: the
     /// transaction was rolled back, and the op sequence belongs in tests/repro/.
     #[error("kernel bug, operation rolled back: {0}")]

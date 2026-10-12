@@ -83,6 +83,7 @@ fn import_op() -> Op {
             context: None,
             style: None,
             shadows: None,
+            sections: None,
         }],
         hidden_tags: vec!["Legs".into()],
         definitions: vec![],

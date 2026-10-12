@@ -458,6 +458,10 @@ pub fn model_hash(m: &Model) -> u64 {
     if m.has_looks() {
         m.hash_looks(&mut h);
     }
+    // Section planes and the section state of scenes (lane 12): only when present.
+    if m.has_sections() {
+        m.hash_sections(&mut h);
+    }
     h.finish()
 }
 

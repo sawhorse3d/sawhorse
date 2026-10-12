@@ -145,7 +145,7 @@ enum Fuzz {
     Undo,
     Redo,
     /// Raw op with whatever ids it has (mostly refused).
-    Raw(Op),
+    Raw(Box<Op>),
     /// Lane 4: move / turn / scale / mirror a solid (or two).
     Transform(u8, u8, XformPick),
     Copy(u8, XformPick),
@@ -434,8 +434,8 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => (0u8..3, any::<bool>()).prop_map(|(t, v)| Fuzz::TagVisible(t, v)),
         3 => Just(Fuzz::Undo),
         2 => Just(Fuzz::Redo),
-        1 => (0u64..4, 0u64..6, distance()).prop_map(|(sketch, region, distance)| Fuzz::Raw(Op::Extrude { sketch, region, distance })),
-        1 => (0u64..4, 0u64..14, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Op::PushPull { object, face, distance })),
+        1 => (0u64..4, 0u64..6, distance()).prop_map(|(sketch, region, distance)| Fuzz::Raw(Box::new(Op::Extrude { sketch, region, distance }))),
+        1 => (0u64..4, 0u64..14, distance()).prop_map(|(object, face, distance)| Fuzz::Raw(Box::new(Op::PushPull { object, face, distance }))),
         2 => (any::<u8>(), any::<u8>(), distance()).prop_map(|(o, f, d)| Fuzz::PushNew(o, f, d)),
         1 => ((grid(), grid(), grid()), prop::option::of(normal())).prop_map(|((x, y, z), d)| Fuzz::Guide([x, y, z], d)),
         1 => ((grid(), grid(), grid()), (grid(), grid(), grid())).prop_map(|(a, b)| Fuzz::Dimension([a.0, a.1, a.2], [b.0, b.1, b.2])),
@@ -1086,6 +1086,8 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 } else {
                     None
                 },
+                // Some carry the section planes' state (lane 12).
+                sections: (n % 4 == 2).then(|| Box::new(m.scene_sections_now())),
             };
             match kind {
                 0 => Op::AddScene { scene },
@@ -1309,7 +1311,13 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     background: (k == 2).then_some([250, 248, 240]),
                     sky: None,
                     ground: (k == 3).then_some([190, 180, 150]),
-                    section_cuts: true,
+                    // Lane 12: section switches and colours too.
+                    section_cuts: k != 2,
+                    section_planes: k != 1,
+                    section_fill: k % 2 == 0,
+                    section_fill_color: (k == 1).then_some([180, 60, 40]),
+                    section_line_color: (k == 3).then_some([20, 20, 20]),
+                    section_line_width: (k == 2).then_some(5),
                 }),
             }
         }
@@ -1323,7 +1331,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         },
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,
-        Fuzz::Raw(op) => op.clone(),
+        Fuzz::Raw(op) => (**op).clone(),
         Fuzz::Transform(o, pair, x) => {
             let mut objects = vec![object(*o)];
             if pair % 4 == 0 {

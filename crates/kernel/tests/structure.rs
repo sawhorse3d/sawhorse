@@ -790,6 +790,7 @@ fn tags_hide_and_show_without_moving_anything() {
                 context: None,
                 style: None,
                 shadows: None,
+                sections: None,
             },
         },
     );
@@ -849,6 +850,7 @@ fn scenes_switch_tag_visibility_and_context() {
         context,
         style: None,
         shadows: None,
+        sections: None,
     };
     ok(
         &mut d,

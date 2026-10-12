@@ -334,6 +334,29 @@ pub struct Graph {
     pub definitions: Vec<GraphDefinition>,
     /// Tag colours (`#rrggbb`), for tags that have one.
     pub tag_colors: BTreeMap<String, String>,
+    /// Section planes (lane 12), in id order.
+    pub sections: Vec<GraphSection>,
+}
+
+/// A section plane as the UI sees it (lane 12): the Outliner's row and what the viewport
+/// draws.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct GraphSection {
+    pub id: u64,
+    pub name: String,
+    pub parent: Option<u64>,
+    pub active: bool,
+    pub hidden: bool,
+    /// Drawn: not hidden and its context shown.
+    pub visible: bool,
+    pub origin: [f64; 3],
+    /// The side kept.
+    pub normal: [f64; 3],
+    /// The in-plane frame (`u x v = normal`).
+    pub u: [f64; 3],
+    pub v: [f64; 3],
+    /// The rectangle it is drawn as, in its frame: `[x0, y0, x1, y1]`, metres.
+    pub extent: [f64; 4],
 }
 
 pub fn hex_color(c: [u8; 3]) -> String {
@@ -706,6 +729,26 @@ impl Model {
                 .iter()
                 .map(|(t, c)| (t.clone(), hex_color(*c)))
                 .collect(),
+            sections: self
+                .sections()
+                .into_iter()
+                .map(|(id, s)| {
+                    let f = s.plane();
+                    GraphSection {
+                        id,
+                        name: s.name.clone(),
+                        parent: s.parent.map(to_public),
+                        active: s.active,
+                        hidden: s.hidden,
+                        visible: self.section_shown(id),
+                        origin: s.origin.to_array(),
+                        normal: s.normal.to_array(),
+                        u: f.u.to_array(),
+                        v: f.v.to_array(),
+                        extent: self.section_extent(id).unwrap_or([0.0; 4]),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -1026,6 +1069,8 @@ impl Model {
         for &s in kids.sketches.get(&Some(n)).into_iter().flatten() {
             self.sketches[s].parent = parent;
         }
+        // Section planes too (lane 12); a second active one there is switched off.
+        self.rehome_sections(n, parent);
         self.nodes.remove(n);
         self.mark(parent);
         Ok(OpOutcome::Exploded { objects, nodes })
@@ -1286,6 +1331,9 @@ impl Model {
         if let Some(c) = sc.context {
             self.node_key(c)?;
         }
+        if let Some(x) = &sc.sections {
+            self.check_scene_sections(x)?;
+        }
         Model::check_scene_looks(sc)
     }
 
@@ -1349,6 +1397,10 @@ impl Model {
         if let Some(s) = sc.shadows {
             self.shadows = Some(s);
         }
+        // And the section planes it saved (lane 12).
+        if let Some(x) = &sc.sections {
+            self.apply_scene_sections(x);
+        }
         self.context = sc
             .context
             .map(from_public::<NodeId>)
@@ -1388,6 +1440,9 @@ impl Model {
                     for &s in kids.sketches.get(&Some(c)).into_iter().flatten() {
                         self.sketches[s] = self.sketches[s].mapped(x)?;
                     }
+                    // Section planes drawn in the copy move with it (lane 12).
+                    let planes = self.sections_in(c);
+                    self.transform_sections(&planes, x)?;
                 }
                 Ok(())
             }
@@ -1413,6 +1468,9 @@ impl Model {
                     // Strokes inside a moved group move with it.
                     self.sketches[s] = self.sketches[s].mapped(x)?;
                 }
+                // So do its section planes (lane 12).
+                let planes = self.sections_in(n);
+                self.transform_sections(&planes, x)?;
                 Ok(())
             }
         }
@@ -1437,6 +1495,12 @@ impl Model {
             ..src.clone()
         });
         self.nodes[copy].xform.check()?;
+        // Its section planes are copied with it, active as they were (lane 12).
+        for k in self.sections_in(n) {
+            let mut c = self.sections[k].mapped(x)?;
+            c.parent = Some(copy);
+            self.sections.insert(c);
+        }
         match src.kind {
             NodeKind::Instance(_) => self.rederive(copy)?,
             NodeKind::Group => {
@@ -1850,6 +1914,8 @@ impl Model {
                     for &sk in kids.sketches.get(&Some(n)).into_iter().flatten() {
                         self.sketches[sk].parent = Some(i);
                     }
+                    // And its section planes (lane 12).
+                    self.rehome_sections(n, Some(i));
                 }
                 self.remove_thing(&kids, t);
             }
@@ -1936,6 +2002,8 @@ impl Model {
             }
         }
         self.defs.retain(|k, _| used.contains(&k));
+        // Section planes in nodes that are gone go too; scenes forget them (lane 12).
+        self.forget_sections();
         let nodes = &self.nodes;
         for sc in &mut self.scenes {
             if sc

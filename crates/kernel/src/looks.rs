@@ -352,9 +352,24 @@ pub struct Style {
     /// Ground colour below the horizon; absent: no ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ground: Option<[u8; 3]>,
-    /// Section cuts shown (kept for the section planes of a later lane).
+    /// Active section planes cut the model (lane 12; the switch was kept since lane 10).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub section_cuts: bool,
+    /// Section planes drawn (lane 12).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub section_planes: bool,
+    /// The cut faces filled (lane 12).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub section_fill: bool,
+    /// The section fill colour (sRGB); absent: the theme's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_fill_color: Option<[u8; 3]>,
+    /// The cut outline's colour (sRGB); absent: the edge colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_line_color: Option<[u8; 3]>,
+    /// The cut outline's width in screen pixels, 1 to 12; absent: 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_line_width: Option<u8>,
 }
 
 impl Default for Style {
@@ -367,6 +382,11 @@ impl Default for Style {
             sky: None,
             ground: None,
             section_cuts: true,
+            section_planes: true,
+            section_fill: true,
+            section_fill_color: None,
+            section_line_color: None,
+            section_line_width: None,
         }
     }
 }
@@ -377,6 +397,15 @@ impl Style {
             && (p.trim().is_empty() || p.chars().count() > 64)
         {
             return Err(DocumentError::BadName.into());
+        }
+        if self
+            .section_line_width
+            .is_some_and(|w| !(1..=12).contains(&w))
+        {
+            return Err(LooksError::BadStyle(
+                "the section line width must be 1 to 12 pixels".into(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -391,13 +420,29 @@ impl Style {
                 | u64::from(e.profiles) << 1
                 | u64::from(e.extensions) << 2
                 | u64::from(e.endpoints) << 3
-                | u64::from(self.section_cuts) << 4,
+                | u64::from(self.section_cuts) << 4
+                // Lane 12's switches count when they are off, so older styles keep their hash.
+                | u64::from(!self.section_planes) << 5
+                | u64::from(!self.section_fill) << 6,
         );
         for c in [self.background, self.sky, self.ground] {
             match c {
                 Some(c) => h.bytes(&c),
                 None => h.u64(u64::MAX),
             }
+        }
+        if self.section_fill_color.is_some()
+            || self.section_line_color.is_some()
+            || self.section_line_width.is_some()
+        {
+            h.tag("section-style");
+            for c in [self.section_fill_color, self.section_line_color] {
+                match c {
+                    Some(c) => h.bytes(&c),
+                    None => h.u64(u64::MAX),
+                }
+            }
+            h.u64(self.section_line_width.map_or(u64::MAX, u64::from));
         }
     }
 }
@@ -522,6 +567,8 @@ pub enum LooksError {
     NothingToPaint,
     #[error("the model already holds {MAX_TEXTURES} texture images")]
     TooManyTextures,
+    #[error("{0}")]
+    BadStyle(String),
 }
 
 impl From<LooksError> for KernelError {

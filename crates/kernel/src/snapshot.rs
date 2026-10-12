@@ -340,6 +340,24 @@ pub struct SnapDimension {
     pub offset: [f64; 3],
 }
 
+/// A section plane (lane 12): its saved id (scenes refer to it), name, point and the
+/// direction of the side it keeps, the group or instance it is in (a saved node id), and
+/// its flags.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SnapSection {
+    pub id: u64,
+    pub name: String,
+    pub origin: [f64; 3],
+    pub normal: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub active: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+}
+
 /// The whole model as plain data.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -392,6 +410,9 @@ pub struct Snapshot {
     pub style: Option<crate::looks::Style>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadows: Option<crate::looks::Shadows>,
+    /// Section planes (lane 12), in id order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<SnapSection>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -639,6 +660,19 @@ impl Model {
                 .collect(),
             style: self.style.clone(),
             shadows: self.shadows,
+            sections: self
+                .sections()
+                .into_iter()
+                .map(|(id, x)| SnapSection {
+                    id,
+                    name: x.name.clone(),
+                    origin: x.origin.to_array(),
+                    normal: x.normal.to_array(),
+                    parent: x.parent.map(to_public),
+                    active: x.active,
+                    hidden: x.hidden,
+                })
+                .collect(),
         }
     }
 
@@ -1035,10 +1069,45 @@ impl Model {
                 }
             }
         }
+        // Section planes before the scenes that name them (lane 12): saved id -> new id.
+        let mut section_ids: BTreeMap<u64, u64> = BTreeMap::new();
+        for x in &s.sections {
+            let parent = node_of(x.parent, &format!("section {}", x.id))?;
+            let (origin, normal) = crate::section::plane_from(&x.origin, &x.normal)
+                .map_err(|e| bad(format!("section {}: {e}", x.id)))?;
+            if x.name.trim().is_empty() || x.name.chars().count() > crate::section::MAX_NAME {
+                return Err(bad(format!("section {}: bad name", x.id)));
+            }
+            let k = m.sections.insert(crate::section::SectionPlane {
+                name: x.name.clone(),
+                origin,
+                normal,
+                parent,
+                active: x.active,
+                hidden: x.hidden,
+            });
+            if section_ids.insert(x.id, to_public(k)).is_some() {
+                return Err(bad(format!("section {} listed twice", x.id)));
+            }
+        }
         for sc in &s.scenes {
             let mut sc = sc.clone();
             sc.context = node_of(sc.context, &format!("scene {:?}", sc.name))?.map(to_public);
             Model::check_scene_looks(&sc)?;
+            if let Some(x) = &mut sc.sections {
+                let map = |ids: &[u64]| -> Result<Vec<u64>, KernelError> {
+                    ids.iter()
+                        .map(|id| {
+                            section_ids
+                                .get(id)
+                                .copied()
+                                .ok_or_else(|| bad(format!("scene {:?}: no section {id}", sc.name)))
+                        })
+                        .collect()
+                };
+                x.active = map(&x.active)?;
+                x.hidden = map(&x.hidden)?;
+            }
             m.scenes.push(sc);
         }
         for g in &s.guides {

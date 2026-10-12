@@ -720,7 +720,7 @@ fn workshop() -> Style {
         background: Some([250, 248, 240]),
         sky: Some([200, 220, 240]),
         ground: None,
-        section_cuts: true,
+        ..Style::default()
     }
 }
 
@@ -763,6 +763,7 @@ fn styles_and_shadows_live_in_the_document_and_in_scenes() {
                 context: None,
                 style: Some(workshop()),
                 shadows: Some(sun),
+                sections: None,
             },
         },
     );
@@ -953,6 +954,7 @@ fn painted_ops() -> Vec<Op> {
                 context: None,
                 style,
                 shadows,
+                sections: None,
             },
         },
     );

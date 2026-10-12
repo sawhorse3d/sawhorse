@@ -40,6 +40,10 @@ slotmap::new_key_type! {
     pub struct DimensionId;
     /// An imported mesh that is not a valid solid (shown, never edited).
     pub struct MeshId;
+    /// A section plane (lane 12): cuts what is in its group, component or the model.
+    pub struct SectionId;
+    /// A drawing sheet (lane 12): paper with viewports, dimensions, labels and tables.
+    pub struct SheetId;
 }
 
 /// Public (serialisable) form of a key. Null keys map to 0.
