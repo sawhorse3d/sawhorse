@@ -35,6 +35,8 @@ fn quad_box(name: &str, min: [f64; 3], s: [f64; 3]) -> ImportItem {
         lines: vec![],
         merge_coplanar: false,
         face_labels: vec![],
+        face_materials: vec![],
+        face_uvs: vec![],
     }
 }
 
@@ -65,11 +67,11 @@ fn import_op() -> Op {
                 closed: false,
             },
         ],
-        materials: vec![MaterialDef {
-            name: "Walnut".into(),
-            color: [90, 60, 40, 255],
-            texture: Some("walnut.png".into()),
-        }],
+        materials: vec![MaterialDef::plain(
+            "Walnut",
+            [90, 60, 40, 255],
+            Some("walnut.png".into()),
+        )],
         scenes: vec![SceneDef {
             name: "Front".into(),
             eye: [0.4, -3.0, 0.8],
@@ -79,6 +81,8 @@ fn import_op() -> Op {
             parallel: false,
             hidden_tags: vec![],
             context: None,
+            style: None,
+            shadows: None,
         }],
         hidden_tags: vec!["Legs".into()],
         definitions: vec![],

@@ -1,0 +1,507 @@
+{
+  "name": "painted",
+  "description": "Lane 10: a cabinet of components painted with materials (a tiny texture, stock links), face paint inside an open component reaching both copies, an instance painted on its own, a texture positioned, a split and a pocket on a painted face, a material renamed, a style and shadows saved in a scene, undo and redo. Replayed through Document::replay and in WASM.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ],
+        [
+          0.0,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.762
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Side"
+    },
+    {
+      "op": "copy",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.59055,
+          0.0,
+          0.0
+        ]
+      },
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.254
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.0,
+          0.254
+        ],
+        [
+          0.59055,
+          0.0,
+          0.254
+        ],
+        [
+          0.59055,
+          0.2794,
+          0.254
+        ],
+        [
+          0.019049999999999997,
+          0.2794,
+          0.254
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 2,
+      "region": 1,
+      "distance": 0.019049999999999997
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.2794,
+          0.0
+        ],
+        [
+          0.59055,
+          0.2794,
+          0.0
+        ],
+        [
+          0.59055,
+          0.28575,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 4294967297,
+      "distance": 0.762
+    },
+    {
+      "op": "add_texture",
+      "path": "assets/oak.png",
+      "mime": "image/png",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAJUlEQVR4AQEaAOX/AMigbmRQN8igbmRQNwBkUDfIoG5kUDfIoG6RagsF4PgIpQAAAABJRU5ErkJggg=="
+    },
+    {
+      "op": "define_material",
+      "name": "White oak",
+      "color": [
+        200,
+        160,
+        110,
+        255
+      ],
+      "texture": "assets/oak.png",
+      "size": [
+        0.6095999999999999,
+        0.30479999999999996
+      ],
+      "stock": {
+        "kind": "lumber",
+        "species": "White oak"
+      }
+    },
+    {
+      "op": "define_material",
+      "name": "Birch ply",
+      "color": [
+        232,
+        208,
+        170,
+        255
+      ],
+      "texture": null,
+      "stock": {
+        "kind": "sheet",
+        "species": "1/4 Baltic birch ply"
+      }
+    },
+    {
+      "op": "define_material",
+      "name": "Barn red",
+      "color": [
+        124,
+        38,
+        32,
+        255
+      ],
+      "texture": null
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "faces",
+        "object": 1,
+        "faces": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "material": "White oak"
+    },
+    {
+      "op": "leave_context"
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "items",
+        "items": [
+          {
+            "node": 2
+          }
+        ]
+      },
+      "material": "Barn red"
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "items",
+        "items": [
+          {
+            "object": 3
+          }
+        ]
+      },
+      "material": "White oak"
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "items",
+        "items": [
+          {
+            "object": 4
+          }
+        ]
+      },
+      "material": "Birch ply"
+    },
+    {
+      "op": "set_face_uv",
+      "object": 3,
+      "face": 2,
+      "uv": {
+        "rotation": 15.0,
+        "offset": [
+          0.0254,
+          0.0127
+        ]
+      }
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "faces",
+        "object": 3,
+        "faces": [
+          2
+        ]
+      },
+      "material": "Barn red"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 3,
+        "face": 2
+      },
+      "points": [
+        [
+          0.30479999999999996,
+          0.0,
+          0.27305
+        ],
+        [
+          0.30479999999999996,
+          0.2794,
+          0.27305
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 3,
+        "face": 2
+      },
+      "points": [
+        [
+          0.07619999999999999,
+          0.07619999999999999,
+          0.27305
+        ],
+        [
+          0.15239999999999998,
+          0.07619999999999999,
+          0.27305
+        ],
+        [
+          0.15239999999999998,
+          0.15239999999999998,
+          0.27305
+        ],
+        [
+          0.07619999999999999,
+          0.15239999999999998,
+          0.27305
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "push_pull",
+      "object": 3,
+      "face": 8,
+      "distance": -0.00635
+    },
+    {
+      "op": "rename_material",
+      "name": "Barn red",
+      "to": "Red"
+    },
+    {
+      "op": "set_style",
+      "style": {
+        "preset": "Workshop",
+        "face": "hidden_line",
+        "edges": {
+          "profiles": true,
+          "extensions": true
+        },
+        "background": [
+          250,
+          248,
+          240
+        ],
+        "sky": [
+          200,
+          220,
+          240
+        ]
+      }
+    },
+    {
+      "op": "set_shadows",
+      "shadows": {
+        "on": true,
+        "month": 6,
+        "day": 21,
+        "minutes": 900,
+        "latitude": 45.0,
+        "light": 80,
+        "dark": 45,
+        "ground": true,
+        "faces": true
+      }
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "3 pm",
+        "eye": [
+          1.5,
+          -1.5,
+          1.2
+        ],
+        "target": [
+          0.3,
+          0.15,
+          0.4
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": false,
+        "style": {
+          "preset": "Workshop",
+          "face": "hidden_line",
+          "edges": {
+            "profiles": true,
+            "extensions": true
+          },
+          "background": [
+            250,
+            248,
+            240
+          ],
+          "sky": [
+            200,
+            220,
+            240
+          ]
+        },
+        "shadows": {
+          "on": true,
+          "month": 6,
+          "day": 21,
+          "minutes": 900,
+          "latitude": 45.0,
+          "light": 80,
+          "dark": 45,
+          "ground": true,
+          "faces": true
+        }
+      }
+    },
+    {
+      "op": "paint",
+      "target": {
+        "on": "faces",
+        "object": 4,
+        "faces": [
+          2
+        ]
+      },
+      "material": "Red"
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "undo"
+    }
+  ],
+  "hash": "6ed112849d85b202",
+  "stats": {
+    "objects": 4,
+    "faces": 30,
+    "edges": 63,
+    "vertices": 42,
+    "genus": 0,
+    "watertight": true
+  },
+  "cut_list": "256e9662e6895d53"
+}

@@ -66,6 +66,7 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {
         return Err("render mesh index/face-id mismatch".into());
     }
+    check_looks(m, &mesh)?;
     check_cut_list(m)?;
     check_nesting(m)
 }
@@ -305,6 +306,55 @@ pub fn check_nesting_of(
         || t.efficiency > 1.0 + 1e-9
     {
         return Err("totals do not add up".into());
+    }
+    Ok(())
+}
+
+/// Materials and paint (lane 10) of any committed model: every face can be sampled and
+/// shows what the view mesh draws; texture coordinates are finite, one pair per vertex,
+/// and present exactly on faces whose material has an image the model holds.
+pub fn check_looks(m: &Model, mesh: &crate::mesh::ViewMesh) -> Result<(), String> {
+    if mesh.uvs.len() * 3 != mesh.positions.len() * 2 {
+        return Err("view mesh texture coordinates are not two per vertex".into());
+    }
+    if mesh.uvs.iter().any(|u| !u.is_finite()) {
+        return Err("a texture coordinate is not finite".into());
+    }
+    if mesh.edge_normals.len() != mesh.edges.len() {
+        return Err("view mesh edge normals are not six per edge".into());
+    }
+    for (id, o) in m.objects() {
+        for f in o.brep().persistent_face_ids() {
+            let s = m
+                .sample(id, f)
+                .map_err(|e| format!("sampling face {f} of object {id}: {e}"))?;
+            if s.as_deref() != m.face_material(id, f) {
+                return Err("a sample differs from what the face shows".into());
+            }
+            if let Some(name) = &s
+                && !m.materials().contains_key(name)
+            {
+                return Err(format!(
+                    "face {f} of object {id} shows an undefined material"
+                ));
+            }
+            let textured = m.face_texture(id, f).is_some();
+            let uvs = crate::mesh::face_uvs(m, id, f, &Default::default());
+            if textured != uvs.is_some() {
+                return Err("a face's texture and its coordinates disagree".into());
+            }
+            if uvs.is_some_and(|u| u.iter().any(|x| !x.is_finite())) {
+                return Err("a face's texture coordinates are not finite".into());
+            }
+        }
+    }
+    for p in &mesh.parts {
+        if p.material
+            .as_deref()
+            .is_some_and(|n| !m.materials().contains_key(n))
+        {
+            return Err("the view mesh names an undefined material".into());
+        }
     }
     Ok(())
 }
@@ -836,4 +886,67 @@ pub fn check_case(c: &BoolCase, r: &CaseResult) -> Result<(), String> {
     } else {
         Err(bad.join("; "))
     }
+}
+
+/// A small PNG (8-bit RGB, uncompressed deflate) of `w` x `h` pixels: a checker of `rgb`
+/// and a darker shade of it, so a texture's orientation shows. For tests and fixtures.
+pub fn tiny_png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let dark = rgb.map(|c| c / 2);
+    let mut raw = Vec::new();
+    for y in 0..h {
+        raw.push(0u8);
+        for x in 0..w {
+            raw.extend(if (x + y) % 2 == 0 { rgb } else { dark });
+        }
+    }
+    png_from_raw(w, h, &raw)
+}
+
+/// PNG bytes from filtered scanlines (`raw`: each row a filter byte then RGB triples).
+pub fn png_from_raw(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
+    fn crc32(d: &[u8]) -> u32 {
+        let mut c = 0xFFFF_FFFFu32;
+        for &b in d {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        !c
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend((data.len() as u32).to_be_bytes());
+        let mut c = kind.to_vec();
+        c.extend_from_slice(data);
+        out.extend_from_slice(&c);
+        out.extend(crc32(&c).to_be_bytes());
+    }
+    let mut z = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = raw.chunks(65535).collect();
+    for (i, b) in blocks.iter().enumerate() {
+        z.push(u8::from(i + 1 == blocks.len()));
+        let n = b.len() as u16;
+        z.extend(n.to_le_bytes());
+        z.extend((!n).to_le_bytes());
+        z.extend_from_slice(b);
+    }
+    let (mut a, mut s2) = (1u32, 0u32);
+    for &b in raw {
+        a = (a + u32::from(b)) % 65521;
+        s2 = (s2 + a) % 65521;
+    }
+    z.extend(((s2 << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::new();
+    ihdr.extend(w.to_be_bytes());
+    ihdr.extend(h.to_be_bytes());
+    ihdr.extend([8, 2, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", &[]);
+    out
 }

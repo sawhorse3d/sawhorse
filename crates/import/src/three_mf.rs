@@ -178,11 +178,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                 name.clone()
             };
             if !out.materials.iter().any(|m| m.name == name) {
-                out.materials.push(MaterialDef {
-                    name: name.clone(),
-                    color: *color,
-                    texture: None,
-                });
+                out.materials.push(MaterialDef::plain(&name, *color, None));
             }
             mats.insert((*gid, *k), name);
         }
@@ -204,6 +200,8 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                 lines: Vec::new(),
                 merge_coplanar: true,
                 face_labels: Vec::new(),
+                face_materials: vec![],
+                face_uvs: vec![],
             };
             collect(
                 &objects,

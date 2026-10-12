@@ -453,6 +453,11 @@ pub fn model_hash(m: &Model) -> u64 {
     if let Some(lib) = m.stored_stock_library() {
         lib.hash_into(&mut h);
     }
+    // Materials beyond a colour, face paint, textures, styles and shadows (lane 10): hashed
+    // only when present, so documents without them keep their hashes.
+    if m.has_looks() {
+        m.hash_looks(&mut h);
+    }
     h.finish()
 }
 

@@ -97,6 +97,27 @@ pub struct SnapFace {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holes: Vec<Vec<u32>>,
     pub plane: SnapPlane,
+    /// The face's own material (lane 10); absent: its solid's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// How a texture sits on the face (lane 10); absent: the material's own placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv: Option<crate::looks::UvXform>,
+}
+
+/// A texture image: its path inside the archive (`assets/...`), its type, and (in an op or
+/// an in-memory snapshot) its bytes. A `.shz` keeps the bytes as the archive entry instead.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SnapTexture {
+    pub path: String,
+    pub mime: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::looks::b64::serde_bytes"
+    )]
+    pub data: Vec<u8>,
 }
 
 /// A solid's exact B-rep: f64 points, faces as index rings, user-drawn edges.
@@ -183,6 +204,9 @@ pub struct SnapNode {
     /// Cut-list attributes (lane 7): grain, stock, sheet. Absent: none said.
     #[serde(default, skip_serializing_if = "PartAttrs::is_default")]
     pub part: PartAttrs,
+    /// Its material (lane 10): what faces inside without their own show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -250,11 +274,17 @@ pub enum SnapMemberKind {
     Group {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         xform: Option<Xform>,
+        /// The nested group's material (lane 10).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        material: Option<String>,
     },
     Instance {
         definition: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         xform: Option<Xform>,
+        /// The nested instance's material (lane 10).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        material: Option<String>,
     },
 }
 
@@ -354,6 +384,14 @@ pub struct Snapshot {
     /// The stock library and nesting settings (lane 9); absent: the built-in library.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stock: Option<crate::stock::StockLibrary>,
+    /// Texture images (lane 10), in path order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub textures: Vec<SnapTexture>,
+    /// The drawing style and the sun and shadows (lane 10). Absent: the defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<crate::looks::Style>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<crate::looks::Shadows>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -373,15 +411,20 @@ pub fn snap_brep(o: &Object) -> SnapBrep {
             .faces
             .iter()
             .enumerate()
-            .map(|(i, f)| SnapFace {
-                id: f.id.unwrap_or(0),
-                outer: f.outer.iter().map(|&k| k as u32).collect(),
-                holes: f
-                    .holes
-                    .iter()
-                    .map(|h| h.iter().map(|&k| k as u32).collect())
-                    .collect(),
-                plane: (&p.plane(i).unwrap_or(Plane::GROUND)).into(),
+            .map(|(i, f)| {
+                let paint = f.id.and_then(|id| o.paint.get(&id));
+                SnapFace {
+                    id: f.id.unwrap_or(0),
+                    outer: f.outer.iter().map(|&k| k as u32).collect(),
+                    holes: f
+                        .holes
+                        .iter()
+                        .map(|h| h.iter().map(|&k| k as u32).collect())
+                        .collect(),
+                    plane: (&p.plane(i).unwrap_or(Plane::GROUND)).into(),
+                    material: paint.and_then(|x| x.material.clone()),
+                    uv: paint.map(|x| x.uv).filter(|u| !u.is_identity()),
+                }
             })
             .collect(),
         user_edges: p
@@ -440,6 +483,21 @@ pub fn brep_object(what: &str, b: &SnapBrep, next_face_id: u64) -> Result<Object
         return Err(bad(format!("{what}: face ids at or above its counter")));
     }
     obj.next_face_id = next_face_id;
+    for f in &b.faces {
+        let uv = match &f.uv {
+            Some(u) => u
+                .checked()
+                .map_err(|e| bad(format!("{what}: face {}: {e}", f.id)))?,
+            None => crate::looks::UvXform::default(),
+        };
+        let paint = crate::looks::FacePaint {
+            material: f.material.clone(),
+            uv,
+        };
+        if !paint.is_default() {
+            obj.paint.insert(f.id, paint);
+        }
+    }
     Ok(obj)
 }
 
@@ -548,11 +606,7 @@ impl Model {
             materials: self
                 .materials()
                 .iter()
-                .map(|(name, m)| MaterialDef {
-                    name: name.clone(),
-                    color: m.color,
-                    texture: m.texture.clone(),
-                })
+                .map(|(name, m)| MaterialDef::of(name, m))
                 .collect(),
             scenes: self.scenes().to_vec(),
             guides: self
@@ -574,6 +628,17 @@ impl Model {
                 .collect(),
             last_number: self.last_number,
             stock: self.stock.clone(),
+            textures: self
+                .textures
+                .iter()
+                .map(|(path, t)| SnapTexture {
+                    path: path.clone(),
+                    mime: t.mime.clone(),
+                    data: t.data.as_ref().clone(),
+                })
+                .collect(),
+            style: self.style.clone(),
+            shadows: self.shadows,
         }
     }
 
@@ -602,6 +667,7 @@ impl Model {
                     slot: n.member.slot,
                     xform: opt_xform(&n.xform),
                     part: n.part.clone(),
+                    material: n.material.clone(),
                 }
             })
             .collect()
@@ -643,10 +709,12 @@ impl Model {
                             },
                             MemberKind::Group(x) => SnapMemberKind::Group {
                                 xform: opt_xform(x),
+                                material: m.material.clone(),
                             },
                             MemberKind::Instance(e, x) => SnapMemberKind::Instance {
                                 definition: def_index[e],
                                 xform: opt_xform(x),
+                                material: m.material.clone(),
                             },
                         },
                     })
@@ -727,15 +795,22 @@ impl Model {
                         note: note.clone(),
                         member: Membership::default(),
                     })),
-                    SnapMemberKind::Group { xform } => {
+                    SnapMemberKind::Group { xform, .. } => {
                         MemberKind::Group(xform.unwrap_or(Xform::IDENTITY))
                     }
-                    SnapMemberKind::Instance { definition, xform } => MemberKind::Instance(
+                    SnapMemberKind::Instance {
+                        definition, xform, ..
+                    } => MemberKind::Instance(
                         *def_ids
                             .get(*definition)
                             .ok_or_else(|| bad(format!("{what}: no definition {definition}")))?,
                         xform.unwrap_or(Xform::IDENTITY),
                     ),
+                };
+                let node_material = match &mem.kind {
+                    SnapMemberKind::Group { material, .. }
+                    | SnapMemberKind::Instance { material, .. } => material.clone(),
+                    _ => None,
                 };
                 if members
                     .insert(
@@ -751,6 +826,7 @@ impl Model {
                             } else {
                                 mem.part.clone()
                             },
+                            material: node_material,
                             kind,
                         },
                     )
@@ -790,6 +866,7 @@ impl Model {
                     locked: n.locked,
                 },
                 part: n.part.clone(),
+                material: n.material.clone(),
             });
             if node_ids.insert(n.id, k).is_some() {
                 return Err(bad(format!("node {} listed twice", n.id)));
@@ -813,14 +890,27 @@ impl Model {
             m.sketches[sketch_ids[i]].parent = node_of(sk.parent, &format!("sketch {i}"))?;
         }
         m.context = node_of(s.context, "the editing context")?;
-        for (name, mat) in s.materials.iter().map(|d| (&d.name, d)) {
-            m.materials.insert(
-                name.clone(),
-                crate::model::Material {
-                    color: mat.color,
-                    texture: mat.texture.clone(),
-                },
-            );
+        for d in &s.materials {
+            m.materials.insert(d.name.clone(), d.material());
+        }
+        for t in &s.textures {
+            crate::looks::check_texture_path(&t.path)?;
+            if t.data.is_empty() {
+                return Err(bad(format!("texture {}: the image is missing", t.path)));
+            }
+            let img = crate::looks::TextureImage::new(&t.mime, t.data.clone())?;
+            if m.textures.insert(t.path.clone(), img).is_some() {
+                return Err(bad(format!("texture {} listed twice", t.path)));
+            }
+        }
+        if m.textures.len() > crate::looks::MAX_TEXTURES {
+            return Err(crate::looks::LooksError::TooManyTextures.into());
+        }
+        if let Some(st) = &s.style {
+            m.set_style(Some(st))?;
+        }
+        if let Some(sh) = &s.shadows {
+            m.set_shadows(Some(sh))?;
         }
         for (t, v) in &s.tags {
             m.tags.insert(t.clone(), *v);
@@ -937,6 +1027,7 @@ impl Model {
                         tag: None,
                         member: Membership::default(),
                         part: PartAttrs::default(),
+                        material: None,
                     });
                     for o in objects {
                         m.objects[o].member.parent = Some(k);
@@ -947,6 +1038,7 @@ impl Model {
         for sc in &s.scenes {
             let mut sc = sc.clone();
             sc.context = node_of(sc.context, &format!("scene {:?}", sc.name))?.map(to_public);
+            Model::check_scene_looks(&sc)?;
             m.scenes.push(sc);
         }
         for g in &s.guides {

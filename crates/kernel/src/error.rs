@@ -311,6 +311,8 @@ pub enum KernelError {
     Stock(#[from] StockError),
     #[error(transparent)]
     Tessellate(#[from] TessellateError),
+    #[error(transparent)]
+    Looks(crate::looks::LooksError),
     /// The validator rejected the result of an operation. Always a kernel bug: the
     /// transaction was rolled back, and the op sequence belongs in tests/repro/.
     #[error("kernel bug, operation rolled back: {0}")]

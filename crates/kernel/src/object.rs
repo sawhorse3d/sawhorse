@@ -5,6 +5,8 @@
 //! imprint) and booleans ([`crate::boolean`]). Every edit rebuilds the B-rep from plain
 //! data and must validate (topology, watertight, no self-intersection) before commit.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use glam::{DVec2, DVec3};
 use slotmap::Key;
 
@@ -49,28 +51,44 @@ pub struct Object {
     /// What was said about it as a part of a cut list: grain and stock (lane 7). Carried
     /// into a component definition's template with the solid, like its material.
     pub(crate) part: crate::cutlist::PartAttrs,
+    /// Paint of single faces, by persistent face id (lane 10): their own material and how
+    /// a texture sits on them. Only faces with something said are listed. Pieces of a
+    /// split face take their parent's paint; faces that disappear take theirs with them.
+    pub(crate) paint: BTreeMap<u64, crate::looks::FacePaint>,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
 /// earlier face already took it (the first piece of a split keeps the id, the second
 /// gets a new one); faces without one get `*next`, `*next + 1`, ... in face order.
-pub fn assign_face_ids(p: &mut Polys, next: &mut u64) {
-    let mut used = std::collections::BTreeSet::new();
-    for f in &mut p.faces {
+/// Returns the lineage of the faces that lost a duplicate id, as (new id, the id it
+/// carried), so paint follows a split onto both pieces.
+pub fn assign_face_ids(p: &mut Polys, next: &mut u64) -> Vec<(u64, u64)> {
+    let mut used = BTreeSet::new();
+    let mut from: Vec<Option<u64>> = vec![None; p.faces.len()];
+    for (k, f) in p.faces.iter_mut().enumerate() {
         match f.id {
             Some(id) if id != 0 && used.insert(id) => {
                 *next = (*next).max(id + 1);
             }
+            Some(id) if id != 0 => {
+                from[k] = Some(id);
+                f.id = None;
+            }
             _ => f.id = None,
         }
     }
-    for f in &mut p.faces {
+    let mut lineage = Vec::new();
+    for (k, f) in p.faces.iter_mut().enumerate() {
         if f.id.is_none() {
             f.id = Some(*next);
             used.insert(*next);
+            if let Some(old) = from[k] {
+                lineage.push((*next, old));
+            }
             *next += 1;
         }
     }
+    lineage
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +192,7 @@ impl Object {
             number: 0,
             member: Default::default(),
             part: Default::default(),
+            paint: Default::default(),
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -229,6 +248,67 @@ impl Object {
         self.number = from.number;
         self.member = from.member.clone();
         self.part = from.part.clone();
+        // Paint this object already took from a split (its lineage) stays; the rest is the
+        // original's.
+        let own = std::mem::take(&mut self.paint);
+        self.paint = from.paint.clone();
+        self.paint.extend(own);
+        self.settle_paint(&[]);
+    }
+
+    /// Faces painted (lane 10): their own material and texture position, by face id.
+    pub fn face_paint(&self) -> &BTreeMap<u64, crate::looks::FacePaint> {
+        &self.paint
+    }
+
+    /// After an edit: new faces that came from a painted face take its paint (`lineage`:
+    /// (new id, the id it came from)), and the paint of faces that are gone goes too.
+    pub(crate) fn settle_paint(&mut self, lineage: &[(u64, u64)]) {
+        if self.paint.is_empty() {
+            return;
+        }
+        for &(new, old) in lineage {
+            if let Some(p) = self.paint.get(&old).cloned() {
+                self.paint.insert(new, p);
+            }
+        }
+        let live: BTreeSet<u64> = self.brep.persistent_face_ids().into_iter().collect();
+        self.paint.retain(|id, _| live.contains(id));
+    }
+
+    /// Painted faces on `plane` and the paint of the first: what a stroke or an imprint on
+    /// that plane passes to the faces it makes.
+    fn paint_on_plane(&self, plane: &Plane) -> Option<crate::looks::FacePaint> {
+        self.brep
+            .faces()
+            .filter(|(_, f)| {
+                f.plane.normal.dot(plane.normal) > 1.0 - 1e-9
+                    && plane.signed_distance(f.plane.origin).abs() <= crate::tolerance::PLANARITY
+            })
+            .find_map(|(_, f)| self.paint.get(&f.id).cloned())
+    }
+
+    /// Faces an edit made on `plane` (not in `before`) take `paint`.
+    fn give_paint_on_plane(
+        &mut self,
+        before: &BTreeSet<u64>,
+        plane: &Plane,
+        paint: Option<crate::looks::FacePaint>,
+    ) {
+        let Some(p) = paint else { return };
+        let fresh: Vec<u64> = self
+            .brep
+            .faces()
+            .filter(|(_, f)| {
+                !before.contains(&f.id)
+                    && f.plane.normal.dot(plane.normal) > 1.0 - 1e-9
+                    && plane.signed_distance(f.plane.origin).abs() <= crate::tolerance::PLANARITY
+            })
+            .map(|(_, f)| f.id)
+            .collect();
+        for id in fresh {
+            self.paint.entry(id).or_insert_with(|| p.clone());
+        }
     }
 
     /// Grain and stock said about this solid as a part (lane 7).
@@ -265,11 +345,12 @@ impl Object {
     /// this object handed out). Keeps provenance and tag. Not validated.
     pub(crate) fn rebuilt(&self, mut p: Polys) -> Result<Object, crate::error::BuildError> {
         let mut next = self.next_face_id;
-        assign_face_ids(&mut p, &mut next);
+        let lineage = assign_face_ids(&mut p, &mut next);
         let brep = Brep::build(&p)?;
         let mut o = Object::from_brep(brep);
         o.next_face_id = o.next_face_id.max(next);
         o.copy_meta(self);
+        o.settle_paint(&lineage);
         Ok(o)
     }
 
@@ -379,6 +460,7 @@ impl Object {
             number: 0,
             member: Default::default(),
             part: Default::default(),
+            paint: Default::default(),
         }
     }
 
@@ -431,11 +513,12 @@ impl Object {
             return Err(FaceEditError::NoSuchFace(face as u64));
         }
         let (a, b) = crate::faceops::split_face(&mut p, face, path)?;
-        assign_face_ids(&mut p, &mut self.next_face_id);
+        let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let ids = [p.faces[a].id, p.faces[b].id].map(|i| i.unwrap_or(0));
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("split_face");
         self.refuse_self_contact()?;
+        self.settle_paint(&lineage);
         Ok(ids)
     }
 
@@ -447,12 +530,19 @@ impl Object {
         if face >= p.faces.len() {
             return Err(FaceEditError::NoSuchFace(face as u64));
         }
+        let before: BTreeSet<u64> = self.brep.persistent_face_ids().into_iter().collect();
+        let plane = p.plane(face);
+        let host = plane.and_then(|pl| self.paint_on_plane(&pl));
         let sub = crate::faceops::imprint(&mut p, face, points)?;
-        assign_face_ids(&mut p, &mut self.next_face_id);
+        let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let id = p.faces[sub].id.unwrap_or(0);
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("imprint");
         self.refuse_self_contact()?;
+        self.settle_paint(&lineage);
+        if let Some(pl) = plane {
+            self.give_paint_on_plane(&before, &pl, host);
+        }
         Ok(id)
     }
 
@@ -471,6 +561,9 @@ impl Object {
             return Err(FaceEditError::NoSuchFace(face as u64));
         }
         let plane = p.plane(face).ok_or(FaceEditError::Degenerate)?;
+        let before: BTreeSet<u64> = self.brep.persistent_face_ids().into_iter().collect();
+        // A painted face on the stroke's plane passes its paint to the pieces made there.
+        let host = self.paint_on_plane(&plane);
         let touched = crate::draw::draw_on_faces(&mut p, face, points, closed)?;
         let inside = if closed {
             let ring: Vec<DVec2> = points.iter().map(|&q| plane.to_local(q)).collect();
@@ -479,7 +572,7 @@ impl Object {
         } else {
             None
         };
-        assign_face_ids(&mut p, &mut self.next_face_id);
+        let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let mut ids: Vec<u64> = touched
             .iter()
             .filter_map(|&i| p.faces.get(i).and_then(|f| f.id))
@@ -490,6 +583,8 @@ impl Object {
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate("draw");
         self.refuse_self_contact()?;
+        self.settle_paint(&lineage);
+        self.give_paint_on_plane(&before, &plane, host);
         Ok((ids, inside))
     }
 
@@ -515,11 +610,12 @@ impl Object {
         fi: usize,
         what: &str,
     ) -> Result<u64, FaceEditError> {
-        assign_face_ids(&mut p, &mut self.next_face_id);
+        let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let id = p.faces.get(fi).and_then(|f| f.id).unwrap_or(0);
         self.brep = Brep::build(&p)?;
         self.brep.debug_validate(what);
         self.refuse_self_contact()?;
+        self.settle_paint(&lineage);
         Ok(id)
     }
 

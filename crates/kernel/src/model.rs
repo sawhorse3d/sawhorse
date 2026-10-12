@@ -363,12 +363,63 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         nodes: Vec<ImportNode>,
     },
-    /// Add or replace a material (a colour, plus the file name of a texture if it had one).
+    /// Add or replace a material: a colour, a texture (a path of an image the model holds,
+    /// or the file name of one it does not, kept as a reference), the texture's real-world
+    /// size, rotation and offset, and what it is as stock (lane 10).
     DefineMaterial {
         name: String,
         color: [u8; 4],
         #[serde(default)]
         texture: Option<String>,
+        /// Texture width and height, metres (absent: one foot across, at the image's aspect).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<[f64; 2]>,
+        /// Texture rotation, degrees.
+        #[serde(default, skip_serializing_if = "is_zero_f")]
+        rotation: f64,
+        /// Texture offset along the face, metres.
+        #[serde(default, skip_serializing_if = "is_zero2")]
+        offset: [f64; 2],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stock: Option<crate::looks::StockLink>,
+    },
+    /// Rename a material everywhere it is used.
+    RenameMaterial {
+        name: String,
+        to: String,
+    },
+    /// Delete a material: what was painted with it shows the default (or what is around it).
+    DeleteMaterial {
+        name: String,
+    },
+    /// Put a texture image into the model (PNG or JPEG bytes, base64 in JSON) under
+    /// `assets/<name>.png|.jpg`. The same path again replaces the image.
+    AddTexture {
+        path: String,
+        mime: String,
+        #[serde(with = "crate::looks::b64::serde_bytes")]
+        data: Vec<u8>,
+    },
+    /// Paint faces of a solid, or solids, groups and instances (their default), with a
+    /// material (`None`: take it off). Faces with a material of their own keep it when their
+    /// container is painted.
+    Paint {
+        target: crate::looks::PaintTarget,
+        material: Option<String>,
+    },
+    /// How the texture sits on one face (`None`: the material's own placement).
+    SetFaceUv {
+        object: u64,
+        face: u64,
+        uv: Option<crate::looks::UvXform>,
+    },
+    /// The document's drawing style (`None`: the default).
+    SetStyle {
+        style: Option<crate::looks::Style>,
+    },
+    /// The document's sun and shadows (`None`: the default, off).
+    SetShadows {
+        shadows: Option<crate::looks::Shadows>,
     },
     /// Paint an object with a material, or take its material off (`None`).
     SetMaterial {
@@ -465,8 +516,9 @@ pub struct ImportStroke {
     pub closed: bool,
 }
 
-/// A material as an op carries it: an sRGB colour with alpha, and the file name of the
-/// texture it had (kept as a reference; textures are not drawn yet).
+/// A material as an op or a file carries it: an sRGB colour with alpha, a texture (a path
+/// of an image the model holds, or the file name of one it does not), its real-world size,
+/// rotation and offset, and its stock link (see [`crate::looks`]).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MaterialDef {
@@ -474,6 +526,54 @@ pub struct MaterialDef {
     pub color: [u8; 4],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "is_zero_f")]
+    pub rotation: f64,
+    #[serde(default, skip_serializing_if = "is_zero2")]
+    pub offset: [f64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock: Option<crate::looks::StockLink>,
+}
+
+impl MaterialDef {
+    /// The material it defines.
+    pub fn material(&self) -> Material {
+        Material {
+            color: self.color,
+            texture: self.texture.clone(),
+            size: self.size,
+            rotation: self.rotation,
+            offset: self.offset,
+            stock: self.stock.clone(),
+        }
+    }
+
+    /// As an op or a file writes it.
+    pub fn of(name: &str, m: &Material) -> MaterialDef {
+        MaterialDef {
+            name: name.to_string(),
+            color: m.color,
+            texture: m.texture.clone(),
+            size: m.size,
+            rotation: m.rotation,
+            offset: m.offset,
+            stock: m.stock.clone(),
+        }
+    }
+
+    /// A plain colour, as before lane 10.
+    pub fn plain(name: &str, color: [u8; 4], texture: Option<String>) -> MaterialDef {
+        MaterialDef::of(name, &Material::plain(color, texture))
+    }
+}
+
+pub(crate) fn is_zero_f(x: &f64) -> bool {
+    *x == 0.0
+}
+
+pub(crate) fn is_zero2(x: &[f64; 2]) -> bool {
+    *x == [0.0, 0.0]
 }
 
 /// A saved view (SketchUp "scene"): camera in metres, Z up, and the tags it hides.
@@ -494,6 +594,13 @@ pub struct SceneDef {
     /// The group or instance open when the scene was saved (public id; `None`: the model).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
+    /// The drawing style saved with the scene (lane 10); activating the scene brings it
+    /// back. Absent: the scene leaves the style alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<crate::looks::Style>,
+    /// The sun and shadows saved with the scene, likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<crate::looks::Shadows>,
 }
 
 fn default_fov() -> f64 {
@@ -659,6 +766,12 @@ pub enum OpOutcome {
         notes: Vec<String>,
     },
     MaterialSet,
+    /// A texture image went into the model under `path`.
+    TextureAdded {
+        path: String,
+    },
+    /// The style or the shadows changed.
+    StyleSet,
     Renamed,
     MeshDeleted,
     /// A part's grain or stock was set (cut list).
@@ -703,6 +816,11 @@ pub struct Model {
     pub(crate) mesh_order: Vec<MeshId>,
     /// Material name -> definition.
     pub(crate) materials: BTreeMap<String, Material>,
+    /// Texture images by path (`assets/...`), lane 10.
+    pub(crate) textures: BTreeMap<String, crate::looks::TextureImage>,
+    /// The drawing style (`None`: the default) and the sun and shadows (`None`: off).
+    pub(crate) style: Option<crate::looks::Style>,
+    pub(crate) shadows: Option<crate::looks::Shadows>,
     /// Saved views, in order.
     pub(crate) scenes: Vec<SceneDef>,
     /// Last display number handed to an object (see [`Object::number`]).
@@ -711,11 +829,39 @@ pub struct Model {
     pub(crate) stock: Option<crate::stock::StockLibrary>,
 }
 
-/// A material: sRGB colour with alpha, and a texture file name kept as a reference.
+/// A material: sRGB colour with alpha; a texture (a path in the model's texture table, or a
+/// file name kept as a reference) with its real-world size (metres; `None`: one foot across
+/// at the image's aspect), rotation (degrees) and offset (metres); and its stock link.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Material {
     pub color: [u8; 4],
     pub texture: Option<String>,
+    pub size: Option<[f64; 2]>,
+    pub rotation: f64,
+    pub offset: [f64; 2],
+    pub stock: Option<crate::looks::StockLink>,
+}
+
+impl Material {
+    /// A plain colour (and maybe a texture reference), as before lane 10.
+    pub fn plain(color: [u8; 4], texture: Option<String>) -> Material {
+        Material {
+            color,
+            texture,
+            size: None,
+            rotation: 0.0,
+            offset: [0.0, 0.0],
+            stock: None,
+        }
+    }
+
+    /// Nothing beyond the colour and the texture name (hashed as before lane 10).
+    pub fn is_plain(&self) -> bool {
+        self.size.is_none()
+            && self.rotation == 0.0
+            && self.offset == [0.0, 0.0]
+            && self.stock.is_none()
+    }
 }
 
 /// A guide line (unit `dir`) or a guide point (`dir` zero).
@@ -1458,17 +1604,31 @@ impl Model {
                 name,
                 color,
                 texture,
+                size,
+                rotation,
+                offset,
+                stock,
             } => {
                 check_name(name)?;
-                self.materials.insert(
-                    name.clone(),
+                self.define_material(
+                    name.trim(),
                     Material {
                         color: *color,
                         texture: texture.clone(),
+                        size: *size,
+                        rotation: *rotation,
+                        offset: *offset,
+                        stock: stock.clone(),
                     },
-                );
-                Ok(OpOutcome::MaterialSet)
+                )
             }
+            Op::RenameMaterial { name, to } => self.rename_material(name, to),
+            Op::DeleteMaterial { name } => self.delete_material(name),
+            Op::AddTexture { path, mime, data } => self.add_texture(path, mime, data),
+            Op::Paint { target, material } => self.paint(target, material.as_deref()),
+            Op::SetFaceUv { object, face, uv } => self.set_face_uv(*object, *face, uv.as_ref()),
+            Op::SetStyle { style } => self.set_style(style.as_ref()),
+            Op::SetShadows { shadows } => self.set_shadows(shadows.as_ref()),
             Op::SetMaterial { object, material } => {
                 if let Some(m) = material
                     && !self.materials.contains_key(m)
@@ -1895,19 +2055,26 @@ impl Model {
     ) -> Result<OpOutcome, KernelError> {
         let mut notes = Vec::new();
         for m in materials {
-            self.materials.insert(
-                clip_name(&m.name, "Material"),
-                Material {
-                    color: m.color,
-                    texture: m.texture.clone(),
-                },
-            );
+            let mut mat = m.material();
+            mat.rotation = mat.rotation.rem_euclid(360.0);
+            if Self::check_material_fields(&mat).is_err() {
+                notes.push(format!(
+                    "{}: texture size, rotation or offset out of range, left at the defaults",
+                    m.name
+                ));
+                mat = Material {
+                    stock: None,
+                    ..Material::plain(m.color, m.texture.clone())
+                };
+            }
+            self.materials.insert(clip_name(&m.name, "Material"), mat);
         }
         let (mut objects, mut meshes) = (Vec::new(), Vec::new());
         let mut groups: Vec<(String, Vec<Thing>)> = Vec::new();
         let ctx = self.context;
         for item in items {
             let built = build_item(item)?;
+            let sources = built.face_sources.clone();
             notes.extend(built.notes);
             let tag = self.import_tag(item.tag.as_deref());
             let material = match item.material.as_deref().map(|m| clip_name(m, "Material")) {
@@ -1932,6 +2099,7 @@ impl Model {
                 });
                 o.tag = tag.clone();
                 o.material = material.clone();
+                notes.extend(self.import_face_paint(&mut o, item, sources.get(k)));
                 o.member.parent = ctx;
                 let id = self.insert_object(o);
                 made.push(Thing::Object(id));
@@ -1969,6 +2137,7 @@ impl Model {
                     ..Default::default()
                 },
                 part: Default::default(),
+                material: None,
             });
             for t in members {
                 match t {
@@ -2121,6 +2290,7 @@ impl Model {
         use crate::nodes::{Member, MemberKind};
         for item in items {
             let built = build_item(item)?;
+            let sources = built.face_sources.clone();
             notes.extend(built.notes);
             let tag = self.import_tag(item.tag.as_deref());
             let material = item
@@ -2132,6 +2302,7 @@ impl Model {
             let n = built.solids.len();
             for (k, mut o) in built.solids.into_iter().enumerate() {
                 o.material = material.clone();
+                notes.extend(self.import_face_paint(&mut o, item, sources.get(k)));
                 let name = if n == 1 {
                     base.clone()
                 } else {
@@ -2149,6 +2320,7 @@ impl Model {
                         locked: false,
                         part: Default::default(),
                         kind: MemberKind::Solid(Box::new(o)),
+                        material: None,
                     },
                 );
             }
@@ -2167,6 +2339,7 @@ impl Model {
                         locked: false,
                         part: Default::default(),
                         kind: MemberKind::Mesh(Box::new(m)),
+                        material: None,
                     },
                 );
             }
@@ -2201,6 +2374,7 @@ impl Model {
                             locked: false,
                             part: Default::default(),
                             kind: MemberKind::Group(Xform::IDENTITY),
+                            material: None,
                         },
                     );
                     self.template_items(def, Some(slot), items, notes)?;
@@ -2223,6 +2397,7 @@ impl Model {
                             locked: false,
                             part: Default::default(),
                             kind: MemberKind::Instance(d, *xform),
+                            material: None,
                         },
                     );
                 }
@@ -2256,9 +2431,11 @@ impl Model {
                     tag,
                     member,
                     part: Default::default(),
+                    material: None,
                 });
                 for item in items {
                     let built = build_item(item)?;
+                    let sources = built.face_sources.clone();
                     notes.extend(built.notes);
                     let tag = self.import_tag(item.tag.as_deref());
                     let material = item
@@ -2276,6 +2453,7 @@ impl Model {
                         });
                         o.tag = tag.clone();
                         o.material = material.clone();
+                        notes.extend(self.import_face_paint(&mut o, item, sources.get(k)));
                         o.member.parent = Some(g);
                         self.insert_object(o);
                     }
@@ -2308,6 +2486,7 @@ impl Model {
                     tag,
                     member,
                     part: Default::default(),
+                    material: None,
                 });
                 self.rederive(i)?;
                 let kids = self.kids();
@@ -2452,7 +2631,7 @@ impl Model {
             violations: vec![Violation::DanglingKey(what)],
             report: Default::default(),
         };
-        if let Err(e) = self.check_structure() {
+        if let Err(e) = self.check_structure().and_then(|_| self.check_looks()) {
             return Err(TopologyError {
                 violations: vec![Violation::Structure(e)],
                 report: Default::default(),

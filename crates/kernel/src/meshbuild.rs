@@ -60,6 +60,15 @@ pub struct ImportItem {
     /// coplanar faces survive the round trip). Empty: any coplanar neighbours merge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_labels: Vec<u32>,
+    /// Lane 10: the material of each face (`None`: the item's `material`), for files that
+    /// paint faces one by one (`.skp`). Empty: every face shows the item's material.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_materials: Vec<Option<String>>,
+    /// Lane 10: how a texture lies on each face, as two affine rows in world metres (u and v
+    /// in repeats: `u = a[0..3] . p + a[3]`), for files that position textures per face.
+    /// The kernel keeps the rotation and scale and drops any skew.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_uvs: Vec<Option<[[f64; 4]; 2]>>,
 }
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
@@ -137,6 +146,9 @@ impl LooseMesh {
 #[derive(Debug, Clone, Default)]
 pub struct Built {
     pub solids: Vec<Object>,
+    /// Per solid, per face (in face order): the item's face it came from, when the solid kept
+    /// the item's faces as they were (`None` where faces were merged or rebuilt).
+    pub face_sources: Vec<Vec<Option<usize>>>,
     pub loose: Option<LooseMesh>,
     /// Plain-language notes: what was healed, what stayed a mesh and why.
     pub notes: Vec<String>,
@@ -592,6 +604,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     let mut seen: BTreeSet<Vec<Vec<u32>>> = BTreeSet::new();
     let mut faces: Vec<Vec<Vec<u32>>> = Vec::new();
     let mut face_label: Vec<u32> = Vec::new();
+    let mut face_src: Vec<usize> = Vec::new();
     let labelled = item.face_labels.len() == item.faces.len() && !item.faces.is_empty();
     if !item.face_labels.is_empty() && !labelled {
         return Err(bad(format!(
@@ -628,6 +641,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             continue;
         }
         faces.push(rings);
+        face_src.push(src);
         face_label.push(if labelled { item.face_labels[src] } else { 0 });
     }
     if degenerate > 0 {
@@ -694,6 +708,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     }
 
     let mut solids = Vec::new();
+    let mut face_sources: Vec<Vec<Option<usize>>> = Vec::new();
     let mut loose_faces: Vec<Vec<Vec<u32>>> = pinched_faces.clone();
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     if !pinched_faces.is_empty() {
@@ -814,30 +829,40 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
         let ltris: Vec<[u32; 3]> = tris.iter().map(|t| t.map(|v| local[&v])).collect();
         let tri_labels: Vec<u32> = tri_face.iter().map(|&f| shell_labels[f]).collect();
         let tri_labels = labelled.then_some(tri_labels.as_slice());
+        // Which item face each solid face came from, when the faces are kept as given.
+        let kept: Vec<Option<usize>> = members.iter().map(|&fi| Some(face_src[fi])).collect();
         let attempt = if item.merge_coplanar {
             match merged_polys(&ltris, &lp, tri_labels) {
                 Some(p) => {
                     merged_from += ltris.len();
-                    as_solid(&p)
+                    as_solid(&p).map(|o| (o, false))
                 }
-                None => as_solid(&shell_polys(&lfaces, lp.clone())),
+                None => as_solid(&shell_polys(&lfaces, lp.clone())).map(|o| (o, true)),
             }
         } else {
             match as_solid(&shell_polys(&lfaces, lp.clone())) {
-                Ok(o) => Ok(o),
+                Ok(o) => Ok((o, true)),
                 // Faces a little off planar (common in exported files) are rebuilt from
                 // their triangles, merged only where they are truly coplanar.
                 Err(first) => match merged_polys(&ltris, &lp, None).map(|p| as_solid(&p)) {
                     Some(Ok(o)) => {
                         rebuilt += 1;
-                        Ok(o)
+                        Ok((o, false))
                     }
                     _ => Err(first),
                 },
             }
         };
         match attempt {
-            Ok(o) => solids.push(o),
+            Ok((o, as_given)) => {
+                let n = o.brep().face_count();
+                face_sources.push(if as_given && n == kept.len() {
+                    kept
+                } else {
+                    vec![None; n]
+                });
+                solids.push(o);
+            }
             Err(e) => {
                 fail(&mut reasons, format!("not a valid solid ({e})"));
                 loose_faces.extend(shell_faces);
@@ -935,6 +960,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     };
     Ok(Built {
         solids,
+        face_sources,
         loose,
         notes,
     })
@@ -984,6 +1010,8 @@ mod tests {
             lines: vec![],
             merge_coplanar: true,
             face_labels: vec![],
+            face_materials: vec![],
+            face_uvs: vec![],
         }
     }
 
@@ -1104,6 +1132,8 @@ mod tests {
             lines: vec![],
             merge_coplanar: false,
             face_labels: vec![],
+            face_materials: vec![],
+            face_uvs: vec![],
         };
         let b = build_item(&item).unwrap();
         assert_eq!(b.solids.len(), 1, "{:?}", b.notes);

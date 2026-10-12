@@ -97,6 +97,10 @@ fn bookshelf() -> (Document, u64, Vec<u64>, u64, u64) {
             name: "Oak".into(),
             color: [196, 160, 110, 255],
             texture: None,
+            size: None,
+            rotation: 0.0,
+            offset: [0.0; 2],
+            stock: None,
         },
     );
     let (side, _) = part(
@@ -690,6 +694,10 @@ fn the_quarter_inch_line_uses_the_exact_thickness() {
             name: "Ply".into(),
             color: [220, 200, 160, 255],
             texture: None,
+            size: None,
+            rotation: 0.0,
+            offset: [0.0; 2],
+            stock: None,
         },
     );
     part(&mut d, "Thick", None, [0.0, 0.0, 0.0, 30.0, 20.0, 0.26]);

@@ -85,6 +85,9 @@ pub struct Node {
     /// Grain and stock said about a group as a part (lane 7; an instance's are its
     /// definition's, so this stays empty on instances).
     pub part: PartAttrs,
+    /// Its material (lane 10): what the faces inside without a material of their own show.
+    /// An instance's is its own (per instance), a nested node's is its definition member's.
+    pub material: Option<String>,
 }
 
 /// A component definition: what its instances share.
@@ -111,6 +114,9 @@ pub struct Member {
     /// A nested group's part attributes (a solid member's are in its template solid).
     pub part: PartAttrs,
     pub kind: MemberKind,
+    /// A nested group's or instance's material (its default, lane 10). A solid member's
+    /// material and face paint are in its template solid; a mesh member's in its mesh.
+    pub material: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -248,7 +254,7 @@ fn template_mesh(m: &LooseMesh, inv: &Xform) -> Result<LooseMesh, TransformError
 fn same_member(a: &Member, b: &Member) -> bool {
     let kind = match (&a.kind, &b.kind) {
         (MemberKind::Solid(x), MemberKind::Solid(y)) => {
-            x.material == y.material && x.part == y.part
+            x.material == y.material && x.part == y.part && x.paint == y.paint
         }
         (MemberKind::Mesh(x), MemberKind::Mesh(y)) => x.material == y.material && x.name == y.name,
         (MemberKind::Group(x), MemberKind::Group(y)) => x == y,
@@ -257,6 +263,7 @@ fn same_member(a: &Member, b: &Member) -> bool {
     };
     kind && a.parent == b.parent
         && a.part == b.part
+        && a.material == b.material
         && a.name == b.name
         && a.tag == b.tag
         && a.hidden == b.hidden
@@ -781,7 +788,7 @@ impl Model {
     }
 
     /// Resolve items to things, refusing unknown ids and duplicates are dropped.
-    fn things(&self, items: &[Item]) -> Result<Vec<Thing>, KernelError> {
+    pub(crate) fn things(&self, items: &[Item]) -> Result<Vec<Thing>, KernelError> {
         let mut out = Vec::new();
         for &it in items {
             let t = match it {
@@ -867,6 +874,7 @@ impl Model {
                 ..Default::default()
             },
             part: PartAttrs::default(),
+            material: None,
         });
         for t in things {
             self.membership_mut(t).expect("resolved").parent = Some(g);
@@ -917,6 +925,7 @@ impl Model {
                         ..Default::default()
                     },
                     part: PartAttrs::default(),
+                    material: None,
                 });
                 for &t in &things {
                     self.membership_mut(t).expect("resolved").parent = Some(i);
@@ -1277,7 +1286,7 @@ impl Model {
         if let Some(c) = sc.context {
             self.node_key(c)?;
         }
-        Ok(())
+        Model::check_scene_looks(sc)
     }
 
     pub(crate) fn add_scene(&mut self, scene: &SceneDef) -> Result<OpOutcome, KernelError> {
@@ -1332,6 +1341,13 @@ impl Model {
             .ok_or_else(|| StructureError::NoSuchScene(name.to_string()))?;
         for (t, v) in self.tags.iter_mut() {
             *v = !sc.hidden_tags.contains(t);
+        }
+        // A scene saved with a style (and shadows) brings them back (lane 10).
+        if let Some(s) = &sc.style {
+            self.style = Some(s.clone()).filter(|s| *s != crate::looks::Style::default());
+        }
+        if let Some(s) = sc.shadows {
+            self.shadows = Some(s);
         }
         self.context = sc
             .context
@@ -1565,6 +1581,7 @@ impl Model {
                             let mut g = (**g).clone();
                             g.material = o.material.clone();
                             g.part = o.part.clone();
+                            g.paint = o.paint.clone();
                             g
                         }
                         _ => {
@@ -1580,6 +1597,7 @@ impl Model {
                         locked: m.locked,
                         part: PartAttrs::default(),
                         kind: MemberKind::Solid(Box::new(geom)),
+                        material: None,
                     }
                 }
                 Thing::Mesh(k) => {
@@ -1604,6 +1622,7 @@ impl Model {
                         locked: m.locked,
                         part: PartAttrs::default(),
                         kind: MemberKind::Mesh(Box::new(geom)),
+                        material: None,
                     }
                 }
                 Thing::Node(k) => {
@@ -1633,6 +1652,7 @@ impl Model {
                             NodeKind::Instance(_) => PartAttrs::default(),
                         },
                         kind,
+                        material: node.material.clone(),
                     }
                 }
             };
@@ -1790,6 +1810,7 @@ impl Model {
                         tag: m.tag.clone(),
                         member,
                         part: m.part.clone(),
+                        material: m.material.clone(),
                     };
                     let k = match by_slot.get(&s) {
                         Some(&Thing::Node(k)) => {
@@ -2094,6 +2115,7 @@ impl Model {
                         if crate::hash::object_hash(o) != crate::hash::object_hash(&want)
                             || o.next_face_id != want.next_face_id
                             || o.material != g.material
+                            || o.paint != g.paint
                             || o.part != g.part
                             || o.name != member.name
                             || o.tag != member.tag
@@ -2113,13 +2135,17 @@ impl Model {
                         if node.kind != NodeKind::Group
                             || node.xform != n.xform.after(l)
                             || node.part != member.part
+                            || node.material != member.material
                         {
                             return Err("an instance's group is not its definition's".into());
                         }
                     }
                     (Thing::Node(k), MemberKind::Instance(e, l)) => {
                         let node = &self.nodes[k];
-                        if node.kind != NodeKind::Instance(*e) || node.xform != n.xform.after(l) {
+                        if node.kind != NodeKind::Instance(*e)
+                            || node.xform != n.xform.after(l)
+                            || node.material != member.material
+                        {
                             return Err(
                                 "an instance's nested instance is not its definition's".into()
                             );

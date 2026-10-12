@@ -856,6 +856,8 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     .map(|(_, t)| t.clone())
                     .collect(),
                 context: ctx.and_then(|k| pick(&all_nodes, k)),
+                style: None,
+                shadows: None,
             };
             match kind {
                 0 => Op::AddScene { scene },

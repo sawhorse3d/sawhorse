@@ -47,6 +47,8 @@ pub fn soup(name: &str, positions: Vec<[f64; 3]>, faces: Vec<Vec<Vec<u32>>>) -> 
         lines: Vec::new(),
         merge_coplanar: true,
         face_labels: Vec::new(),
+        face_materials: vec![],
+        face_uvs: vec![],
     }
 }
 

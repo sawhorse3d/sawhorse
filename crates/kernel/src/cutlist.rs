@@ -1005,22 +1005,31 @@ impl Model {
         }
     }
 
-    /// Name, attributes and material of a part, read from its first piece.
+    /// Name, attributes and material of a part, read from its first piece. The material is
+    /// the one covering most of its first solid's faces (face paint, else the solid's, else
+    /// what is around it; lane 10): for a part painted as a whole, its paint.
     fn part_info(&self, key: PartKey, first: Item) -> (String, PartAttrs, Option<String>, PartRef) {
-        let kids_first_solid = |n: NodeId| {
-            self.object_order
+        let kids_material = |n: NodeId| {
+            let first = self
+                .object_order
                 .iter()
                 .find(|&&o| self.objects[o].member.parent == Some(n))
-                .map(|&o| &self.objects[o])
+                .map(|&o| &self.objects[o]);
+            first.and_then(|o| self.majority_material(&[o], None))
         };
         match key {
             PartKey::Definition(id) => {
                 let d = from_public::<DefId>(id);
                 let def = &self.defs[d];
+                // The first copy's own paint stands for the faces that inherit it.
+                let around = self
+                    .instances_of(d)
+                    .first()
+                    .and_then(|&i| self.container_material(Some(i)));
                 let material = self
                     .template_solids(d)
                     .first()
-                    .and_then(|o| o.material().map(str::to_string));
+                    .and_then(|o| self.majority_material(&[o], around));
                 (
                     def.name.clone(),
                     def.part.clone(),
@@ -1031,7 +1040,7 @@ impl Model {
             PartKey::Node(id) => {
                 let n = from_public::<NodeId>(id);
                 let node = &self.nodes[n];
-                let material = kids_first_solid(n).and_then(|o| o.material().map(str::to_string));
+                let material = kids_material(n);
                 (
                     node.name.clone().unwrap_or_else(|| "Group".into()),
                     node.part.clone(),
@@ -1053,15 +1062,14 @@ impl Model {
                     (
                         name,
                         o.part.clone(),
-                        o.material().map(str::to_string),
+                        self.majority_material(&[o], None),
                         PartRef::Object(oid),
                     )
                 }
                 Item::Node(nid) => {
                     let n = from_public::<NodeId>(nid);
                     let node = &self.nodes[n];
-                    let material =
-                        kids_first_solid(n).and_then(|o| o.material().map(str::to_string));
+                    let material = kids_material(n);
                     (
                         node.name.clone().unwrap_or_else(|| "Group".into()),
                         node.part.clone(),
@@ -1108,10 +1116,15 @@ impl Model {
             let handed = idx.iter().filter(|&&i| pieces[i].handed).count();
             let stock = attrs.stock.clone().filter(|s| !s.trim().is_empty());
             let stock_set = stock.is_some();
-            let material = stock.or(material);
+            // A material linked to stock (lane 10) reads as its species and says lumber or
+            // sheet goods, unless the part names its own stock.
+            let (material, linked_sheet) = match stock {
+                Some(s) => (Some(s), None),
+                None => self.stock_reading(material),
+            };
             // Classification, board feet and area from the exact sizes: the rounding (and
             // the units, which pick it) is display only and never changes a total.
-            let sheet = attrs.sheet.unwrap_or_else(|| {
+            let sheet = attrs.sheet.or(linked_sheet).unwrap_or_else(|| {
                 material.as_deref().is_some_and(is_sheet_word) || thin_enough_for_sheet(size[0])
             });
             let inches = size.map(exact_inches);

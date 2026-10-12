@@ -788,6 +788,8 @@ fn tags_hide_and_show_without_moving_anything() {
                 parallel: true,
                 hidden_tags: vec!["Carcass".into()],
                 context: None,
+                style: None,
+                shadows: None,
             },
         },
     );
@@ -845,6 +847,8 @@ fn scenes_switch_tag_visibility_and_context() {
         parallel: false,
         hidden_tags: hidden.iter().map(|s| s.to_string()).collect(),
         context,
+        style: None,
+        shadows: None,
     };
     ok(
         &mut d,

@@ -270,11 +270,8 @@ fn read_with_ids(
                     .as_str()
                     .map(str::to_string)
             });
-        out.materials.push(MaterialDef {
-            name: name.clone(),
-            color,
-            texture,
-        });
+        out.materials
+            .push(MaterialDef::plain(&name, color, texture));
         mat_names.push(name);
     }
 
@@ -340,6 +337,8 @@ fn read_with_ids(
             lines: Vec::new(),
             merge_coplanar: true,
             face_labels: Vec::new(),
+            face_materials: vec![],
+            face_uvs: vec![],
         };
         let mut all_labelled = true;
         let mut material_use: std::collections::BTreeMap<usize, usize> = Default::default();

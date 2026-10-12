@@ -112,6 +112,10 @@ fn bookshelf() -> (Document, Shelf) {
             name: "Oak".into(),
             color: [196, 160, 110, 255],
             texture: None,
+            size: None,
+            rotation: 0.0,
+            offset: [0.0; 2],
+            stock: None,
         },
     );
     let (side_i, side) = part(

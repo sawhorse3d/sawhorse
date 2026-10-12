@@ -9,6 +9,7 @@ use glam::{DVec2, DVec3};
 use sawhorse_tessellate::{TessellateError, triangulate};
 
 use crate::ids::to_public;
+use crate::looks::{texture_frame, texture_uv};
 use crate::meshbuild::LooseMesh;
 use crate::model::Model;
 use crate::object::Object;
@@ -35,9 +36,20 @@ pub struct MeshPart {
     pub normal: [f64; 3],
     pub u: [f64; 3],
     pub v: [f64; 3],
-    /// The owner's material colour (sRGB + alpha), when it has one.
+    /// The colour (sRGB + alpha) of the material the face shows (its own, its solid's or
+    /// its container's), when it has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<[u8; 4]>,
+    /// The name of that material (lane 10): what the renderer looks its texture up by.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// The face has a material of its own (painted on the face, not inherited).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub own: bool,
+    /// How a texture sits on the face, when it was positioned (the texture handles start
+    /// from it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uv: Option<crate::looks::UvXform>,
 }
 
 impl MeshPart {
@@ -51,6 +63,9 @@ impl MeshPart {
             u: plane.u.to_array(),
             v: plane.v.to_array(),
             color: None,
+            material: None,
+            own: false,
+            uv: None,
         }
     }
 }
@@ -59,6 +74,9 @@ impl MeshPart {
 pub struct ViewMesh {
     /// xyz per render vertex.
     pub positions: Vec<f32>,
+    /// Texture coordinates per render vertex (u, v in repeats of the texture), for faces
+    /// whose material has a texture the model holds; zero elsewhere (lane 10).
+    pub uvs: Vec<f32>,
     /// Three per triangle.
     pub indices: Vec<u32>,
     /// One per triangle: index into `parts`.
@@ -67,6 +85,10 @@ pub struct ViewMesh {
     pub edges: Vec<f32>,
     /// One per edge segment: index into `edge_owners` (what the edge belongs to).
     pub edge_owner: Vec<u32>,
+    /// Six per edge segment (lane 10): the outward normals of the two faces that meet at the
+    /// edge, zero where there is no face (a stroke, an open boundary). An edge is a profile
+    /// where one of its faces turns towards the eye and the other away.
+    pub edge_normals: Vec<f32>,
     /// Owners of edges: an object (edges of its solid) or a sketch (its strokes).
     pub edge_owners: Vec<EdgeOwner>,
     pub parts: Vec<MeshPart>,
@@ -87,6 +109,7 @@ impl ViewMesh {
         outer: &[DVec3],
         holes: &[Vec<DVec3>],
         to2d: impl Fn(DVec3) -> DVec2,
+        uv: impl Fn(DVec3) -> [f64; 2],
     ) -> Result<(), TessellateError> {
         let o2: Vec<DVec2> = outer.iter().map(|&p| to2d(p)).collect();
         let h2: Vec<Vec<DVec2>> = holes
@@ -97,6 +120,8 @@ impl ViewMesh {
         let base = (self.positions.len() / 3) as u32;
         for p in outer.iter().chain(holes.iter().flatten()) {
             self.positions.extend([p.x as f32, p.y as f32, p.z as f32]);
+            let [u, v] = uv(*p);
+            self.uvs.extend([u as f32, v as f32]);
         }
         let id = self.parts.len() as u32;
         for t in tris {
@@ -108,11 +133,19 @@ impl ViewMesh {
     }
 
     fn push_edge(&mut self, a: DVec3, b: DVec3) {
+        self.push_edge_n(a, b, [DVec3::ZERO; 2]);
+    }
+
+    fn push_edge_n(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2]) {
         self.edges.extend([
             a.x as f32, a.y as f32, a.z as f32, b.x as f32, b.y as f32, b.z as f32,
         ]);
         self.edge_owner
             .push(self.edge_owners.len().saturating_sub(1) as u32);
+        for v in n {
+            self.edge_normals
+                .extend([v.x as f32, v.y as f32, v.z as f32]);
+        }
     }
 
     fn begin_owner(&mut self, kind: &'static str, id: u64) {
@@ -123,32 +156,62 @@ impl ViewMesh {
         self.indices.len() / 3
     }
 
-    fn push_object(
-        &mut self,
-        id: u64,
-        o: &Object,
-        color: Option<[u8; 4]>,
-    ) -> Result<(), TessellateError> {
+    fn push_object(&mut self, model: &Model, id: u64, o: &Object) -> Result<(), TessellateError> {
         self.begin_owner("object", id);
         let b = o.brep();
+        let default = model.solid_default(o);
         for (_, f) in b.faces() {
             let outer = b.loop_points(f.outer);
             let holes: Vec<Vec<DVec3>> = f.holes.iter().map(|&h| b.loop_points(h)).collect();
             let plane = f.plane;
+            let paint = o.face_paint().get(&f.id);
+            let own = paint.and_then(|p| p.material.as_deref());
+            let name = own.or(default);
+            let mat = name.and_then(|n| model.materials().get(n));
             let mut part = MeshPart::new(PartKind::Face, id, f.id, &plane);
-            part.color = color;
-            self.push_face(part, &outer, &holes, |p| plane.to_local(p))?;
+            part.color = mat.map(|m| m.color);
+            part.material = mat.and(name).map(str::to_string);
+            part.own = own.is_some();
+            part.uv = paint.map(|p| p.uv).filter(|u| !u.is_identity());
+            let textured = mat.filter(|m| {
+                m.texture
+                    .as_deref()
+                    .is_some_and(|t| model.textures().contains_key(t))
+            });
+            match textured {
+                Some(m) => {
+                    let frame = texture_frame(&plane, &outer);
+                    let px = model.texture_px(m);
+                    let pos = paint.map(|p| p.uv).unwrap_or_default();
+                    self.push_face(
+                        part,
+                        &outer,
+                        &holes,
+                        |p| plane.to_local(p),
+                        |p| texture_uv(&frame, p, m, px, &pos),
+                    )?;
+                }
+                None => {
+                    self.push_face(part, &outer, &holes, |p| plane.to_local(p), |_| [0.0; 2])?
+                }
+            }
         }
-        for (e, _) in b.edges() {
+        let normal_of = |he: Option<crate::ids::HalfEdgeId>| {
+            he.and_then(|h| b.half_edge(h))
+                .and_then(|h| b.lp(h.lp))
+                .and_then(|l| b.face(l.face))
+                .map_or(DVec3::ZERO, |f| f.plane.normal)
+        };
+        for (e, edge) in b.edges() {
             let (p, q) = b.edge_points(e);
-            self.push_edge(p, q);
+            self.push_edge_n(p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)]);
         }
         Ok(())
     }
 
     /// An imported non-solid mesh: every face that triangulates (others are skipped: the
     /// mesh is shown as it came), then its edges and loose lines.
-    fn push_loose(&mut self, id: u64, mesh: &LooseMesh, color: Option<[u8; 4]>) {
+    fn push_loose(&mut self, id: u64, mesh: &LooseMesh, material: Option<(&str, [u8; 4])>) {
         self.begin_owner("mesh", id);
         let (tris, owner) = mesh.triangles();
         let mut by_face: std::collections::BTreeMap<u32, Vec<[u32; 3]>> = Default::default();
@@ -167,6 +230,7 @@ impl ViewMesh {
                     local.entry(v).or_insert_with(|| {
                         let p = mesh.positions[v as usize];
                         self.positions.extend([p.x as f32, p.y as f32, p.z as f32]);
+                        self.uvs.extend([0.0, 0.0]);
                         next
                     });
                 }
@@ -177,7 +241,8 @@ impl ViewMesh {
                 self.face_ids.push(part);
             }
             let mut p = MeshPart::new(PartKind::Mesh, id, u64::from(fi), &plane);
-            p.color = color;
+            p.color = material.map(|m| m.1);
+            p.material = material.map(|m| m.0.to_string());
             self.parts.push(p);
         }
         let mut drawn = std::collections::BTreeSet::new();
@@ -199,10 +264,13 @@ impl ViewMesh {
     }
 }
 
-fn material_color(model: &Model, material: Option<&str>) -> Option<[u8; 4]> {
-    material
-        .and_then(|m| model.materials().get(m))
-        .map(|m| m.color)
+/// A mesh's material (its own, else its container's) with its colour.
+fn mesh_material<'a>(model: &'a Model, mesh: &'a LooseMesh) -> Option<(&'a str, [u8; 4])> {
+    let name = mesh
+        .material
+        .as_deref()
+        .or_else(|| model.container_material(mesh.member.parent))?;
+    model.materials().get(name).map(|m| (name, m.color))
 }
 
 /// Everything: objects (in order, faces in order), then imported meshes, then sketch
@@ -211,12 +279,12 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
     let mut m = ViewMesh::default();
     for (id, o) in model.objects() {
         if model.is_visible(id) {
-            m.push_object(id, o, material_color(model, o.material()))?;
+            m.push_object(model, id, o)?;
         }
     }
     for (id, mesh) in model.meshes() {
         if model.is_mesh_visible(id) {
-            m.push_loose(id, mesh, material_color(model, mesh.material.as_deref()));
+            m.push_loose(id, mesh, mesh_material(model, mesh));
         }
     }
     for (sid, s) in model.sketches() {
@@ -232,7 +300,7 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
                 .map(|ring| ring.iter().map(|&q| plane.to_world(q)).collect())
                 .collect();
             let part = MeshPart::new(PartKind::Region, sid, to_public(rid), &plane);
-            m.push_face(part, &outer, &holes, |p| plane.to_local(p))?;
+            m.push_face(part, &outer, &holes, |p| plane.to_local(p), |_| [0.0; 2])?;
         }
         m.begin_owner("sketch", sid);
         for (_, [a, b]) in s.edges() {
@@ -248,8 +316,35 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
 pub fn object_view_mesh(model: &Model, object: u64) -> Option<Result<ViewMesh, TessellateError>> {
     let o = model.object(object)?;
     let mut m = ViewMesh::default();
-    Some(
-        m.push_object(object, o, material_color(model, o.material()))
-            .map(|_| m),
-    )
+    Some(m.push_object(model, object, o).map(|_| m))
+}
+
+/// The texture coordinates face `face` of `object` would get with positioning `uv`, in the
+/// order the view mesh lists the face's vertices (outer ring, then holes): the texture
+/// handles' live preview. `None` when the face shows no texture the model holds.
+pub fn face_uvs(
+    model: &Model,
+    object: u64,
+    face: u64,
+    uv: &crate::looks::UvXform,
+) -> Option<Vec<f32>> {
+    let o = model.object(object)?;
+    let b = o.brep();
+    let (_, f) = b.faces().find(|(_, f)| f.id == face)?;
+    let name = model.face_material(object, face)?;
+    let m = model.materials().get(name)?;
+    m.texture
+        .as_deref()
+        .filter(|t| model.textures().contains_key(*t))?;
+    let outer = b.loop_points(f.outer);
+    let frame = texture_frame(&f.plane, &outer);
+    let px = model.texture_px(m);
+    let mut out = Vec::new();
+    for l in f.loops() {
+        for p in b.loop_points(l) {
+            let [u, v] = texture_uv(&frame, p, m, px, uv);
+            out.extend([u as f32, v as f32]);
+        }
+    }
+    Some(out)
 }
