@@ -8,9 +8,12 @@
 //   clay   8-bit greyscale PNG. Flat-shaded clay; Replicate's fallback model estimates its
 //          own depth from it.
 //
-// Nothing else leaves the machine: no model file, no materials, no textures.
+// Plus material hints (lane 10): which materials the visible faces show and how much of the
+// picture each covers (species from the stock link, colour), worked out from an exact
+// material-id pass and sent as `material_hints` and as a short sentence after the prompt.
+// Nothing else leaves the machine: no model file, no textures.
 import * as THREE from "three";
-import type { MeshData } from "../kernel/types";
+import type { MaterialInfo, MeshData } from "../kernel/types";
 import { bytesToBase64, encodeGreyPng } from "./png";
 
 export interface CaptureSource {
@@ -18,6 +21,17 @@ export interface CaptureSource {
   camera: THREE.Camera;
   mesh: MeshData | null;
   size: { w: number; h: number };
+  /** The model's materials (lane 10), for the hints. */
+  materials?: MaterialInfo[];
+}
+
+/** One material the render will show: its name, what it is (species), its colour and how
+ * much of the model's pixels it covers (0..1). */
+export interface MaterialHint {
+  name: string;
+  species: string | null;
+  color: string;
+  share: number;
 }
 
 export interface RenderPasses {
@@ -30,6 +44,8 @@ export interface RenderPasses {
   depthPreview: string;
   /** Model pixels in the frame. Zero means the model is out of view. */
   modelPixels: number;
+  /** The materials in view, most of the picture first (lane 10). */
+  materials?: MaterialHint[];
 }
 
 export class NothingToRenderError extends Error {}
@@ -62,6 +78,41 @@ export function cameraFor(src: THREE.Camera, aspect: number): THREE.Camera {
   }
   cam.updateMatrixWorld(true);
   return cam;
+}
+
+const ID_VERT = /* glsl */ `
+attribute float aMat;
+varying float vMat;
+void main() {
+  vMat = aMat;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+// Material index + 1 in R (low byte) and G (high byte); 0 means no material.
+const ID_FRAG = /* glsl */ `
+precision highp float;
+varying float vMat;
+void main() {
+  float id = floor(vMat + 0.5);
+  float hi = floor(id / 256.0);
+  gl_FragColor = vec4((id - hi * 256.0) / 255.0, hi / 255.0, 0.0, 1.0);
+}`;
+
+/** "Materials: white oak (most of it), Baltic birch ply, barn red." The sentence that goes
+ * after the prompt; empty when nothing in view is painted. */
+export function materialsSentence(hints: MaterialHint[]): string {
+  const shown = hints.filter((h) => h.share >= 0.03).slice(0, 5);
+  if (!shown.length) return "";
+  const words = shown.map((h, i) => `${(h.species ?? h.name).toLowerCase()}${i === 0 && h.share >= 0.5 ? " (most of it)" : ""}`);
+  return `Materials: ${words.join(", ")}.`;
+}
+
+/** The prompt sent: the user's, then the materials sentence, within the service's 1000 characters. */
+export function promptWithMaterials(prompt: string, hints: MaterialHint[]): string {
+  const s = materialsSentence(hints);
+  if (!s) return prompt;
+  const joined = `${prompt.trim()} ${s}`.trim();
+  return joined.length <= 1000 ? joined : prompt.slice(0, 1000);
 }
 
 const DEPTH_VERT = /* glsl */ `
@@ -207,12 +258,66 @@ export async function renderPasses(src: CaptureSource, long = 1024): Promise<Ren
     const clay = new Uint8Array(width * height);
     for (let i = 0; i < width * height; i++) clay[i] = Math.round(0.299 * cpx[i * 4] + 0.587 * cpx[i * 4 + 1] + 0.114 * cpx[i * 4 + 2]);
 
+    // ---- materials: an exact id per face, counted over the model's pixels ----
+    const names: string[] = [];
+    const idOf = new Map<string, number>();
+    const aMat = new Float32Array(mesh.positions.length / 3);
+    for (let t = 0; t < mesh.faceIds.length; t++) {
+      const name = mesh.parts[mesh.faceIds[t]]?.material;
+      let id = 0;
+      if (name) {
+        id = idOf.get(name) ?? 0;
+        if (!id) {
+          names.push(name);
+          id = names.length;
+          idOf.set(name, id);
+        }
+      }
+      for (let k = 0; k < 3; k++) aMat[mesh.indices[3 * t + k]] = id;
+    }
+    let materials: MaterialHint[] = [];
+    if (names.length) {
+      const idGeom = new THREE.BufferGeometry();
+      idGeom.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+      idGeom.setAttribute("aMat", new THREE.BufferAttribute(aMat, 1));
+      idGeom.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+      const idMat = new THREE.ShaderMaterial({ vertexShader: ID_VERT, fragmentShader: ID_FRAG, side: THREE.DoubleSide });
+      disposables.push(idGeom, idMat);
+      const idScene = new THREE.Scene();
+      idScene.add(new THREE.Mesh(idGeom, idMat));
+      draw(renderer, idScene, camera, exact, 0x000000, 0);
+      const ipx = readTarget(renderer, exact, width, height);
+      const counts = new Array<number>(names.length + 1).fill(0);
+      for (let i = 0; i < width * height; i++) {
+        if (ipx[i * 4 + 3] === 0) continue;
+        const id = ipx[i * 4] + ipx[i * 4 + 1] * 256;
+        if (id < counts.length) counts[id]++;
+      }
+      const info = new Map((src.materials ?? []).map((m) => [m.name, m]));
+      materials = names
+        .map((name, i) => {
+          const m = info.get(name);
+          const c = m?.color ?? [200, 200, 200, 255];
+          return {
+            name,
+            species: m?.stock?.species?.trim() || null,
+            color: `#${c
+              .slice(0, 3)
+              .map((v) => v.toString(16).padStart(2, "0"))
+              .join("")}`,
+            share: counts[i + 1] / modelPixels,
+          };
+        })
+        .filter((h) => h.share > 0)
+        .sort((a, b) => b.share - a.share);
+    }
+
     const [depthPng, edgesPng, clayPng] = await Promise.all([
       encodeGreyPng({ width, height, data: depth }),
       encodeGreyPng({ width, height, data: edges }),
       encodeGreyPng({ width, height, data: clay }),
     ]);
-    return { width, height, depthPng, edgesPng, clayPng, depthPreview: previewUrl(preview, width, height), modelPixels };
+    return { width, height, depthPng, edgesPng, clayPng, depthPreview: previewUrl(preview, width, height), modelPixels, materials };
   } finally {
     for (const d of disposables) d.dispose();
   }
@@ -232,6 +337,6 @@ function previewUrl(rgba: Uint8ClampedArray, w: number, h: number): string {
   }
 }
 
-export function passesToRequest(p: RenderPasses): { depth_png: string; edges_png: string; clay_png: string } {
-  return { depth_png: bytesToBase64(p.depthPng), edges_png: bytesToBase64(p.edgesPng), clay_png: bytesToBase64(p.clayPng) };
+export function passesToRequest(p: RenderPasses): { depth_png: string; edges_png: string; clay_png: string; material_hints: MaterialHint[] } {
+  return { depth_png: bytesToBase64(p.depthPng), edges_png: bytesToBase64(p.edgesPng), clay_png: bytesToBase64(p.clayPng), material_hints: (p.materials ?? []).map((h) => ({ ...h, share: Math.round(h.share * 1000) / 1000 })) };
 }

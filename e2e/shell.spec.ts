@@ -19,7 +19,8 @@ test("shell matches the approved mock's structure", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".app > header.top")).toBeVisible();
   await expect(page.locator(".tool")).toHaveCount(15);
-  await expect(page.getByRole("tab")).toHaveText(["Outliner", "Tags", "Cut list", "Render"]);
+  // The mock's four tabs, plus Materials and Styles (lane 10).
+  await expect(page.getByRole("tab")).toHaveText(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render"]);
   await expect(page.locator(".legend")).toContainText("Endpoint");
   await expect(page.locator(".vcb")).toBeVisible();
   // Our inference colours, from the CSS tokens.

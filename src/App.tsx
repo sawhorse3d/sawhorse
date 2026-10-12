@@ -1087,14 +1087,16 @@ export function App() {
       }
     : null;
 
-  // The library, once the kernel is there.
+  // The library, the first time it is wanted (the Materials pane or Paint), so it never
+  // holds up the edits of someone who is not painting.
+  const wantLibrary = pane === "materials" || toolId === "paint";
   useEffect(() => {
-    if (kernelState !== "ready" || libraryRef.current.length) return;
+    if (kernelState !== "ready" || libraryRef.current.length || !wantLibrary) return;
     void kernelRef.current
       ?.library()
       .then(setLibrary)
       .catch(() => undefined);
-  }, [kernelState]);
+  }, [kernelState, wantLibrary]);
 
   // Library swatches, fetched while the Materials pane is open (each once).
   useEffect(() => {

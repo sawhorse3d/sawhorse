@@ -189,7 +189,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, ops: JSON.parse(mod.material_library_ops(req.name, req.asName)) as KernelOp[] };
         break;
       case "libraryTexture":
-        res = { id: req.id, ok: true, file: mod.material_library_texture(req.name) };
+        res = { id: req.id, ok: true, file: mod.material_library_swatch(req.name) };
         break;
       case "texture":
         res = { id: req.id, ok: true, file: document(mod).texture(req.path) };

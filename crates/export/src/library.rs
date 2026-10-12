@@ -279,7 +279,8 @@ pub fn materials() -> &'static [LibraryMaterial] {
         let mut v = build();
         for m in &mut v {
             if let Some(p) = m.pattern {
-                let px = pixels(&p);
+                // A coarse sample is enough for the average (and keeps listing cheap).
+                let px = pixels_sized(&p, 128, 64);
                 let n = (px.len() / 3) as u64;
                 let mut sum = [0u64; 3];
                 for c in px.chunks(3) {
@@ -454,9 +455,21 @@ fn put(px: &mut Vec<u8>, c: [f64; 3], k: f64) {
     }
 }
 
-/// RGB pixels of a pattern, rows top to bottom.
+/// The swatch of a library material's texture: the whole image, small (96 x 48), cheap to
+/// draw, for the Materials pane.
+pub fn swatch_png(m: &LibraryMaterial) -> Option<Vec<u8>> {
+    let p = m.pattern?;
+    Some(crate::png::encode(96, 48, 3, &pixels_sized(&p, 96, 48)))
+}
+
+/// RGB pixels of a pattern at the texture size, rows top to bottom.
 pub fn pixels(p: &Pattern) -> Vec<u8> {
     let (w, h) = TEXTURE_PX;
+    pixels_sized(p, w, h)
+}
+
+/// RGB pixels of a pattern drawn `w` x `h` (the same image at another resolution).
+pub fn pixels_sized(p: &Pattern, w: u32, h: u32) -> Vec<u8> {
     let mut px = Vec::with_capacity((w * h * 3) as usize);
     for j in 0..h {
         for i in 0..w {

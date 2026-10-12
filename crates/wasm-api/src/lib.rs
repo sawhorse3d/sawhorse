@@ -856,6 +856,15 @@ pub fn material_library_texture(name: &str) -> Result<Vec<u8>, JsError> {
     DocCore::library_texture(name).map_err(js)
 }
 
+/// A library material's swatch PNG (96 x 48), for the Materials pane.
+#[wasm_bindgen]
+pub fn material_library_swatch(name: &str) -> Result<Vec<u8>, JsError> {
+    let m = sawhorse_export::library::find(name)
+        .ok_or_else(|| JsError::new(&format!("no library material {name:?}")))?;
+    sawhorse_export::library::swatch_png(m)
+        .ok_or_else(|| JsError::new(&format!("{name} has no texture")))
+}
+
 #[wasm_bindgen]
 impl Doc {
     #[wasm_bindgen(constructor)]

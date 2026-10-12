@@ -189,7 +189,7 @@ export class KernelClient {
     return (await this.call({ kind: "libraryOps", name, asName })).ops ?? [];
   }
 
-  /** A library material's texture (PNG bytes), for swatches. */
+  /** A library material's swatch (a small PNG of its texture), for the Materials pane. */
   async libraryTexture(name: string): Promise<Uint8Array> {
     const r = await this.call({ kind: "libraryTexture", name });
     if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no image");

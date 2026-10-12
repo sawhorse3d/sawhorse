@@ -47,7 +47,7 @@ pub fn encode(w: u32, h: u32, channels: u8, pixels: &[u8]) -> Vec<u8> {
         raw.push(best.1);
         raw.extend_from_slice(&best.2);
     }
-    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(9));
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(6));
     z.write_all(&raw).expect("in-memory write");
     let idat = z.finish().expect("in-memory write");
     let mut out = b"\x89PNG\r\n\x1a\n".to_vec();

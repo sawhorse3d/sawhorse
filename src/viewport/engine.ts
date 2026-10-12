@@ -17,7 +17,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import type { MeshData } from "../kernel/types";
+import type { MaterialInfo, MeshData, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
+import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
+import { TextureCache, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop } from "./looks";
 import type { UnitSystem } from "../lib/units";
 import {
   AXIS_COLORS,
@@ -41,6 +43,9 @@ export { VIEWS, type ViewId, type Projection } from "./camera";
 
 /** Nudge the grid below the ground so coplanar regions win the depth test (lane-2 open question 3). */
 export const GRID_DEPTH_OFFSET = -5e-5;
+
+/** The default back-face colour: the inner sides of imported meshes that are not closed. */
+export const BACK_FACE_COLOUR = "#7f93ad";
 
 interface Theme {
   vp: string;
@@ -151,6 +156,26 @@ export class ViewportEngine {
   private queued = false;
   private disposed = false;
   private listeners = new Set<() => void>();
+  // Lane 10: materials, textures, the style and the sun.
+  private style: FullStyle = fullStyle(null);
+  private shadows: Shadows | null = null;
+  private materials = new Map<string, MaterialInfo>();
+  /** Texture path -> content digest (from the document state). */
+  private texDigest = new Map<string, string>();
+  private textures: TextureCache;
+  private looksKey = "";
+  /** Meshes drawing textured faces over the faces, one per image. */
+  private textured = new THREE.Group();
+  private texturedParts = 0;
+  private paintPreview: { parts: number[]; material: MaterialInfo } | null = null;
+  private previewParts = new Set<number>();
+  /** Profiles and endpoints (fat lines), rebuilt when the camera moves. */
+  private styledEdges = new THREE.Group();
+  private styledEdgesKey = "";
+  private backdrop = makeBackdrop();
+  private sunLight = new THREE.DirectionalLight(0xffffff, 2);
+  private ambient = new THREE.AmbientLight(0xffffff, 1);
+  private groundShadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.3, depthWrite: false }));
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -159,7 +184,22 @@ export class ViewportEngine {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.theme = readTheme(themeRoot);
-    this.scene.add(this.axes, this.highlightGroup, this.overlayGroup);
+    this.scene.add(this.axes, this.highlightGroup, this.overlayGroup, this.textured, this.styledEdges, this.backdrop);
+    this.textures = new TextureCache(this.renderer.capabilities.getMaxAnisotropy(), () => {
+      // An image finished decoding: draw the faces that show it.
+      if (this.faces) this.colourFaces(this.faces.geometry);
+      this.buildOverlays();
+      this.requestRender();
+    });
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.sunLight.shadow.mapSize.set(2048, 2048);
+    this.groundShadow.receiveShadow = true;
+    this.groundShadow.renderOrder = -1;
+    this.groundShadow.frustumCulled = false;
+    this.scene.add(this.sunLight, this.sunLight.target, this.ambient, this.groundShadow);
+    this.sunLight.visible = false;
+    this.ambient.visible = false;
+    this.groundShadow.visible = false;
 
     this.controls = new OrbitControls(this.camera, canvas);
     // Left button belongs to the active tool. Middle orbits (Shift+middle pans: OrbitControls
@@ -278,6 +318,8 @@ export class ViewportEngine {
     if (this.gridMajor) (this.gridMajor.material as THREE.LineBasicMaterial).color.set(this.theme.gridMajor);
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.theme.edge);
     if (this.faces) this.colourFaces(this.faces.geometry);
+    this.buildOverlays();
+    this.styledEdgesKey = "";
     this.rebuildHighlights();
     this.rebuildOverlays();
     this.requestRender();
@@ -292,7 +334,30 @@ export class ViewportEngine {
 
   // ---- model -----------------------------------------------------------------------------
 
-  /** Colour each triangle by its normal with the mock's three face tokens (top / front / side). */
+  /** The material a part shows, as the style draws it: null for the theme's tones. */
+  private partMaterial(part: number): MaterialInfo | null {
+    const info = this.meshData?.parts[part];
+    const preview = this.paintPreview;
+    if (preview && this.previewParts.has(part)) return preview.material;
+    if (!info?.material) return null;
+    return this.materials.get(info.material) ?? null;
+  }
+
+  /** The texture a part shows in this style, when its image is loaded. */
+  private partTexture(part: number): { digest: string; texture: THREE.Texture } | null {
+    if (!faceMode(this.style).textures) return null;
+    if (this.paintPreview && this.previewParts.has(part)) return null;
+    const m = this.partMaterial(part);
+    if (!m?.texture || !m.held) return null;
+    const digest = this.texDigest.get(m.texture);
+    const texture = this.textures.get(digest);
+    return digest && texture ? { digest, texture } : null;
+  }
+
+  /** Colour each triangle: the mock's three face tones (top / front / side) or the material
+   * colour shaded the same way, white under a texture (the image is the colour), the
+   * background colour in hidden line; tinted for selection and hover, faded outside the open
+   * group. Under the sun the tones come from the light instead. */
   private colourFaces(geom: THREE.BufferGeometry): void {
     const pos = geom.getAttribute("position") as THREE.BufferAttribute;
     const index = geom.getIndex();
@@ -308,6 +373,10 @@ export class ViewportEngine {
     const hovered = new Set(this.highlight.hoverParts);
     const faded = new Set(this.highlight.fadedParts ?? []);
     const paper = new THREE.Color(this.theme.vp);
+    const mode = faceMode(this.style);
+    const lit = this.lit();
+    const background = this.style.background ? new THREE.Color(rgbCss(this.style.background)) : paper;
+    const white = new THREE.Color(1, 1, 1);
     const ids = this.meshData?.faceIds;
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
@@ -323,15 +392,25 @@ export class ViewportEngine {
       n.subVectors(b, a).cross(c.sub(a)).normalize();
       const part = ids ? ids[t / 3] : -1;
       const kind = n.z > 0.5 ? 0 : n.z < -0.5 ? 2 : Math.abs(n.y) >= Math.abs(n.x) ? 1 : 2;
-      let col = [top, front, side][kind];
+      const shade = lit ? 1 : [1, 0.86, 0.72][kind];
+      let col = lit ? new THREE.Color(this.theme.face) : [top, front, side][kind];
       const info = part >= 0 ? this.meshData?.parts[part] : undefined;
-      if (info?.color) {
+      const mat = part >= 0 ? this.partMaterial(part) : null;
+      if (mode.paper) {
+        col = background;
+      } else if (part >= 0 && this.partTexture(part)) {
+        // The texture is the colour; the vertex colour only shades it.
+        col = white.clone().multiplyScalar(shade);
+      } else if (mode.colours && mat) {
         // A material colour, shaded like the theme's three face tones.
-        const [r, g, b] = info.color;
-        col = new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace).multiplyScalar([1, 0.86, 0.72][kind]);
+        const [r, g, bb] = mat.color;
+        col = new THREE.Color().setRGB(r / 255, g / 255, bb / 255, THREE.SRGBColorSpace).multiplyScalar(shade);
+      } else if (mode.colours && !mat && info?.color) {
+        const [r, g, bb] = info.color;
+        col = new THREE.Color().setRGB(r / 255, g / 255, bb / 255, THREE.SRGBColorSpace).multiplyScalar(shade);
       }
       // Imported geometry that is not a solid reads amber-tinted: it cannot be pushed or printed.
-      if (info?.kind === "mesh") col = col.clone().lerp(warn, 0.3);
+      if (info?.kind === "mesh" && !mode.paper) col = col.clone().lerp(warn, 0.3);
       if (selected.has(part)) col = tint(col, 0.45);
       else if (hovered.has(part)) col = tint(col, 0.2);
       // Outside the open group or component: faded towards the background.
@@ -341,72 +420,79 @@ export class ViewportEngine {
     geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   }
 
+  /** Shadows are being drawn (the faces are lit by the sun then). */
+  private lit(): boolean {
+    return !!this.shadows?.on && faceMode(this.style).faces && !faceMode(this.style).paper;
+  }
+
+  /**
+   * Materials, textures, the style and the sun (lane 10). `materials` and `textures` come
+   * from the document state; `blobs` are images new to this UI (decoded once, by digest).
+   */
+  setLooks(looks: { materials?: MaterialInfo[]; textures?: TextureInfo[]; style?: Style | null; shadows?: Shadows | null; blobs?: TextureBlob[] }): void {
+    for (const b of looks.blobs ?? []) this.textures.add(b.digest, b.mime, b.bytes);
+    this.materials = new Map((looks.materials ?? []).map((m) => [m.name, m]));
+    this.texDigest = new Map((looks.textures ?? []).map((t) => [t.path, t.digest]));
+    const style = fullStyle(looks.style ?? null);
+    const shadows = looks.shadows ?? null;
+    const key = JSON.stringify([style, shadows, looks.materials, looks.textures]);
+    if (key === this.looksKey) return;
+    this.looksKey = key;
+    this.style = style;
+    this.shadows = shadows;
+    this.buildFaces();
+    this.requestRender();
+  }
+
+  /** What the style says right now (tests and captures). */
+  looksState(): { face: string; profiles: boolean; shadows: boolean; textures: number; texturedParts: number; sun: Vec3 | null } {
+    return {
+      face: this.style.face,
+      profiles: this.style.edges.profiles,
+      shadows: this.lit(),
+      textures: this.textures.size(),
+      texturedParts: this.texturedParts,
+      sun: this.lit() && this.shadows ? sunDirection(this.shadows) : null,
+    };
+  }
+
+  /** Show the Paint tool's hover: `parts` drawn in `material` (null: none). */
+  setPaintPreview(p: { parts: number[]; material: MaterialInfo } | null): void {
+    const same = (!p && !this.paintPreview) || (p && this.paintPreview && p.material.name === this.paintPreview.material.name && p.parts.join() === this.paintPreview.parts.join());
+    if (same) return;
+    this.paintPreview = p;
+    this.previewParts = new Set(p?.parts ?? []);
+    if (this.faces) {
+      this.colourFaces(this.faces.geometry);
+      this.buildOverlays();
+    }
+    this.requestRender();
+  }
+
+  /** Texture coordinates of one part replaced (the texture handles' live preview). */
+  setPartUvs(part: number, uvs: Float32Array): void {
+    const m = this.meshData;
+    const g = this.faces?.geometry;
+    const attr = g?.getAttribute("uv") as THREE.BufferAttribute | undefined;
+    if (!m || !g || !attr || !uvs.length) return;
+    let first = Infinity;
+    for (let t = 0; t < m.faceIds.length; t++) {
+      if (m.faceIds[t] !== part) continue;
+      for (let k = 0; k < 3; k++) first = Math.min(first, m.indices[3 * t + k]);
+    }
+    if (!Number.isFinite(first) || (first + uvs.length / 2) * 2 > attr.array.length) return;
+    (attr.array as Float32Array).set(uvs, first * 2);
+    attr.needsUpdate = true;
+    this.buildOverlays();
+    this.requestRender();
+  }
+
   setMesh(mesh: MeshData | null): void {
-    disposeObject(this.faces);
-    disposeObject(this.backs);
-    this.backs = null;
-    disposeObject(this.edges);
-    this.faces = null;
-    this.edges = null;
     this.meshData = mesh;
-    if (mesh && mesh.indices.length > 0) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-      g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-      this.colourFaces(g);
-      g.computeBoundingSphere();
-      g.computeBoundingBox();
-      const mat = new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        side: THREE.DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
-      });
-      this.faces = new THREE.Mesh(g, mat);
-      this.faces.renderOrder = 2;
-      this.scene.add(this.faces);
-      // A solid only ever shows its outsides; an imported mesh may be open, so its inner sides
-      // get their own tone (drawn as reversed triangles just in front of the faces).
-      const back: number[] = [];
-      for (let t = 0; t < mesh.faceIds.length; t++) {
-        if (mesh.parts[mesh.faceIds[t]]?.kind !== "mesh") continue;
-        back.push(mesh.indices[t * 3], mesh.indices[t * 3 + 2], mesh.indices[t * 3 + 1]);
-      }
-      if (back.length) {
-        const bg = new THREE.BufferGeometry();
-        const pos = g.getAttribute("position") as THREE.BufferAttribute;
-        bg.setAttribute("position", pos);
-        bg.setIndex(back);
-        // The inner tone, shaded by which way each inner side faces, like the outer faces.
-        const tone = new THREE.Color("#7f93ad");
-        const colors = new Float32Array(pos.count * 3);
-        const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-        for (let t = 0; t < back.length; t += 3) {
-          a.fromBufferAttribute(pos, back[t]);
-          b.fromBufferAttribute(pos, back[t + 1]);
-          c.fromBufferAttribute(pos, back[t + 2]);
-          n.subVectors(b, a).cross(c.sub(a)).normalize();
-          const k = n.z > 0.5 ? 1 : n.z < -0.5 ? 0.72 : Math.abs(n.y) >= Math.abs(n.x) ? 0.86 : 0.72;
-          const col = tone.clone().multiplyScalar(k);
-          for (const i of [back[t], back[t + 1], back[t + 2]]) col.toArray(colors, i * 3);
-        }
-        bg.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-        // No depth offset: the faces are pushed back by theirs, so these win where an inner
-        // side faces the camera, and edges (drawn later) still show on top.
-        this.backs = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }));
-        this.backs.renderOrder = 2;
-        this.scene.add(this.backs);
-      }
-    }
-    if (mesh && mesh.edges.length > 0) {
-      const eg = new THREE.BufferGeometry();
-      eg.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
-      eg.computeBoundingBox();
-      this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge }));
-      this.edges.renderOrder = 3;
-      this.scene.add(this.edges);
-    }
+    // A hover preview names parts of the old mesh: it goes (the next pointer move sets it again).
+    this.paintPreview = null;
+    this.previewParts = new Set();
+    this.buildFaces();
     // The grid grows with the model.
     const box = this.contentBox();
     const r = box.getBoundingSphere(new THREE.Sphere()).radius + box.getCenter(new THREE.Vector3()).length();
@@ -426,11 +512,241 @@ export class ViewportEngine {
     }
   }
 
+  /** (Re)build the faces, the textured overlays, the inner sides of open meshes and the
+   * edges from the mesh, the materials and the style. */
+  private buildFaces(): void {
+    disposeObject(this.faces);
+    disposeObject(this.backs);
+    disposeObject(this.edges);
+    this.faces = null;
+    this.backs = null;
+    this.edges = null;
+    const mesh = this.meshData;
+    const mode = faceMode(this.style);
+    const lit = this.lit();
+    if (mesh && mesh.indices.length > 0) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+      if (mesh.uvs && mesh.uvs.length === (mesh.positions.length / 3) * 2) g.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs.slice(), 2));
+      if (lit) g.computeVertexNormals();
+      this.colourFaces(g);
+      g.computeBoundingSphere();
+      g.computeBoundingBox();
+      const common = {
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+        transparent: mode.xray,
+        opacity: mode.xray ? 0.42 : 1,
+        depthWrite: !mode.xray,
+      };
+      const mat = lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common);
+      this.faces = new THREE.Mesh(g, mat);
+      this.faces.renderOrder = 2;
+      this.faces.visible = mode.faces;
+      this.faces.castShadow = lit;
+      this.faces.receiveShadow = lit && !!this.shadows?.faces;
+      this.scene.add(this.faces);
+      // A solid only ever shows its outsides; an imported mesh may be open, so its inner sides
+      // get their own tone (the default back-face colour), drawn as reversed triangles just in
+      // front of the faces.
+      const back: number[] = [];
+      for (let t = 0; t < mesh.faceIds.length; t++) {
+        if (mesh.parts[mesh.faceIds[t]]?.kind !== "mesh") continue;
+        back.push(mesh.indices[t * 3], mesh.indices[t * 3 + 2], mesh.indices[t * 3 + 1]);
+      }
+      if (back.length && mode.faces && !mode.xray) {
+        const bg = new THREE.BufferGeometry();
+        const pos = g.getAttribute("position") as THREE.BufferAttribute;
+        bg.setAttribute("position", pos);
+        bg.setIndex(back);
+        // The inner tone, shaded by which way each inner side faces, like the outer faces.
+        const tone = new THREE.Color(BACK_FACE_COLOUR);
+        const colors = new Float32Array(pos.count * 3);
+        const [a, b, c, n] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+        for (let t = 0; t < back.length; t += 3) {
+          a.fromBufferAttribute(pos, back[t]);
+          b.fromBufferAttribute(pos, back[t + 1]);
+          c.fromBufferAttribute(pos, back[t + 2]);
+          n.subVectors(b, a).cross(c.sub(a)).normalize();
+          const k = n.z > 0.5 ? 1 : n.z < -0.5 ? 0.72 : Math.abs(n.y) >= Math.abs(n.x) ? 0.86 : 0.72;
+          const col = tone.clone().multiplyScalar(k);
+          for (const i of [back[t], back[t + 1], back[t + 2]]) col.toArray(colors, i * 3);
+        }
+        bg.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        // No depth offset: the faces are pushed back by theirs, so these win where an inner
+        // side faces the camera, and edges (drawn later) still show on top.
+        this.backs = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }));
+        this.backs.renderOrder = 2;
+        this.scene.add(this.backs);
+      }
+    }
+    this.buildOverlays();
+    if (mesh && mesh.edges.length > 0) {
+      const eg = new THREE.BufferGeometry();
+      eg.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+      eg.computeBoundingBox();
+      // Wireframe and X-ray show the edges behind faces too.
+      this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge, depthTest: !mode.hiddenEdges, transparent: mode.hiddenEdges }));
+      this.edges.renderOrder = 3;
+      this.edges.visible = this.style.edges.edges;
+      this.scene.add(this.edges);
+    }
+    this.styledEdgesKey = "";
+    this.updateSun();
+  }
+
+  /** One mesh per texture over the faces that show it, drawn exactly over the faces (the
+   * same positions and depth offset, LessEqual depth), with its own copy of their vertices. */
+  private buildOverlays(): void {
+    for (const c of [...this.textured.children]) disposeObject(c);
+    this.texturedParts = 0;
+    const mesh = this.meshData;
+    const g = this.faces?.geometry;
+    if (!mesh || !g || !this.faces?.visible || !g.getAttribute("uv")) return;
+    const byDigest = new Map<string, { texture: THREE.Texture; tris: number[] }>();
+    const counted = new Set<number>();
+    for (let t = 0; t < mesh.faceIds.length; t++) {
+      const part = mesh.faceIds[t];
+      const tex = this.partTexture(part);
+      if (!tex) continue;
+      if (!counted.has(part)) {
+        counted.add(part);
+        this.texturedParts++;
+      }
+      let e = byDigest.get(tex.digest);
+      if (!e) byDigest.set(tex.digest, (e = { texture: tex.texture, tris: [] }));
+      e.tris.push(mesh.indices[3 * t], mesh.indices[3 * t + 1], mesh.indices[3 * t + 2]);
+    }
+    const lit = this.lit();
+    for (const { texture, tris } of byDigest.values()) {
+      // Compact: only the vertices these triangles use.
+      const remap = new Map<number, number>();
+      const index: number[] = [];
+      for (const v of tris) {
+        let k = remap.get(v);
+        if (k === undefined) remap.set(v, (k = remap.size));
+        index.push(k);
+      }
+      const og = new THREE.BufferGeometry();
+      for (const [name, size] of [["position", 3], ["uv", 2], ["color", 3], ["normal", 3]] as const) {
+        const at = g.getAttribute(name) as THREE.BufferAttribute | undefined;
+        if (!at) continue;
+        const src = at.array as Float32Array;
+        const out = new Float32Array(remap.size * size);
+        for (const [v, k] of remap) out.set(src.subarray(v * size, v * size + size), k * size);
+        og.setAttribute(name, new THREE.BufferAttribute(out, size));
+      }
+      og.setIndex(index);
+      const common = {
+        map: texture,
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+        depthFunc: THREE.LessEqualDepth,
+      };
+      const om = new THREE.Mesh(og, lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common));
+      om.renderOrder = 2.5;
+      om.receiveShadow = this.faces.receiveShadow;
+      om.castShadow = false;
+      om.frustumCulled = false;
+      this.textured.add(om);
+    }
+  }
+
+  /** Place the sun and the shadow camera, or switch them off. */
+  private updateSun(): void {
+    const lit = this.lit();
+    const s = this.shadows;
+    this.renderer.shadowMap.enabled = lit;
+    this.sunLight.visible = lit;
+    this.ambient.visible = lit;
+    this.groundShadow.visible = lit && !!s?.ground;
+    if (!lit || !s) return;
+    const dir = sunDirection(s);
+    const up = dir[2] > 0;
+    // Sunlight and shade: the sliders, 0..100.
+    this.sunLight.intensity = up ? (s.light / 100) * 2.4 : 0;
+    this.ambient.intensity = 0.35 + (s.dark / 100) * 1.6;
+    this.sunLight.castShadow = up;
+    const box = this.contentBox();
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const r = Math.max(sphere.radius, 0.05) * 1.6;
+    const d = new THREE.Vector3(...dir);
+    this.sunLight.position.copy(sphere.center).addScaledVector(d, r * 4);
+    this.sunLight.target.position.copy(sphere.center);
+    this.sunLight.target.updateMatrixWorld();
+    const cam = this.sunLight.shadow.camera;
+    cam.left = -r;
+    cam.right = r;
+    cam.top = r;
+    cam.bottom = -r;
+    cam.near = 0.001;
+    cam.far = r * 8;
+    cam.updateProjectionMatrix();
+    this.sunLight.shadow.bias = -0.0004;
+    this.sunLight.shadow.normalBias = r * 0.002;
+    // The ground catches shadows a good way round the model.
+    this.groundShadow.scale.setScalar(Math.max(r * 6, 1));
+    this.groundShadow.position.set(sphere.center.x, sphere.center.y, GRID_DEPTH_OFFSET * 2);
+    (this.groundShadow.material as THREE.ShadowMaterial).opacity = 0.18 + (1 - s.dark / 100) * 0.3;
+  }
+
+  /** Profile, extension and endpoint lines depend on the camera: rebuilt when it moves. */
+  private updateStyledEdges(): void {
+    const e = this.style.edges;
+    const mesh = this.meshData;
+    const need = !!mesh && e.edges && (e.profiles || e.extensions || e.endpoints);
+    const cam = this.camera;
+    const key = need ? `${cam.position.toArray().join()}|${(cam as THREE.OrthographicCamera).zoom}|${this.size.w}x${this.size.h}|${this.meshData?.edges.length}` : "";
+    if (key === this.styledEdgesKey) return;
+    this.styledEdgesKey = key;
+    for (const c of [...this.styledEdges.children]) disposeObject(c);
+    if (this.edges) {
+      // Plain edges come back when the extensions are switched off.
+      const pos = this.edges.geometry.getAttribute("position") as THREE.BufferAttribute;
+      if (!e.extensions && mesh && pos.array !== mesh.edges) this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+    }
+    if (!need || !mesh) return;
+    const mode = faceMode(this.style);
+    const px = (p: THREE.Vector3) => this.metresPerPixelAt([p.x, p.y, p.z]);
+    if (e.extensions && this.edges) {
+      this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(extendedSegments(mesh.edges, (p) => 5 * px(p)), 3));
+    }
+    const pairs = (flat: number[]): Vec3[][] => {
+      const out: Vec3[][] = [];
+      for (let i = 0; i + 5 < flat.length; i += 6) out.push([[flat[i], flat[i + 1], flat[i + 2]], [flat[i + 3], flat[i + 4], flat[i + 5]]]);
+      return out;
+    };
+    if (e.profiles) {
+      const segs = profileSegments(mesh.edges, mesh.edgeNormals, this.camera);
+      if (segs.length) {
+        const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
+        l.renderOrder = 3.5;
+        this.styledEdges.add(l);
+      }
+    }
+    if (e.endpoints) {
+      const segs = endpointSegments(mesh.edges, (p) => 7 * px(p));
+      if (segs.length) {
+        const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
+        l.renderOrder = 3.5;
+        this.styledEdges.add(l);
+      }
+    }
+  }
+
   // ---- highlights and overlays -----------------------------------------------------------
 
   setHighlight(h: Highlight): void {
     this.highlight = h;
     if (this.faces) this.colourFaces(this.faces.geometry);
+    this.buildOverlays();
     this.rebuildHighlights();
     this.requestRender();
   }
@@ -721,6 +1037,7 @@ export class ViewportEngine {
 
   /** A PNG of the current view, at most `max` pixels on its long side (.shz thumbnails). */
   async snapshotPng(max = 512): Promise<Uint8Array> {
+    this.beforeRender();
     this.renderer.render(this.scene, this.camera);
     const src = this.renderer.domElement;
     const k = Math.min(1, max / Math.max(src.width, src.height));
@@ -762,9 +1079,40 @@ export class ViewportEngine {
     requestAnimationFrame(() => {
       this.queued = false;
       if (this.disposed) return;
+      this.beforeRender();
       this.renderer.render(this.scene, this.camera);
       for (const cb of this.listeners) cb();
     });
+  }
+
+  /** Average milliseconds per frame over `n` full renders, turning the camera a little each
+   * time (so profiles and shadows are redone): the 60 fps budget check. */
+  benchmark(n = 120): number {
+    const gl = this.renderer.getContext();
+    const target = this.controls.target.clone();
+    const start = this.camera.position.clone();
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 0.5;
+      const rel = start.clone().sub(target).applyAxisAngle(new THREE.Vector3(0, 0, 1), a);
+      this.camera.position.copy(target).add(rel);
+      this.camera.lookAt(target);
+      this.beforeRender();
+      this.renderer.render(this.scene, this.camera);
+    }
+    gl.finish();
+    const ms = (performance.now() - t0) / n;
+    this.camera.position.copy(start);
+    this.camera.lookAt(target);
+    this.requestRender();
+    return ms;
+  }
+
+  /** What follows the camera: the backdrop's horizon and the profile / extension lines. */
+  private beforeRender(): void {
+    setBackdrop(this.backdrop, this.style, this.theme.vp, this.camera, this.controls.target);
+    this.renderer.setClearColor(new THREE.Color(this.style.background ? rgbCss(this.style.background) : this.theme.vp), 1);
+    this.updateStyledEdges();
   }
 
   /** Project a world point to canvas CSS pixels. */
@@ -788,8 +1136,8 @@ export class ViewportEngine {
   }
 
   /** What the render passes (src/render/passes.ts) draw from: this renderer, the current camera and the model. */
-  captureSource(): { renderer: THREE.WebGLRenderer; camera: THREE.Camera; mesh: MeshData | null; size: { w: number; h: number } } {
-    return { renderer: this.renderer, camera: this.camera, mesh: this.meshData, size: { ...this.size } };
+  captureSource(): { renderer: THREE.WebGLRenderer; camera: THREE.Camera; mesh: MeshData | null; size: { w: number; h: number }; materials: MaterialInfo[] } {
+    return { renderer: this.renderer, camera: this.camera, mesh: this.meshData, size: { ...this.size }, materials: [...this.materials.values()] };
   }
 
   private ndc(x: number, y: number): THREE.Vector2 {
@@ -872,6 +1220,9 @@ export class ViewportEngine {
     this.setOverlay([]);
     this.setMesh(null);
     this.listeners.clear();
+    this.textures.dispose();
+    disposeObject(this.backdrop);
+    disposeObject(this.groundShadow);
     this.controls.dispose();
     disposeObject(this.gridMinor);
     disposeObject(this.gridMajor);

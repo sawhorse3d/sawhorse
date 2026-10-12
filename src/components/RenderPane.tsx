@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { newRequestId, PACKS, ServiceError, ServiceUnreachableError, type HistoryItem, type Pack } from "../credits/client";
 import { storageNote } from "../credits/device";
 import type { CreditsHandle } from "../credits/useCredits";
-import { NothingToRenderError, passesToRequest, type RenderPasses } from "../render/passes";
+import { NothingToRenderError, passesToRequest, promptWithMaterials, type RenderPasses } from "../render/passes";
 
 // The Render pane from the approved mock, wired to the render service (ADR-0004): presets,
 // prompt, Render (1 credit), the result, a history gallery, credit packs that open Stripe
@@ -125,7 +125,8 @@ export function RenderPane({ credits, capture }: RenderPaneProps) {
       setResult({ kind: "rendering", preview: "", started, stage: "Drawing the depth and edge passes…" });
       const passes = await capture();
       setResult({ kind: "rendering", preview: passes.depthPreview, started, stage: `Rendering ${passes.width} × ${passes.height}…` });
-      const r = await client.render({ request_id: newRequestId(), prompt: usedPrompt, preset: PRESETS[preset]?.name ?? null, ...passesToRequest(passes) });
+      // The materials in view go with the prompt (lane 10): as hints, and as a sentence after it.
+      const r = await client.render({ request_id: newRequestId(), prompt: promptWithMaterials(usedPrompt, passes.materials ?? []), preset: PRESETS[preset]?.name ?? null, ...passesToRequest(passes) });
       credits.setCredits(r.balance);
       setResult({ kind: "done", url: r.image_url, mock: r.mock, provider: r.provider, prompt: usedPrompt });
       if (showHistory || history) void loadHistory();

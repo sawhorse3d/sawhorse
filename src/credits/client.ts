@@ -40,6 +40,8 @@ export interface RenderRequest {
   depth_png: string;
   edges_png?: string;
   clay_png?: string;
+  /** The materials in view, most of the picture first (lane 10; the service may fold them into its prompt). */
+  material_hints?: { name: string; species: string | null; color: string; share: number }[];
   return?: "url" | "inline";
 }
 

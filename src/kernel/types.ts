@@ -659,6 +659,8 @@ export interface WasmModule {
   /** The ops that put a library material into a model (texture + definition), as JSON. */
   material_library_ops(name: string, asName: string): string;
   material_library_texture(name: string): Uint8Array;
+  /** A small swatch of a library material's texture (96 x 48 PNG). */
+  material_library_swatch(name: string): Uint8Array;
 }
 
 export type RequestBody =

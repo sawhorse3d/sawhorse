@@ -85,6 +85,10 @@ export interface SawhorseHooks {
   pick(x: number, y: number): { point: Vec3; part: number } | null;
   /** Read back canvas pixels (r, g, b) at canvas pixel (x, y). */
   pixel(x: number, y: number): [number, number, number];
+  /** Milliseconds per frame over `n` renders with the camera turning (lane 10). */
+  frameTime(n?: number): number;
+  /** Triangles of the mesh the engine draws (what the render passes read). */
+  engineTriangles(): number;
 }
 
 export function Viewport(props: ViewportProps) {
@@ -127,6 +131,8 @@ export function Viewport(props: ViewportProps) {
       grid: () => engine.gridState(),
       pick: (x, y) => engine.pick(x, y),
       pixel: (x, y) => engine.readPixel(x, y),
+      frameTime: (n) => engine.benchmark(n),
+      engineTriangles: () => (engine.captureSource().mesh?.indices.length ?? 0) / 3,
     };
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), ...hooks };

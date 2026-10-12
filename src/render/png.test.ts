@@ -105,3 +105,18 @@ describe("pass geometry", () => {
     expect(persp.aspect).toBe(1.5);
   });
 });
+
+describe("material hints (lane 10)", () => {
+  it("a sentence after the prompt names the materials in view, most first", async () => {
+    const { materialsSentence, promptWithMaterials } = await import("./passes");
+    const hints = [
+      { name: "White oak", species: "White oak", color: "#cdb288", share: 0.62 },
+      { name: "Birch ply", species: "Baltic birch ply", color: "#e8d0aa", share: 0.3 },
+      { name: "Red", species: null, color: "#7c2620", share: 0.01 },
+    ];
+    expect(materialsSentence(hints)).toBe("Materials: white oak (most of it), baltic birch ply.");
+    expect(promptWithMaterials("A bookshelf in a workshop", hints)).toBe("A bookshelf in a workshop Materials: white oak (most of it), baltic birch ply.");
+    expect(promptWithMaterials("x".repeat(990), hints)).toBe("x".repeat(990));
+    expect(promptWithMaterials("Plain", [])).toBe("Plain");
+  });
+});
