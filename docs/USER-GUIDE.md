@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 3): looking around, drawing, push/pull, measuring, guides and dimensions. Move, Rotate, Scale, Offset, Follow Me and Paint are on the tool rail but say "arrives in a later lane"; the Outliner, Tags and Cut list panes still show the design mock's example content.
+Sawhorse is pre-alpha. This page covers what works today (lane 4): looking around, drawing, push/pull, measuring, guides and dimensions, and the transform tools (Move, Rotate, Scale, Offset, Follow Me). Paint is on the tool rail but says "arrives in a later lane"; the Outliner, Tags and Cut list panes still show the design mock's example content. Copies are separate solids for now; components arrive in lane 5.
 
 ## The first ten minutes
 
@@ -45,6 +45,11 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 | A | Arc | Click both ends, then pull out the bulge | a bulge length, `12r` radius, `12s` segments |
 | A again | 3-Point Arc | Click the start, a point it passes through, then the end | - |
 | P | Push/Pull | Press on a face and drag, then release; or click, move, click. Double-click repeats the last distance. Hold Ctrl when you let go to pull out a new face. | a distance (negative flips it) |
+| M | Move | Click a solid (or select first), move, click; or drag. Ctrl copies. With faces, edges or points selected, moves that part (Alt: autofold). | a distance; after a copy `x3`, `3x`, `*3` or `/4` |
+| Q | Rotate | Click the centre on the protractor's plane, the start of the angle, then the end. Ctrl copies. | an angle in degrees (`90`, `-22.5`, `30deg`); after a copy `x3` or `/4` |
+| S | Scale | Drag a grip on the selection's box (or click it, move, click). Shift: uniform. Ctrl: about the centre. | a factor (`2`, `0.5`, `-1`), three factors (`2,1,0.5`), or a size with a unit (`30in`) |
+| F | Offset | Click a face or region (or near selected edges), move inward or outward, click | a distance (negative goes the other way) |
+| W | Follow Me | Select the path first (edges, or a face for its edge), then click the profile | - |
 | T | Tape | Click two points to measure. Click an edge, then move away from it, to place a parallel guide. | the offset, or a length that drops a guide point |
 | D | Dimension | Click two points (or one edge), then click where the dimension line goes | - |
 | Shift+Z | | Zoom extents | |
@@ -60,7 +65,9 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 - Holding Shift locks whatever direction is showing, until you release it.
 - With Rectangle, arrow keys pressed before the first click choose the plane: level, upright facing red, or upright facing green.
 
-**Value Control Box.** Type a value at any point in a gesture. The units are your display units unless you type one: `3/4`, `1 1/2`, `1-1/2`, `18"`, `1'6"`, `457mm`, `45.7cm`, `0.457m`. Click the unit label to cycle through fractional in, decimal in, ft-in, mm, cm and m. Esc clears what you typed, and Ctrl+Z still works while you type. Angles (`30°`) and the array forms for Move (`x3`, `3x`, `*3`, `/4`) parse today but belong to Rotate and Move in lane 4; until then they are refused with a message.
+**Ctrl and Alt taps.** In Move and Rotate a tap of Ctrl switches copying on and off (holding it on the last click works too). In Scale, Ctrl switches between scaling about the opposite grip and about the centre. In Move, Alt switches autofold.
+
+**Value Control Box.** Type a value at any point in a gesture. The units are your display units unless you type one: `3/4`, `1 1/2`, `1-1/2`, `18"`, `1'6"`, `457mm`, `45.7cm`, `0.457m`. Click the unit label to cycle through fractional in, decimal in, ft-in, mm, cm and m. Esc clears what you typed, and Ctrl+Z still works while you type. Angles (`30°`, or a bare number in Rotate) and the array forms (`x3`, `3x`, `*3`, `/4`) belong to Rotate and Move; other tools say so. A value typed right after a move, turn, scale or offset changes it (one undo step).
 
 ## Inference colours
 
@@ -99,3 +106,69 @@ A shape drawn on a solid's face becomes part of that face:
 A shape that reaches past the solid (for example, a top board drawn from one side's corner to the other's) becomes a new sketch on that plane.
 
 Push/Pull on a face moves it along its normal and keeps the solid closed. Pushing past the far side cuts through.
+
+## Moving, turning and scaling
+
+**Move (M).** With nothing selected, Move picks up the solid you click. Select first to move several solids, or to move part of one solid: a face, an edge or a point.
+- Click where to pick it up (a corner snaps exactly), move, and click where it goes.
+- Or type the distance: it goes the way the cursor went.
+- The arrow keys lock the red, green or blue axis. Shift holds the direction that is showing.
+
+Copies:
+1. Tap Ctrl (the preview turns green), then move and click.
+2. Straight after, type `x3`: you get three copies, each the same distance further on.
+3. Or type `/4`: you get four copies dividing the distance.
+
+Another count or distance replaces the last one. Ctrl+Z takes the whole array back to before the copy.
+
+**Moving part of a solid.** Select a face (or an edge, or a corner), press M and move it. Faces that stay flat follow along: lifting a top face makes the box taller, and sliding a top edge slopes the sides. If a face would have to bend, Sawhorse refuses and says which face. Tap Alt for autofold: the bent face then folds along new edges.
+
+**Rotate (Q).** The protractor appears on the face under the cursor, or level on the ground.
+- Right, Left and Up lock it upright facing red, upright facing green, or level. Hold Shift to keep the plane it is on.
+- Click the centre, click where the angle starts, then click where it ends.
+- Or type the angle. The cursor snaps to the protractor's 15 degree ticks; a typed angle is exact.
+- With nothing selected, the solid under the centre click turns.
+- Ctrl copies; `x3` and `/4` work as in Move. A ring of four chair legs is one copy at 90 degrees, then `x3`.
+
+**Scale (S).** Grips appear on the box around the selection (or the solid under the cursor):
+- a face-centre grip stretches one way, an edge grip two ways, and a corner grip three;
+- Shift makes the scale uniform, and Ctrl scales about the centre instead of the opposite grip;
+- type `2` for twice the size, `-1` to mirror, or `30in` for an absolute length along the grip.
+
+Sawhorse refuses a scale that would flatten the solid, turn it inside out or fold it into itself.
+
+**A tapered leg.**
+1. Draw a 2 x 2 rectangle and pull it up 28.
+2. Select the top face and press S.
+3. Tap Ctrl (about the centre), click a corner grip and type `0.6`. The leg tapers to the top.
+4. To put the taper at the foot, turn the leg end for end: Q, press Right, click the middle of a side edge, and type `180`.
+
+## Offset and Follow Me
+
+**Offset (F).** Click a face, then move toward its middle and type `1/2`. A loop 1/2 in inside the edge is imprinted, and Push/Pull (P) raises it straight away as a tenon.
+- Moving outward instead draws the bigger loop on a new sketch on that plane, because it reaches off the solid.
+- A sketch region offsets inside its own sketch.
+- With edges selected, Offset offsets that chain of edges to the side the cursor is on.
+- Corners stay sharp. A face with a hole offsets as one shape.
+
+**Follow Me (W).**
+1. Select the path: edges joined end to end (Shift-click to add them), or one face to go round its edge.
+2. Press W. The path shows in blue.
+3. Click the profile: a face, or a region of a sketch.
+
+The profile travels along the path and turns on a miter at every corner. A region becomes a new solid. A face adds to its solid, or cuts into it when the path runs into it.
+
+**A moulding round the top of a box.**
+1. Look at one end of the box (Right).
+2. With Line, draw from the top edge, 2 in in, down to the front edge, 2 in down. That cuts off a chamfer triangle.
+3. Select the top face, press W and click the triangle. The chamfer is routed all the way round.
+
+Paths with arcs come later.
+
+## When a cut goes all the way through
+
+A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piece that keeps the board's smallest face id keeps its name ("solid 3"); the other gets the next number. Both stay in the board's groups.
+
+## Unsaved work
+
+Sawhorse keeps your work in this browser as you go. If the tab closes or reloads, the status line offers **Restore unsaved work?** with Restore and Discard; Edit > Restore Unsaved Work does the same while the offer stands. Restoring brings the undo history back too. Real files (.shz) arrive with their lane.

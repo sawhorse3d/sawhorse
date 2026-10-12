@@ -134,6 +134,7 @@ export class FollowTool extends Tool {
       h.setSelection([]);
       this.path = null;
       this.pathError = "Select the next path, then click a profile.";
+      h.changed();
     }
   }
 

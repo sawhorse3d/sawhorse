@@ -45,13 +45,16 @@ npx vitest run              # unit + component tests (jsdom)
 npm run build               # tsc + vite production build into dist/
 npm run build:all           # wasm + build (what Tauri's beforeBuildCommand runs)
 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test   # e2e on the installed Edge, no browser download
+PW_PORT=4184 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test   # the same from a worktree beside another lane (own preview port)
 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npm run e2e:bookshelf # the Phase-2 exit test alone (`just bookshelf`)
 npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 ```
 
 `?theme=light` or `?theme=dark` on the URL forces a theme.
 
-### The e2e suites (lane 3)
+Parallel lanes: each `.worktrees/<slug>` checkout gets its own cargo target directory automatically (`scripts/env.sh` appends the slug: `D:/build-cache/sawhorse-<slug>`, `/mnt/d/build-cache/sawhorse/wsl-<slug>`), so lanes never wait on each other's cargo lock. Give each lane its own Vite and preview ports (`npx vite --port 5184`, `PW_PORT=4184`); Playwright reuses an existing server on its port, which would otherwise be another lane's build.
+
+### The e2e suites (lanes 3 and 4)
 
 | Spec | What it drives |
 |---|---|
@@ -63,7 +66,15 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 | `e2e/draw.spec.ts` | Line, Rect, Rotated Rect, Circle, Polygon, Arc, 3-Point Arc; a stroke across a face becomes `split_face` |
 | `e2e/push.spec.ts` | press-drag-release, click-move-click, typed mid-gesture, double-click repeat, Ctrl new face, push-through, typed refusals |
 | `e2e/tape.spec.ts` | Tape measure, guides from an edge, guide crossings as snaps, Dimension, erasing a guide |
-| `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, and prints its time and the refusal tally |
+| `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, each solid's bounding box (so a misplaced part fails), and prints its time and the refusal tally |
+| `e2e/session.spec.ts` | lane 4: the dev autosave (restore and discard after a reload, `?autosave=0`), solids named by display number after slot reuse, the Rect preview's direction labels and message |
+| `e2e/move.spec.ts` | Move: typed and retyped moves, drag corner to corner, Ctrl copy then `x3` and `/2` with bounds, a face and a corner moved with autofold off and on |
+| `e2e/rotate.spec.ts` | Rotate: a locked protractor, a quarter turn and a retyped angle, a ring of four copies about an off-solid centre, a top face tilted into a wedge (exact volume), a twist refused |
+| `e2e/scale.spec.ts` | Scale: grips, a face grip with a factor, an absolute size, a mirror; a tapered leg (frustum volume) |
+| `e2e/offset.spec.ts` | Offset: a face inward (imprint, tenon pulled up), outward (sketch), a sketch region, a selected edge offset across a face |
+| `e2e/follow.spec.ts` | Follow Me: a chamfer routed round a box top through the UI, checked against the exact removed volume |
+
+Shared helpers for the lane-4 specs live in `e2e/helpers.ts`. `hover` re-reads the screen position and nudges the cursor until the expected inference shows, because the view refits after an edit. `solids()` reads every solid's display number, bounds and volume from `window.__sawhorse.solids()`.
 
 The specs drive the page through read-only hooks on `window.__sawhorse`: `worldToScreen(p)` (metres to canvas pixels), `visibleEndpoints()`, `parts()`, `partScreenCenter(part)`, `camera()`, `grid()`, `pick(x, y)`, `pixel(x, y)`, and `refusals` (kernel refusal messages and how often each came back this page load). The viewport mirrors its state in `data-*` attributes on `main.vp`: `data-kernel`, `data-view`, `data-projection`, `data-inference` (the kind under the cursor), `data-objects`, `data-volume` (m^3), `data-watertight`, `data-selection`, `data-hover`. A spec waits on those attributes rather than on timers.
 
@@ -74,6 +85,13 @@ node scripts/capture.mjs --out ../_captures/2026-10-11-lane01-shell.png --theme 
 ```
 
 It drives the installed Edge through Playwright, waits for the kernel, applies the typed value, hovers a visible corner (via the read-only `window.__sawhorse.visibleEndpoints()` hook) and prints the kernel state it captured.
+
+Lane 4's walk-through, `scripts/capture-lane04.mjs`, drives a running dev server like a person at the keyboard and mouse. Each click waits for its inference. It saves a screenshot after each stage and prints every status line and each solid's volume. The stages are a tapered leg with a tenon (Scale, Rotate, Offset, Push/Pull), four copies with a Move array, one leg turned 90 degrees, and a moulding routed round a box with Follow Me.
+
+```bash
+npx vite --port 5184 --strictPort        # in another terminal
+node scripts/capture-lane04.mjs --url http://localhost:5184 --out ../_captures
+```
 
 ## Rust (from Git Bash on Windows, forwarded to WSL)
 
@@ -113,8 +131,10 @@ cd .. && wasm-pack build crates/wasm-api --target web --out-dir ../../src/wasm/p
 | Global self-intersection (edges through faces, chords, vertex/edge contact, coplanar overlap) and positive volume | `kernel/src/intersect.rs`, `Object::validate` | every commit |
 | Property invariants | `crates/kernel/tests/invariants.rs` (extrude, push/pull inverse), `sketch_props.rs` (insertion order independence, simple region boundaries, split-then-erase identity), `face_props.rs` (split/imprint then merge identity, transactional refusals), `push.rs` (every push/pull path, volume/area/Euler) | `cargo test` |
 | Boolean differential | `crates/kernel/tests/booleans/cases.json` (26 cases) via `tests/booleans.rs` (hand-computed volume, area, shells, genus, faces) and `scripts/boolean-diff.mjs` (same cases, WASM kernel vs npm `manifold-3d` on identical operand meshes) | `cargo test`, `npm run boolean:diff` (CI) |
-| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, undo/redo interleaved); every op checked for validity, typed refusals, unchanged state on refusal, undo/redo round trip, log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
+| Op-sequence fuzzer | `crates/kernel/tests/sequences.rs`: op intents resolved against the live document (strokes, rectangles, polylines, erase, extrude, push/pull incl. push-through, split_face, imprint, delete, groups, tags, and since lane 4 transforms, copies, arrays, partial moves, offsets and Follow Me; undo/redo interleaved); every solid must be one piece; every op checked for validity, typed refusals, unchanged state on refusal, undo/redo round trip, log replay and determinism (`quick_fuzz` 192 sequences; `long_fuzz` ignored, seeded) | `cargo test`; CI runs 10,000 |
 | Repro replay | `crates/kernel/tests/repro/*.json` via `tests/repro.rs` | `cargo test` |
+| Transforms (lane 4) | `crates/kernel/tests/transforms.rs`: object-level moves, turns, scales and mirrors keep face ids and drawn edges; copies and arrays; moving part of a solid with autofold off and on; severance; proptest "transform then inverse restores the hash"; `transform.rs` unit tests (`Xform` algebra, `divided` steps compose back) | `cargo test` |
+| Offset and Follow Me (lane 4) | `crates/kernel/tests/offset.rs` and `follow_me.rs` (exact areas and volumes: Pappus for mitered sweeps, the moulding round a box top at either end); `offset.rs`, `sweep.rs`, `snap.rs` and `sever.rs` unit tests | `cargo test` |
 | Inference | `crates/inference/tests/infer.rs` (every inference kind, ranks, pixel tolerance at depth, occlusion incl. oblique views of the face under the cursor, locks, length snapping, from-point memory, guides) and the TS tool tests in `src/tools/*.test.ts` (each tool against a fake host) | `cargo test`, `npx vitest run` |
 | Golden hashes | `crates/kernel/tests/golden/*.json` (document op logs, undo/redo included) via `tests/golden.rs` and `scripts/golden-wasm.mjs` | `cargo test`, `npm run golden:wasm` |
 | cargo-fuzz | `crates/kernel/fuzz` (own workspace, nightly + libFuzzer) | `cd crates/kernel && cargo +nightly fuzz run op_sequence` (Linux/WSL) |

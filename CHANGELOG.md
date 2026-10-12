@@ -75,6 +75,58 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
   - The op-sequence fuzzer covers every new op: 50,000 sequences clean, with boolean-path refusals now counted in the report.
 - Docs: `docs/USER-GUIDE.md`, a first-ten-minutes tour with every key and the inference colours.
 
+### Added (lane 4, transforms, 2026-10-11)
+
+- Move (M):
+  - Click a solid (or select first), move, click again; or press, drag and let go.
+  - The cursor snaps from the start point; arrow keys lock red, green or blue, and Shift holds the line showing.
+  - Type a distance mid-move (it goes the way the cursor went) or after it (the move changes).
+  - Ctrl copies. After a copy, `x3` (or `3x`, `*3`) makes three copies at one, two and three times the move, and `/4` divides it into quarters. One undo takes the whole array back.
+  - With faces, edges or points of one solid selected, Move moves that part. Faces that stay flat follow; one that would bend is refused unless Alt turns autofold on.
+- Rotate (Q):
+  - The protractor sits on the face under the cursor, or level. Arrow keys lock it upright facing red or green, or level, and Shift keeps its plane.
+  - Click the centre, the start of the angle and the end, or type the angle (`90`, `-22.5`, `30deg`).
+  - Cursor angles snap to the protractor's 15 degree ticks; typed angles are exact and can be retyped after the turn.
+  - Ctrl copies. `x3` and `/4` make arrays the same way Move does.
+- Scale (S):
+  - Grips sit on the bounding box of the selection: corners, edge middles and face centres. A selected face gets its 8.
+  - Each grip scales about the opposite grip; Shift makes the scale uniform and Ctrl scales about the centre.
+  - Type a factor (`2`, `0.5`, `-1` mirrors, or `2,1,0.5` for red, green and blue), or an absolute size with a unit (`30in`, `1200mm`).
+  - The kernel checks every non-uniform scale for volume sign, flat faces and a closed shell.
+  - Scaling a selected face tapers a leg.
+- Offset (F):
+  - Click a face or a sketch region (or near selected edges), then move inward or outward, or type a distance.
+  - Offsets come from `cavalier_contours` with sharp corners. A face with holes is offset as one shape.
+  - The result imprints on the solid when it stays on the face, and becomes a new sketch on that plane when it reaches off it (the same way Draw decides). The kernel's own preview shows while the cursor moves.
+- Follow Me (W):
+  - Select the path (edges end to end, or one face to go round its edge), then click the profile.
+  - The profile is swept along straight segments with mitered corners; open and closed paths both work.
+  - A sketch region becomes a new solid. A face adds to its solid when the path leaves it, and cuts the solid when the path runs in, so a moulding drawn on a box's end routes round its top.
+- Kernel:
+  - `Transform`, `Copy`, `Array` and `TransformGeometry` ops: affine, object-level, face ids kept, validated, with typed refusals.
+  - A `divided` helper gives the `/n` step of a move, turn, screw or scale.
+  - `Offset` with `Doc.offset_preview`, and `FollowMe` with mitered sweeps.
+  - Severance: a push or a sweep that cuts through a board leaves one solid per piece, each keeping its face ids.
+  - Plane snapping before and after every boolean: nearly coplanar faces share one plane, drifted vertices are re-solved onto it, and coincident vertices are welded. The engine's output is welded at the merge distance.
+- Lane-3 verifier conditions:
+  - A dev autosave to IndexedDB, with "Restore unsaved work?" (Restore / Discard, also on the Edit menu) after a reload.
+  - Status text names solids by display number ("solid 3"), never by raw id.
+  - The Rect preview labels each side's length and direction, and its message states them.
+  - Per-solid bounding boxes in the bookshelf test.
+  - Vite ignores `.worktrees/`, and CI uses `actions/upload-artifact@v5`.
+- Tests:
+  - Kernel suites for transforms (with the proptest "transform then inverse restores the hash"), offsets, Follow Me (exact volumes), severance and snapping.
+  - Goldens `transforms`, `offset` and `follow_me`, where the WASM hash equals the native one.
+  - Vitest suites for each new tool, and seven new Playwright specs (`session`, `move`, `rotate`, `scale`, `offset`, `follow`; `vcb` updated).
+  - The fuzzer drives every new op. 50,000 sequences are clean, and the boolean refusal rate is measured with plane snapping off and on.
+  - A lane-end walk-through, `scripts/capture-lane04.mjs`.
+
+### Changed (lane 4)
+
+- Typing straight after a tool key goes to that tool and is not wiped when the switch lands. Arrow keys and Ctrl / Alt taps wait for clicks still on their way. A render that skipped pending edit updates no longer restores a stale Push target. Fast keyboard use found all three.
+- `scripts/env.sh` gives each worktree its own cargo target directory, and `PW_PORT` lets parallel worktrees run Playwright side by side.
+- A push that cuts a solid in two now reports `severed` (two solids) instead of leaving a two-shell solid.
+
 ### Changed (lane 3)
 
 - CI: `actions/checkout@v5` and `actions/setup-node@v5`. The `rust` and `web` jobs are pinned to `ubuntu-24.04`; `tauri-check` stays on 22.04.

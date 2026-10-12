@@ -350,6 +350,9 @@ export class ScaleTool extends Tool {
     const r = await h.apply(scaleOp(t.subject, c, f), (_res: EditResult) => `Scaled ${describeSubject(t.subject)} ${factorWords(f)} about ${aboutCentre ? "its centre" : "the opposite grip"}.`);
     if (r) {
       this.last = { target: t, grip, f, aboutCentre };
+      // The box shows what was applied (the largest change), not the cursor's last reading.
+      const shown = f.reduce((a, b) => (Math.abs(b - 1) > Math.abs(a - 1) ? b : a), 1);
+      h.showValue(String(Math.round(shown * 10000) / 10000));
       // The grips move to the new bounds of the same subject.
       const x = scaling(c, f);
       const subject: Subject = t.subject.kind === "geometry" ? { ...t.subject, points: t.subject.points.map((p) => applyX(x, p)) } : t.subject;

@@ -4,9 +4,9 @@ The seed record of 2026-10-11 has been split into one file per decision under `d
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](adr/0001-kernel.md) | Geometry kernel: pure-Rust half-edge B-rep with hole loops, sketch + object tiers, compiled to WASM, robustness machinery first | Accepted; lane 1 built the data model, validator, transactions, extrude, push/pull "extend", tests; day-1 spike passed with nothing dropped; lane 2 the kernel core; lane 3 face ids, erase, draw-on-anything, annotations and the inference crate (own BVH) |
+| [0001](adr/0001-kernel.md) | Geometry kernel: pure-Rust half-edge B-rep with hole loops, sketch + object tiers, compiled to WASM, robustness machinery first | Accepted; lane 1 built the data model, validator, transactions, extrude, push/pull "extend", tests; day-1 spike passed with nothing dropped; lane 2 the kernel core; lane 3 face ids, erase, draw-on-anything, annotations and the inference crate (own BVH); lane 4 transforms, copies, arrays, partial moves, severance, plane snapping, offsets (cavalier_contours) and Follow Me |
 | [0002](adr/0002-formats.md) | File formats: open `.shz`, `.skp` via npm `openskp` (MIT), watertight STL/3MF/GLB/DXF/SVG | Accepted; STL and 3MF exporters exist; `.skp` export pending the attorney read |
-| [0003](adr/0003-ui-shell.md) | UI shell: exactly the approved mock, SketchUp-2017 keys, our glyphs and inference colours, Tauri 2 + Vite + React + three.js | Accepted; shell built in lane 1; navigation, selection, inference, VCB grammar and the draw / push / tape tools in lane 3 |
+| [0003](adr/0003-ui-shell.md) | UI shell: exactly the approved mock, SketchUp-2017 keys, our glyphs and inference colours, Tauri 2 + Vite + React + three.js | Accepted; shell built in lane 1; navigation, selection, inference, VCB grammar and the draw / push / tape tools in lane 3; Move, Rotate, Scale, Offset, Follow Me, the dev autosave and friendly names in lane 4 |
 | [0004](adr/0004-credits.md) | Credits and render service: no accounts, device keys, Stripe packs, server-side keys only | Accepted; not started (credit-store lane) |
 
 New decisions get the next number (`docs/adr/0005-*.md`) with Status, Context, Decision, Consequences.
@@ -26,6 +26,7 @@ New decisions get the next number (`docs/adr/0005-*.md`) with Status, Context, D
 | threemf | 0.8.0 (0BSD; zip 8 + zlib-rs, pure Rust) | export | builds |
 | wasm-bindgen | 0.2.129 | wasm-api | builds |
 | proptest 1.12 / arbitrary 1.5 | dev / feature `arbitrary` | kernel tests, fuzz harness | dev-only |
+| cavalier_contours | 0.9.0 (MIT OR Apache-2.0, added in lane 4) | kernel::offset | builds |
 
 Findings that change how we work (details in `docs/DEVELOPMENT.md`):
 

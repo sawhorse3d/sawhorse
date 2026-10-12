@@ -1,6 +1,6 @@
 # ADR-0003: UI shell
 
-- Status: Accepted, 2026-10-11. Mock approved by the maintainer: "mock looks great". Lane 3 (feel) implemented, 2026-10-11.
+- Status: Accepted, 2026-10-11. Mock approved by the maintainer: "mock looks great". Lane 3 (feel) and lane 4 (transforms) implemented, 2026-10-11.
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed; approved mock `docs/mock/sawhorse-mock.html`
 
@@ -36,3 +36,22 @@ People who already model furniture have SketchUp in their hands: the keys, the p
 - Inference colours: the mock's four plus intersection magenta, centre blue, parallel / perpendicular indigo, from-point grey, guide tan, grid sage, axes red / green / blue (`src/lib/inferenceStyle.ts`, tokens in `src/styles/tokens.css`, light and dark). The legend keeps the mock's four.
 - Not yet: Move, Rotate, Scale, Offset, Follow Me, Paint say "arrives in a later lane". The Outliner, Tags and Cut list panes still carry the mock's example content (lane 5 and the cut-list lane).
 - User-facing summary: `docs/USER-GUIDE.md`.
+
+## Implementation status (lane 4, transforms)
+
+- Built: Move (M), Rotate (Q), Scale (S), Offset (F), Follow Me (W), all through the one tool framework, unit-tested against the fake host and driven end to end in Playwright. Details for users: `docs/USER-GUIDE.md`.
+- Previews:
+  - Move and Rotate draw the moving edges (green while copying).
+  - Rotate draws the protractor: a ring with 15 degree ticks in the axis colour, the swept arc and the angle.
+  - Scale draws the bounding box and its grips (small squares, filled under the cursor, the fixed point round in the warning colour). Grips are labels pinned to world points, so they need no new overlay type.
+  - Offset shows the kernel's own result for the current distance.
+  - Follow Me shows the path in the accent colour.
+- Keys:
+  - A tap of Ctrl copies (Move, Rotate) or switches Scale to about-centre. A tap of Alt switches Move's autofold.
+  - Arrow keys lock axes (Move), the protractor plane (Rotate) or nothing.
+  - Taps and arrows wait for clicks still on their way, so a fast "click, then arrow" acts on that click.
+- Status line:
+  - Names solids "solid N" by the kernel's display number and faces "face N" by persistent id; kernel refusals are reworded before they show.
+  - Can carry actions: the dev autosave's "Restore unsaved work?" with Restore / Discard (also Edit > Restore Unsaved Work).
+- Rect: the preview labels each side's length and direction ("12 in −red") with ticks at the first corner, and the message states them.
+- Not yet: Paint says "arrives in a later lane". The Outliner, Tags and Cut list panes still carry the mock's example content (lane 5 and the cut-list lane).

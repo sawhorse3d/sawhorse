@@ -540,7 +540,10 @@ export function App() {
         // A tap of Ctrl or Alt alone (Move / Rotate copy, Move autofold). Alt must not
         // focus the browser's menu bar.
         if (e.key === "Alt") e.preventDefault();
-        activeRef.current?.onModifier(e.key === "Control" ? "ctrl" : "alt");
+        // After any click or tool key still on its way: the tap belongs to the tool that is
+        // active by then ("s" then Ctrl scales about the centre).
+        const mod = e.key === "Control" ? "ctrl" : "alt";
+        void afterPointer(() => activeRef.current?.onModifier(mod));
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;

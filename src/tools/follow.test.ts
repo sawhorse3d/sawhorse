@@ -46,6 +46,7 @@ describe("Follow Me", () => {
     expect(op).toMatchObject({ op: "follow_me", profile: { of: "face", object: 1, face: 9 }, closed: true, path: topRing });
     expect(h.statuses.at(-1)?.text).toContain("cut from");
     expect(h.sel).toEqual([]);
+    expect(t.view().overlay).toEqual([]);
   });
 
   it("refuses a click with no path, or on nothing, typed", async () => {
