@@ -4,6 +4,11 @@
 //! library. Faces stay n-gons where OBJ can say so (no holes); faces with holes are written
 //! as their triangles, since OBJ has no hole loops. Imported non-solid meshes come after
 //! the solids, their loose lines as `l` elements.
+//!
+//! Lane 10: faces that show another material than the rest of their solid (face paint,
+//! paint on the groups around it) get their own `usemtl`; faces whose material has a
+//! texture the model holds get `vt` texture coordinates laid out as the view draws them,
+//! and the MTL names the image file (`map_Kd lib-white-oak.png`) the app saves beside it.
 
 use std::fmt::Write as _;
 
@@ -112,8 +117,13 @@ pub fn document(model: &Model, scope: &Scope, mtl_file: &str) -> Result<String, 
     if solids.is_empty() && loose.is_empty() {
         return Err(ExportError::Empty);
     }
-    let painted = solids.iter().any(|(_, o)| o.material().is_some())
-        || loose.iter().any(|(_, m)| m.material.is_some());
+    let painted = solids.iter().any(|(id, o)| {
+        o.brep()
+            .persistent_face_ids()
+            .into_iter()
+            .any(|f| model.face_material(*id, f).is_some())
+    }) || loose.iter().any(|(_, m)| m.material.is_some());
+    let mut vt_base = 0;
     let mut out = String::new();
     out.push_str("# Sawhorse OBJ; units mm; Z up\n");
     if painted {
@@ -133,12 +143,64 @@ pub fn document(model: &Model, scope: &Scope, mtl_file: &str) -> Result<String, 
     for (id, o) in &solids {
         let name = unique(object_name(model, *id));
         let _ = writeln!(out, "o {name}\ng {name}");
-        if let Some(m) = o.material() {
-            let _ = writeln!(out, "usemtl {}", clean_name(m));
+        let ids = o.brep().persistent_face_ids();
+        let mats: Vec<Option<&str>> = ids.iter().map(|&f| model.face_material(*id, f)).collect();
+        let textured = ids.iter().any(|&f| model.face_texture(*id, f).is_some());
+        // As before lane 10 when every face shows the solid's own material and none is
+        // textured: one usemtl for the whole object.
+        if !textured && mats.iter().all(|m| *m == o.material()) {
+            if let Some(m) = o.material() {
+                let _ = writeln!(out, "usemtl {}", clean_name(m));
+            }
+            let (points, f) = solid_faces(o);
+            vertices(&mut out, &points);
+            faces(&mut out, &points, &f, base)?;
+            base += points.len();
+            continue;
         }
         let (points, f) = solid_faces(o);
         vertices(&mut out, &points);
-        faces(&mut out, &points, &f, base)?;
+        let mut current: Option<Option<&str>> = None;
+        for (k, face) in f.iter().enumerate() {
+            if current != Some(mats[k]) {
+                let _ = writeln!(
+                    out,
+                    "usemtl {}",
+                    mats[k].map_or("default".to_string(), clean_name)
+                );
+                current = Some(mats[k]);
+            }
+            match model.face_texture(*id, ids[k]) {
+                Some(t) => {
+                    // One vt per point of this face (its own texture coordinates).
+                    let pts: Vec<usize> = std::iter::once(&face.0)
+                        .chain(&face.1)
+                        .flatten()
+                        .copied()
+                        .collect();
+                    let mut vt_of = std::collections::BTreeMap::new();
+                    for &i in &pts {
+                        if let std::collections::btree_map::Entry::Vacant(e) = vt_of.entry(i) {
+                            let [u, v] = t.uv(points[i]);
+                            let _ = writeln!(out, "vt {u} {v}");
+                            vt_base += 1;
+                            e.insert(vt_base);
+                        }
+                    }
+                    let mut tmp = String::new();
+                    faces(&mut tmp, &points, std::slice::from_ref(face), 0)?;
+                    for line in tmp.lines() {
+                        out.push('f');
+                        for idx in line.split_whitespace().skip(1) {
+                            let i: usize = idx.parse().unwrap_or(1) - 1;
+                            let _ = write!(out, " {}/{}", base + i + 1, vt_of[&i]);
+                        }
+                        out.push('\n');
+                    }
+                }
+                None => faces(&mut out, &points, std::slice::from_ref(face), base)?,
+            }
+        }
         base += points.len();
     }
     for (_, m) in &loose {
@@ -195,11 +257,24 @@ pub fn mtl(model: &Model) -> String {
             c[2],
             c[3]
         );
-        if let Some(t) = &m.texture {
-            let _ = writeln!(out, "map_Kd {t}");
+        match &m.texture {
+            // An image the model holds: its file name, saved beside the MTL.
+            Some(t) if model.textures().contains_key(t) => {
+                let _ = writeln!(out, "map_Kd {}", texture_file(t));
+            }
+            Some(t) => {
+                let _ = writeln!(out, "map_Kd {t}");
+            }
+            None => {}
         }
     }
     out
+}
+
+/// The file name a texture is saved under next to an OBJ (`assets/lib-oak.png` ->
+/// `lib-oak.png`).
+pub fn texture_file(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -280,6 +355,40 @@ mod tests {
         assert_eq!(last_f, "f 17 18 19 20", "the sheet's quad");
         let lib = mtl(&m);
         assert!(lib.contains("newmtl Oak\nKd 0.7843 0.6275 0.3922\nd 1.0000\nmap_Kd oak.jpg"));
+    }
+
+    #[test]
+    fn painted_faces_and_textures() {
+        let mut m = fixtures::box_model();
+        for op in crate::library::ops(crate::library::find("White oak").unwrap(), None) {
+            m.apply(&op).unwrap();
+        }
+        m.apply(&Op::Paint {
+            target: sawhorse_kernel::looks::PaintTarget::Faces {
+                object: 1,
+                faces: vec![2],
+            },
+            material: Some("White oak".into()),
+        })
+        .unwrap();
+        let text = document(&m, &Scope::visible(&m), "m.mtl").unwrap();
+        assert!(text.contains("mtllib m.mtl\n"));
+        let usemtl: Vec<&str> = text.lines().filter(|l| l.starts_with("usemtl")).collect();
+        assert_eq!(
+            usemtl,
+            ["usemtl default", "usemtl White_oak", "usemtl default"]
+        );
+        assert_eq!(text.lines().filter(|l| l.starts_with("vt ")).count(), 4);
+        assert!(
+            text.lines().any(|l| l.starts_with("f ") && l.contains('/')),
+            "the top refers to its texture coordinates"
+        );
+        let lib = mtl(&m);
+        assert!(lib.contains("map_Kd lib-white-oak.png"), "{lib}");
+        assert_eq!(
+            texture_file("assets/lib-white-oak.png"),
+            "lib-white-oak.png"
+        );
     }
 
     #[test]

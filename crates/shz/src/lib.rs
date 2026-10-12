@@ -8,7 +8,7 @@
 //! | `scene.json` | format, version, units, and the whole model as plain data (`sawhorse_kernel::snapshot`): sketches, solids as exact f64 B-reps with persistent face ids, imported meshes, groups, tags, materials, scenes, guides, dimensions |
 //! | `geometry.glb` | every solid and mesh as glTF 2.0 (Y up, metres), so any glTF viewer can show a `.shz`; also the fallback geometry for objects a writer left without a B-rep |
 //! | `thumbnail.png` | a picture of the model (optional) |
-//! | `assets/` | texture images (none yet: textures are kept as file-name references) |
+//! | `assets/` | texture images the materials use (lane 10), PNG or JPEG, one entry per image, named by `scene.json`'s `textures[].path` |
 //!
 //! Reading validates everything like an edit: a file that does not validate is refused
 //! with a plain message, never patched up.
@@ -119,12 +119,22 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
         thumbnail: opts.thumbnail_png.as_ref().map(|_| "thumbnail.png".into()),
         model: model.snapshot(),
     };
+    // Texture images go into their own entries (`assets/...`), not into scene.json.
+    let mut scene = scene;
+    let images: Vec<(String, Vec<u8>)> = scene
+        .model
+        .textures
+        .iter_mut()
+        .map(|t| (t.path.clone(), std::mem::take(&mut t.data)))
+        .collect();
     let json = serde_json::to_vec_pretty(&scene).map_err(|e| ShzError::Write(e.to_string()))?;
     let all = sawhorse_export::Scope {
         objects: model.object_ids(),
         meshes: model.meshes().into_iter().map(|(id, _)| id).collect(),
     };
-    let glb = match sawhorse_export::gltf::document(model, &all) {
+    // The images are their own entries: geometry.glb keeps the texture names only.
+    let glb_opts = sawhorse_export::gltf::GlbOptions { textures: false };
+    let glb = match sawhorse_export::gltf::document_with(model, &all, glb_opts) {
         Ok(b) => b,
         Err(sawhorse_export::ExportError::Empty) => sawhorse_export::gltf::glb(empty_gltf(), &[]),
         Err(e) => return Err(ShzError::Write(e.to_string())),
@@ -144,6 +154,11 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
         zw.write_all(png).map_err(io)?;
     }
     zw.add_directory("assets/", stored).map_err(w)?;
+    // Already compressed images are stored as they are.
+    for (path, data) in &images {
+        zw.start_file(path.as_str(), stored).map_err(w)?;
+        zw.write_all(data).map_err(io)?;
+    }
     Ok(zw.finish().map_err(w)?.into_inner())
 }
 
@@ -207,6 +222,26 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
         )));
     }
     let mut notes = Vec::new();
+    let mut scene = scene;
+    // Texture images come from their entries; a missing one leaves its materials showing
+    // their colour (the path stays as a file-name reference).
+    let mut kept = Vec::new();
+    for mut t in std::mem::take(&mut scene.model.textures) {
+        if t.data.is_empty() {
+            match entry(&mut zip, &t.path)? {
+                Some(d) if !d.is_empty() => t.data = d,
+                _ => {
+                    notes.push(format!(
+                        "texture {} is missing from the file; its materials show their colour",
+                        t.path
+                    ));
+                    continue;
+                }
+            }
+        }
+        kept.push(t);
+    }
+    scene.model.textures = kept;
     // Objects saved without an exact B-rep (and not derived from a component definition)
     // come back from geometry.glb: in place, when the mesh rebuilds into exactly one solid
     // (so they keep their id, group and order); otherwise imported afterwards.
@@ -298,6 +333,10 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
         Some(t) => entry(&mut zip, t)?,
         None => None,
     };
+    // The opened scene describes the file: texture bytes stay in the model, not here.
+    for t in &mut scene.model.textures {
+        t.data.clear();
+    }
     Ok(Opened {
         document,
         scene,
@@ -571,6 +610,51 @@ mod tests {
         fresh["cut_list"] = serde_json::json!({"future": true});
         fresh["objects"][0]["future_field"] = serde_json::json!(1);
         assert!(read(&rezip(&fresh)).is_ok());
+    }
+
+    /// The painted golden plus a library texture: paint, face positions, styles, shadows and
+    /// texture images survive a save and an open; images are their own `assets/` entries.
+    #[test]
+    fn materials_textures_styles_and_shadows_round_trip() {
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../../kernel/tests/golden/painted.json")).unwrap();
+        let ops: Vec<Op> = serde_json::from_value(golden["ops"].clone()).unwrap();
+        let mut d = Document::replay(&ops).unwrap();
+        let walnut = sawhorse_export::library::find("Walnut").unwrap();
+        for op in sawhorse_export::library::ops(walnut, None) {
+            d.apply(&op).unwrap();
+        }
+        let bytes = write(d.model(), &SaveOptions::default()).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes[..])).unwrap();
+        let png = entry(&mut zip, "assets/lib-walnut.png").unwrap().unwrap();
+        assert_eq!(
+            sawhorse_kernel::looks::image_size(&png).map(|x| x.0),
+            Some("image/png")
+        );
+        assert!(entry(&mut zip, "assets/oak.png").unwrap().is_some());
+        let json = String::from_utf8(entry(&mut zip, "scene.json").unwrap().unwrap()).unwrap();
+        assert!(
+            !json.contains("\"data\""),
+            "image bytes stay out of scene.json"
+        );
+        assert!(
+            json.contains("\"stock\"") && json.contains("\"style\"") && json.contains("\"uv\"")
+        );
+        let o = read(&bytes).unwrap();
+        assert_eq!(o.document.hash(), d.hash());
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        // A file whose image entry went missing still opens: the materials show their colour.
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in ["mimetype", "scene.json", "geometry.glb"] {
+            zw.start_file(name, SimpleFileOptions::default()).unwrap();
+            zw.write_all(&entry(&mut zip, name).unwrap().unwrap())
+                .unwrap();
+        }
+        let partial = zw.finish().unwrap().into_inner();
+        let o = read(&partial).unwrap();
+        assert!(o.document.model().textures().is_empty());
+        assert_eq!(o.notes.len(), 2, "{:?}", o.notes);
+        assert!(o.notes[0].contains("missing"));
     }
 
     #[test]

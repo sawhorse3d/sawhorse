@@ -51,7 +51,7 @@ import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { autosaveEnabled, clearAutosave, describeAutosave, loadAutosave, saveAutosave, worthRestoring, type Autosave } from "./lib/autosave";
 import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, readBrowserFile, saveFile, stem, type FileHandle, type PickedFile } from "./io/files";
-import { EXPORTS, MTL_TYPE, type ExportChoice } from "./io/exports";
+import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
 import { NameDialog, type NameRequest } from "./components/NameDialog";
@@ -662,6 +662,14 @@ export function App() {
         if (!res) return;
         if (c.id === "obj" && (live.current.scene?.state.materials.length ?? 0) > 0) {
           await saveFile(`${base}.mtl`, await k.exportFile("mtl", {}), MTL_TYPE);
+          // The texture images the MTL names (map_Kd <file>), saved beside it (lane 10).
+          const st = live.current.scene?.state;
+          const used = new Set((st?.materials ?? []).filter((m) => m.held && m.texture).map((m) => m.texture as string));
+          for (const t of st?.textures ?? []) {
+            if (!used.has(t.path)) continue;
+            const file = t.path.split("/").pop() ?? t.path;
+            await saveFile(file, await k.texture(t.path), textureType(t.mime));
+          }
         }
         setMessage({ text: `Exported ${res.name}: ${c.hint}.`, error: false });
       } catch (e) {

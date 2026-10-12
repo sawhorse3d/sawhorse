@@ -5,6 +5,12 @@
 //! below 2^24; glTF only allows integer types for indices); materials as metallic-roughness
 //! base colours. Node `extras.sawhorse` carries the object id, tag, group names, whether
 //! it is a solid, and for imported meshes the note saying why not.
+//!
+//! Lane 10: a solid whose faces show different materials (face paint, or paint on the groups
+//! and components around it) gets one primitive per material; a material whose texture the
+//! model holds is written with its image embedded (`images`, `textures`, a repeating
+//! sampler) and `TEXCOORD_0` on its primitives, laid out exactly as the view draws it.
+//! The `geometry.glb` inside a `.shz` leaves the images out (they are in `assets/`).
 
 use glam::{DVec2, DVec3};
 use sawhorse_kernel::Model;
@@ -24,13 +30,22 @@ pub fn to_y_up(p: DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, (-p.y) as f32]
 }
 
-/// Flat-shaded triangles of one thing: per-vertex positions (Y up), normals and face ids.
+/// Flat-shaded triangles of one thing: per-vertex positions (Y up), normals, face ids and
+/// (textured) texture coordinates.
 #[derive(Default)]
 struct Prim {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     face_ids: Vec<f32>,
+    uvs: Vec<[f32; 2]>,
     indices: Vec<u32>,
+}
+
+/// What to write beyond geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlbOptions {
+    /// Embed the texture images materials use (and texture coordinates).
+    pub textures: bool,
 }
 
 impl Prim {
@@ -41,6 +56,7 @@ impl Prim {
         normal: DVec3,
         plane_local: impl Fn(DVec3) -> DVec2,
         id: u64,
+        uv: Option<&dyn Fn(DVec3) -> [f64; 2]>,
     ) -> Result<(), ExportError> {
         let outer: Vec<DVec2> = rings[0].iter().map(|&p| plane_local(p)).collect();
         let holes: Vec<Vec<DVec2>> = rings[1..]
@@ -55,6 +71,10 @@ impl Prim {
             self.positions.push(to_y_up(*p));
             self.normals.push(n);
             self.face_ids.push(id as f32);
+            if let Some(f) = uv {
+                let [u, v] = f(*p);
+                self.uvs.push([u as f32, v as f32]);
+            }
         }
         for t in tris {
             self.indices.extend(t.map(|k| base + k));
@@ -109,6 +129,31 @@ impl Builder {
         self.accessors.len() - 1
     }
 
+    fn vec2(&mut self, data: &[[f32; 2]]) -> usize {
+        let bytes: Vec<u8> = data
+            .iter()
+            .flatten()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        let view = self.view(&bytes, ARRAY_BUFFER);
+        self.accessors.push(json!({
+            "bufferView": view, "componentType": FLOAT, "count": data.len(), "type": "VEC2"
+        }));
+        self.accessors.len() - 1
+    }
+
+    /// An image's bytes as a buffer view (no target).
+    fn image(&mut self, bytes: &[u8]) -> usize {
+        while !self.bin.len().is_multiple_of(4) {
+            self.bin.push(0);
+        }
+        let offset = self.bin.len();
+        self.bin.extend_from_slice(bytes);
+        self.views
+            .push(json!({ "buffer": 0, "byteOffset": offset, "byteLength": bytes.len() }));
+        self.views.len() - 1
+    }
+
     fn scalar_f32(&mut self, data: &[f32]) -> usize {
         let bytes: Vec<u8> = data.iter().flat_map(|x| x.to_le_bytes()).collect();
         let view = self.view(&bytes, ARRAY_BUFFER);
@@ -157,9 +202,18 @@ pub fn glb(mut doc: Value, bin: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Everything in `scope` as one GLB. Imported meshes are included (glTF is a viewing
-/// format): their node extras say they are not solids, and why.
+/// Everything in `scope` as one GLB, texture images embedded. Imported meshes are included
+/// (glTF is a viewing format): their node extras say they are not solids, and why.
 pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
+    document_with(model, scope, GlbOptions { textures: true })
+}
+
+/// [`document`] with options (a `.shz` leaves the images out of its `geometry.glb`).
+pub fn document_with(
+    model: &Model,
+    scope: &Scope,
+    opts: GlbOptions,
+) -> Result<Vec<u8>, ExportError> {
     let solids = scope.solids(model)?;
     let loose = scope.loose(model)?;
     if solids.is_empty() && loose.is_empty() {
@@ -168,17 +222,35 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
     let mut b = Builder::default();
     let mut materials: Vec<Value> = Vec::new();
     let mut material_index: Vec<String> = Vec::new();
-    let mut material_for = |name: Option<&str>| -> Option<usize> {
+    let mut images: Vec<Value> = Vec::new();
+    let mut textures: Vec<Value> = Vec::new();
+    let mut image_index: Vec<String> = Vec::new();
+    let mut material_for = |b: &mut Builder, name: Option<&str>| -> Option<usize> {
         let name = name?;
         let def = model.materials().get(name)?;
         if let Some(i) = material_index.iter().position(|n| n == name) {
             return Some(i);
         }
         let c = def.color;
+        let image = def
+            .texture
+            .as_deref()
+            .filter(|_| opts.textures)
+            .and_then(|t| model.textures().get(t).map(|img| (t, img)));
+        let factor = if image.is_some() {
+            json!([1.0, 1.0, 1.0, f64::from(c[3]) / 255.0])
+        } else {
+            json!([
+                srgb_to_linear(c[0]),
+                srgb_to_linear(c[1]),
+                srgb_to_linear(c[2]),
+                f64::from(c[3]) / 255.0
+            ])
+        };
         let mut m = json!({
             "name": name,
             "pbrMetallicRoughness": {
-                "baseColorFactor": [srgb_to_linear(c[0]), srgb_to_linear(c[1]), srgb_to_linear(c[2]), f64::from(c[3]) / 255.0],
+                "baseColorFactor": factor,
                 "metallicFactor": 0.0,
                 "roughnessFactor": 0.8
             },
@@ -186,6 +258,19 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
         });
         if c[3] < 255 {
             m["alphaMode"] = json!("BLEND");
+        }
+        if let Some((path, img)) = image {
+            let source = match image_index.iter().position(|p| p == path) {
+                Some(i) => i,
+                None => {
+                    let view = b.image(&img.data);
+                    images.push(json!({ "bufferView": view, "mimeType": img.mime, "name": path }));
+                    textures.push(json!({ "sampler": 0, "source": images.len() - 1 }));
+                    image_index.push(path.to_string());
+                    image_index.len() - 1
+                }
+            };
+            m["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": source });
         }
         if let Some(t) = &def.texture {
             m["extras"] = json!({ "sawhorse": { "texture": t } });
@@ -216,45 +301,74 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
     let mut meshes = Vec::new();
     let mut nodes = Vec::new();
     let mut push =
-        |b: &mut Builder, prim: Prim, name: String, material: Option<usize>, extras: Value| {
-            if prim.indices.is_empty() {
+        |b: &mut Builder, prims: Vec<(Prim, Option<usize>)>, name: String, extras: Value| {
+            let mut out = Vec::new();
+            for (prim, material) in prims {
+                if prim.indices.is_empty() {
+                    continue;
+                }
+                let pos = b.vec3(&prim.positions, true);
+                let nor = b.vec3(&prim.normals, false);
+                let fid = b.scalar_f32(&prim.face_ids);
+                let mut attrs = json!({ "POSITION": pos, "NORMAL": nor, "_FACE_ID": fid });
+                if !prim.uvs.is_empty() && prim.uvs.len() == prim.positions.len() {
+                    attrs["TEXCOORD_0"] = json!(b.vec2(&prim.uvs));
+                }
+                let idx = b.indices(&prim.indices);
+                let mut p = json!({ "attributes": attrs, "indices": idx, "mode": 4 });
+                if let Some(m) = material {
+                    p["material"] = json!(m);
+                }
+                out.push(p);
+            }
+            if out.is_empty() {
                 return;
             }
-            let pos = b.vec3(&prim.positions, true);
-            let nor = b.vec3(&prim.normals, false);
-            let fid = b.scalar_f32(&prim.face_ids);
-            let idx = b.indices(&prim.indices);
-            let mut p = json!({
-                "attributes": { "POSITION": pos, "NORMAL": nor, "_FACE_ID": fid },
-                "indices": idx,
-                "mode": 4
-            });
-            if let Some(m) = material {
-                p["material"] = json!(m);
-            }
-            meshes.push(json!({ "name": name, "primitives": [p] }));
+            meshes.push(json!({ "name": name, "primitives": out }));
             nodes.push(
                 json!({ "name": name, "mesh": meshes.len() - 1, "extras": { "sawhorse": extras } }),
             );
         };
     for (id, o) in &solids {
-        let mut prim = Prim::default();
+        // One primitive per material the faces show, in order of first face.
+        let mut by_material: Vec<(Option<String>, Prim)> = Vec::new();
         let br = o.brep();
         for (_, f) in br.faces() {
             let rings: Vec<Vec<DVec3>> = f.loops().map(|l| br.loop_points(l)).collect();
             let plane = f.plane;
-            prim.face(&rings, plane.normal, |p| plane.to_local(p), f.id)?;
+            let mat = model.face_material(*id, f.id).map(str::to_string);
+            let k = match by_material.iter().position(|(m, _)| *m == mat) {
+                Some(k) => k,
+                None => {
+                    by_material.push((mat, Prim::default()));
+                    by_material.len() - 1
+                }
+            };
+            let tex = if opts.textures {
+                model.face_texture(*id, f.id)
+            } else {
+                None
+            };
+            let uv = tex.as_ref().map(|t| move |p: DVec3| t.uv(p));
+            by_material[k].1.face(
+                &rings,
+                plane.normal,
+                |p| plane.to_local(p),
+                f.id,
+                uv.as_ref().map(|f| f as &dyn Fn(DVec3) -> [f64; 2]),
+            )?;
         }
         let extras = json!({
             "object": id, "solid": true, "tag": o.tag(), "groups": groups_of(*id)
         });
-        push(
-            &mut b,
-            prim,
-            object_name(model, *id),
-            material_for(o.material()),
-            extras,
-        );
+        let prims = by_material
+            .into_iter()
+            .map(|(m, p)| {
+                let mi = material_for(&mut b, m.as_deref());
+                (p, mi)
+            })
+            .collect();
+        push(&mut b, prims, object_name(model, *id), extras);
     }
     for (id, m) in &loose {
         let mut prim = Prim::default();
@@ -267,16 +381,11 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
                 .map(|r| r.iter().map(|&i| m.positions[i as usize]).collect())
                 .collect();
             // A face that will not triangulate is left out of the picture, as in the view.
-            let _ = prim.face(&rings, plane.normal, |p| plane.to_local(p), fi as u64);
+            let _ = prim.face(&rings, plane.normal, |p| plane.to_local(p), fi as u64, None);
         }
         let extras = json!({ "mesh": id, "solid": false, "note": m.note, "tag": m.tag });
-        push(
-            &mut b,
-            prim,
-            m.name.clone(),
-            material_for(m.material.as_deref()),
-            extras,
-        );
+        let mi = material_for(&mut b, m.material.as_deref());
+        push(&mut b, vec![(prim, mi)], m.name.clone(), extras);
     }
     if nodes.is_empty() {
         return Err(ExportError::Empty);
@@ -293,6 +402,13 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
     });
     if !materials.is_empty() {
         doc["materials"] = json!(materials);
+    }
+    if !images.is_empty() {
+        doc["images"] = json!(images);
+        doc["textures"] = json!(textures);
+        // Repeat both ways, linear with mipmaps (as the view draws them).
+        doc["samplers"] =
+            json!([{ "wrapS": 10497, "wrapT": 10497, "magFilter": 9729, "minFilter": 9987 }]);
     }
     Ok(glb(doc, &b.bin))
 }
@@ -379,6 +495,51 @@ mod tests {
             doc["accessors"][prim["indices"].as_u64().unwrap() as usize]["count"],
             36
         );
+    }
+
+    #[test]
+    fn painted_faces_get_primitives_and_textures_are_embedded() {
+        let mut m = fixtures::box_model();
+        for op in crate::library::ops(crate::library::find("Walnut").unwrap(), None) {
+            m.apply(&op).unwrap();
+        }
+        m.apply(&sawhorse_kernel::Op::Paint {
+            target: sawhorse_kernel::looks::PaintTarget::Faces {
+                object: 1,
+                faces: vec![2],
+            },
+            material: Some("Walnut".into()),
+        })
+        .unwrap();
+        let (doc, bin) = {
+            let bytes = document(&m, &Scope::visible(&m)).unwrap();
+            let (d, b) = parse_glb(&bytes).unwrap();
+            (d, b.to_vec())
+        };
+        let prims = doc["meshes"][0]["primitives"].as_array().unwrap();
+        assert_eq!(prims.len(), 2, "the unpainted faces, then the walnut top");
+        assert!(prims[0].get("material").is_none());
+        assert_eq!(doc["materials"][0]["name"], "Walnut");
+        let tex = prims[1]["attributes"]["TEXCOORD_0"].as_u64().unwrap() as usize;
+        assert_eq!(doc["accessors"][tex]["type"], "VEC2");
+        assert_eq!(doc["accessors"][tex]["count"], 4);
+        let uv = floats(&doc, &bin, tex);
+        assert!(uv.iter().all(|x| x.is_finite()));
+        assert_eq!(
+            doc["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"],
+            0
+        );
+        let img = &doc["images"][0];
+        assert_eq!(img["mimeType"], "image/png");
+        let view = &doc["bufferViews"][img["bufferView"].as_u64().unwrap() as usize];
+        let off = view["byteOffset"].as_u64().unwrap() as usize;
+        assert_eq!(&bin[off + 1..off + 4], b"PNG");
+        assert_eq!(doc["samplers"][0]["wrapS"], 10497);
+        // The .shz copy keeps the image out.
+        let bytes = document_with(&m, &Scope::visible(&m), GlbOptions { textures: false }).unwrap();
+        let (d2, _) = parse_glb(&bytes).unwrap();
+        assert!(d2.get("images").is_none());
+        assert!(d2["meshes"][0]["primitives"][1]["attributes"].get("TEXCOORD_0").is_none());
     }
 
     #[test]

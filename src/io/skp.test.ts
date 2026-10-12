@@ -206,4 +206,75 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     for (const s of after.solids) expect(s.max[2]).toBeCloseTo(11 * 0.0254, 9);
     d.free();
   });
+
+  it("faces keep their own materials; texture images, sizes and positions come in (lane 10)", async () => {
+    const { create } = await import("openskp");
+    const { deflateSync } = await import("node:zlib");
+    // A 4 x 2 RGB PNG written here (no fixture).
+    const crcTable = Array.from({ length: 256 }, (_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const crc = (b: Uint8Array) => {
+      let c = 0xffffffff;
+      for (const x of b) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Uint8Array) => {
+      const out = new Uint8Array(12 + data.length);
+      const dv = new DataView(out.buffer);
+      dv.setUint32(0, data.length);
+      out.set(new TextEncoder().encode(type), 4);
+      out.set(data, 8);
+      dv.setUint32(8 + data.length, crc(out.subarray(4, 8 + data.length)));
+      return out;
+    };
+    const ihdr = new Uint8Array(13);
+    new DataView(ihdr.buffer).setUint32(0, 4);
+    new DataView(ihdr.buffer).setUint32(4, 2);
+    ihdr.set([8, 2, 0, 0, 0], 8);
+    const raw = new Uint8Array(2 * (1 + 12)).map((_, i) => (i % 13 === 0 ? 0 : 120 + (i % 7) * 10));
+    const parts = [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", new Uint8Array(deflateSync(raw))), chunk("IEND", new Uint8Array())];
+    const png = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+    let at = 0;
+    for (const x of parts) {
+      png.set(x, at);
+      at += x.length;
+    }
+    const b = create();
+    const oak = b.addTextureMaterial("Oak", png, "oak.png", 6, 12);
+    const red = b.addMaterial("Red", [180, 30, 20]);
+    // A 10 x 4 x 2 in box: the top red, every other face oak.
+    b.addGroup((g) => {
+      const P = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
+      g.addFace([P(0, 0, 0), P(0, 4, 0), P(10, 4, 0), P(10, 0, 0)], { material: oak });
+      g.addFace([P(0, 0, 2), P(10, 0, 2), P(10, 4, 2), P(0, 4, 2)], { material: red });
+      g.addFace([P(0, 0, 0), P(10, 0, 0), P(10, 0, 2), P(0, 0, 2)], { material: oak });
+      g.addFace([P(10, 0, 0), P(10, 4, 0), P(10, 4, 2), P(10, 0, 2)], { material: oak });
+      g.addFace([P(10, 4, 0), P(0, 4, 0), P(0, 4, 2), P(10, 4, 2)], { material: oak });
+      g.addFace([P(0, 4, 0), P(0, 0, 0), P(0, 0, 2), P(0, 4, 2)], { material: oak });
+    }, { name: "Board" });
+    const r = skpToOp(b.toBytes(), "board.skp");
+    if (r.op.op !== "batch") throw new Error(`expected the image batched first, got ${r.op.op}`);
+    const [tex, imp] = r.op.ops;
+    expect(tex).toMatchObject({ op: "add_texture", path: "assets/skp-oak.png", mime: "image/png" });
+    if (imp.op !== "import") throw new Error();
+    const oakDef = (imp.materials ?? []).find((m) => m.name === "Oak")!;
+    expect(oakDef.texture).toBe("assets/skp-oak.png");
+    expect(oakDef.size?.[0]).toBeCloseTo(12 * 0.0254, 9);
+    expect(oakDef.size?.[1]).toBeCloseTo(6 * 0.0254, 9);
+    expect(r.notes.join(" ")).toMatch(/1 texture image imported/);
+    const mod = await kernel();
+    const d = mod.document_new();
+    d.apply_op(JSON.stringify(r.op));
+    const st = JSON.parse(d.state_json());
+    expect(st.stats.objects).toBe(1);
+    const id = st.objects[0];
+    const shows = [1, 2, 3, 4, 5, 6].map((f) => JSON.parse(d.sample(id, f)));
+    expect(shows.filter((m) => m === "Red")).toHaveLength(1);
+    expect(shows.filter((m) => m === "Oak")).toHaveLength(5);
+    expect(st.textures.map((t: { path: string }) => t.path)).toEqual(["assets/skp-oak.png"]);
+    d.free();
+  });
 });

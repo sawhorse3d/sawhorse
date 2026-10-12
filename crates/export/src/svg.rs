@@ -6,6 +6,11 @@
 //!   a BVH of the model's triangles). A parallel view is drawn **to scale** in millimetres
 //!   (`width`/`height` in `mm`, 1 mm on paper = 1 mm in the model), so it prints or imports
 //!   at true size; a perspective view is drawn in pixels.
+//!
+//!   The drawing follows the document's edge style (lane 10): no edges when they are off;
+//!   every edge, front and back, for the wireframe and X-ray face styles; profiles
+//!   (silhouettes and open boundaries) and endpoints in a heavier pen; extensions running
+//!   each edge a little past its ends, like pencil lines.
 //! - [`outline`]: the 2D outline of one face (or sketch region) for laser cutters and CNC,
 //!   in millimetres, lower-left corner at the origin, one closed sub-path per ring with
 //!   `fill-rule="evenodd"` so holes stay holes.
@@ -19,8 +24,11 @@ use sawhorse_kernel::Model;
 
 use crate::{ExportError, MM_PER_M, Scope, dxf::normalised_rings};
 
+/// An edge to draw, with the outward normals of the faces that meet at it (zero: none).
+type DrawEdge = (DVec3, DVec3, [DVec3; 2]);
+
 /// Triangles that hide things, and the edges to draw.
-type Picture = (Vec<[DVec3; 3]>, Vec<(DVec3, DVec3)>);
+type Picture = (Vec<[DVec3; 3]>, Vec<DrawEdge>);
 
 /// The camera of a drawing, as the viewport has it. Metres, Z up.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
@@ -166,8 +174,15 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
         let (pts, ts, _) = crate::solid_triangles(o)?;
         tris.extend(ts.iter().map(|t| t.map(|i| pts[i as usize])));
         let b = o.brep();
-        for (e, _) in b.edges() {
-            edges.push(b.edge_points(e));
+        let normal_of = |he: Option<sawhorse_kernel::ids::HalfEdgeId>| {
+            he.and_then(|h| b.half_edge(h))
+                .and_then(|h| b.lp(h.lp))
+                .and_then(|l| b.face(l.face))
+                .map_or(DVec3::ZERO, |f| f.plane.normal)
+        };
+        for (e, edge) in b.edges() {
+            let (p, q) = b.edge_points(e);
+            edges.push((p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)]));
         }
     }
     for (_, m) in scope.loose(model)? {
@@ -178,13 +193,21 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
             for k in 0..r.len() {
                 let (a, b) = (r[k], r[(k + 1) % r.len()]);
                 if seen.insert((a.min(b), a.max(b))) {
-                    edges.push((m.positions[a as usize], m.positions[b as usize]));
+                    edges.push((
+                        m.positions[a as usize],
+                        m.positions[b as usize],
+                        [DVec3::ZERO; 2],
+                    ));
                 }
             }
         }
         for l in &m.lines {
             if seen.insert((l[0].min(l[1]), l[0].max(l[1]))) {
-                edges.push((m.positions[l[0] as usize], m.positions[l[1] as usize]));
+                edges.push((
+                    m.positions[l[0] as usize],
+                    m.positions[l[1] as usize],
+                    [DVec3::ZERO; 2],
+                ));
             }
         }
     }
@@ -195,7 +218,7 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
         let plane = s.plane();
         for (_, [a, b]) in s.edges() {
             if let (Some(p), Some(q)) = (s.vertex(a), s.vertex(b)) {
-                edges.push((plane.to_world(p), plane.to_world(q)));
+                edges.push((plane.to_world(p), plane.to_world(q), [DVec3::ZERO; 2]));
             }
         }
     }
@@ -206,9 +229,12 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
 pub fn view(model: &Model, scope: &Scope, spec: &ViewSpec) -> Result<String, ExportError> {
     let cam = Camera::new(*spec)?;
     let (tris, edges) = gather(model, scope)?;
-    if edges.is_empty() {
+    let style = model.style().cloned().unwrap_or_default();
+    if edges.is_empty() || !style.edges.edges {
         return Err(ExportError::Empty);
     }
+    use sawhorse_kernel::looks::FaceStyle;
+    let see_through = matches!(style.face, FaceStyle::Wireframe | FaceStyle::XRay);
     let boxes: Vec<Aabb> = tris.iter().map(|t| Aabb::of(t)).collect();
     let bvh = Bvh::build(&boxes);
     let size = boxes
@@ -220,6 +246,9 @@ pub fn view(model: &Model, scope: &Scope, spec: &ViewSpec) -> Result<String, Exp
         .max(1e-3);
     let eps = size * 1e-7 + 1e-9;
     let visible = |p: DVec3| -> bool {
+        if see_through {
+            return true;
+        }
         let dir = cam.to_eye(p);
         let o = p + dir * eps;
         let t_max = if spec.ortho {
@@ -242,38 +271,80 @@ pub fn view(model: &Model, scope: &Scope, spec: &ViewSpec) -> Result<String, Exp
     let unit = if spec.ortho { "mm" } else { "px" };
     let stroke = if spec.ortho { 0.25 } else { 1.0 };
     let mut paths = String::new();
+    let mut heavy = String::new();
     let mut runs = 0usize;
-    for (a, b) in edges {
+    // Extensions and endpoints in output units (millimetres on paper, or pixels).
+    let ext = if style.edges.extensions {
+        3.0 * stroke * 4.0
+    } else {
+        0.0
+    };
+    let tip = 4.0 * stroke * 4.0;
+    for (a, b, n) in edges {
         let (Some((pa, _)), Some((pb, _))) = (cam.project(a), cam.project(b)) else {
             continue;
         };
+        // A profile: one face turns towards the eye and the other away, or only one face.
+        let profile = style.edges.profiles && {
+            let (h1, h2) = (n[0] != DVec3::ZERO, n[1] != DVec3::ZERO);
+            if h1 != h2 {
+                true
+            } else if h1 {
+                let v = cam.to_eye(a.lerp(b, 0.5));
+                let (d1, d2) = (n[0].dot(v), n[1].dot(v));
+                (d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)
+            } else {
+                false
+            }
+        };
+        let dir2 = (pb - pa).normalize_or_zero();
         // Samples every ~2 output units (at least both ends), capped.
-        let n = ((pa.distance(pb) / 2.0).ceil() as usize).clamp(1, 400);
-        let mut run: Option<DVec2> = None;
+        let steps = ((pa.distance(pb) / 2.0).ceil() as usize).clamp(1, 400);
+        let mut run: Option<(DVec2, bool)> = None;
         let mut last = pa;
-        for k in 0..=n {
-            let t = k as f64 / n as f64;
+        let mut emit = |s: DVec2, from_start: bool, e: DVec2, to_end: bool, paths: &mut String| {
+            if s.distance(e) <= 1e-9 {
+                return;
+            }
+            let s2 = if from_start { s - dir2 * ext } else { s };
+            let e2 = if to_end { e + dir2 * ext } else { e };
+            let out = if profile { &mut heavy } else { &mut *paths };
+            let _ = write!(out, "M{:.3} {:.3}L{:.3} {:.3}", s2.x, s2.y, e2.x, e2.y);
+            if style.edges.endpoints {
+                let l = tip.min(s.distance(e) / 3.0);
+                if from_start {
+                    let q = s + dir2 * l;
+                    let _ = write!(heavy, "M{:.3} {:.3}L{:.3} {:.3}", s.x, s.y, q.x, q.y);
+                }
+                if to_end {
+                    let q = e - dir2 * l;
+                    let _ = write!(heavy, "M{:.3} {:.3}L{:.3} {:.3}", q.x, q.y, e.x, e.y);
+                }
+            }
+        };
+        for k in 0..=steps {
+            let t = k as f64 / steps as f64;
             let p = a.lerp(b, t);
             let Some((q, _)) = cam.project(p) else {
                 continue;
             };
             if visible(p) {
                 if run.is_none() {
-                    run = Some(q);
+                    run = Some((q, k == 0));
                 }
-            } else if let Some(s) = run.take()
-                && s.distance(last) > 1e-9
-            {
-                let _ = write!(paths, "M{:.3} {:.3}L{:.3} {:.3}", s.x, s.y, last.x, last.y);
-                runs += 1;
+            } else if let Some((s, from_start)) = run.take() {
+                if s.distance(last) > 1e-9 {
+                    runs += 1;
+                }
+                emit(s, from_start, last, false, &mut paths);
             }
             last = q;
         }
-        if let Some(s) = run
-            && s.distance(last) > 1e-9
-        {
-            let _ = write!(paths, "M{:.3} {:.3}L{:.3} {:.3}", s.x, s.y, last.x, last.y);
-            runs += 1;
+        if let Some((s, from_start)) = run {
+            if s.distance(last) > 1e-9 {
+                runs += 1;
+            }
+            emit(s, from_start, last, true, &mut paths);
         }
     }
     let mut out = String::new();
@@ -298,6 +369,13 @@ pub fn view(model: &Model, scope: &Scope, spec: &ViewSpec) -> Result<String, Exp
         out,
         r##"  <path d="{paths}" fill="none" stroke="#000" stroke-width="{stroke}" stroke-linecap="round"/>"##
     );
+    if !heavy.is_empty() {
+        let _ = writeln!(
+            out,
+            r##"  <path class="profiles" d="{heavy}" fill="none" stroke="#000" stroke-width="{w}" stroke-linecap="round"/>"##,
+            w = stroke * 2.5
+        );
+    }
     out.push_str("</svg>\n");
     Ok(out)
 }
@@ -435,6 +513,83 @@ mod tests {
             "hole at 100 mm, y flipped: {svg}"
         );
         assert!(outline(&[]).is_err());
+    }
+
+    #[test]
+    fn the_edge_style_shapes_the_drawing() {
+        use sawhorse_kernel::looks::{EdgeStyle, FaceStyle, Style};
+        let mut m = fixtures::box_model();
+        let iso = ViewSpec {
+            eye: [1.0, -1.0, 1.0],
+            target: [0.05, 0.1, 0.025],
+            up: [0.0, 0.0, 1.0],
+            ortho: true,
+            fov: 35.0,
+            half_height: 0.2,
+            width: 800.0,
+            height: 600.0,
+        };
+        let plain = view(&m, &Scope::visible(&m), &iso).unwrap();
+        assert!(!plain.contains("profiles"));
+        let set = |m: &mut Model, s: Style| {
+            m.apply(&sawhorse_kernel::Op::SetStyle { style: Some(s) })
+                .unwrap();
+        };
+        // Profiles: the silhouette goes in the heavy pen; the three back edges stay hidden.
+        set(
+            &mut m,
+            Style {
+                edges: EdgeStyle {
+                    profiles: true,
+                    ..EdgeStyle::default()
+                },
+                ..Style::default()
+            },
+        );
+        let prof = view(&m, &Scope::visible(&m), &iso).unwrap();
+        let heavy = prof.lines().find(|l| l.contains("profiles")).unwrap();
+        assert_eq!(
+            heavy.matches('M').count(),
+            6,
+            "the six silhouette edges: {heavy}"
+        );
+        // X-ray: the back edges come through too.
+        set(
+            &mut m,
+            Style {
+                face: FaceStyle::XRay,
+                ..Style::default()
+            },
+        );
+        let xray = view(&m, &Scope::visible(&m), &iso).unwrap();
+        assert_eq!(segments(&xray), 12, "every edge of the box");
+        assert_eq!(segments(&plain), 9);
+        // Extensions run past the ends; endpoints add heavy ticks; edges off draw nothing.
+        set(
+            &mut m,
+            Style {
+                edges: EdgeStyle {
+                    extensions: true,
+                    endpoints: true,
+                    ..EdgeStyle::default()
+                },
+                ..Style::default()
+            },
+        );
+        let pencil = view(&m, &Scope::visible(&m), &iso).unwrap();
+        assert!(pencil.contains("profiles"), "endpoints in the heavy pen");
+        assert_ne!(pencil, plain);
+        set(
+            &mut m,
+            Style {
+                edges: EdgeStyle {
+                    edges: false,
+                    ..EdgeStyle::default()
+                },
+                ..Style::default()
+            },
+        );
+        assert_eq!(view(&m, &Scope::visible(&m), &iso), Err(ExportError::Empty));
     }
 
     #[test]

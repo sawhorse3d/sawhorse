@@ -14,6 +14,13 @@
 // a placement's layer becomes its tag.
 //
 // Units: SketchUp stores inches, Z up. The kernel is metres, Z up. Nothing else changes.
+//
+// Materials (lane 10): every face keeps its own material (a face without one takes the
+// placement's, as SketchUp draws it); a material's texture image comes in (PNG or JPEG, as
+// an `add_texture` op batched before the import) with its size in inches; a face's texture
+// position (SketchUp's `uvTransform`, or the default projection) comes in as the affine
+// mapping it gives in world metres, which the kernel fits to a scale, a rotation and an
+// offset (skew and projected textures are dropped, with a note).
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
 import type { ImportDefinition, ImportItem, ImportNode, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
 
@@ -99,6 +106,8 @@ interface Ctx {
   items: ImportItem[];
   notes: Set<string>;
   usedMaterials: Set<string>;
+  /** Material name -> its texture image as it comes into the model (lane 10). */
+  textures: Map<string, { path: string; mime: string; bytes: Uint8Array }>;
   usedTags: Set<string>;
   hiddenTags: Set<string>;
   summary: SkpSummary;
@@ -141,6 +150,8 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   };
   const mirrored = det3(m) < 0;
   const faces: number[][][] = [];
+  const faceMaterials: (string | null)[] = [];
+  const faceUvs: ([number[], number[]] | null)[] = [];
   const used = new Set<number>();
   const paint = new Map<string, number>();
   const loopVerts = (loop: Face["loops"][number]): number[] => {
@@ -172,8 +183,14 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
     });
     if (idx[0].length < 3) continue;
     faces.push(idx);
-    const mat = materialName(ctx, f.materialId ?? opts.inherited ?? null);
-    if (mat) bump(paint, mat);
+    const matId = f.materialId ?? opts.inherited ?? null;
+    const mat = materialName(ctx, matId);
+    if (mat) {
+      bump(paint, mat);
+      ctx.usedMaterials.add(mat);
+    }
+    faceMaterials.push(mat);
+    faceUvs.push(mat ? faceUv(ctx, f, matId, outerPts, m) : null);
     ctx.summary.faces++;
   }
   const lines: [number, number][] = [];
@@ -187,10 +204,11 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   if (!faces.length && !lines.length) return null;
   let material: string | null = null;
   if (paint.size) {
+    // The solid's own material is the one on most faces; the others are face paint.
     material = [...paint.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))[0][0];
     ctx.usedMaterials.add(material);
-    if (paint.size > 1) ctx.notes.add(`${name}: faces painted with ${paint.size} materials; the object takes the most used (${material})`);
   }
+  const perFace = faceMaterials.some((x) => x !== material) || faceUvs.some((x) => x !== null);
   if (opts.tag) ctx.usedTags.add(opts.tag);
   return {
     name,
@@ -201,7 +219,101 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
     faces,
     lines,
     merge_coplanar: false,
+    ...(perFace ? { face_materials: faceMaterials, face_uvs: faceUvs } : {}),
   };
+}
+
+/** Inverse of a row-major 3x3, or null when it is singular. */
+function inv3(a: number[]): number[] | null {
+  const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = a;
+  const c0 = m4 * m8 - m5 * m7;
+  const c1 = m5 * m6 - m3 * m8;
+  const c2 = m3 * m7 - m4 * m6;
+  const det = m0 * c0 + m1 * c1 + m2 * c2;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const k = 1 / det;
+  return [c0 * k, (m2 * m7 - m1 * m8) * k, (m1 * m5 - m2 * m4) * k, c1 * k, (m0 * m8 - m2 * m6) * k, (m2 * m3 - m0 * m5) * k, c2 * k, (m1 * m6 - m0 * m7) * k, (m0 * m4 - m1 * m3) * k];
+}
+
+const dot3 = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: V3): V3 => {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+};
+
+/**
+ * A face's texture mapping as world-metre affine rows (u, v in repeats), from SketchUp's
+ * face basis (xr = Z x n, yr = n x xr; X and +-Y for a level face), the face's uvTransform
+ * (texture space to face plane, row-major) or the default projection, and the material's
+ * tile size in inches. Null for an untextured material, or a projective (4-pin) mapping.
+ */
+function faceUv(ctx: Ctx, f: Face, matId: number | null, outer: V3[], m: Placement): [number[], number[]] | null {
+  if (matId === null) return null;
+  const mat = ctx.model.materialsById.get(matId);
+  const tex = mat?.texture;
+  if (!tex || !texturePath(ctx, mat!.name)) return null;
+  if (f.uvProjected) {
+    ctx.notes.add("projected textures (terrain drapes) came in at their default position");
+    return null;
+  }
+  const n = unit(newell(outer));
+  if (!Number.isFinite(n[0])) return null;
+  const vertical = Math.abs(n[2]) > 1 - 1e-9;
+  const xr: V3 = vertical ? [1, 0, 0] : unit(cross3([0, 0, 1], n));
+  const yr: V3 = vertical ? [0, Math.sign(n[2]) || 1, 0] : cross3(n, xr);
+  const tw = tex.width > 1e-9 ? tex.width : 1;
+  const th = tex.height > 1e-9 ? tex.height : 1;
+  const t = f.uvTransform && f.uvTransform.length >= 9 ? inv3(f.uvTransform.slice(0, 9)) : null;
+  if (f.uvTransform && !t) return null;
+  if (t && (Math.abs(t[2]) > 1e-9 || Math.abs(t[5]) > 1e-9)) {
+    ctx.notes.add("distorted (four-pin) textures came in without their distortion");
+  }
+  // uv of a definition point (inches), affine part of SketchUp's mapping.
+  const uvOf = (p: V3): [number, number] => {
+    const x = dot3(p, xr);
+    const y = dot3(p, yr);
+    if (!t) return [x / tw, y / th];
+    const u = x * t[0] + y * t[3] + t[6];
+    const v = x * t[1] + y * t[4] + t[7];
+    const q = x * t[2] + y * t[5] + t[8];
+    const w = Math.abs(q) > 1e-12 ? q : 1;
+    return [u / w / tw, v / w / th];
+  };
+  // The affine map in world metres, from four points: the face's first corner and steps
+  // along xr, yr and the normal (which changes nothing).
+  const p0 = outer[0];
+  const pts: V3[] = [p0, [p0[0] + xr[0], p0[1] + xr[1], p0[2] + xr[2]], [p0[0] + yr[0], p0[1] + yr[1], p0[2] + yr[2]], [p0[0] + n[0], p0[1] + n[1], p0[2] + n[2]]];
+  const world = pts.map((p) => apply(m, p).map((c) => c * M_PER_IN) as V3);
+  const uvs = pts.map(uvOf);
+  const d = [1, 2, 3].map((i) => [world[i][0] - world[0][0], world[i][1] - world[0][1], world[i][2] - world[0][2]]);
+  const dm = inv3([...d[0], ...d[1], ...d[2]]);
+  if (!dm) return null;
+  const row = (k: 0 | 1): number[] => {
+    const r = [1, 2, 3].map((i) => uvs[i][k] - uvs[0][k]);
+    // g . d_i = r_i  =>  g = D^-1 r (D has the d_i as rows).
+    const g = [0, 1, 2].map((j) => dm[j * 3] * r[0] + dm[j * 3 + 1] * r[1] + dm[j * 3 + 2] * r[2]);
+    return [...g, uvs[0][k] - (g[0] * world[0][0] + g[1] * world[0][1] + g[2] * world[0][2])];
+  };
+  return [row(0), row(1)];
+}
+
+/** The model path of a material's texture image, when it can come in (PNG or JPEG bytes). */
+function texturePath(ctx: Ctx, materialName: string): string | null {
+  return ctx.textures.get(materialName)?.path ?? null;
+}
+
+/** Image type from the first bytes. */
+function sniff(d: Uint8Array): "image/png" | "image/jpeg" | null {
+  if (d.length > 8 && d[0] === 0x89 && d[1] === 0x50 && d[2] === 0x4e && d[3] === 0x47) return "image/png";
+  if (d.length > 3 && d[0] === 0xff && d[1] === 0xd8) return "image/jpeg";
+  return null;
+}
+
+function base64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 /** A SketchUp placement (inches) as a kernel transform (metres): the 3x3 is unitless, the
@@ -342,6 +454,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     items: [],
     notes: new Set(),
     usedMaterials: new Set(),
+    textures: new Map(),
     usedTags: new Set(),
     hiddenTags: new Set(),
     skipped: new Map(),
@@ -362,6 +475,23 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       scenes: model.pages.length,
     },
   };
+  // Texture images: PNG and JPEG come in, one per material, under a path the kernel takes.
+  const takenPaths = new Set<string>();
+  for (const m of model.materials) {
+    const data = m.texture?.data;
+    const mime = data ? sniff(data) : null;
+    if (!data || !mime) continue;
+    const slug =
+      `skp-${m.name}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 48) || "skp-texture";
+    let path = `assets/${slug}.${mime === "image/png" ? "png" : "jpg"}`;
+    for (let k = 2; takenPaths.has(path); k++) path = `assets/${slug}-${k}.${mime === "image/png" ? "png" : "jpg"}`;
+    takenPaths.add(path);
+    ctx.textures.set(m.name, { path, mime, bytes: data });
+  }
   // Loose geometry drawn at the top level of the model.
   const root = itemOf(ctx, model.root, IDENTITY, stem, {});
   if (root) ctx.items.push(root);
@@ -372,8 +502,13 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     .filter((m) => ctx.usedMaterials.has(m.name))
     .map((m) => {
       const a = m.color.a !== undefined && m.color.a < 255 ? m.color.a : Math.round(255 * (1 - (m.transparency ?? 0)));
-      return { name: m.name, color: [m.color.r, m.color.g, m.color.b, Math.max(0, Math.min(255, a))], texture: m.texture?.filename || null };
+      const held = ctx.textures.get(m.name);
+      const def: MaterialDef = { name: m.name, color: [m.color.r, m.color.g, m.color.b, Math.max(0, Math.min(255, a))], texture: held?.path ?? (m.texture?.filename || null) };
+      // The texture's tile size, inches to metres.
+      if (held && m.texture && m.texture.width > 1e-9 && m.texture.height > 1e-9) def.size = [m.texture.width * M_PER_IN, m.texture.height * M_PER_IN];
+      return def;
     });
+  const images = [...ctx.textures.entries()].filter(([name]) => ctx.usedMaterials.has(name));
   for (const l of model.layers) if (l.hidden && layerTag(l.name)) ctx.hiddenTags.add(l.name.trim());
   const scenes: SceneDef[] = model.pages
     .filter((p) => p.eye && p.target)
@@ -387,14 +522,19 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       hidden_tags: p.hiddenLayers.filter((l) => layerTag(l)),
     }));
   if (model.pages.length > scenes.length) ctx.notes.add(`${model.pages.length - scenes.length} scene(s) without a camera were left out`);
-  if (ctx.summary.textures) ctx.notes.add(`${ctx.summary.textures} textured material(s): colours imported, textures kept as file-name references (not drawn yet)`);
+  if (images.length) ctx.notes.add(`${images.length} texture image${images.length === 1 ? "" : "s"} imported with ${images.length === 1 ? "its" : "their"} sizes and positions`);
+  const kept = ctx.summary.textures - images.length;
+  if (kept > 0) ctx.notes.add(`${kept} textured material(s) whose image is not PNG or JPEG (or is unused): colours imported, the texture kept as a file-name reference`);
   if (ctx.summary.components)
     ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} placed more than once came in as components: editing one copy changes them all`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   const hidden_tags = [...ctx.hiddenTags];
+  const importOp: KernelOp = { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes };
+  // The images go in first, in the same undo step.
+  const op: KernelOp = images.length ? { op: "batch", ops: [...images.map(([, t]): KernelOp => ({ op: "add_texture", path: t.path, mime: t.mime, data: base64(t.bytes) })), importOp] } : importOp;
   return {
-    op: { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes },
+    op,
     notes: [...ctx.notes],
     summary: ctx.summary,
   };
