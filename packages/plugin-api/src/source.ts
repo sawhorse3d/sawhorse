@@ -4,14 +4,24 @@
 // - ES modules only. A module imports "sawhorse" (the API) or another module of the same
 //   plugin by a relative path ("./lib/shelves.js"). Nothing else: no URLs, no packages, no
 //   files outside the plugin folder.
-// - No dynamic `import(...)` and no `importScripts`: everything a plugin runs is in its own
-//   folder and was checked here. (The sandbox also removes importScripts and every way to
-//   turn a string into code, so this is the first of two locks, not the only one.)
+// - No dynamic `import(...)` (nor any other `import.<phase>` form) and no `importScripts`:
+//   everything a plugin runs is in its own folder and was checked here. (The sandbox also
+//   removes importScripts and every way to turn a string into code, and runs under the
+//   app's content security policy, so this is the first of several locks, not the only one.)
 // - Modules may not import each other in a circle (each module becomes a blob URL that
 //   must exist before the modules importing it).
+//
+// Every module is parsed with a real ECMAScript parser (acorn), as a module, exactly the way
+// the browser will read it, and the checks look at the syntax tree. An earlier version
+// scanned the text with comments and strings blanked out; it had to guess whether a `/`
+// started a regular expression or was a division, and a regex placed where it guessed wrong
+// (after `if (x)`, `throw`, `delete`, `export default` ...) hid an `import(...)` from it.
+// A parser does not guess. A module the parser cannot read is refused (it would not load
+// either, or it uses syntax too new to check).
+import { parse } from "acorn";
 
 export interface ImportRef {
-  /** The specifier as written. */
+  /** The specifier, as the module loader reads it (escapes resolved). */
   spec: string;
   /** Where the specifier's text starts and ends in the source (inside the quotes). */
   start: number;
@@ -26,123 +36,26 @@ export interface ModuleScan {
 /** The API module's name. */
 export const API_MODULE = "sawhorse";
 
-const isIdent = (c: string) => /[A-Za-z0-9_$]/.test(c);
+/** A node of acorn's syntax tree, looked at generically. */
+type AstNode = { type: string; start: number; end: number } & Record<string, unknown>;
 
-/**
- * The source with comments blanked out (same length, so positions still match), and with
- * `strings` also the text inside strings, templates and regular expressions (the quotes
- * stay). Regular-expression literals are recognised well enough that a quote or a slash
- * inside one does not start a string or a comment.
- */
-export function maskComments(src: string, strings = false): string {
-  const out = src.split("");
-  let i = 0;
-  let lastSig = "";
-  let lastWord = "";
-  const blank = (a: number, b: number) => {
-    for (let k = a; k < b && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  const templates: number[] = [];
-  /** Template text from `i` to its end or its next `${`. */
-  const templateText = () => {
-    const from = i;
-    while (i < src.length && src[i] !== "`") {
-      if (src[i] === "\\") i += 2;
-      else if (src[i] === "$" && src[i + 1] === "{") {
-        if (strings) blank(from, i);
-        templates.push(0);
-        i += 2;
-        return;
-      } else i++;
+const isNode = (v: unknown): v is AstNode => typeof v === "object" && v !== null && typeof (v as { type?: unknown }).type === "string" && typeof (v as { start?: unknown }).start === "number";
+
+/** Every node under `root` (depth first, any order). */
+function eachNode(root: AstNode, visit: (n: AstNode) => void): void {
+  const stack: AstNode[] = [root];
+  while (stack.length) {
+    const n = stack.pop()!;
+    visit(n);
+    for (const key of Object.keys(n)) {
+      if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range") continue;
+      const v = n[key];
+      if (Array.isArray(v)) {
+        for (const c of v) if (isNode(c)) stack.push(c);
+      } else if (isNode(v)) stack.push(v);
     }
-    if (strings) blank(from, i);
-    if (src[i] === "`") i++;
-  };
-  while (i < src.length) {
-    const c = src[i];
-    const d = src[i + 1];
-    if (c === "/" && d === "/") {
-      const e = src.indexOf("\n", i);
-      const end = e < 0 ? src.length : e;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (c === "/" && d === "*") {
-      const e = src.indexOf("*/", i + 2);
-      const end = e < 0 ? src.length : e + 2;
-      blank(i, end);
-      i = end;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      i++;
-      const from = i;
-      while (i < src.length && src[i] !== c && src[i] !== "\n") i += src[i] === "\\" ? 2 : 1;
-      if (strings) blank(from, i);
-      i++;
-      lastSig = c;
-      lastWord = "";
-      continue;
-    }
-    if (c === "`") {
-      i++;
-      templateText();
-      lastSig = "`";
-      lastWord = "";
-      continue;
-    }
-    if (c === "}" && templates.length && templates[templates.length - 1] === 0) {
-      // Back into the template's text.
-      templates.pop();
-      i++;
-      templateText();
-      continue;
-    }
-    if (c === "{" && templates.length) templates[templates.length - 1]++;
-    if (c === "}" && templates.length) templates[templates.length - 1]--;
-    if (c === "/") {
-      const regexAllowed = lastSig === "" || "(,=:[!&|?{};+-*%<>~^".includes(lastSig) || ["return", "typeof", "case", "do", "else", "in", "of", "void", "yield", "await"].includes(lastWord);
-      if (regexAllowed) {
-        i++;
-        const from = i;
-        let inClass = false;
-        while (i < src.length && src[i] !== "\n") {
-          if (src[i] === "\\") i += 2;
-          else if (src[i] === "[") (inClass = true), i++;
-          else if (src[i] === "]") (inClass = false), i++;
-          else if (src[i] === "/" && !inClass) break;
-          else i++;
-        }
-        if (strings) blank(from, i);
-        i++;
-        while (i < src.length && isIdent(src[i])) i++;
-        lastSig = "/";
-        lastWord = "";
-        continue;
-      }
-    }
-    if (isIdent(c)) {
-      let j = i;
-      while (j < src.length && isIdent(src[j])) j++;
-      lastWord = src.slice(i, j);
-      lastSig = "a";
-      i = j;
-      continue;
-    }
-    if (!/\s/.test(c)) {
-      lastSig = c;
-      lastWord = "";
-    }
-    i++;
   }
-  return out.join("");
 }
-
-// Run on the source with string contents blanked (text inside strings never counts); the
-// specifier is then read from the original at the same positions.
-const STATIC_IMPORT = /\bimport\s*(?:[\w$*{}\s,]+?\s*\bfrom\s*)?(["'])( +)\1/g;
-const STATIC_EXPORT = /\bexport\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]*\})\s*from\s*(["'])( +)\1/g;
 
 function lineOf(src: string, at: number): number {
   let n = 1;
@@ -150,24 +63,59 @@ function lineOf(src: string, at: number): number {
   return n;
 }
 
+/** Parse one module the way a browser loads it (module goal: strict, top-level await, no HTML comments). */
+export function parseModule(src: string): AstNode {
+  return parse(src, { ecmaVersion: "latest", sourceType: "module", allowHashBang: true }) as unknown as AstNode;
+}
+
 /** The imports of one module and anything in it that is not allowed. */
 export function scanModule(path: string, src: string): ModuleScan {
-  const code = maskComments(src, true);
   const problems: string[] = [];
   const imports: ImportRef[] = [];
-  for (const m of code.matchAll(/\bimport\s*\(/g)) problems.push(`${path}:${lineOf(src, m.index ?? 0)}: dynamic import() is not allowed in a plugin (import modules statically from the plugin's own folder)`);
-  for (const m of code.matchAll(/\bimportScripts\b/g)) problems.push(`${path}:${lineOf(src, m.index ?? 0)}: importScripts is not available to plugins`);
-  for (const re of [STATIC_IMPORT, STATIC_EXPORT]) {
-    re.lastIndex = 0;
-    for (const m of code.matchAll(re)) {
-      const whole = m.index ?? 0;
-      const start = whole + m[0].length - 1 - m[2].length;
-      const spec = src.slice(start, start + m[2].length);
-      if (!spec.trim()) continue;
-      imports.push({ spec, start, end: start + spec.length });
-    }
+  let program: AstNode;
+  try {
+    program = parseModule(src);
+  } catch (e) {
+    const err = e as { message?: string; loc?: { line?: number } };
+    const line = err.loc?.line ?? 1;
+    const message = String(err.message ?? e).replace(/\s*\(\d+:\d+\)$/, "");
+    return { imports, problems: [`${path}:${line}: cannot be read as a JavaScript module: ${message}`] };
   }
+  const at = (n: AstNode) => `${path}:${lineOf(src, n.start)}`;
+  eachNode(program, (n) => {
+    switch (n.type) {
+      case "ImportExpression":
+        problems.push(`${at(n)}: dynamic import() is not allowed in a plugin (import modules statically from the plugin's own folder)`);
+        break;
+      case "MetaProperty": {
+        const meta = n.meta as { name?: string } | undefined;
+        const prop = n.property as { name?: string } | undefined;
+        if (meta?.name === "import" && prop?.name !== "meta") problems.push(`${at(n)}: import.${prop?.name ?? "?"} is not allowed in a plugin (import modules statically from the plugin's own folder)`);
+        break;
+      }
+      case "Identifier":
+      case "PrivateIdentifier":
+        if (n.name === "importScripts") problems.push(`${at(n)}: importScripts is not available to plugins`);
+        break;
+      case "ImportDeclaration":
+      case "ExportAllDeclaration":
+      case "ExportNamedDeclaration": {
+        const source = n.source;
+        if (!isNode(source)) break;
+        if (source.type !== "Literal" || typeof source.value !== "string") {
+          problems.push(`${at(n)}: an import names its module with a plain string`);
+          break;
+        }
+        // Inside the quotes; the sandbox replaces exactly this text with the module's URL.
+        imports.push({ spec: source.value, start: source.start + 1, end: source.end - 1 });
+        break;
+      }
+    }
+  });
+  // In source order (the walk is depth first from the end).
   imports.sort((a, b) => a.start - b.start);
+  const order = (p: string) => Number(/:(\d+):/.exec(p)?.[1] ?? 0);
+  problems.sort((a, b) => order(a) - order(b));
   return { imports, problems };
 }
 

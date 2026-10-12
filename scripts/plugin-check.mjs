@@ -4,8 +4,9 @@
 // Checks plugins the way the app does before it lists or starts one, plus a type check:
 //   1. plugin.json against the manifest rules (packages/plugin-api/src/manifest.ts, the
 //      same validator the app uses);
-//   2. every module reachable from the entry: imports only "sawhorse" and its own files, no
-//      dynamic import(), no importScripts, no circles (packages/plugin-api/src/source.ts);
+//   2. every module reachable from the entry, parsed as an ES module (acorn): imports only
+//      "sawhorse" and its own files, no dynamic import(), no importScripts, no circles
+//      (packages/plugin-api/src/source.ts);
 //   3. README.md and a licence file present (the samples' rule; a warning elsewhere);
 //   4. the JavaScript type-checked against packages/plugin-api/index.d.ts (plugins/tsconfig.json,
 //      `// @ts-check` files), when the folders are under plugins/.

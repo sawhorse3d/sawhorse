@@ -13,6 +13,7 @@
     "./source": "./src/source.ts"
   },
   "files": ["index.d.ts", "sawhorse.js", "manifest.schema.json", "src/", "README.md"],
+  "dependencies": { "acorn": "8.19.0" },
   "repository": { "type": "git", "url": "https://github.com/sawhorse3d/sawhorse.git", "directory": "packages/plugin-api" },
   "private": true
 }
