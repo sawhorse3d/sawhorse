@@ -54,7 +54,11 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 
 Parallel lanes: each `.worktrees/<slug>` checkout gets its own cargo target directory automatically (`scripts/env.sh` appends the slug: `D:/build-cache/sawhorse-<slug>`, `/mnt/d/build-cache/sawhorse/wsl-<slug>`), so lanes never wait on each other's cargo lock. Give each lane its own Vite and preview ports (`npx vite --port 5184`, `PW_PORT=4184`); Playwright reuses an existing server on its port, which would otherwise be another lane's build.
 
-### The e2e suites (lanes 3 and 4)
+### Render service (lane 8)
+
+The Render pane talks to the render service (`../render-service`, its own repository) at `VITE_RENDER_SERVICE_URL`, default `http://127.0.0.1:8787`. Run it with `cd ../render-service && npm ci && npm run dev`. With no keys it uses a mock provider, a simulated checkout and an embedded Postgres. Without it, the pane says "Render service not connected" and the chip shows a dash. The full local loop, the device key and what is sent are in `docs/RENDER.md`. Device-key tests run in WSL: `cd src-tauri && cargo test -p sawhorse-device-key` (WSL needs `libdbus-1-dev` and `pkg-config`).
+
+### The e2e suites (lanes 3, 4, 6 and 8)
 
 | Spec | What it drives |
 |---|---|
@@ -69,6 +73,7 @@ Parallel lanes: each `.worktrees/<slug>` checkout gets its own cargo target dire
 | `e2e/bookshelf.spec.ts` | the Phase-2 exit test: a 36 x 72 x 11 1/4 in bookshelf with dados, every click gated on the inference it should land on; asserts 8 watertight solids and 2,761.03125 in^3, each solid's bounding box (so a misplaced part fails), and prints its time and the refusal tally |
 | `e2e/files.spec.ts` | lane 6: the File menu and Export submenu, STL import, STL and 3MF export and re-import, an open mesh refused by STL export by name, `.shz` save, New and open with the same hash, SVG drag and drop, a `.skp` through openskp |
 | `e2e/corpus.spec.ts` | lane 6: all 200 corpus `.skp` files imported and rendered, the 20-file sample diffed against `tests/corpus/golden/` (skips without the corpus unless `REQUIRE_CORPUS=1`) |
+| `e2e/render.spec.ts` | lane 8: Credits chip and Render pane against a fake render service that verifies every signature; not connected, a render with the real 16-bit depth, edge and clay passes, a pack opening checkout and the chip following the payment |
 | `e2e/session.spec.ts` | lane 4: the dev autosave (restore and discard after a reload, `?autosave=0`), solids named by display number after slot reuse, the Rect preview's direction labels and message |
 | `e2e/move.spec.ts` | Move: typed and retyped moves, drag corner to corner, Ctrl copy then `x3` and `/2` with bounds, a face and a corner moved with autofold off and on |
 | `e2e/rotate.spec.ts` | Rotate: a locked protractor, a quarter turn and a retyped angle, a ring of four copies about an off-solid centre, a top face tilted into a wedge (exact volume), a twist refused |

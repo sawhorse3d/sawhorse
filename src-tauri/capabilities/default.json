@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core defaults; open/save dialogs; reading and writing files, limited to the paths the user picked in a dialog or dropped on the window (lane 6). No shell or http.",
+  "description": "Main window: core defaults; open/save dialogs; reading and writing files, limited to the paths the user picked in a dialog or dropped on the window (lane 6). The app's own commands (device_public_key, device_sign, open_external) are allowed by default; the opener plugin is driven from Rust, so no opener, shell or http permission is granted to the webview (lane 8).",
   "windows": ["main"],
   "permissions": [
     "core:default",

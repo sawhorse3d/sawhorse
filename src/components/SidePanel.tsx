@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { CreditsHandle } from "../credits/useCredits";
+import type { RenderPasses } from "../render/passes";
+import { RenderPane } from "./RenderPane";
 
-// Right panel: Outliner / Tags / Cut list / Render, with the approved mock's example
-// content. The data model behind each tab lands in its own lane (groups/components,
-// cut list, credit store); until then the panes show the mock's example scene.
+// Right panel: Outliner / Tags / Cut list / Render. The Render pane is live (lane 8: render
+// service and credit store); the others still carry the approved mock's example content
+// until their lanes land (groups/components, cut list).
 
 export type PaneId = "outliner" | "tags" | "cutlist" | "render";
 
@@ -11,13 +14,6 @@ const TABS: { id: PaneId; label: string }[] = [
   { id: "tags", label: "Tags" },
   { id: "cutlist", label: "Cut list" },
   { id: "render", label: "Render" },
-];
-
-const PRESETS: { name: string; sub: string; prompt: string }[] = [
-  { name: "Workshop", sub: "soft daylight, oak", prompt: "Oak bookshelf in a bright workshop, soft daylight through a window, sawdust on the bench" },
-  { name: "Kitchen", sub: "painted, warm", prompt: "Painted bookshelf in a warm kitchen, morning light, ceramic bowls on the shelves" },
-  { name: "Living room", sub: "walnut, evening", prompt: "Walnut bookshelf in a living room at evening, lamp light, books and a plant" },
-  { name: "Exterior", sub: "deck, overcast", prompt: "Cedar shelf unit on a covered deck, overcast sky, wet boards" },
 ];
 
 const CUT_LIST = [
@@ -29,16 +25,18 @@ const CUT_LIST = [
 ];
 
 export interface SidePanelProps {
-  credits: number;
+  credits: CreditsHandle;
+  /** Draw the render passes from the current view (the viewport engine). */
+  capture: () => Promise<RenderPasses>;
+  /** Bumped to bring the Render pane forward (the Credits chip). */
+  focusRender?: number;
 }
 
-export function SidePanel({ credits }: SidePanelProps) {
+export function SidePanel({ credits, capture, focusRender = 0 }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
-  const [preset, setPreset] = useState(0);
-  const [prompt, setPrompt] = useState(PRESETS[0].prompt);
-  const [result, setResult] = useState(
-    "Render appears here. The model's depth and edge passes are sent with the prompt; nothing else leaves this machine.",
-  );
+  useEffect(() => {
+    if (focusRender > 0) setPane("render");
+  }, [focusRender]);
 
   return (
     <aside className="side" aria-label="Panels">
@@ -139,63 +137,7 @@ export function SidePanel({ credits }: SidePanelProps) {
       </section>
 
       <section className="pane" id="pane-render" role="tabpanel" aria-labelledby="tab-render" hidden={pane !== "render"}>
-        <h3>
-          Render <small>current view</small>
-        </h3>
-        <div className="presets" role="group" aria-label="Presets">
-          {PRESETS.map((p, i) => (
-            <button
-              key={p.name}
-              type="button"
-              aria-pressed={preset === i}
-              onClick={() => {
-                setPreset(i);
-                setPrompt(p.prompt);
-              }}
-            >
-              {p.name}
-              <small>{p.sub}</small>
-            </button>
-          ))}
-        </div>
-        <textarea id="prompt" aria-label="Prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-        <div className="btnrow">
-          <button
-            type="button"
-            className="btn primary"
-            id="renderBtn"
-            onClick={() =>
-              setResult(
-                credits <= 0
-                  ? "No credits on this device yet. The render service and credit packs arrive with the credit-store lane."
-                  : "The render service is not connected in this build.",
-              )
-            }
-          >
-            Render · 1 credit
-          </button>
-          <button type="button" className="btn">History</button>
-        </div>
-        <div className="result" id="result">
-          {result}
-        </div>
-        <div className="packs" role="group" aria-label="Credit packs">
-          {[
-            ["$10", 100],
-            ["$25", 250],
-            ["$50", 500],
-          ].map(([price, n]) => (
-            <button
-              key={price}
-              type="button"
-              onClick={() => setResult(`${n} credits for ${price}. Checkout opens in your browser once the credit store ships; nothing is charged in this build.`)}
-            >
-              <b>{price}</b>
-              {n} credits
-            </button>
-          ))}
-        </div>
-        <p className="note">No account. Packs are tied to this device; a claim code moves them.</p>
+        <RenderPane credits={credits} capture={capture} />
       </section>
     </aside>
   );

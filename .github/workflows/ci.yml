@@ -145,8 +145,10 @@ jobs:
       - name: webview deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -155,3 +157,11 @@ jobs:
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --locked
+      - name: device key tests (ADR-0004; the OS keychain test is ignored on runners)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-device-key
+      - name: clippy and fmt (shell + device key)
+        working-directory: src-tauri
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo fmt --all --check

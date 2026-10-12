@@ -62,3 +62,8 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **SketchUp behaviour** (components vs groups, reversed faces, Layer0, hidden instances) was described from general user knowledge.
 - **Other dependencies read for their APIs** (permissive licences, not copyleft): the `threemf` 0.8 crate (to learn why it does not see prefixed `m:basematerials`), and the `tauri` 2.12 and `tauri-plugin-fs` 2.7 crate sources in the cargo registry (to confirm `FsExt::fs_scope`, `Scope::allow_file` and `DragDropEvent::Drop`). Nothing was copied.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002.
+
+### 2026-10-11 — lane 8 (render service and credit store): nothing read
+- **Who:** the lane-8 builder (Claude Opus 5.5).
+- **Read:** nothing from hew3d/hew or hew3d/openskp, and no published URL of any kind. The Stripe, fal, Replicate and Resend integrations were written from general knowledge of those public APIs. The Stripe webhook signature check uses the official `stripe` npm SDK, and its own type definitions in `node_modules` were consulted. The fal and Replicate request field names are marked for verification against the live schemas before launch (`docs/LAUNCH-CREDITS.md`). Package versions were looked up in the crates.io and npm registries; no documentation was read.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b|openskp'` matches only this log, `docs/DECISIONS.md` and ADR-0001/0002.

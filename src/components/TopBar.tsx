@@ -23,7 +23,13 @@ export interface TopBarProps {
   /** The standard view the camera is on, or null after orbiting away. */
   view: ViewId | null;
   onView: (v: ViewId) => void;
-  credits: number;
+  /** Credits on this device; null while the render service is not connected. */
+  credits: number | null;
+  /** Connection state of the render service (data attribute and tooltip). */
+  creditsState?: string;
+  creditsTitle?: string;
+  /** Click on the chip (opens the Render pane). */
+  onCredits?: () => void;
   /** Drop-down contents by menu name; menus without an entry stay inert, as in the mock. */
   menus?: Partial<Record<string, MenuItem[]>>;
 }
@@ -70,7 +76,7 @@ function Entry({ item: it, sub, setSub, close }: { item: MenuItem; sub: string |
   );
 }
 
-export function TopBar({ view, onView, credits, menus }: TopBarProps) {
+export function TopBar({ view, onView, credits, creditsState, creditsTitle, onCredits, menus }: TopBarProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [sub, setSub] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -130,9 +136,9 @@ export function TopBar({ view, onView, credits, menus }: TopBarProps) {
           </button>
         ))}
       </div>
-      <span className="chip" title="Render credits on this device">
-        Credits <b id="credits">{credits}</b>
-      </span>
+      <button type="button" className="chip" title={creditsTitle ?? "Render credits on this device"} data-state={creditsState} onClick={onCredits}>
+        Credits <b id="credits">{credits ?? "—"}</b>
+      </button>
     </header>
   );
 }

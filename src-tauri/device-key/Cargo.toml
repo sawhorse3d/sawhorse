@@ -1,0 +1,30 @@
+[package]
+name = "sawhorse-device-key"
+version = "0.0.1"
+description = "Sawhorse desktop: the render-credit device key (Ed25519) kept in the OS secure store (ADR-0004)."
+authors = ["Sawhorse contributors"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# A member of the src-tauri workspace (a path dependency under its root), kept apart from the
+# Tauri crate so its tests run without the webview toolchain:
+#   cd src-tauri && cargo test -p sawhorse-device-key
+
+[dependencies]
+ed25519-dalek = "2.2"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+zeroize = "1"
+
+# The OS secure store: Windows Credential Manager, macOS Keychain, Secret Service on Linux.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }

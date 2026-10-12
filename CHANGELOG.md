@@ -4,6 +4,118 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 8, render service and credit store, 2026-10-11)
+
+- Render credits per ADR-0004, with no accounts:
+  - The app holds an Ed25519 device key. On the desktop it lives in the OS secure store (`src-tauri/device-key`, `keyring`); in the browser demo it is a non-extractable WebCrypto key in IndexedDB.
+  - `install_id = base32(sha256(public key))[:20]`, and every request to the render service is signed.
+- The Credits chip shows this device's balance (a dash when the service is not connected) and opens the Render pane.
+- The Render pane is live:
+  - Presets, the prompt, and **Render · 1 credit**.
+  - The depth pass shows faintly while the render runs, then the result.
+  - A history gallery.
+  - The $10 / $25 / $50 packs open Stripe Checkout in the system browser and the chip follows the payment.
+  - **Move credits**: an emailed claim code moves a balance to a new device, two devices at most.
+  - "Render service not connected" when the service cannot be reached; nothing is charged or simulated.
+- Render passes from the current three.js view (`src/render/passes.ts`), each with our own PNG writer:
+  - a 16-bit linear depth map normalised over the model;
+  - an edge line render with hidden lines removed;
+  - a clay render.
+- The render service, in its own repository (`../render-service`, not deployed):
+  - Hono on Node 24, Postgres (PGlite locally, node-postgres in production).
+  - Stripe Checkout and an idempotent webhook.
+  - Atomic credit decrement; fal first, Replicate as the fallback, re-credit on failure.
+  - Claim codes over Resend; limits of 2 concurrent, 6 a minute and 200 a day.
+  - 56 tests, also run on real Postgres; a Dockerfile, a systemd unit for the production host and a deploy guide.
+- Tauri: the `device_public_key`, `device_sign` and `open_external` commands (the last opens only Stripe Checkout and the local dev checkout), plus the opener plugin. The CSP allows the local service.
+- Tests:
+  - The shared signing vector, checked in TypeScript, Rust and the service.
+  - Client, PNG and Render pane unit tests.
+  - `e2e/render.spec.ts`, with a fake service inside Playwright that verifies every signature and decodes the real passes.
+  - `scripts/capture-credits.mjs`, the full session against the real service, with screenshots.
+- Docs: `docs/RENDER.md`, and `docs/LAUNCH-CREDITS.md` (what the maintainer provides before credits go live).
+
+### Changed (lane 8)
+
+- CI `tauri-check` installs `libdbus-1-dev`, which `keyring`'s Secret Service backend needs, and runs the device-key tests, clippy and fmt for `src-tauri`. The release workflow installs `libdbus-1-dev` too.
+- `PW_PORT` sets the Playwright preview port (default 4173), so parallel worktrees can run e2e side by side.
+
+### Added (lane 6, file import/export, 2026-10-11)
+
+- File menu: New, Open, Save, Save As, Import, Import units, and an Export submenu; Ctrl+O, Ctrl+S, Ctrl+Shift+S and Ctrl+I.
+  - Drag and drop a file onto the window: a `.shz` opens, anything else is imported.
+  - Browsers with the File System Access API use native pickers, and Save writes back to the same file. Other browsers (or `?io=basic`) use a file input and downloads. The desktop app uses Tauri's dialog and fs plugins, limited to the paths the user picked or dropped.
+  - An import report lists what became solids, what stayed a mesh and why, and what was healed or skipped.
+- Exports, over everything visible or the selected solids:
+  - STL (binary, mm, Z up) and 3MF (one named object per solid, mm, colours). Both refuse anything that is not a watertight solid, naming it.
+  - glTF binary (Y up, metres, a node per object, face ids as `_FACE_ID`), OBJ (an object and group per part, with a material library), DXF (3D faces and edges, a layer per object).
+  - SVG: a hidden-line drawing of the current view (to scale in mm for parallel views), and the outline of a selected face for laser cutting and CNC, also as DXF.
+- Imports, each one undo step:
+  - STL, OBJ, glTF/GLB, 3MF, DXF (3D faces, lines, polylines with arcs, circles) and SVG (paths and shapes as sketch strokes on the ground).
+  - Closed shells become solids, including parts that touch each other. Open, non-manifold or self-intersecting geometry comes in as a visible, amber-tinted mesh with a note; it is never silently repaired.
+  - Units for STL, OBJ and unitless DXF: millimetres by default, chosen under File > Import units.
+- SketchUp `.skp` import through the npm `openskp` package (MIT), parsed in the kernel worker: groups, each component placement, nested and mirrored placements, materials as colours, layers as tags (hidden ones hidden), hidden objects on a hidden tag, scenes. What is and is not supported: `docs/skp-compat.md`.
+- The native `.shz` document, an open format (`docs/format.md`): `scene.json` with exact geometry and persistent face ids, `geometry.glb` for any glTF viewer, and a thumbnail. Opening a saved file gives the same model, hash for hash.
+- Materials (colour, texture file name), object names, saved scenes and imported meshes in the kernel; faces drawn in their material colour; the View menu lists saved scenes; Edit > Delete Imported Meshes.
+- Tests: a writer and reader test for every format, including round trips through our own readers; every export read by an independent reader (`dxf-parser`, three.js GLTFLoader, fflate); `.shz` round trips of every golden document; a 200-file `.skp` corpus with a golden-image harness and a CI job; `e2e/files.spec.ts` for the menus, export, save, open and drag and drop.
+
+### Changed (lane 6)
+
+- The same per-worktree cargo target directory and `PW_PORT` change as lane 4 (merged once).
+- `serde_json` parses floats exactly (`float_roundtrip`), so saved files read back bit for bit.
+
+### Added (lane 4, transforms, 2026-10-11)
+
+- Move (M):
+  - Click a solid (or select first), move, click again; or press, drag and let go.
+  - The cursor snaps from the start point; arrow keys lock red, green or blue, and Shift holds the line showing.
+  - Type a distance mid-move (it goes the way the cursor went) or after it (the move changes).
+  - Ctrl copies. After a copy, `x3` (or `3x`, `*3`) makes three copies at one, two and three times the move, and `/4` divides it into quarters. One undo takes the whole array back.
+  - With faces, edges or points of one solid selected, Move moves that part. Faces that stay flat follow; one that would bend is refused unless Alt turns autofold on.
+- Rotate (Q):
+  - The protractor sits on the face under the cursor, or level. Arrow keys lock it upright facing red or green, or level, and Shift keeps its plane.
+  - Click the centre, the start of the angle and the end, or type the angle (`90`, `-22.5`, `30deg`).
+  - Cursor angles snap to the protractor's 15 degree ticks; typed angles are exact and can be retyped after the turn.
+  - Ctrl copies. `x3` and `/4` make arrays the same way Move does.
+- Scale (S):
+  - Grips sit on the bounding box of the selection: corners, edge middles and face centres. A selected face gets its 8.
+  - Each grip scales about the opposite grip; Shift makes the scale uniform and Ctrl scales about the centre.
+  - Type a factor (`2`, `0.5`, `-1` mirrors, or `2,1,0.5` for red, green and blue), or an absolute size with a unit (`30in`, `1200mm`).
+  - The kernel checks every non-uniform scale for volume sign, flat faces and a closed shell.
+  - Scaling a selected face tapers a leg.
+- Offset (F):
+  - Click a face or a sketch region (or near selected edges), then move inward or outward, or type a distance.
+  - Offsets come from `cavalier_contours` with sharp corners. A face with holes is offset as one shape.
+  - The result imprints on the solid when it stays on the face, and becomes a new sketch on that plane when it reaches off it (the same way Draw decides). The kernel's own preview shows while the cursor moves.
+- Follow Me (W):
+  - Select the path (edges end to end, or one face to go round its edge), then click the profile.
+  - The profile is swept along straight segments with mitered corners; open and closed paths both work.
+  - A sketch region becomes a new solid. A face adds to its solid when the path leaves it, and cuts the solid when the path runs in, so a moulding drawn on a box's end routes round its top.
+- Kernel:
+  - `Transform`, `Copy`, `Array` and `TransformGeometry` ops: affine, object-level, face ids kept, validated, with typed refusals.
+  - A `divided` helper gives the `/n` step of a move, turn, screw or scale.
+  - `Offset` with `Doc.offset_preview`, and `FollowMe` with mitered sweeps.
+  - Severance: a push or a sweep that cuts through a board leaves one solid per piece, each keeping its face ids.
+  - Plane snapping before and after every boolean: nearly coplanar faces share one plane, drifted vertices are re-solved onto it, and coincident vertices are welded. The engine's output is welded at the merge distance.
+- Lane-3 verifier conditions:
+  - A dev autosave to IndexedDB, with "Restore unsaved work?" (Restore / Discard, also on the Edit menu) after a reload.
+  - Status text names solids by display number ("solid 3"), never by raw id.
+  - The Rect preview labels each side's length and direction, and its message states them.
+  - Per-solid bounding boxes in the bookshelf test.
+  - Vite ignores `.worktrees/`, and CI uses `actions/upload-artifact@v5`.
+- Tests:
+  - Kernel suites for transforms (with the proptest "transform then inverse restores the hash"), offsets, Follow Me (exact volumes), severance and snapping.
+  - Goldens `transforms`, `offset` and `follow_me`, where the WASM hash equals the native one.
+  - Vitest suites for each new tool, and seven new Playwright specs (`session`, `move`, `rotate`, `scale`, `offset`, `follow`; `vcb` updated).
+  - The fuzzer drives every new op. 50,000 sequences are clean, and the boolean refusal rate is measured with plane snapping off and on.
+  - A lane-end walk-through, `scripts/capture-lane04.mjs`.
+
+### Changed (lane 4)
+
+- Typing straight after a tool key goes to that tool and is not wiped when the switch lands. Arrow keys and Ctrl / Alt taps wait for clicks still on their way. A render that skipped pending edit updates no longer restores a stale Push target. Fast keyboard use found all three.
+- `scripts/env.sh` gives each worktree its own cargo target directory, and `PW_PORT` lets parallel worktrees run Playwright side by side.
+- A push that cuts a solid in two now reports `severed` (two solids) instead of leaving a two-shell solid.
+
 ### Added (lane 1, foundations, 2026-10-11)
 
 - Browser app shell built from the approved mock: top bar with menus, Iso/Top/Front/Right/Persp views and Credits chip; tool rail with the SketchUp-2017 default keys and our own glyphs; three.js WebGL2 viewport (Z-up, grid, axes, coarse hover inference in our four colours); Outliner / Tags / Cut list / Render panel; Value Control Box with fractional in, decimal in, ft-in, mm, cm and m. Light and dark themes.
@@ -74,82 +186,6 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
   - The Phase-2 exit test, `e2e/bookshelf.spec.ts`: a 36 x 72 x 11 1/4 in bookshelf with dados, 8 watertight solids, 2,761.03125 in^3, 0 refusals, about 10 s. It runs alone with `npm run e2e:bookshelf`.
   - The op-sequence fuzzer covers every new op: 50,000 sequences clean, with boolean-path refusals now counted in the report.
 - Docs: `docs/USER-GUIDE.md`, a first-ten-minutes tour with every key and the inference colours.
-
-### Added (lane 4, transforms, 2026-10-11)
-
-- Move (M):
-  - Click a solid (or select first), move, click again; or press, drag and let go.
-  - The cursor snaps from the start point; arrow keys lock red, green or blue, and Shift holds the line showing.
-  - Type a distance mid-move (it goes the way the cursor went) or after it (the move changes).
-  - Ctrl copies. After a copy, `x3` (or `3x`, `*3`) makes three copies at one, two and three times the move, and `/4` divides it into quarters. One undo takes the whole array back.
-  - With faces, edges or points of one solid selected, Move moves that part. Faces that stay flat follow; one that would bend is refused unless Alt turns autofold on.
-- Rotate (Q):
-  - The protractor sits on the face under the cursor, or level. Arrow keys lock it upright facing red or green, or level, and Shift keeps its plane.
-  - Click the centre, the start of the angle and the end, or type the angle (`90`, `-22.5`, `30deg`).
-  - Cursor angles snap to the protractor's 15 degree ticks; typed angles are exact and can be retyped after the turn.
-  - Ctrl copies. `x3` and `/4` make arrays the same way Move does.
-- Scale (S):
-  - Grips sit on the bounding box of the selection: corners, edge middles and face centres. A selected face gets its 8.
-  - Each grip scales about the opposite grip; Shift makes the scale uniform and Ctrl scales about the centre.
-  - Type a factor (`2`, `0.5`, `-1` mirrors, or `2,1,0.5` for red, green and blue), or an absolute size with a unit (`30in`, `1200mm`).
-  - The kernel checks every non-uniform scale for volume sign, flat faces and a closed shell.
-  - Scaling a selected face tapers a leg.
-- Offset (F):
-  - Click a face or a sketch region (or near selected edges), then move inward or outward, or type a distance.
-  - Offsets come from `cavalier_contours` with sharp corners. A face with holes is offset as one shape.
-  - The result imprints on the solid when it stays on the face, and becomes a new sketch on that plane when it reaches off it (the same way Draw decides). The kernel's own preview shows while the cursor moves.
-- Follow Me (W):
-  - Select the path (edges end to end, or one face to go round its edge), then click the profile.
-  - The profile is swept along straight segments with mitered corners; open and closed paths both work.
-  - A sketch region becomes a new solid. A face adds to its solid when the path leaves it, and cuts the solid when the path runs in, so a moulding drawn on a box's end routes round its top.
-- Kernel:
-  - `Transform`, `Copy`, `Array` and `TransformGeometry` ops: affine, object-level, face ids kept, validated, with typed refusals.
-  - A `divided` helper gives the `/n` step of a move, turn, screw or scale.
-  - `Offset` with `Doc.offset_preview`, and `FollowMe` with mitered sweeps.
-  - Severance: a push or a sweep that cuts through a board leaves one solid per piece, each keeping its face ids.
-  - Plane snapping before and after every boolean: nearly coplanar faces share one plane, drifted vertices are re-solved onto it, and coincident vertices are welded. The engine's output is welded at the merge distance.
-- Lane-3 verifier conditions:
-  - A dev autosave to IndexedDB, with "Restore unsaved work?" (Restore / Discard, also on the Edit menu) after a reload.
-  - Status text names solids by display number ("solid 3"), never by raw id.
-  - The Rect preview labels each side's length and direction, and its message states them.
-  - Per-solid bounding boxes in the bookshelf test.
-  - Vite ignores `.worktrees/`, and CI uses `actions/upload-artifact@v5`.
-- Tests:
-  - Kernel suites for transforms (with the proptest "transform then inverse restores the hash"), offsets, Follow Me (exact volumes), severance and snapping.
-  - Goldens `transforms`, `offset` and `follow_me`, where the WASM hash equals the native one.
-  - Vitest suites for each new tool, and seven new Playwright specs (`session`, `move`, `rotate`, `scale`, `offset`, `follow`; `vcb` updated).
-  - The fuzzer drives every new op. 50,000 sequences are clean, and the boolean refusal rate is measured with plane snapping off and on.
-  - A lane-end walk-through, `scripts/capture-lane04.mjs`.
-
-### Changed (lane 4)
-
-- Typing straight after a tool key goes to that tool and is not wiped when the switch lands. Arrow keys and Ctrl / Alt taps wait for clicks still on their way. A render that skipped pending edit updates no longer restores a stale Push target. Fast keyboard use found all three.
-- `scripts/env.sh` gives each worktree its own cargo target directory, and `PW_PORT` lets parallel worktrees run Playwright side by side.
-- A push that cuts a solid in two now reports `severed` (two solids) instead of leaving a two-shell solid.
-
-### Added (lane 6, file import/export, 2026-10-11)
-
-- File menu: New, Open, Save, Save As, Import, Import units, and an Export submenu; Ctrl+O, Ctrl+S, Ctrl+Shift+S and Ctrl+I.
-  - Drag and drop a file onto the window: a `.shz` opens, anything else is imported.
-  - Browsers with the File System Access API use native pickers, and Save writes back to the same file. Other browsers (or `?io=basic`) use a file input and downloads. The desktop app uses Tauri's dialog and fs plugins, limited to the paths the user picked or dropped.
-  - An import report lists what became solids, what stayed a mesh and why, and what was healed or skipped.
-- Exports, over everything visible or the selected solids:
-  - STL (binary, mm, Z up) and 3MF (one named object per solid, mm, colours). Both refuse anything that is not a watertight solid, naming it.
-  - glTF binary (Y up, metres, a node per object, face ids as `_FACE_ID`), OBJ (an object and group per part, with a material library), DXF (3D faces and edges, a layer per object).
-  - SVG: a hidden-line drawing of the current view (to scale in mm for parallel views), and the outline of a selected face for laser cutting and CNC, also as DXF.
-- Imports, each one undo step:
-  - STL, OBJ, glTF/GLB, 3MF, DXF (3D faces, lines, polylines with arcs, circles) and SVG (paths and shapes as sketch strokes on the ground).
-  - Closed shells become solids, including parts that touch each other. Open, non-manifold or self-intersecting geometry comes in as a visible, amber-tinted mesh with a note; it is never silently repaired.
-  - Units for STL, OBJ and unitless DXF: millimetres by default, chosen under File > Import units.
-- SketchUp `.skp` import through the npm `openskp` package (MIT), parsed in the kernel worker: groups, each component placement, nested and mirrored placements, materials as colours, layers as tags (hidden ones hidden), hidden objects on a hidden tag, scenes. What is and is not supported: `docs/skp-compat.md`.
-- The native `.shz` document, an open format (`docs/format.md`): `scene.json` with exact geometry and persistent face ids, `geometry.glb` for any glTF viewer, and a thumbnail. Opening a saved file gives the same model, hash for hash.
-- Materials (colour, texture file name), object names, saved scenes and imported meshes in the kernel; faces drawn in their material colour; the View menu lists saved scenes; Edit > Delete Imported Meshes.
-- Tests: a writer and reader test for every format, including round trips through our own readers; every export read by an independent reader (`dxf-parser`, three.js GLTFLoader, fflate); `.shz` round trips of every golden document; a 200-file `.skp` corpus with a golden-image harness and a CI job; `e2e/files.spec.ts` for the menus, export, save, open and drag and drop.
-
-### Changed (lane 6)
-
-- The same per-worktree cargo target directory and `PW_PORT` change as lane 4 (merged once).
-- `serde_json` parses floats exactly (`float_roundtrip`), so saved files read back bit for bit.
 
 ### Changed (lane 3)
 
