@@ -102,6 +102,13 @@ test("solids are named by display number, never by raw id", async ({ page }) => 
   const ids = await page.evaluate(() => (window as unknown as { __sawhorse: { solids(): { id: number; number: number }[] } }).__sawhorse.solids());
   expect(ids).toEqual([{ id: 2 ** 32 + 1, number: 2, min: expect.anything(), max: expect.anything(), volume: expect.anything() }]);
   await page.keyboard.press("Space");
+  // Wait for the view to settle on the new solid (it refits after an edit), then click.
+  await expect(async () => {
+    const t = await at(page, [6 * IN, 6 * IN, 6 * IN]);
+    await page.mouse.move(t[0] + 3, t[1] + 2);
+    await page.mouse.move(t[0], t[1], { steps: 2 });
+    await expect(vp).toHaveAttribute("data-hover", "face", { timeout: 800 });
+  }).toPass({ timeout: 10_000 });
   const top = await at(page, [6 * IN, 6 * IN, 6 * IN]);
   await page.mouse.click(top[0], top[1]);
   const hint = page.locator("#hint");

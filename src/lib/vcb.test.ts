@@ -36,13 +36,13 @@ describe("Value Control Box grammar", () => {
     expect(parseVcb("-15deg", "frac-in")).toEqual({ ok: true, value: { kind: "angle", deg: -15 } });
   });
 
-  it("reserves array syntax for Move (lane 4)", () => {
+  it("array syntax belongs to Move and Rotate copies", () => {
     expect(parseVcb("x3", "frac-in")).toEqual({ ok: true, value: { kind: "array", copies: 3 } });
     expect(parseVcb("3x", "frac-in")).toEqual({ ok: true, value: { kind: "array", copies: 3 } });
     expect(parseVcb("*4", "frac-in")).toEqual({ ok: true, value: { kind: "array", copies: 4 } });
     expect(parseVcb("/4", "frac-in")).toEqual({ ok: true, value: { kind: "divide", parts: 4 } });
     const v = parseVcb("x3", "frac-in");
-    expect(v.ok && notHere(v.value, "Line", "a length")).toMatch(/lane 4/);
+    expect(v.ok && notHere(v.value, "Line", "a length")).toMatch(/follow a copy/);
   });
 
   it("explains what it cannot read", () => {

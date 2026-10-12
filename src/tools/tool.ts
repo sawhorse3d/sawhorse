@@ -136,6 +136,8 @@ export abstract class Tool {
   }
   /** Shift went down or up (some tools lock the current inference while it is held). */
   onShift(_down: boolean): void {}
+  /** Ctrl or Alt was tapped (Move and Rotate toggle copying; Move toggles autofold). */
+  onModifier(_key: "ctrl" | "alt"): void {}
   /** Enter in the Value Control Box. */
   onValue(_text: string): void {}
   /** Esc. Return true when it cancelled something. */

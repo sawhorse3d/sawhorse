@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 // The Value Control Box (lane 3): typed values mid-gesture with fractional inches, feet and
 // inches, metric suffixes; Enter commits, Esc cancels; Ctrl+Z works while it has focus; array
-// syntax is reserved for lane 4; an untouched box does not swallow tool keys.
+// syntax follows a Move or Rotate copy; an untouched box does not swallow tool keys.
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 
 async function ready(page: Page) {
@@ -35,7 +35,7 @@ test("typed lengths in every woodworker form", async ({ page }) => {
   expect(v / 0.0254 ** 3).toBeCloseTo(18 * 11.25 * 18.75, 6);
 });
 
-test("Esc cancels typing, Ctrl+Z works mid-entry, arrays wait for lane 4, tool keys pass an untouched box", async ({ page }) => {
+test("Esc cancels typing, Ctrl+Z works mid-entry, arrays follow a copy, tool keys pass an untouched box", async ({ page }) => {
   const vp = await ready(page);
   const vcb = page.locator("#vcb");
   await page.keyboard.press("r");
@@ -58,10 +58,10 @@ test("Esc cancels typing, Ctrl+Z works mid-entry, arrays wait for lane 4, tool k
   await page.keyboard.press("Control+y");
   await expect(vp).toHaveAttribute("data-triangles", "2");
   await page.keyboard.press("Escape");
-  // Array syntax is reserved for Move.
+  // Array syntax belongs to Move and Rotate copies.
   await page.keyboard.type("x3");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#hint")).toContainText("lane 4");
+  await expect(page.locator("#hint")).toContainText("follow a copy");
   await expect(vp).toHaveAttribute("data-triangles", "2");
   // A box that was clicked into but not typed in does not swallow tool keys.
   await vcb.click();

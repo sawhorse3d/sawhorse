@@ -77,6 +77,6 @@ describe("Push/Pull feel", () => {
     await tick();
     expect(last(h)).toMatchObject({ op: "extrude", sketch: 1, region: 4 });
     t.onValue("x3");
-    expect(h.statuses.at(-1)?.text).toMatch(/lane 4/);
+    expect(h.statuses.at(-1)?.text).toMatch(/follow a copy/);
   });
 });

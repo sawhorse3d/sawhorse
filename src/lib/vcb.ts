@@ -5,9 +5,9 @@
 //   24,12   24, 12   600mm,300mm             two lengths (rectangles: width, depth)
 //   48s                                      a count: circle / arc segments, polygon sides
 //   12r                                      an arc radius
-//   30°   30deg                              an angle, reserved for Rotate (lane 4)
-//   x3   3x   *3                             copies: an array, reserved for Move (lane 4)
-//   /4                                       divide: an array, reserved for Move (lane 4)
+//   30°   30deg                              an angle (Rotate also takes a bare number)
+//   x3   3x   *3                             copies: an array after a Move or Rotate copy
+//   /4                                       divide: an array after a Move or Rotate copy
 //
 // Every tool takes the forms that make sense for it and says so when given another.
 import { parseLength, type UnitSystem } from "./units";
@@ -74,6 +74,6 @@ export function parseVcb(text: string, units: UnitSystem): VcbResult {
 
 /** The message for a form a tool does not take. */
 export function notHere(v: VcbValue, tool: string, wants: string): string {
-  if (v.kind === "array" || v.kind === "divide") return "Arrays (x3, /4) arrive with the Move tool in lane 4.";
+  if (v.kind === "array" || v.kind === "divide") return "Arrays (x3, /4) follow a copy: Move (M) or Rotate (Q) with Ctrl first.";
   return `${tool} takes ${wants}.`;
 }

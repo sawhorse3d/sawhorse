@@ -17,6 +17,7 @@ import { SelectTool } from "./tools/select";
 import { EraseTool } from "./tools/erase";
 import { RectTool } from "./tools/rect";
 import { PushTool } from "./tools/push";
+import { MoveTool } from "./tools/move";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
@@ -89,8 +90,23 @@ export function App() {
   const kernelRef = useRef<KernelClient | null>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
   // Latest state for the tool host (tools live outside React).
-  const live = useRef({ scene, units, selection, target, groupContext, vcbEditing: false, lastError: null as string | null });
-  live.current = { ...live.current, scene, units, selection, target, groupContext };
+  const live = useRef({ scene, units, selection, target, groupContext, vcbEditing: false, vcbFor: null as ToolId | null, lastError: null as string | null });
+  // Copy a React state value into `live` only when it changed since the last render. The
+  // handlers write `live` first (imperatively) and React state after; a render that runs
+  // before React has applied those updates (a keystroke renders urgently and skips the
+  // edit's pending updates) must not put the stale values back: that lost the Push target
+  // between "draw a rectangle" and "type a distance" when the keys came fast.
+  const seen = useRef({ scene, units, selection, target, groupContext });
+  {
+    const prev = seen.current;
+    const next = { scene, units, selection, target, groupContext };
+    if (prev.scene !== scene) live.current.scene = scene;
+    if (prev.units !== units) live.current.units = units;
+    if (prev.selection !== selection) live.current.selection = selection;
+    if (prev.target !== target) live.current.target = target;
+    if (prev.groupContext !== groupContext) live.current.groupContext = groupContext;
+    seen.current = next;
+  }
   // Edits run one at a time, in order.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const editsPending = useRef(0);
@@ -328,6 +344,7 @@ export function App() {
       ["tape", new TapeTool(host)],
       ["dim", new DimensionTool(host)],
       ["pushpull", new PushTool(host)],
+      ["move", new MoveTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;
@@ -364,6 +381,8 @@ export function App() {
     driverRef.current?.pointer(p);
   }, []);
   const toolIdRef = useRef(toolId);
+  /** A tool switch requested by a key and not applied yet (see the keydown handler). */
+  const pendingToolRef = useRef<ToolId | null>(null);
   toolIdRef.current = toolId;
 
   const defaultValue = useCallback(
@@ -387,8 +406,13 @@ export function App() {
       setToolId(id);
       setMessage(null);
       setHover(null);
-      live.current.vcbEditing = false;
-      setVcb(defaultValue(id, live.current.units));
+      // Typing that began for this very tool while its key was on its way ("p" then "6"
+      // faster than the switch) stays; anything else gives way to the tool's default.
+      if (!(live.current.vcbEditing && live.current.vcbFor === id)) {
+        live.current.vcbEditing = false;
+        setVcb(defaultValue(id, live.current.units));
+      }
+      live.current.vcbFor = null;
       const next = toolFor(id);
       activeRef.current = next;
       next?.activate();
@@ -495,6 +519,13 @@ export function App() {
         }
       }
       if (e.key === "Shift" && !textEntry) activeRef.current?.onShift(true);
+      if ((e.key === "Control" || e.key === "Alt") && !e.repeat && !textEntry) {
+        // A tap of Ctrl or Alt alone (Move / Rotate copy, Move autofold). Alt must not
+        // focus the browser's menu bar.
+        if (e.key === "Alt") e.preventDefault();
+        activeRef.current?.onModifier(e.key === "Control" ? "ctrl" : "alt");
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (textEntry) return;
       if (inVcb && (e.key === "Enter" || e.key === "Escape")) return; // the box's own keys
@@ -524,22 +555,43 @@ export function App() {
         zoomExtents();
         return;
       }
+      if (e.key.startsWith("Arrow")) {
+        // Locks act on the gesture the clicks before them started: wait for those clicks.
+        e.preventDefault();
+        void afterPointer(() => {
+          if (activeRef.current?.onKey(e)) driverRef.current?.refresh();
+        });
+        return;
+      }
       if (activeRef.current?.onKey(e)) {
         e.preventDefault();
         driverRef.current?.refresh();
         return;
       }
-      if (activeRef.current?.valueLabel() && startsValueEntry(e.key)) {
+      // A tool key may still be on its way (it waits for clicks and edits in flight): typing
+      // right after it belongs to that tool, so "r" then "24,16" never loses the "2".
+      const typingFor = pendingToolRef.current ? toolFor(pendingToolRef.current) : activeRef.current;
+      if (typingFor?.valueLabel() && startsValueEntry(e.key)) {
         e.preventDefault();
         live.current.vcbEditing = true;
+        live.current.vcbFor = pendingToolRef.current;
         setVcb(e.key);
-        vcbRef.current?.focus();
+        // The box may still be read-only (a tool without values was active a moment ago and
+        // React has not re-rendered yet): open it now so the next keys land in it.
+        const input = vcbRef.current;
+        if (input) {
+          input.readOnly = false;
+          input.value = e.key;
+          input.focus();
+        }
         return;
       }
       const t = toolForKey(e.key);
       if (t) {
         e.preventDefault();
+        if (t.id !== toolIdRef.current) pendingToolRef.current = t.id;
         void afterPointer(() => {
+          if (pendingToolRef.current === t.id) pendingToolRef.current = null;
           // The active tool's key again switches its variant (Rect / Rotated Rect, ...).
           if (t.id === toolIdRef.current && activeRef.current) {
             const hint = activeRef.current.cycleVariant();
