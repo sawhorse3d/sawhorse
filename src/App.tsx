@@ -189,7 +189,6 @@ function partNames(rows: CutRow[]): string {
   return rows.length === 1 ? quoted(rows[0].name) : `${rows.length} parts`;
 }
 
-
 type Message = StatusMessage | null;
 
 export function App() {
