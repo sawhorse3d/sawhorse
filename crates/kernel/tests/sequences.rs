@@ -7,11 +7,15 @@
 //! and cutting), and (lane 5) groups and components: make group / component / unique,
 //! explode, delete, open and close (the editing context), node moves / copies / arrays,
 //! hide, lock, tags (create, rename, colour, delete, assign) and scenes (add, update,
-//! delete, activate), and (lane 7) grain and stock on cut-list parts, and (lane 9) the stock
+//! delete, activate), and (lane 7) grain and stock on cut-list parts, (lane 9) the stock
 //! library (define, replace, delete, per-material defaults, kerf / trim / algorithm, reset),
-//! with undo / redo interleaved anywhere. After every accepted op the cut list is worked out
-//! and checked against a brute-force count of the world (`testing::check_cut_list`), and the
-//! parts are nested with both algorithms and every layout invariant checked
+//! and (lane 10) materials (defined with and without a texture image and a stock link,
+//! renamed, deleted), paint on faces and on solids, groups and instances, texture
+//! positions, styles and shadows (in the document and in scenes), with undo / redo
+//! interleaved anywhere. After every accepted op every face is sampled and its texture
+//! coordinates checked (`testing::check_looks`), the cut list is worked out and checked
+//! against a brute-force count of the world (`testing::check_cut_list`), and the parts are
+//! nested with both algorithms and every layout invariant checked
 //! (`testing::check_nesting`). While a group or component is
 //! open, most intents pick what is in it, so edits propagate through definitions.
 //!
@@ -207,6 +211,28 @@ enum Fuzz {
     Grain(u8, u8),
     /// Lane 7: stock (a name index, or none) and sheet / lumber / decide.
     Stock(u8, Option<u8>, Option<bool>),
+    /// Lane 10: define material `name` (an index into MATERIALS): colour, a texture image
+    /// (kind 0 none, 1 an image the op adds, 2 a file-name reference, 3 a path never added),
+    /// a size pick, a rotation and a stock link (0 none, 1 lumber, 2 sheet).
+    DefineMat {
+        name: u8,
+        color: [u8; 4],
+        texture: u8,
+        size: u8,
+        rotation: f64,
+        stock: u8,
+    },
+    /// Paint faces (a bit mask over the k-th solid's faces) with a material (or take it off).
+    PaintFaces(u8, u8, Option<u8>),
+    /// Paint items of the open context (or anything, with a high pick) with a material.
+    PaintItems(Vec<u8>, Option<u8>),
+    /// Position a texture on a face: scale, rotation, offset (garbage on purpose), or clear.
+    FaceUv(u8, u8, Option<(f64, f64, f64, f64)>),
+    RenameMat(u8, u8),
+    DeleteMat(u8),
+    /// A style (index into a few) or none; shadows on / off at a time, or none.
+    Style(Option<u8>),
+    Shadows(Option<(bool, u16, f64)>),
 }
 
 /// A transform, as an intent.
@@ -319,6 +345,24 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
     ]
 }
 
+fn lane10_op() -> impl Strategy<Value = Fuzz> {
+    let mat = || prop::option::of(0u8..6);
+    let garbage =
+        || prop_oneof![8 => -5.0..5.0f64, 1 => Just(f64::NAN), 1 => Just(1e9), 1 => Just(0.0)];
+    prop_oneof![
+        3 => (0u8..6, any::<[u8; 4]>(), 0u8..4, any::<u8>(), garbage(), 0u8..3)
+            .prop_map(|(name, color, texture, size, rotation, stock)| Fuzz::DefineMat { name, color, texture, size, rotation, stock }),
+        6 => (any::<u8>(), any::<u8>(), mat()).prop_map(|(o, f, m)| Fuzz::PaintFaces(o, f, m)),
+        4 => (prop::collection::vec(any::<u8>(), 1..3), mat()).prop_map(|(i, m)| Fuzz::PaintItems(i, m)),
+        3 => (any::<u8>(), any::<u8>(), prop::option::of((garbage(), garbage(), garbage(), garbage())))
+            .prop_map(|(o, f, u)| Fuzz::FaceUv(o, f, u)),
+        1 => (0u8..6, 0u8..6).prop_map(|(a, b)| Fuzz::RenameMat(a, b)),
+        1 => (0u8..6).prop_map(Fuzz::DeleteMat),
+        1 => prop::option::of(0u8..4).prop_map(Fuzz::Style),
+        1 => prop::option::of((any::<bool>(), 0u16..1500, -100.0..100.0f64)).prop_map(Fuzz::Shadows),
+    ]
+}
+
 fn fuzz_op() -> impl Strategy<Value = Fuzz> {
     let pt = || (grid(), grid()).prop_map(|(x, y)| [x, y]);
     prop_oneof![
@@ -364,6 +408,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => any::<u8>().prop_map(Fuzz::EraseDimension),
         9 => lane4_op(),
         8 => lane5_op(),
+        6 => lane10_op(),
     ]
 }
 
@@ -422,6 +467,16 @@ const NEST_LENGTHS: [f64; 8] = [
     0.2,
     -0.001,
     f64::NAN,
+];
+/// Materials the lane-10 intents define, paint with, rename and delete (one name blank, one
+/// too long: refused).
+const MATERIALS: [&str; 6] = [
+    "White oak",
+    "Birch ply",
+    "Red",
+    "Walnut",
+    " ",
+    "a material name far longer than any name may be, sixty-four chars",
 ];
 /// Tags the lane-5 intents create, rename, colour and delete (the first two shared with
 /// the older intents, so renames and deletes hit tags in use).
@@ -856,8 +911,13 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     .map(|(_, t)| t.clone())
                     .collect(),
                 context: ctx.and_then(|k| pick(&all_nodes, k)),
-                style: None,
-                shadows: None,
+                // Some scenes carry the document's style and sun.
+                style: if n % 3 == 0 { m.style().cloned() } else { None },
+                shadows: if n % 3 == 1 {
+                    m.shadows().copied()
+                } else {
+                    None
+                },
             };
             match kind {
                 0 => Op::AddScene { scene },
@@ -928,6 +988,169 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             },
         },
         Fuzz::ResetStock => Op::ResetStockLibrary,
+        Fuzz::DefineMat {
+            name,
+            color,
+            texture,
+            size,
+            rotation,
+            stock,
+        } => {
+            let name = MATERIALS[*name as usize % MATERIALS.len()].to_string();
+            let path = format!("assets/fuzz-{}.png", name.len());
+            let def = Op::DefineMaterial {
+                name: name.clone(),
+                color: *color,
+                texture: match texture {
+                    0 => None,
+                    1 | 3 => Some(path.clone()),
+                    _ => Some("oak.jpg".into()),
+                },
+                size: match size % 4 {
+                    0 => None,
+                    1 => Some([0.3, 0.15]),
+                    2 => Some([f64::from(*size) * 1e-3, 0.5]),
+                    _ => Some([0.0, 1.0]),
+                },
+                rotation: *rotation,
+                offset: [0.0, f64::from(*size) * 1e-3],
+                stock: match stock {
+                    0 => None,
+                    1 => Some(sawhorse_kernel::looks::StockLink {
+                        kind: sawhorse_kernel::looks::StockKind::Lumber,
+                        species: name.clone(),
+                    }),
+                    _ => Some(sawhorse_kernel::looks::StockLink {
+                        kind: sawhorse_kernel::looks::StockKind::Sheet,
+                        species: String::new(),
+                    }),
+                },
+            };
+            if *texture == 1 {
+                Op::Batch {
+                    ops: vec![
+                        Op::AddTexture {
+                            path,
+                            mime: "image/png".into(),
+                            data: sawhorse_kernel::testing::tiny_png(
+                                1 + u32::from(color[0] % 4),
+                                1 + u32::from(color[1] % 3),
+                                [color[0], color[1], color[2]],
+                            ),
+                        },
+                        def,
+                    ],
+                }
+            } else {
+                def
+            }
+        }
+        Fuzz::PaintFaces(o, mask, mat) => {
+            let o = object(*o);
+            let ids = m
+                .object(o)
+                .map(|x| x.brep().persistent_face_ids())
+                .unwrap_or_default();
+            let mut faces: Vec<u64> = ids
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << (i % 8)) != 0)
+                .map(|(_, &f)| f)
+                .collect();
+            if faces.is_empty() {
+                faces = ids.first().copied().into_iter().collect();
+            }
+            if mask % 16 == 15 {
+                faces.push(9999);
+            }
+            Op::Paint {
+                target: sawhorse_kernel::looks::PaintTarget::Faces { object: o, faces },
+                material: mat.map(|k| MATERIALS[k as usize % MATERIALS.len()].to_string()),
+            }
+        }
+        Fuzz::PaintItems(ks, mat) => Op::Paint {
+            target: sawhorse_kernel::looks::PaintTarget::Items {
+                items: ks
+                    .iter()
+                    .map(|&k| {
+                        if k > 240 {
+                            Item::Node(node(k))
+                        } else {
+                            item(k)
+                        }
+                    })
+                    .collect(),
+            },
+            material: mat.map(|k| MATERIALS[k as usize % MATERIALS.len()].to_string()),
+        },
+        Fuzz::FaceUv(o, f, uv) => {
+            let o = object(*o);
+            let f = face(o, *f).map_or(1, |x| x.0);
+            Op::SetFaceUv {
+                object: o,
+                face: f,
+                uv: uv.map(|(s, r, x, y)| sawhorse_kernel::looks::UvXform {
+                    scale: [s.abs(), (s * 0.5).abs()],
+                    rotation: r * 90.0,
+                    offset: [x * 0.01, y * 0.01],
+                }),
+            }
+        }
+        Fuzz::RenameMat(a, b) => {
+            // Mostly a material the model has, to a name it may not have yet.
+            let names: Vec<String> = m.materials().keys().cloned().collect();
+            let name = match pick_ref(&names, *a) {
+                Some(n) if a % 4 != 3 => n.clone(),
+                _ => MATERIALS[*a as usize % MATERIALS.len()].to_string(),
+            };
+            let to = if b % 3 == 0 {
+                format!("{name} {b}")
+            } else {
+                MATERIALS[*b as usize % MATERIALS.len()].to_string()
+            };
+            Op::RenameMaterial { name, to }
+        }
+        Fuzz::DeleteMat(a) => {
+            let names: Vec<String> = m.materials().keys().cloned().collect();
+            Op::DeleteMaterial {
+                name: match pick_ref(&names, *a) {
+                    Some(n) if a % 4 != 3 => n.clone(),
+                    _ => MATERIALS[*a as usize % MATERIALS.len()].to_string(),
+                },
+            }
+        }
+        Fuzz::Style(s) => {
+            use sawhorse_kernel::looks::{EdgeStyle, FaceStyle, Style};
+            Op::SetStyle {
+                style: s.map(|k| Style {
+                    preset: (k == 1).then(|| "Shop drawing".to_string()),
+                    face: [
+                        FaceStyle::Textured,
+                        FaceStyle::HiddenLine,
+                        FaceStyle::XRay,
+                        FaceStyle::Wireframe,
+                    ][k as usize % 4],
+                    edges: EdgeStyle {
+                        edges: k != 3,
+                        profiles: k % 2 == 1,
+                        extensions: k == 1,
+                        endpoints: k == 2,
+                    },
+                    background: (k == 2).then_some([250, 248, 240]),
+                    sky: None,
+                    ground: (k == 3).then_some([190, 180, 150]),
+                    section_cuts: true,
+                }),
+            }
+        }
+        Fuzz::Shadows(s) => Op::SetShadows {
+            shadows: s.map(|(on, minutes, latitude)| sawhorse_kernel::looks::Shadows {
+                on,
+                minutes,
+                latitude,
+                ..Default::default()
+            }),
+        },
         Fuzz::Undo => Op::Undo,
         Fuzz::Redo => Op::Redo,
         Fuzz::Raw(op) => op.clone(),
