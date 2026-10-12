@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
-import { CutListPane, rowKey, type CutListPaneProps } from "./CutListPane";
+import { columnWidths, CutListPane, rowKey, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
 import { REPORT_COLUMNS, reportCells } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
@@ -130,6 +130,46 @@ describe("Cut list pane", () => {
     expect((screen.getByRole("button", { name: "CSV" }) as HTMLButtonElement).disabled).toBe(true);
     rerender(<CutListPane {...props({ list: { ...empty, visible_only: true, totals: { ...empty.totals, hidden: 3 } }, visibleOnly: true })} />);
     expect(screen.getByTestId("cutlist-empty").textContent).toMatch(/Untick Visible only/);
+  });
+});
+
+describe("Cut list pane fit (300 px)", () => {
+  it("fixes the column widths from the longest value, caps the sizes, and leaves the rest to Part and Material", () => {
+    const list = bookshelf();
+    // 3/4, 11 1/4, 71 1/4: 3, 6 and 6 characters; the grain mark beside W (the top) and L.
+    expect(columnWidths(list, "fraction")).toEqual(["calc(3ch + 10px)", "calc(3ch + 10px)", "calc(6ch + 21px)", "calc(6ch + 21px)"]);
+    // Thirty-seconds over 100 in are capped; the full size is in the cell's tooltip.
+    const long = { ...list, rounding: "thirty_second" as const, rows: [{ ...list.rows[0], grain: "none" as const, qty: 12345, steps: [47, 3647, 3231] as [number, number, number] }] };
+    expect(columnWidths(long, "fraction")).toEqual(["calc(3ch + 10px)", "calc(7ch + 10px)", "calc(8ch + 10px)", "calc(9ch + 10px)"]);
+    render(<CutListPane {...props({ list: long, rounding: "thirty_second" })} />);
+    const cells = [...screen.getByText("Side").closest("tr")!.querySelectorAll("td")];
+    expect(cells[3].textContent).toBe("113 31/32");
+    expect(cells[3].getAttribute("title")).toBe("113 31/32 in");
+    expect(cells[4].getAttribute("title")).toBeNull();
+    expect(screen.getByRole("table", { name: "Cut list" }).className).toContain("fit");
+  });
+
+  it("Part and Material carry their full text as a tooltip; tabular figures", () => {
+    const list = bookshelf();
+    list.rows[0] = { ...list.rows[0], name: "A side panel with a name far too long for the pane", hidden: 1, material: "Quartersawn white oak, select and better" };
+    render(<CutListPane {...props({ list })} />);
+    const row = screen.getByText(/A side panel/).closest("tr")!;
+    expect(row.querySelector("td.part")!.getAttribute("title")).toBe("A side panel with a name far too long for the pane (1 hidden)");
+    expect(row.querySelector("td.mat")!.getAttribute("title")).toBe("Quartersawn white oak, select and better");
+    expect(document.querySelectorAll("col")).toHaveLength(6);
+  });
+
+  it("the right-click menu is titled with the row's name and the row stays marked while it is open", () => {
+    render(<CutListPane {...props()} />);
+    const top = screen.getByText("Top").closest("tr")!;
+    expect(top.className).not.toContain("menu");
+    fireEvent.contextMenu(top);
+    const menu = screen.getByRole("menu", { name: "Cut list: Top" });
+    expect(menu.querySelector(".ctxtitle")?.textContent).toBe("Top");
+    expect(screen.getByText("Top", { selector: ".name" }).closest("tr")!.className).toContain("menu");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText("Top", { selector: ".name" }).closest("tr")!.className).not.toContain("menu");
   });
 });
 

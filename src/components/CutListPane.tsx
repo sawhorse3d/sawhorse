@@ -44,6 +44,27 @@ interface Menu {
   row: CutRow;
 }
 
+/** Widest a size column grows (characters); longer sizes end in an ellipsis, in full in
+ * their tooltip. Sixteenths up to 99 in fit ("99 15/16", 8; lengths to "999 15/16"), and
+ * metres of mm ("2438.5"). */
+const SIZE_CAP: [number, number, number] = [7, 8, 9];
+/** A numeric cell's side padding (6 + 3 px) plus a pixel, and the grain mark beside a size (px). */
+const PAD = 10;
+const MARK = 11;
+
+/** Fixed column widths for the pane (`table-layout: fixed`): Qty and the sizes as wide as
+ * their longest value in this list (in `ch`, the table's monospace digits), capped; Part
+ * and Material share what is left and end in an ellipsis. So the table never scrolls
+ * sideways in the 300 px pane, at any rounding, units or grain. */
+export function columnWidths(list: CutList, style: ReturnType<typeof listStyle>): string[] {
+  const r = list.rounding;
+  // Qty: three digits ("QTY" is as wide); a thousand pieces would end in an ellipsis.
+  const qty = 3;
+  const sizes = [0, 1, 2].map((k) => Math.min(SIZE_CAP[k], Math.max(1, ...list.rows.map((x) => formatSteps(x.steps[k], r, style).length))));
+  const mark = (k: number) => (k === 1 && list.rows.some((x) => x.grain === "width")) || (k === 2 && list.rows.some((x) => x.grain === "length")) ? MARK : 0;
+  return [`calc(${qty}ch + ${PAD}px)`, ...sizes.map((n, k) => `calc(${n}ch + ${PAD + mark(k)}px)`)];
+}
+
 const GRAIN_CHOICES: { grain: Grain; label: string }[] = [
   { grain: "length", label: "Grain along the length" },
   { grain: "width", label: "Grain across (along the width)" },
@@ -119,7 +140,14 @@ export function CutListPane(p: CutListPaneProps) {
       ) : (
         <>
           <div className="tablewrap">
-            <table aria-label="Cut list">
+            <table aria-label="Cut list" className="fit">
+              <colgroup>
+                <col className="c-part" />
+                {columnWidths(list, style).map((w, k) => (
+                  <col key={k} style={{ width: w }} />
+                ))}
+                <col className="c-mat" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Part</th>
@@ -143,26 +171,29 @@ export function CutListPane(p: CutListPaneProps) {
                       data-row={k}
                       data-part={row.name}
                       aria-selected={sel}
-                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}`}
+                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${menu && rowKey(menu.row) === k ? " menu" : ""}`}
                       onClick={(e) => p.onSelectRow(row, e.ctrlKey || e.metaKey ? "toggle" : e.shiftKey ? "add" : "replace")}
                       onContextMenu={(e) => openMenu(e, row)}
                       title="Click to select its pieces in the model. Right-click to set the grain or the stock."
                     >
-                      <td className="part">
+                      <td className="part" title={notes.length ? `${row.name} (${notes.join(", ")})` : row.name}>
                         <span className="name">{row.name}</span>
                         {notes.length ? <small>{notes.join(" · ")}</small> : null}
                       </td>
                       <td className="n">{row.qty}</td>
-                      <td className="n">{formatSteps(row.steps[0], r, style)}</td>
-                      <td className="n">
-                        {formatSteps(row.steps[1], r, style)}
-                        {mark(1)}
+                      {[0, 1, 2].map((k) => {
+                        const t = formatSteps(row.steps[k], r, style);
+                        const m = k ? mark(k as 1 | 2) : null;
+                        return (
+                          <td key={k} className={m ? "n mk" : "n"} title={t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}>
+                            <span className="v">{t}</span>
+                            {m}
+                          </td>
+                        );
+                      })}
+                      <td className={`mat${row.stock_set ? " set" : ""}`} title={row.material ?? "No material or stock set"}>
+                        {materialText(row)}
                       </td>
-                      <td className="n">
-                        {formatSteps(row.steps[2], r, style)}
-                        {mark(2)}
-                      </td>
-                      <td className={`mat${row.stock_set ? " set" : ""}`}>{materialText(row)}</td>
                     </tr>
                   );
                 })}
@@ -203,6 +234,9 @@ export function CutListPane(p: CutListPaneProps) {
       </p>
       {menu ? (
         <div className="ctxmenu" ref={menuRef} role="menu" aria-label={`Cut list: ${menu.row.name}`} style={{ left: menu.x, top: menu.y }}>
+          <div className="ctxtitle" title={menu.row.name}>
+            {menu.row.name}
+          </div>
           {GRAIN_CHOICES.map((g) => (
             <button
               key={g.grain}

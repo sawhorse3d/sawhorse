@@ -309,6 +309,72 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   await page.screenshot({ path: test.info().outputPath("cutlist.png") });
 });
 
+test("the cut list fits the 300 px pane at every rounding, unit and grain, with long names", async ({ page }) => {
+  test.setTimeout(120_000);
+  await ready(page);
+  // One awkward board: thirty-seconds near 100 in, a long name and a long stock.
+  await escapeAll(page);
+  await page.keyboard.press("r");
+  await type(page, "11 15/32, 99 31/32");
+  await expect(hint(page)).toContainText("on the ground");
+  await page.keyboard.press("p");
+  await type(page, "1 15/32");
+  await expect(hint(page)).toContainText("Extruded");
+  await escapeAll(page);
+  await page.keyboard.press("Control+a");
+  await component(page, "Adjustable shelf, left-hand carcass, upper bay");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const row = page.locator(".cutlist tbody tr").first();
+  await expect(row).toContainText("Adjustable shelf");
+  await row.click({ button: "right" });
+  // The menu is titled with the row and the row stays marked while it is open.
+  await expect(page.getByRole("menu").locator(".ctxtitle")).toHaveText("Adjustable shelf, left-hand carcass, upper bay");
+  await expect(row).toHaveClass(/(^| )menu( |$)/);
+  await page.getByRole("menuitem", { name: /Stock/ }).click();
+  const dialog = page.getByRole("dialog", { name: /^Stock for Adjustable/ });
+  await dialog.getByRole("textbox").fill("Quartersawn white oak, select and better, kiln dried");
+  await dialog.getByRole("button", { name: "Set stock" }).click();
+  await expect(row.locator("td.mat")).toHaveAttribute("title", "Quartersawn white oak, select and better, kiln dried");
+
+  const side = await page.locator(".side").boundingBox();
+  expect(Math.round(side!.width)).toBe(300);
+  const fits = () =>
+    page.evaluate(() => {
+      const els = [".cutlist", ".cutlist .tablewrap", "#pane-cutlist"].map((q) => document.querySelector(q) as HTMLElement);
+      const over = els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => `${e.className || e.id}: ${e.scrollWidth} > ${e.clientWidth}`);
+      const t = document.querySelector(".cutlist table") as HTMLElement;
+      const w = document.querySelector(".cutlist .tablewrap") as HTMLElement;
+      if (t.getBoundingClientRect().width > w.getBoundingClientRect().width + 0.5) over.push(`table ${t.getBoundingClientRect().width} > ${w.getBoundingClientRect().width}`);
+      return over;
+    });
+  const grains = [/along the length/, /across/, /No grain/];
+  for (const rounding of ["follow", "sixteenth", "thirty_second", "half_mm"]) {
+    await page.getByLabel("Round sizes to").selectOption(rounding);
+    for (const g of grains) {
+      await row.click({ button: "right" });
+      await page.getByRole("menuitemradio", { name: g }).click();
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      await page.waitForTimeout(50);
+      expect(await fits(), `${rounding} ${g}`).toEqual([]);
+    }
+  }
+  await page.getByLabel("Round sizes to").selectOption("thirty_second");
+  await expect(row.locator("td").nth(4)).toContainText("99 31/32");
+  // Every display unit (Follow units): fractions, decimal inches, ft-in decimals, mm.
+  await page.getByLabel("Round sizes to").selectOption("follow");
+  const seen: string[] = [];
+  for (let k = 0; k < 6; k++) {
+    await page.locator("button.units").click();
+    await page.waitForTimeout(50);
+    seen.push((await row.locator("td").nth(3).innerText()).trim());
+    expect(await fits(), `units ${k}`).toEqual([]);
+  }
+  // decimal in, ft-in (decimal inches), mm, cm, m (both mm), then fractional again.
+  // W = 11 15/32 in: 11 1/2 at 1/16 in; 291.5 mm at 0.5 mm.
+  expect(seen).toEqual(["11.5", "11.5", "291.5", "291.5", "291.5", "11 1/2"]);
+  await page.screenshot({ path: test.info().outputPath("cutlist-fit.png") });
+});
+
 test("the cut list of an empty model says how parts come about", async ({ page }) => {
   await ready(page);
   await page.getByRole("tab", { name: "Cut list" }).click();

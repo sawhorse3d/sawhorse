@@ -227,12 +227,23 @@ button.chip:hover{border-color:var(--accent)}
 .cutlist table tbody tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .cutlist table tbody tr.sel td{background:color-mix(in srgb,var(--accent) 18%,transparent)}
 .cutlist table tbody tr.dim td{color:var(--muted)}
-.cutlist table{font-size:11px}
+.cutlist table{font-size:11px;font-variant-numeric:tabular-nums}
+.cutlist .tablewrap{margin:0}
+.cutlist table.fit td.n,.cutlist table.fit th.n{padding-left:6px}
+.cutlist table.fit{table-layout:fixed;width:100%}
+.cutlist table.fit td,.cutlist table.fit th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cutlist table.fit td.n .v{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.cutlist table.fit td.n.mk .v{max-width:calc(100% - 11px)}
+.cut-controls .pin{font:11.5px var(--body);padding:2px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--muted)}
+.cut-controls .pin.on{border-color:var(--accent);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.cut-controls .pin:disabled{opacity:.5;cursor:default}
+.cutlist table.fit td.part .name,.cutlist table.fit td.part small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cutlist table.fit td.part .name,.cutlist table.fit td.mat{font-family:var(--body);font-size:11.5px}
+.cutlist table tbody tr.menu td{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
+.ctxtitle{font:600 12px var(--body);color:var(--muted);padding:4px 8px 5px;border-bottom:1px solid var(--line);margin:0 0 3px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cutlist th,.cutlist td{padding:5px 3px}
 .cutlist th{font-size:10px;letter-spacing:.02em}
 .cutlist th:first-child,.cutlist td:first-child{padding-left:4px}
-.cutlist td.part{white-space:normal;min-width:64px;overflow-wrap:anywhere}
-.cutlist td.mat{white-space:normal;overflow-wrap:anywhere;min-width:48px}
 .cutlist td.part .name{display:block}
 .cutlist td.part small{display:block;font-family:var(--body);font-size:10px;color:var(--muted);line-height:1.25;margin-top:1px}
 .cutlist td.set{color:var(--accent)}
