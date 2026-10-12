@@ -462,6 +462,10 @@ pub fn model_hash(m: &Model) -> u64 {
     if m.has_sections() {
         m.hash_sections(&mut h);
     }
+    // Drawing sheets (lane 12): only when there is one.
+    if !m.sheet_order.is_empty() {
+        m.hash_sheets(&mut h);
+    }
     h.finish()
 }
 

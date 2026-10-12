@@ -108,11 +108,35 @@ impl DocCore {
     }
 }
 
+impl DocCore {
+    /// The document's drawing sheets in order (lane 12): `[{id, sheet}]`, each sheet with
+    /// its setup and items as the kernel stores them.
+    pub fn sheets_json(&self) -> String {
+        #[derive(serde::Serialize)]
+        struct Row<'a> {
+            id: u64,
+            sheet: &'a sawhorse_kernel::sheets::Sheet,
+        }
+        let m = self.doc.model();
+        let rows: Vec<Row> = m
+            .sheets()
+            .into_iter()
+            .map(|(id, sheet)| Row { id, sheet })
+            .collect();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
+    }
+}
+
 #[wasm_bindgen]
 impl Doc {
     /// See [`DocCore::section_view_json`].
     pub fn section_view(&self) -> Result<String, JsError> {
         self.core.section_view_json().map_err(|e| JsError::new(&e))
+    }
+
+    /// See [`DocCore::sheets_json`].
+    pub fn sheets(&self) -> String {
+        self.core.sheets_json()
     }
 }
 

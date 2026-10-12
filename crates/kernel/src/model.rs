@@ -540,6 +540,51 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+    /// Drawing sheets (lane 12, see [`crate::sheets`]): a new sheet at the end.
+    AddSheet {
+        setup: Box<crate::sheets::SheetSetup>,
+    },
+    /// A sheet's paper, margins, units, grid, length format, title block and name.
+    SetSheet {
+        sheet: u64,
+        setup: Box<crate::sheets::SheetSetup>,
+    },
+    DeleteSheet {
+        sheet: u64,
+    },
+    /// Put a sheet at position `to` in the document's order.
+    MoveSheet {
+        sheet: u64,
+        to: u32,
+    },
+    /// Place an item on a sheet (viewport, dimension, label, table, image, line, rectangle).
+    AddSheetItem {
+        sheet: u64,
+        item: Box<crate::sheets::ItemKind>,
+    },
+    /// Replace an item (moved, resized or changed); it keeps its id and kind.
+    SetSheetItem {
+        sheet: u64,
+        item: u64,
+        kind: Box<crate::sheets::ItemKind>,
+    },
+    /// Move items on the paper by `by` (metres).
+    MoveSheetItems {
+        sheet: u64,
+        items: Vec<u64>,
+        by: [f64; 2],
+    },
+    /// Delete items (a viewport's dimensions go with it).
+    DeleteSheetItems {
+        sheet: u64,
+        items: Vec<u64>,
+    },
+    /// Put an item at position `to` in its sheet's drawing order.
+    OrderSheetItem {
+        sheet: u64,
+        item: u64,
+        to: u32,
+    },
     /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
     /// edit; refused (typed) when the snapshot does not validate.
     Restore {
@@ -889,6 +934,17 @@ pub enum OpOutcome {
         meshes: usize,
         sketches: usize,
     },
+    /// A sheet was added (lane 12).
+    SheetAdded {
+        sheet: u64,
+    },
+    /// An item was placed on a sheet.
+    SheetItemAdded {
+        sheet: u64,
+        item: u64,
+    },
+    /// A sheet or its items changed.
+    SheetSet,
     /// A section plane was added (lane 12).
     SectionAdded {
         section: u64,
@@ -953,6 +1009,9 @@ pub struct Model {
     pub(crate) stock: Option<crate::stock::StockLibrary>,
     /// Section planes (lane 12), see [`crate::section`].
     pub(crate) sections: SlotMap<crate::ids::SectionId, crate::section::SectionPlane>,
+    /// Drawing sheets and their order (lane 12), see [`crate::sheets`].
+    pub(crate) sheets: SlotMap<crate::ids::SheetId, crate::sheets::Sheet>,
+    pub(crate) sheet_order: Vec<crate::ids::SheetId>,
 }
 
 /// A material: sRGB colour with alpha; a texture (a path in the model's texture table, or a
@@ -1866,6 +1925,15 @@ impl Model {
                 Ok(OpOutcome::SectionsCopied { sections })
             }
             Op::SliceToGroup { section, name } => self.slice_to_group(*section, name.as_deref()),
+            Op::AddSheet { setup } => self.add_sheet(setup),
+            Op::SetSheet { sheet, setup } => self.set_sheet(*sheet, setup),
+            Op::DeleteSheet { sheet } => self.delete_sheet(*sheet),
+            Op::MoveSheet { sheet, to } => self.move_sheet(*sheet, *to),
+            Op::AddSheetItem { sheet, item } => self.add_sheet_item(*sheet, item),
+            Op::SetSheetItem { sheet, item, kind } => self.set_sheet_item(*sheet, *item, kind),
+            Op::MoveSheetItems { sheet, items, by } => self.move_sheet_items(*sheet, items, *by),
+            Op::DeleteSheetItems { sheet, items } => self.delete_sheet_items(*sheet, items),
+            Op::OrderSheetItem { sheet, item, to } => self.order_sheet_item(*sheet, *item, *to),
             Op::Restore { snapshot } => {
                 *self = Model::from_snapshot(snapshot)?;
                 Ok(OpOutcome::Restored {
@@ -2863,6 +2931,7 @@ impl Model {
             .check_structure()
             .and_then(|_| self.check_looks())
             .and_then(|_| self.check_sections())
+            .and_then(|_| self.check_sheets())
         {
             return Err(TopologyError {
                 violations: vec![Violation::Structure(e)],

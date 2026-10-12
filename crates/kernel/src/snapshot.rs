@@ -413,6 +413,9 @@ pub struct Snapshot {
     /// Section planes (lane 12), in id order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<SnapSection>,
+    /// Drawing sheets (lane 12), in the document's order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets: Vec<crate::sheets::Sheet>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -673,6 +676,7 @@ impl Model {
                     hidden: x.hidden,
                 })
                 .collect(),
+            sheets: self.sheets().into_iter().map(|(_, s)| s.clone()).collect(),
         }
     }
 
@@ -1109,6 +1113,11 @@ impl Model {
                 x.hidden = map(&x.hidden)?;
             }
             m.scenes.push(sc);
+        }
+        // Drawing sheets (lane 12), in order; the validator checks them below.
+        for sh in &s.sheets {
+            let k = m.sheets.insert(sh.clone());
+            m.sheet_order.push(k);
         }
         for g in &s.guides {
             let point = DVec3::from_array(g.point);

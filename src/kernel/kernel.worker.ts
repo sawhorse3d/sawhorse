@@ -5,6 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
+import type { SheetRow } from "./sheetTypes";
 import type { DocState, Inference, KernelOp, LibraryEntry, MeshData, OpOutcome, Picked, SceneData, SceneGraph, SectionView, TextureBlob, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
@@ -70,7 +71,9 @@ function scene(d: WasmDoc): SceneData {
     const state = JSON.parse(d.state_json()) as DocState;
     // Section cuts (lane 12): only for a model that has a section plane.
     const sections = state.graph?.sections?.length ? (JSON.parse(d.section_view()) as SectionView) : undefined;
-    return { mesh, state, textures: newTextures(d, state), sections };
+    // Drawing sheets (lane 12), with every edit (plain data, small).
+    const sheets = JSON.parse(d.sheets()) as SheetRow[];
+    return { mesh, state, textures: newTextures(d, state), sections, sheets };
   } finally {
     m.free();
   }

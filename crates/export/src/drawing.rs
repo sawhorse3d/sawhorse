@@ -35,61 +35,7 @@ use sawhorse_kernel::plane::Plane;
 
 use crate::ExportError;
 
-/// The standard views of a sheet viewport (Z up; the model's front is the -Y side).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StdView {
-    /// Plan: looking down.
-    Top,
-    Bottom,
-    /// Looking at the -Y side (towards +Y), like the app's Front view.
-    Front,
-    Back,
-    /// Looking at the -X side (towards +X).
-    Left,
-    /// Looking at the +X side (towards -X), like the app's Right view.
-    Right,
-    /// The app's three-quarter view, parallel (not to scale on paper).
-    Iso,
-}
-
-impl StdView {
-    /// (view direction, up) for the view.
-    pub fn axes(self) -> (DVec3, DVec3) {
-        match self {
-            StdView::Top => (-DVec3::Z, DVec3::Y),
-            StdView::Bottom => (DVec3::Z, -DVec3::Y),
-            StdView::Front => (DVec3::Y, DVec3::Z),
-            StdView::Back => (-DVec3::Y, DVec3::Z),
-            StdView::Left => (DVec3::X, DVec3::Z),
-            StdView::Right => (-DVec3::X, DVec3::Z),
-            StdView::Iso => (DVec3::new(1.0, 1.0, -1.0).normalize(), DVec3::Z),
-        }
-    }
-
-    /// Orthographic and square to the model's axes: a drawing to scale.
-    pub fn to_scale(self) -> bool {
-        self != StdView::Iso
-    }
-}
-
-/// A camera, as scenes store it (metres, Z up).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CameraSpec {
-    pub eye: [f64; 3],
-    pub target: [f64; 3],
-    pub up: [f64; 3],
-    /// Parallel projection.
-    #[serde(default)]
-    pub parallel: bool,
-    /// Vertical field of view, degrees (perspective).
-    #[serde(default = "default_fov")]
-    pub fov: f64,
-}
-
-fn default_fov() -> f64 {
-    35.0
-}
+pub use sawhorse_kernel::paper::{CameraSpec, StdView};
 
 /// What a drawing looks at.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]

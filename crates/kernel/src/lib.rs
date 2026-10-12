@@ -38,6 +38,7 @@ pub mod push;
 pub mod refbatch;
 pub mod section;
 pub mod sever;
+pub mod sheets;
 pub mod sketch;
 pub mod snap;
 pub mod snapshot;
@@ -52,7 +53,7 @@ pub mod validate;
 pub use document::Document;
 pub use error::{
     BuildError, DocumentError, FaceEditError, KernelError, OffsetError, PushError, SectionError,
-    SketchError, StockError, StructureError, SweepError, TransformError,
+    SheetError, SketchError, StockError, StructureError, SweepError, TransformError,
 };
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};

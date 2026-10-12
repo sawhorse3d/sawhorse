@@ -1364,6 +1364,8 @@ impl Model {
         if sc.name != name && self.scenes.iter().any(|s| s.name == sc.name) {
             return Err(StructureError::SceneExists(sc.name).into());
         }
+        // Sheet viewports showing it follow (lane 12).
+        self.sheets_scene_updated(name, &sc);
         self.scenes[k] = sc;
         Ok(OpOutcome::SceneSet)
     }
@@ -1374,7 +1376,9 @@ impl Model {
             .iter()
             .position(|s| s.name == name)
             .ok_or_else(|| StructureError::NoSuchScene(name.to_string()))?;
-        self.scenes.remove(k);
+        let gone = self.scenes.remove(k);
+        // Sheet viewports showing it keep its camera (lane 12).
+        self.sheets_scene_deleted(&gone);
         Ok(OpOutcome::SceneSet)
     }
 

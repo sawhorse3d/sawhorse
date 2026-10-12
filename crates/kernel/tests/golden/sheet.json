@@ -1,0 +1,730 @@
+{
+  "name": "sheet",
+  "description": "Lane 12: the cut bookshelf (section.json) on a Letter landscape sheet: front elevation and plan at 1:12, the section at 1:4 cropped to the bottom shelf, three dimensions, a label with a leader on a model point, the cut list and a title block; undo and redo.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ],
+        [
+          0.0,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.80975
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Side"
+    },
+    {
+      "op": "copy",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.89535,
+          0.0,
+          0.0
+        ]
+      },
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.08889999999999999
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.0,
+          0.08889999999999999
+        ],
+        [
+          0.89535,
+          0.0,
+          0.08889999999999999
+        ],
+        [
+          0.89535,
+          0.2794,
+          0.08889999999999999
+        ],
+        [
+          0.019049999999999997,
+          0.2794,
+          0.08889999999999999
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 2,
+      "region": 1,
+      "distance": 0.019049999999999997
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 3
+        }
+      ],
+      "name": "Shelf"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.4572
+        ]
+      },
+      "count": 3,
+      "nodes": [
+        3
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          1.80975
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          1.80975
+        ],
+        [
+          0.9144,
+          0.0,
+          1.80975
+        ],
+        [
+          0.9144,
+          0.28575,
+          1.80975
+        ],
+        [
+          0.0,
+          0.28575,
+          1.80975
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 3,
+      "region": 1,
+      "distance": 0.019049999999999997
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 7
+        }
+      ],
+      "name": "Top"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.0508,
+          0.0
+        ],
+        [
+          0.89535,
+          0.0508,
+          0.0
+        ],
+        [
+          0.89535,
+          0.06985,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.06985,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 4294967297,
+      "distance": 0.08889999999999999
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 8
+        }
+      ],
+      "name": "Toe kick"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.2794,
+          0.0
+        ],
+        [
+          0.89535,
+          0.2794,
+          0.0
+        ],
+        [
+          0.89535,
+          0.28575,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 8589934593,
+      "distance": 1.80975
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 9
+        }
+      ],
+      "name": "Back panel"
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.4572,
+        0.127,
+        0.762
+      ],
+      "normal": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "op": "flip_section",
+      "section": 1
+    },
+    {
+      "op": "move_sections",
+      "sections": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          -0.15239999999999998,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "Section A",
+        "eye": [
+          3.0,
+          -3.0,
+          2.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": true,
+        "sections": {
+          "active": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.762
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "rename_section",
+      "section": 2,
+      "name": "Plan at 30 in"
+    },
+    {
+      "op": "slice_to_group",
+      "section": 2
+    },
+    {
+      "op": "activate_scene",
+      "name": "Section A"
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "Section",
+        "eye": [
+          -2.0,
+          0.142875,
+          0.9144
+        ],
+        "target": [
+          0.4572,
+          0.142875,
+          0.9144
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": true,
+        "style": {
+          "preset": "Shop drawing",
+          "face": "hidden_line",
+          "edges": {}
+        },
+        "sections": {
+          "active": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "op": "add_sheet",
+      "setup": {
+        "name": "Bookshelf",
+        "paper": {
+          "kind": "letter"
+        },
+        "landscape": true,
+        "margins": [
+          0.0127,
+          0.0127,
+          0.0127,
+          0.0127
+        ],
+        "units": "inches",
+        "grid": 0.003175,
+        "format": {
+          "kind": "fraction",
+          "den": 16
+        },
+        "title": {
+          "title": "Bookshelf",
+          "project": "Shop drawings",
+          "date": "2026-10-12",
+          "revision": "A"
+        }
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "viewport",
+        "rect": [
+          0.015239999999999998,
+          0.015239999999999998,
+          0.09144,
+          0.16763999999999998
+        ],
+        "source": {
+          "from": "standard",
+          "view": "front"
+        },
+        "scale": {
+          "kind": "ratio",
+          "paper": 1.0,
+          "model": 12.0
+        },
+        "caption": "FRONT ELEVATION 1:12"
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "viewport",
+        "rect": [
+          0.1143,
+          0.015239999999999998,
+          0.08635999999999999,
+          0.035559999999999994
+        ],
+        "source": {
+          "from": "standard",
+          "view": "top"
+        },
+        "scale": {
+          "kind": "ratio",
+          "paper": 1.0,
+          "model": 12.0
+        },
+        "caption": "PLAN 1:12"
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "viewport",
+        "rect": [
+          0.20827999999999997,
+          0.015239999999999998,
+          0.05588,
+          0.08381999999999999
+        ],
+        "source": {
+          "from": "scene",
+          "name": "Section"
+        },
+        "scale": {
+          "kind": "ratio",
+          "paper": 1.0,
+          "model": 4.0
+        },
+        "centre": [
+          -0.1397,
+          0.1016
+        ],
+        "caption": "SECTION A 1:4",
+        "border": true
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "dimension",
+        "viewport": 1,
+        "dim": "horizontal",
+        "points": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.9144,
+            0.0,
+            0.0
+          ]
+        ],
+        "offset": 0.008889999999999999,
+        "style": "arrows"
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "dimension",
+        "viewport": 1,
+        "dim": "vertical",
+        "points": [
+          [
+            0.9144,
+            0.0,
+            0.0
+          ],
+          [
+            0.9144,
+            0.0,
+            1.8288
+          ]
+        ],
+        "offset": 0.008889999999999999,
+        "style": "arrows"
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "dimension",
+        "viewport": 1,
+        "dim": "vertical",
+        "points": [
+          [
+            0.019049999999999997,
+            0.0,
+            0.10794999999999999
+          ],
+          [
+            0.019049999999999997,
+            0.0,
+            0.5461
+          ]
+        ],
+        "offset": -0.007619999999999999,
+        "style": "arrows"
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "label",
+        "at": [
+          0.1143,
+          0.18542
+        ],
+        "text": "Back panel 1/4 ply in a rabbet",
+        "size": 0.002794,
+        "leader": {
+          "on": "model",
+          "viewport": 1,
+          "point": [
+            0.4572,
+            0.2794,
+            0.762
+          ]
+        }
+      }
+    },
+    {
+      "op": "add_sheet_item",
+      "sheet": 1,
+      "item": {
+        "kind": "table",
+        "rect": [
+          0.1143,
+          0.05841999999999999,
+          0.14986,
+          0.05841999999999999
+        ],
+        "columns": [
+          "part",
+          "qty",
+          "thickness",
+          "width",
+          "length",
+          "material",
+          "amount",
+          "notes"
+        ],
+        "title": "CUT LIST"
+      }
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    }
+  ],
+  "hash": "ab2f2a4b8a7c949d",
+  "stats": {
+    "objects": 9,
+    "faces": 54,
+    "edges": 108,
+    "vertices": 72,
+    "genus": 0,
+    "watertight": true
+  },
+  "cut_list": "0a172a5011a79a49",
+  "nesting": "8013eae20f414d88",
+  "sections": [
+    "ce03808fc8484b3b",
+    "05ffdbf92ab8bcff"
+  ]
+}

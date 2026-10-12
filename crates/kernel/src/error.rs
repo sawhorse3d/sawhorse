@@ -304,6 +304,21 @@ pub enum SectionError {
     SceneSection(u64),
 }
 
+/// Drawing sheets (lane 12). Refusals of bad input; nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum SheetError {
+    #[error("no sheet #{0}")]
+    NoSuchSheet(u64),
+    #[error("no item #{1} on sheet #{0}")]
+    NoSuchItem(u64, u64),
+    #[error("{0}")]
+    Bad(String),
+    #[error("a document holds at most 200 sheets")]
+    TooManySheets,
+    #[error("a sheet holds at most 2,000 items")]
+    TooManyItems,
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
@@ -332,6 +347,8 @@ pub enum KernelError {
     Looks(crate::looks::LooksError),
     #[error(transparent)]
     Section(#[from] SectionError),
+    #[error(transparent)]
+    Sheet(#[from] SheetError),
     /// The validator rejected the result of an operation. Always a kernel bug: the
     /// transaction was rolled back, and the op sequence belongs in tests/repro/.
     #[error("kernel bug, operation rolled back: {0}")]

@@ -98,6 +98,8 @@ export type KernelOp =
   | { op: "copy_sections"; sections: number[]; xform: Xform; count?: number }
   /** Create Group from Slice: the cut's outline as a sketch in a new group. */
   | { op: "slice_to_group"; section: number; name?: string | null }
+  // Lane 12: drawing sheets (src/kernel/sheetTypes.ts).
+  | import("./sheetTypes").SheetOp
   | { op: "undo" }
   | { op: "redo" };
 
@@ -322,6 +324,9 @@ export type OpOutcome =
   | { kind: "sections_moved"; sections: number[] }
   | { kind: "sections_copied"; sections: number[] }
   | { kind: "sliced"; group: number; sketch: number }
+  | { kind: "sheet_added"; sheet: number }
+  | { kind: "sheet_item_added"; sheet: number; item: number }
+  | { kind: "sheet_set" }
   | { kind: "undone" }
   | { kind: "redone" };
 
@@ -680,6 +685,8 @@ export interface SceneData {
   textures?: TextureBlob[];
   /** Section cuts to draw (lane 12; absent when the model has no section plane). */
   sections?: SectionView;
+  /** The drawing sheets, in order (lane 12). */
+  sheets?: import("./sheetTypes").SheetRow[];
 }
 
 /** The subset of the wasm-bindgen module the worker uses (see crates/wasm-api/src/lib.rs). */
@@ -732,6 +739,8 @@ export interface WasmDoc {
   face_uvs(object: number, face: number, uvJson: string): Float32Array;
   /** What the viewport draws for section cuts (lane 12), as JSON. */
   section_view(): string;
+  /** The drawing sheets in order (lane 12), as JSON. */
+  sheets(): string;
   free(): void;
 }
 
