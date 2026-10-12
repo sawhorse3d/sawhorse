@@ -82,6 +82,14 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Algorithms** (templates captured and re-derived by slot, affine maps of B-reps, a tidy pass, the definition-reachability purge) were written from general knowledge.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
 
+### 2026-10-12 — lane 11 (the plugin API): what was read
+- **Who:** the lane-11 builder (Claude), plugins lane.
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane. The SketchUp Ruby API's source and documentation were not opened, and no code from any SketchUp extension was read.
+- **SketchUp extensions** (the Extension Manager, extensions adding menus, toolbars, tools and dialogs, cabinet and joinery extensions, line-boring for shelf pins) were described from memory, as a user knows them. The API, its names, the manifest, the sandbox and the three samples are our own design and words.
+- **Third-party code used, not copied:** `fflate` (MIT, already a dependency) for zips. The permission sets of `tauri-plugin-fs` 2.7.0 (`permissions/read-all.toml`, `write-all.toml`, the generated `appdata` sets) and the `recursive` option of `tauri-plugin-dialog` 2.8.2's `open` (`src/commands.rs`) were read in the local cargo registry to choose the capabilities; nothing was copied.
+- **Written from general knowledge:** Web Worker isolation and its globals, removing properties along prototype chains, blob-URL module linking, a small JavaScript scanner (comments, strings, templates, regular expressions), JSON Schema, request/response RPC with ids and a ping watchdog.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
+
 ### 2026-10-12 — lane 9 (nesting and cutting diagrams): what was read
 - **Who:** the lane-9 builder (Claude), nesting lane.
 - **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane.

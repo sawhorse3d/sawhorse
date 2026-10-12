@@ -81,6 +81,10 @@ The Render pane talks to the render service (`../render-service`, its own reposi
 | `e2e/offset.spec.ts` | Offset: a face inward (imprint, tenon pulled up), outward (sketch), a sketch region, a selected edge offset across a face |
 | `e2e/follow.spec.ts` | Follow Me: a chamfer routed round a box top through the UI, checked against the exact removed volume |
 | `e2e/cutlist.spec.ts` | lane 7: the user guide's bookshelf built from components through the UI (Back panel, Side x2, Top, Toe kick, Shelf x4; every part's bounds checked), then the Cut list pane: every row and both tiles (18.99 board feet, 1 sheet), stock and grain from the right-click menu, a row selecting its pieces, CSV / PDF / labels saved and read back, Print with the print stylesheet, a hidden shelf with Visible only, 0.5 mm rounding; and the empty state |
+| `e2e/plugins-sandbox.spec.ts` | lane 11: the sandbox in a real worker: no DOM, `window`, `fetch`, XHR, WebSocket, IndexedDB, `importScripts`, `postMessage`; `eval`, `Function` and string timers throw; no model change without `model.write`, no network without `net`; dynamic `import()` and outside imports refused before the plugin runs; a command spinning forever reported (with Stop) and stopped while a box is drawn; a plugin throwing while it loads |
+| `e2e/plugins-model.spec.ts` | lane 11: model reads in the API's shapes, the selection both ways, a batch with placeholders as one step named "Plugin box" in the Edit menu, undone and redone |
+| `e2e/plugins-ui.spec.ts` | lane 11: Install from .zip through the picker, the permission dialog, every panel field, prompt and confirm, the Plugins menu and a shortcut, a plugin tool and the VCB, the console, Reload, installs surviving a reload, Disable, Uninstall, a broken zip, a session load |
+| `e2e/plugins-samples.spec.ts` | lane 11: the samples off with their permissions; the cabinet generator (30 x 72 x 12 in, 3 shelves: the Outliner's names, the Cut list's sizes, one undo; Update in place); shelf pin holes (a column of exact volume, one undo); the model report (counts against the model, Markdown and CSV) |
 | `e2e/groups.spec.ts` | lane 5: Ctrl+G, a click selecting the group, Push/Pull refusing a closed group's face, double-click to open, Esc to close, undo returning inside, Ctrl+Shift+G; Make Component (dialog), a Ctrl+Move copy as an instance, an edit inside one reaching both, Make Unique from the Outliner; tags (New tag, assign, hide), scene tabs (add, switch, rename), the Outliner's eye and lock |
 
 Shared helpers for the lane-4 specs live in `e2e/helpers.ts`. `hover` re-reads the screen position and nudges the cursor until the expected inference shows, because the view refits after an edit. `solids()` reads every solid's display number, bounds and volume from `window.__sawhorse.solids()`.
@@ -116,6 +120,36 @@ Lane 7's walk-through, `scripts/capture-lane07.mjs`, builds the same bookshelf f
 ```bash
 npm run dev -- --port 5197 --strictPort   # in another terminal
 node scripts/capture-lane07.mjs --url http://localhost:5197 --out ../_captures
+```
+
+### Plugins (lane 11)
+
+| What | Where |
+|---|---|
+| The API's types, shim, manifest schema and validator, protocol, plugin-side runtime, geometry | `packages/plugin-api` (design: `docs/adr/0009-plugin-api.md`; guide: `docs/PLUGINS.md`) |
+| The sandbox (one module worker per plugin) and its lockdown | `src/plugins/sandbox.worker.ts`, `lockdown.ts` |
+| Permissions, requests, the watchdog | `src/plugins/host.ts` |
+| Registry, loading, enabling, contributions, request handlers | `src/plugins/manager.ts`, `loader.ts`, `zip.ts`, `store.ts`, `platform.ts` (desktop folders, browser IndexedDB), `bundled.ts` |
+| The model as plugins read it, panel checks | `src/plugins/model.ts`, `panel.ts` |
+| The window: pane, panels, dialogs, menu, shortcuts, rail group, plugin tools | `src/components/PluginsPane.tsx`, `PluginPanel.tsx`, `PluginDialog.tsx`, `src/plugins/usePlugins.tsx`, `src/tools/plugin.ts` |
+| Named batches with placeholders | `crates/kernel/src/refbatch.rs`, `Doc.apply_named_batch` (`crates/wasm-api`), the worker's `namedBatch` |
+| The samples | `plugins/` (type-checked by `plugins/tsconfig.json`) |
+
+```bash
+npm run plugin:check                                    # every plugin under plugins/: manifest, sources, type check
+npm run plugin:pack -- plugins/cabinet-generator        # -> dist-plugins/<id>-<version>.zip (gitignored), deterministic
+npx vitest run packages src/plugins                     # codec, manifest, sources, runtime, host, panels, zips, samples, WASM batches
+bash scripts/cargo.sh test -p sawhorse-kernel --lib --test refbatch     # batches against the goldens
+PW_PORT=4211 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test e2e/plugins-sandbox.spec.ts e2e/plugins-model.spec.ts e2e/plugins-ui.spec.ts e2e/plugins-samples.spec.ts
+```
+
+`window.__sawhorse.plugins` (tests and developers): `list()`, `loadSession(files)`, `enable(id)`, `disable(id)`, `commands()`, `run(key)`.
+
+Lane 11's walk-through, `scripts/capture-lane11.mjs`, enables the three samples through the permission dialog, generates a 30 x 72 x 12 in cabinet with three shelves, shows the Outliner and the Cut list, opens the Right side from the Outliner and drills two columns of shelf pin holes (checked by volume: 32 holes, both sides), shows the model report and reads its exports, in light and dark:
+
+```bash
+npx vite --port 5211 --strictPort        # in another terminal
+node scripts/capture-lane11.mjs --url http://localhost:5211 --out ../_captures
 ```
 
 ### The cut list (lane 7)

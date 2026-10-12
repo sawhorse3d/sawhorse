@@ -53,7 +53,16 @@ export function parts(s) {
   const innerD = s.depth - b;
   /** @type {import("sawhorse").PartSpec[]} */
   const list = [
-    { name: "Side", boxes: [{ min: [0, 0, 0], size: [t, s.depth, s.height] }], copies: [{ at: [0, 0, 0], name: "Left side" }, { at: [s.width - t, 0, 0], name: "Right side" }] },
+    // The left side is the right side mirrored, as in the shop: its inside face is the same
+    // face of the part, so holes drilled into one side's inside go into both insides.
+    {
+      name: "Side",
+      boxes: [{ min: [0, 0, 0], size: [t, s.depth, s.height] }],
+      copies: [
+        { at: { linear: [[-1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [t, 0, 0] }, name: "Left side" },
+        { at: [s.width - t, 0, 0], name: "Right side" },
+      ],
+    },
     { name: "Top", boxes: [{ min: [0, 0, 0], size: [innerW, innerD, t] }], copies: [{ at: [t, 0, s.height - t], name: "Top" }] },
     { name: "Bottom", boxes: [{ min: [0, 0, 0], size: [innerW, innerD, t] }], copies: [{ at: [t, 0, s.toeKick], name: "Bottom" }] },
   ];

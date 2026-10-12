@@ -12,13 +12,13 @@ What it makes, x across the front, y front to back, z up:
 
 | Part | Copies | Size |
 |---|---|---|
-| Side | Left side, Right side | stock x depth x height, full height |
+| Side | Right side, and Left side as its mirror image | stock x depth x height, full height |
 | Top, Bottom | one each | between the sides, the depth less the back |
 | Shelf | Shelf 1 .. Shelf n | as the top, spaced so every opening is the same height |
 | Back | one (when ticked) | 1/4 in (6 mm in metric documents) sheet between the sides, from the toe kick up |
 | Toe kick | one (when the height is more than 0) | stock thick, set back 3 in (75 mm) from the front |
 
-The sides run to the floor; cut the toe notch in them yourself if you want one. The whole cabinet is one undo step ("Generate cabinet").
+The sides run to the floor; cut the toe notch in them yourself if you want one. The left side is the right side mirrored (the Cut list notes it as handed), so anything done inside one side, such as a column of shelf pin holes, appears inside the other. The whole cabinet is one undo step ("Generate cabinet").
 
 **Changing it.** Select the cabinet (a click on it selects the whole component) and the button reads **Update selected cabinet**: it replaces that cabinet in place with the new sizes, again as one undo step. With anything else selected, it adds a new cabinet beside the model.
 

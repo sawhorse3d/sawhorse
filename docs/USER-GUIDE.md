@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 10): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, the cut list, and materials, paint, styles and shadows.
+Sawhorse is pre-alpha. This page covers what works today (lane 11): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, the cut list, materials, paint, styles and shadows, and plugins.
 
 ## The first ten minutes
 
@@ -293,6 +293,30 @@ Parts of different materials never share a sheet or a board.
 **Files.** **SVG** saves one drawing per sheet or board, 1:1 in millimetres (it prints or projects to scale): every part outlined and labelled with its tag, name and size, the overall dimensions, every cut numbered where it starts, and the cut sequence written underneath. Each diagram's own **SVG** link saves just that one. **DXF** saves every sheet and board in one file for a CNC router or a laser, in millimetres: a closed polyline per part on a layer per sheet or board (SHEET-01, BOARD-02, ...), the stock outlines on layer STOCK and the tags as text on layer LABELS, so the CAM program can cut one layer and ignore the rest. **DXF R12** is the same with old-style polylines, for programs that read only R12. **PDF** saves a booklet: a first page with what to buy (each stock and material, how many, the yield, board feet), the settings, any parts on no stock and an index; then a page per sheet or board with its diagram to scale, its parts and its cut sequence.
 
 **The bookshelf.** Build the bookshelf above and name its back panel 1/4 birch ply, then open Nesting: the carcass, top, shelves and toe kick (3/4 in, no material) come from **five 4/4 x 12 x 96 boards** (each side takes a board, with 24 5/8 in left that nothing fits; the top and the toe kick share one; the four shelves go two to a board) and the back from **one 4 x 8 sheet of 1/4 in**: 6,105 sq in of parts from 10,368 sq in of stock, **58.9% yield**. Name the carcass "3/4 birch ply" too and it becomes three sheets: two of 3/4 in (four 11 1/4 in strips fit across a sheet, but nothing 34 1/2 in long fits beside a 71 1/4 in side) and the back's.
+
+## Plugins
+
+Plugins add tools, panels and commands. Each runs in its own sandbox, apart from the app, and can do only what it asked for when you enabled it: read the model, change it (every change is one undo step), add to the window, keep its settings, save or open files through the usual dialogs, or reach the sites it lists. A plugin that stops responding is reported in the status line (with **Stop**) and stopped after 15 seconds; the app keeps working.
+
+**The Plugins pane** is the puzzle-piece tab at the end of the right panel. It lists every plugin with its state (Off, Running, Not responding, Stopped, Crashed, Cannot load), what it asks for and its last error, and the panels of the plugins that are running, each in a section under its name (click the name to fold it).
+
+- **Enable...** shows what the plugin asks for; Enable starts it, now and every time Sawhorse starts. **Disable** stops it and takes its panels, commands and tools away.
+- **Reload** restarts it (a plugin loaded from a folder is read again first).
+- **Developer: console** shows what it logged; useful when something does not work.
+- **Uninstall** removes a plugin you installed. The samples cannot be uninstalled, only disabled.
+- **Open folder** (desktop) shows where it is on disk.
+
+**Getting a plugin.** Plugins > Install from .zip... (or the button under the list) takes a plugin's .zip. On the desktop it goes into the app's plugin folder; in the browser, into this browser. In the browser, Load from .zip for this session runs one until you close the tab; on the desktop, Load unpacked folder runs one from a folder (for people writing plugins). Install only plugins you trust, and read what they ask for before enabling them.
+
+**Using them.** A plugin's commands are in the Plugins menu under its name (with its shortcut, if it has one), its panels in the Plugins pane, and its tools in the last group of the tool rail. Changes a plugin makes are undone with Ctrl+Z like your own; the status line names them ("Undone: Generate cabinet").
+
+**The samples** come with Sawhorse, off until you enable them:
+
+- **Cabinet generator**: type a width, height, depth, stock thickness, number of shelves, back panel and toe kick (in your units), then **Generate cabinet**: a frameless cabinet whose parts are named components (Left side, Right side, Top, Bottom, Shelf 1 ..., Back, Toe kick), so the Cut list reads it straight away. With that cabinet selected the button reads **Update selected cabinet** and replaces it in place. A 30 x 72 x 12 in cabinet with three shelves lists Side 2 (3/4 x 12 x 72), Top, Bottom and Shelf 3 (3/4 x 11 3/4 x 28 1/2), Back (1/4 x 28 1/2 x 68, sheet goods) and Toe kick.
+- **Shelf pin holes**: pick **Pins** in the rail, hover a face and a column of holes shows; click to drill it. Type `count, pitch, diameter` (8, 32mm, 5mm to start). Esc clears the preview; one Ctrl+Z takes a column back. To drill a cabinet side, open the cabinet and the side first (double-click, or the Outliner's Edit inside): both sides get the holes, since the left one is the right one mirrored.
+- **Model report**: a live report of the model (counts of solids, groups, components, instances, faces and edges, the overall size, the volume, board feet by material, warnings) with **Export report** to Markdown and CSV.
+
+Writing plugins: `docs/PLUGINS.md`.
 
 ## When a cut goes all the way through
 

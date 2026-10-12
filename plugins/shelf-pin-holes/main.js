@@ -53,12 +53,18 @@ function circle(c, n) {
   });
 }
 
-const describe = () => `${settings.count} holes, ${units.format(settings.diameter)} across, ${units.format(settings.pitch)} apart`;
+/** A length in the document's units, or in millimetres when those would only round it (5 mm, not "~ 3/16"). @param {number} m */
+const len = (m) => {
+  const f = units.format(m);
+  return f.startsWith("~") ? `${Number((m * 1000).toFixed(1))} mm` : f;
+};
+
+const describe = () => `${settings.count} holes, ${len(settings.diameter)} across, ${len(settings.pitch)} apart`;
 
 /** @param {import("sawhorse").Tool} tool @param {boolean} [say] update the status line too */
 async function show(tool, say = true) {
   if (!spot) {
-    await tool.setView({ overlay: [], labels: [], busy: false, status: say ? `Hover a face to place ${describe()}.` : undefined, value: `${settings.count}, ${units.format(settings.pitch)}, ${units.format(settings.diameter)}` });
+    await tool.setView({ overlay: [], labels: [], busy: false, status: say ? `Hover a face to place ${describe()}.` : undefined, value: `${settings.count}, ${len(settings.pitch)}, ${len(settings.diameter)}` });
     return;
   }
   const cs = centres(spot);
@@ -68,9 +74,9 @@ async function show(tool, say = true) {
       { kind: "segments", points: [vec3.add(cs[0], lift), vec3.add(cs[cs.length - 1], lift)], color: "accent", dashed: true, width: 1.25 },
       ...cs.map((c) => ({ kind: /** @type {const} */ ("loop"), points: circle(vec3.add(c, lift), spot ? spot.normal : [0, 0, 1]), color: "accent", width: 1.75 })),
     ],
-    labels: [{ at: cs[cs.length - 1], text: `${settings.count} x ${units.format(settings.diameter)} @ ${units.format(settings.pitch)}` }],
+    labels: [{ at: cs[cs.length - 1], text: `${settings.count} x ${len(settings.diameter)} @ ${len(settings.pitch)}` }],
     busy: true,
-    status: say ? `Click to drill ${describe()}, ${units.format(usualDepth())} deep. Type count, pitch, diameter to change them; Esc clears.` : undefined,
+    status: say ? `Click to drill ${describe()}, ${len(usualDepth())} deep. Type count, pitch, diameter to change them; Esc clears.` : undefined,
   });
 }
 
@@ -101,7 +107,7 @@ async function drill(tool) {
   }
   try {
     await batch.commit();
-    await ui.notify(`Drilled ${describe()}, ${units.format(depth)} deep. Ctrl+Z takes the column back.`);
+    await ui.notify(`Drilled ${describe()}, ${len(depth)} deep. Ctrl+Z takes the column back.`);
   } catch (e) {
     await ui.notify(`Could not drill there: ${e instanceof Error ? e.message : String(e)}. Keep the whole column on the face.`, { kind: "error" });
   } finally {

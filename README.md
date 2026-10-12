@@ -6,6 +6,8 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 
 **Status: pre-alpha.** Lanes 1 to 3 are done: the app shell from the approved design; a robust geometry kernel (sketches, push/pull on any face, booleans, undo) compiled to WebAssembly; and the feel: navigation, selection, inference snapping, typed values, Line / Rectangle / Circle / Polygon / Arc, Push/Pull, Tape with guides, and Dimension. You can model a bookshelf with dados by hand. Move / Rotate / Scale / Offset / Follow Me, groups and components, the cut list and file import/export land over the next lanes.
 
+**Plugins**: tools, panels and commands in sandboxed JavaScript with declared permissions; three samples come with the app. Writing one: [`docs/PLUGINS.md`](docs/PLUGINS.md).
+
 ## Run the browser build
 
 Needs Node 24+ and, for the kernel, Rust with the `wasm32-unknown-unknown` target and `wasm-pack` (see `docs/DEVELOPMENT.md`; on a Windows machine without Visual Studio Build Tools the Rust step runs in WSL automatically).
