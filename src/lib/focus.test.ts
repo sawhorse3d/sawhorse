@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEditableText } from "./focus";
+import { isEditableText, keyBelongsToControl } from "./focus";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string> = {}): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -32,5 +32,27 @@ describe("isEditableText: who keeps Ctrl+Z", () => {
     expect(isEditableText(null)).toBe(false);
     expect(isEditableText(window)).toBe(false);
     expect(isEditableText(el("input", { type: "text", readonly: "" }))).toBe(false);
+  });
+});
+
+describe("keyBelongsToControl: who gets a tool key", () => {
+  it("text fields and selects keep every key", () => {
+    for (const k of ["r", "p", "Escape", " ", "Delete"]) {
+      expect(keyBelongsToControl(el("input"), k), k).toBe(true);
+      expect(keyBelongsToControl(el("input", { type: "number" }), k), k).toBe(true);
+      expect(keyBelongsToControl(el("textarea"), k), k).toBe(true);
+      expect(keyBelongsToControl(el("select"), k), k).toBe(true);
+    }
+  });
+
+  // The verifier: after using a plugin panel's control, "r" and "p" did nothing until the
+  // focus was moved off it.
+  it("a checkbox, radio, range or colour picker keeps only the keys it uses", () => {
+    for (const type of ["checkbox", "radio", "range", "color"]) {
+      for (const k of ["r", "p", "1", "Escape", "Delete"]) expect(keyBelongsToControl(el("input", { type }), k), `${type} ${k}`).toBe(false);
+      for (const k of [" ", "Enter", "ArrowLeft", "ArrowDown"]) expect(keyBelongsToControl(el("input", { type }), k), `${type} ${k}`).toBe(true);
+    }
+    expect(keyBelongsToControl(el("button"), "r")).toBe(false);
+    expect(keyBelongsToControl(null, "r")).toBe(false);
   });
 });

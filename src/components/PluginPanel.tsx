@@ -1,7 +1,7 @@
 // A plugin's panel, drawn by the app from the plugin's declarative fields (src/plugins/panel.ts
 // checked them): text, number (lengths in the document's units), select, checkbox, button,
 // table, note, image. No plugin markup reaches the page.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FieldValue, PanelField } from "../plugins/panel";
 import { formatLength, parseLength, type UnitSystem } from "../lib/units";
 
@@ -14,34 +14,44 @@ export interface PluginPanelProps {
   onAction: (id: string) => void;
 }
 
-/** A number field: lengths are typed and shown in the document's units, committed on Enter or blur. */
+/**
+ * A number field: lengths are typed and shown in the document's units, committed on Enter or
+ * blur. Enter that commits also hands the keyboard back to the model (the field loses focus),
+ * so the next tool key ("r", "p") picks a tool instead of typing into the field; a value that
+ * cannot be read keeps the focus, with its error, to be fixed.
+ */
 function NumberField({ f, units, onChange, domId }: { f: Extract<PanelField, { type: "number" }>; units: UnitSystem; onChange: (v: number | null) => void; domId: string }) {
   const show = (v: number | null) => (v === null ? "" : f.unit === "length" ? formatLength(v, units).replace(/^~ /, "") : String(v));
   const [text, setText] = useState(show(f.value));
   const [error, setError] = useState<string | null>(null);
+  /** Set while Enter's own commit blurs the field, so the blur does not commit again. */
+  const committed = useRef(false);
   useEffect(() => {
     setText(show(f.value));
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.value, units, f.unit]);
-  const commit = () => {
+  /** Commit the typed text; false when it cannot be read (the error shows). */
+  const commit = (): boolean => {
+    const fail = (why: string) => (setError(why), false);
     const t = text.trim();
-    if (t === "") return setText(show(f.value));
+    if (t === "") return (setText(show(f.value)), true);
     let v: number;
     if (f.unit === "length") {
       const r = parseLength(t, units);
-      if (!r.ok) return setError(r.error);
+      if (!r.ok) return fail(r.error);
       v = r.metres;
     } else {
       v = Number(t);
-      if (!Number.isFinite(v)) return setError(`"${t}" is not a number`);
+      if (!Number.isFinite(v)) return fail(`"${t}" is not a number`);
       if (f.unit === "count") v = Math.round(v);
     }
-    if (f.min !== undefined && v < f.min) return setError(`At least ${f.unit === "length" ? formatLength(f.min, units) : f.min}.`);
-    if (f.max !== undefined && v > f.max) return setError(`At most ${f.unit === "length" ? formatLength(f.max, units) : f.max}.`);
+    if (f.min !== undefined && v < f.min) return fail(`At least ${f.unit === "length" ? formatLength(f.min, units) : f.min}.`);
+    if (f.max !== undefined && v > f.max) return fail(`At most ${f.unit === "length" ? formatLength(f.max, units) : f.max}.`);
     setError(null);
     if (v !== f.value) onChange(v);
     else setText(show(v));
+    return true;
   };
   return (
     <label className="pf-field" htmlFor={domId}>
@@ -55,10 +65,16 @@ function NumberField({ f, units, onChange, domId }: { f: Extract<PanelField, { t
         disabled={f.disabled}
         aria-invalid={!!error}
         onChange={(e) => setText(e.currentTarget.value)}
-        onBlur={commit}
+        onBlur={() => {
+          if (committed.current) committed.current = false;
+          else commit();
+        }}
         onKeyDown={(e) => {
           e.stopPropagation();
-          if (e.key === "Enter") commit();
+          if (e.key === "Enter" && commit()) {
+            committed.current = true;
+            e.currentTarget.blur();
+          }
           if (e.key === "Escape") {
             // Back to the value it had, and no error left to vanish under the next click.
             setText(show(f.value));
@@ -73,6 +89,7 @@ function NumberField({ f, units, onChange, domId }: { f: Extract<PanelField, { t
 
 function TextField({ f, onChange, domId }: { f: Extract<PanelField, { type: "text" }>; onChange: (v: string) => void; domId: string }) {
   const [text, setText] = useState(f.value);
+  const committed = useRef(false);
   useEffect(() => setText(f.value), [f.value]);
   const commit = () => text !== f.value && onChange(text);
   return (
@@ -87,10 +104,18 @@ function TextField({ f, onChange, domId }: { f: Extract<PanelField, { type: "tex
         disabled={f.disabled}
         maxLength={2000}
         onChange={(e) => setText(e.currentTarget.value)}
-        onBlur={commit}
+        onBlur={() => {
+          if (committed.current) committed.current = false;
+          else commit();
+        }}
         onKeyDown={(e) => {
           e.stopPropagation();
-          if (e.key === "Enter") commit();
+          // Enter commits and hands the keyboard back to the model, as in a number field.
+          if (e.key === "Enter") {
+            commit();
+            committed.current = true;
+            e.currentTarget.blur();
+          }
         }}
       />
     </label>

@@ -96,6 +96,12 @@ test("install from .zip, enable, use every field, prompt and confirm, reload, di
   await panel.locator('[data-field="len"]').fill("18 1/2");
   await panel.locator('[data-field="len"]').press("Enter");
   await expect(panel.locator('[data-note="said"]')).toHaveText(`len is ${18.5 * 0.0254}`);
+  // Enter that commits hands the keyboard back to the model: the next tool key picks a tool.
+  const railTool = (id: string) => page.locator(`.rail button[data-tool="${id}"]`);
+  await expect(panel.locator('[data-field="len"]')).not.toBeFocused();
+  await page.keyboard.press("r");
+  await expect(railTool("rect")).toHaveAttribute("aria-pressed", "true");
+  await railTool("select").click();
   await panel.locator('[data-field="len"]').fill("nonsense");
   await panel.locator('[data-field="len"]').press("Enter");
   await expect(panel.locator(".pf-error")).toContainText("Can't read");
@@ -106,6 +112,11 @@ test("install from .zip, enable, use every field, prompt and confirm, reload, di
   await panel.locator('[data-field="edge"]').click();
   await expect(panel.locator('[data-field="edge"]')).toBeChecked();
   await expect(panel.locator('[data-note="said"]')).toHaveText("edge is true");
+  // A ticked box keeps the focus but not the letters: "p" picks Push/Pull.
+  await expect(panel.locator('[data-field="edge"]')).toBeFocused();
+  await page.keyboard.press("p");
+  await expect(railTool("pushpull")).toHaveAttribute("aria-pressed", "true");
+  await railTool("select").click();
   await panel.locator('[data-action="go"]').click();
   await expect(hint(page)).toContainText(`Everything: Go with Shelf, ${18.5 * 0.0254} m, ash, true`);
 

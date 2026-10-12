@@ -70,4 +70,45 @@ describe("plugin:check and plugin:pack", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  // The verifier wrote a plugin outside plugins/ from the docs; plugin:check skipped its
+  // type check there. Now a folder anywhere has its // @ts-check modules checked.
+  it("type-check a plugin folder outside plugins/, and pass the guide's first plugin", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "sawhorse-plugin-"));
+    try {
+      const manifest = { id: "org.example.hello-box", name: "Hello box", version: "1.0.0", api: 1, description: "Puts a 12 in cube at the origin.", author: "You", license: "MIT", permissions: ["model.write", "ui"], contributes: { commands: [{ id: "cube", title: "Add a Cube" }], menus: [{ command: "cube" }] }, entry: "main.js" };
+      const good = `// @ts-check
+import { model, ui } from "sawhorse";
+
+await ui.registerCommand({
+  id: "cube",
+  async run() {
+    const b = model.batch("Add a cube");
+    b.box({ min: [0, 0, 0], size: [0.3048, 0.3048, 0.3048], name: "Cube" });
+    await b.commit();
+    await ui.notify("A 12 in cube.");
+  },
+});
+`;
+      for (const [name, main] of [
+        ["hello-box", good],
+        ["typo-box", good.replace("[0.3048, 0.3048, 0.3048]", '"big"')],
+      ] as const) {
+        mkdirSync(path.join(dir, name));
+        writeFileSync(path.join(dir, name, "plugin.json"), JSON.stringify(manifest));
+        writeFileSync(path.join(dir, name, "main.js"), main);
+      }
+      const ok = node(["scripts/plugin-check.mjs", path.join(dir, "hello-box")]);
+      expect(ok.status, ok.stdout + ok.stderr).toBe(0);
+      expect(ok.stdout).toContain("ok   type check");
+      // Outside plugins/ a missing README or LICENSE is a warning, not a failure.
+      expect(ok.stdout).toContain("warning: README.md is missing");
+      const typo = node(["scripts/plugin-check.mjs", path.join(dir, "typo-box")]);
+      expect(typo.status).toBe(1);
+      expect(typo.stdout).toContain("FAIL type check");
+      expect(typo.stdout).toContain("Type 'string' is not assignable to type 'Vec3'");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

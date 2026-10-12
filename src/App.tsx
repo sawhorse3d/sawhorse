@@ -59,7 +59,7 @@ import { SceneTabs } from "./components/SceneTabs";
 import type { OutlineRow, OutlinerAction } from "./components/Outliner";
 import { TAG_PALETTE, hexToRgb } from "./components/TagsPane";
 import { applySelection } from "./lib/entities";
-import { isEditableText } from "./lib/focus";
+import { isEditableText, keyBelongsToControl } from "./lib/focus";
 import type { Item, SceneDef } from "./kernel/types";
 import { useCredits } from "./credits/useCredits";
 import { storageNote } from "./credits/device";
@@ -203,11 +203,6 @@ function saveUnits(u: UnitSystem): void {
   } catch {
     /* per-viewer convenience only */
   }
-}
-
-function isTextEntry(el: EventTarget | null): boolean {
-  if (!(el instanceof HTMLElement)) return false;
-  return el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
 
 /** One op per part named (rows of one part, a scaled copy's, name it once); several are one
@@ -1785,7 +1780,7 @@ export function App() {
       const inVcb = e.target === vcbRef.current;
       // Focus rules: the Value Control Box only owns the keyboard while something is being
       // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
-      const textEntry = isTextEntry(e.target) && !(inVcb && !live.current.vcbEditing);
+      const textEntry = keyBelongsToControl(e.target, e.key) && !(inVcb && !live.current.vcbEditing);
       const mod = e.ctrlKey || e.metaKey;
       // A plugin's shortcut (always with Ctrl, Alt or Meta; built-in keys win, see usePlugins).
       if (!textEntry && !inVcb && pluginsRef.current?.shortcut(e)) return;
