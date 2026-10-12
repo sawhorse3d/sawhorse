@@ -143,5 +143,6 @@
     "vertices": 24,
     "genus": 0,
     "watertight": true
-  }
+  },
+  "cut_list": "99db06de1065e2e7"
 }

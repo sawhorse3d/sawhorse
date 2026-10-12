@@ -77,5 +77,6 @@
     "vertices": 16,
     "genus": 0,
     "watertight": true
-  }
+  },
+  "cut_list": "f4c97598c85bc7a9"
 }

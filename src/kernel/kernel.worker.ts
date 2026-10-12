@@ -145,6 +145,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, file };
         break;
       }
+      case "cutList":
+        res = { id: req.id, ok: true, cutList: JSON.parse(document(mod).cut_list(JSON.stringify(req.options))) };
+        break;
       case "export": {
         const d = document(mod);
         const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);

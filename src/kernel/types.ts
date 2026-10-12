@@ -66,6 +66,10 @@ export type KernelOp =
   | { op: "set_material"; object: number; material: string | null }
   | { op: "rename_object"; object: number; name: string | null }
   | { op: "delete_mesh"; mesh: number }
+  /** Cut list (lane 7): which way a part's grain runs ("length" clears the override). */
+  | { op: "set_grain"; part: PartRef; grain: Grain }
+  /** Cut list: the stock a part is cut from (null: its material's name) and sheet or lumber (null: decide). */
+  | { op: "set_stock"; part: PartRef; stock: string | null; sheet: boolean | null }
   | { op: "undo" }
   | { op: "redo" };
 
@@ -185,6 +189,7 @@ export type OpOutcome =
   | { kind: "material_set" }
   | { kind: "renamed" }
   | { kind: "mesh_deleted" }
+  | { kind: "part_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "undone" }
   | { kind: "redone" };
@@ -473,6 +478,8 @@ export interface WasmDoc {
   export_stl(object: number): Uint8Array;
   export_obj(object: number): string;
   export_file(format: string, options: string): Uint8Array;
+  /** The cut list (lane 7) for CutOptions JSON, as JSON (crates/kernel/src/cutlist.rs). */
+  cut_list(options: string): string;
   import_file(name: string, bytes: Uint8Array, options: string): string;
   save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
   open_shz(bytes: Uint8Array): string;
@@ -506,7 +513,8 @@ export type RequestBody =
   | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions }
   | { kind: "importSkp"; name: string; bytes: Uint8Array }
   | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
-  | { kind: "openShz"; bytes: Uint8Array };
+  | { kind: "openShz"; bytes: Uint8Array }
+  | { kind: "cutList"; options: CutOptions };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -558,5 +566,83 @@ export type WorkerResponse =
       notes?: string[];
       /** What opening a .shz found: the unit system it was saved in, who wrote it. */
       opened?: { display_units: string | null; generator: string };
+      cutList?: CutList;
     }
   | { id: number; ok: false; error: string; missing?: boolean };
+
+// ---- cut list (lane 7; crates/kernel/src/cutlist.rs) --------------------------------------
+
+export type Grain = "length" | "width" | "none";
+export type Rounding = "sixteenth" | "thirty_second" | "half_mm";
+
+/** What a grain or stock op names: a component (its definition), a group or a solid. */
+export type PartRef = { definition: number } | { node: number } | { object: number };
+
+/** Which part a row is. */
+export type PartKey = { definition: number } | { node: number } | { object: number } | { member: { definition: number; slot: number } };
+
+export interface CutOptions {
+  rounding: Rounding;
+  /** Count only what is drawn. */
+  visible_only: boolean;
+}
+
+/** A part's minimal box: thickness, width and length directions (world) and sizes (metres). */
+export interface PartBox {
+  axes: [V3, V3, V3];
+  size: V3;
+  center: V3;
+  shaped: boolean;
+}
+
+export interface Occurrence extends PartBox {
+  item: Item;
+  visible: boolean;
+  handed: boolean;
+}
+
+export interface CutRow {
+  key: PartKey;
+  target: PartRef;
+  name: string;
+  qty: number;
+  total: number;
+  hidden: number;
+  handed: number;
+  /** Thickness, width, length (metres, exact). */
+  size: V3;
+  rounded: V3;
+  /** Rounded sizes in rounding steps (sixteenths, thirty-seconds or half millimetres). */
+  steps: [number, number, number];
+  shaped: boolean;
+  scaled: boolean;
+  grain: Grain;
+  grain_set: boolean;
+  material: string | null;
+  stock_set: boolean;
+  sheet: boolean;
+  sheet_set: boolean;
+  board_feet: number;
+  area_m2: number;
+  occurrences: Occurrence[];
+}
+
+export interface CutTotals {
+  parts: number;
+  pieces: number;
+  hidden: number;
+  board_feet: number;
+  lumber: { material: string | null; board_feet: number }[];
+  sheets: { material: string | null; thickness: number; steps: number; area_m2: number; sheets: number; oversize: boolean }[];
+  sheet_count: number;
+}
+
+export interface CutList {
+  rounding: Rounding;
+  visible_only: boolean;
+  rows: CutRow[];
+  totals: CutTotals;
+  /** Width and length of the sheet the rough count assumes (metres). */
+  sheet_size: [number, number];
+  hash: string;
+}

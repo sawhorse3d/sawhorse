@@ -111,5 +111,6 @@
     "vertices": 18,
     "genus": 0,
     "watertight": true
-  }
+  },
+  "cut_list": "bc978c47816d9207"
 }

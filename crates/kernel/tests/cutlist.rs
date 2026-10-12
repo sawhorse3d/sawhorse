@@ -659,3 +659,70 @@ fn part_attributes_survive_the_snapshot() {
     assert_eq!(back.hash(), d.model().hash());
     assert_eq!(list(&back).hash, list(d.model()).hash);
 }
+
+/// The golden `cutlist.json` replays exactly this: the bookshelf, the top's grain across,
+/// the back panel named as ply, a hidden shelf and a mirrored side. Its ops are written
+/// from here under `UPDATE_GOLDEN=1` (then `--test golden` fills in the hashes), and must
+/// match it otherwise, so the golden never drifts from the documented bookshelf.
+#[test]
+fn the_cut_list_golden_is_this_bookshelf() {
+    let (mut d, side, shelves, top, back) = bookshelf();
+    ok(
+        &mut d,
+        Op::SetGrain {
+            part: PartRef::Definition(top),
+            grain: Grain::Width,
+        },
+    );
+    ok(
+        &mut d,
+        Op::SetStock {
+            part: PartRef::Definition(back),
+            stock: Some("1/4 birch ply".into()),
+            sheet: Some(true),
+        },
+    );
+    ok(
+        &mut d,
+        Op::SetHidden {
+            items: vec![Item::Node(shelves[1])],
+            hidden: true,
+        },
+    );
+    ok(
+        &mut d,
+        Op::Copy {
+            objects: vec![],
+            nodes: vec![side],
+            xform: Xform::scaling(DVec3::new(60.0 * IN, 0.0, 0.0), DVec3::new(-1.0, 1.0, 1.0)),
+        },
+    );
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/cutlist.json");
+    let ops = serde_json::to_value(d.log()).unwrap();
+    if std::env::var("UPDATE_GOLDEN").is_ok_and(|v| v == "1") {
+        let mut g: serde_json::Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "name": "cutlist",
+                    "hash": "",
+                    "stats": {"objects": 0, "faces": 0, "edges": 0, "vertices": 0, "genus": 0, "watertight": true}
+                })
+            });
+        g["description"] = "Lane 7: the bookshelf as components (Side x2, Shelf x4, Top, Toe kick, Back panel), the top's grain set across, the back panel named 1/4 birch ply and marked sheet, one shelf hidden, a mirrored side copy. Its cut_list hash proves WASM lists the same parts as native.".into();
+        g["ops"] = ops;
+        std::fs::write(&path, serde_json::to_string_pretty(&g).unwrap() + "\n").unwrap();
+    } else {
+        let g: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            g["ops"], ops,
+            "golden/cutlist.json is not this bookshelf (UPDATE_GOLDEN=1)"
+        );
+    }
+    let l = list(d.model());
+    assert_eq!(row(&l, "Side").qty, 3);
+    assert_eq!(row(&l, "Side").handed, 1);
+    assert_eq!(row(&l, "Shelf").hidden, 1);
+}

@@ -20,6 +20,10 @@ struct Golden {
     ops: Vec<Op>,
     hash: String,
     stats: GoldenStats,
+    /// The cut list's hash (1/16 in, everything counted): the WASM build must list the same
+    /// parts (`scripts/golden-wasm.mjs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cut_list: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -63,18 +67,24 @@ fn golden_hashes() {
             watertight: st.watertight,
         };
         let hash = m.hash_hex();
+        let cut = m
+            .cut_list(&sawhorse_kernel::cutlist::CutOptions::default())
+            .hash;
         if update {
             g.hash = hash;
             g.stats = stats;
+            g.cut_list = Some(cut);
             std::fs::write(&f, serde_json::to_string_pretty(&g).unwrap() + "\n").unwrap();
-        } else if g.hash != hash || g.stats != stats {
+        } else if g.hash != hash || g.stats != stats || g.cut_list.as_ref() != Some(&cut) {
             mismatches.push(format!(
-                "{}: hash {} (golden {}), stats {:?} (golden {:?})",
+                "{}: hash {} (golden {}), stats {:?} (golden {:?}), cut list {} (golden {:?})",
                 f.display(),
                 hash,
                 g.hash,
                 stats,
-                g.stats
+                g.stats,
+                cut,
+                g.cut_list
             ));
         }
     }

@@ -373,6 +373,13 @@ impl DocCore {
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// The cut list (see `sawhorse_kernel::cutlist`) for JSON options `{rounding?,
+    /// visible_only?}` (empty: the defaults, 1/16 in and everything), as JSON.
+    pub fn cut_list_json(&self, options_json: &str) -> Result<String, String> {
+        let opts = cut_options(options_json)?;
+        serde_json::to_string(&self.doc.model().cut_list(&opts)).map_err(|e| e.to_string())
+    }
+
     /// The model's tree on its own (what the Outliner shows), as JSON.
     pub fn scene_graph_json(&self) -> String {
         serde_json::to_string(&self.doc.model().graph()).unwrap_or_else(|_| "{}".to_string())
@@ -597,6 +604,22 @@ pub fn replay_hash_core(ops_json: &str) -> Result<String, String> {
         .map_err(|(i, e)| format!("op {i}: {e}"))
 }
 
+fn cut_options(json: &str) -> Result<sawhorse_kernel::cutlist::CutOptions, String> {
+    if json.trim().is_empty() {
+        return Ok(Default::default());
+    }
+    serde_json::from_str(json).map_err(|e| format!("bad cut list options: {e}"))
+}
+
+/// The cut list of the document produced by replaying a JSON op log, as JSON (the golden
+/// cross-check: its `hash` must match the native one).
+pub fn replay_cut_list_core(ops_json: &str, options_json: &str) -> Result<String, String> {
+    let ops: Vec<Op> = serde_json::from_str(ops_json).map_err(|e| e.to_string())?;
+    let opts = cut_options(options_json)?;
+    let d = Document::replay(&ops).map_err(|(i, e)| format!("op {i}: {e}"))?;
+    serde_json::to_string(&d.model().cut_list(&opts)).map_err(|e| e.to_string())
+}
+
 /// Run one boolean differential case (tests/booleans/cases.json format) through the kernel
 /// and return its result plus both operand meshes, as JSON, for scripts/boolean-diff.mjs.
 pub fn boolean_case_core(case_json: &str) -> Result<String, String> {
@@ -653,6 +676,12 @@ pub fn document_replay(ops_json: &str) -> Result<Doc, JsError> {
 #[wasm_bindgen]
 pub fn replay_hash(ops_json: &str) -> Result<String, JsError> {
     replay_hash_core(ops_json).map_err(js)
+}
+
+/// See [`replay_cut_list_core`].
+#[wasm_bindgen]
+pub fn replay_cut_list(ops_json: &str, options_json: &str) -> Result<String, JsError> {
+    replay_cut_list_core(ops_json, options_json).map_err(js)
 }
 
 /// See [`boolean_case_core`].
@@ -775,6 +804,11 @@ impl Doc {
     /// `{notes, display_units, generator}` as JSON; a refused file changes nothing.
     pub fn open_shz(&mut self, bytes: &[u8]) -> Result<String, JsError> {
         self.core.open_shz(bytes).map_err(js)
+    }
+
+    /// The cut list for JSON options `{rounding?, visible_only?}`, as JSON (read-only).
+    pub fn cut_list(&self, options_json: &str) -> Result<String, JsError> {
+        self.core.cut_list_json(options_json).map_err(js)
     }
 
     /// Import a file into the document as one undoable step (see [`DocCore::import`]).
@@ -1239,6 +1273,73 @@ mod tests {
         let mut fresh = DocCore::default();
         fresh.open_shz(&bytes).unwrap();
         assert_eq!(fresh.document().hash_hex(), h);
+    }
+
+    #[test]
+    fn the_cut_list_and_its_ops_through_json() {
+        let mut d = DocCore::default();
+        // A shelf (3/4 x 11 x 34 1/2 in), a component, three more by an array.
+        op(
+            &mut d,
+            r#"{"op":"draw","target":{"on":"plane","origin":[0,0,0],"normal":[0,0,1]},"points":[[0,0,0],[0.8763,0,0],[0.8763,0.2794,0],[0,0.2794,0]],"closed":true}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.01905}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"make_component","items":[{"object":1}],"name":"Shelf"}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"array","objects":[],"nodes":[1],"xform":{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[0,0,0.4572]},"count":3}"#,
+        );
+        let l: serde_json::Value = serde_json::from_str(&d.cut_list_json("").unwrap()).unwrap();
+        let r = &l["rows"][0];
+        assert_eq!(r["name"], "Shelf");
+        assert_eq!(r["qty"], 4);
+        assert_eq!(r["steps"], serde_json::json!([12, 176, 552]));
+        assert_eq!(r["key"], serde_json::json!({ "definition": 1 }));
+        assert_eq!(r["target"], serde_json::json!({ "definition": 1 }));
+        assert_eq!(r["grain"], "length");
+        assert_eq!(r["occurrences"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            r["occurrences"][0]["item"],
+            serde_json::json!({ "node": 1 })
+        );
+        assert_eq!(
+            r["occurrences"][0]["axes"][2],
+            serde_json::json!([1.0, 0.0, 0.0])
+        );
+        assert_eq!(l["totals"]["board_feet"], 4.0 * 1.9765625);
+        // Grain across, stock named, through the op log's JSON.
+        let out = op(
+            &mut d,
+            r#"{"op":"set_grain","part":{"node":2},"grain":"width"}"#,
+        );
+        assert_eq!(out["kind"], "part_set");
+        op(
+            &mut d,
+            r#"{"op":"set_stock","part":{"definition":1},"stock":"White oak","sheet":null}"#,
+        );
+        let l: serde_json::Value = serde_json::from_str(
+            &d.cut_list_json(r#"{"rounding":"half_mm","visible_only":true}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(l["rounding"], "half_mm");
+        assert_eq!(l["rows"][0]["grain"], "width");
+        assert_eq!(l["rows"][0]["material"], "White oak");
+        assert_eq!(l["rows"][0]["steps"], serde_json::json!([38, 559, 1753]));
+        assert!(d.cut_list_json(r#"{"rounding":"inch"}"#).is_err());
+        // The replayed log lists the same thing, hash for hash.
+        let log = d.log_json();
+        let again: serde_json::Value =
+            serde_json::from_str(&replay_cut_list_core(&log, "{}").unwrap()).unwrap();
+        let here: serde_json::Value =
+            serde_json::from_str(&d.cut_list_json("{}").unwrap()).unwrap();
+        assert_eq!(again["hash"], here["hash"]);
     }
 
     #[test]

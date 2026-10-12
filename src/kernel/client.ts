@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { CutList, CutOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -153,6 +153,13 @@ export class KernelClient {
   async openShz(bytes: Uint8Array): Promise<EditResult & { notes: string[]; opened: { display_units: string | null; generator: string } }> {
     const r = await this.call({ kind: "openShz", bytes });
     return { ...this.edit(r), notes: r.notes ?? [], opened: r.opened ?? { display_units: null, generator: "" } };
+  }
+
+  /** The cut list (read-only): parts, quantities, finished sizes, board feet and sheets. */
+  async cutList(options: CutOptions): Promise<CutList> {
+    const c = (await this.call({ kind: "cutList", options })).cutList;
+    if (!c) throw new Error("kernel returned no cut list");
+    return c;
   }
 
   /** A fresh document (ground sketch only), as an edit result. */
