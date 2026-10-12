@@ -59,7 +59,11 @@ function NumberField({ f, units, onChange, domId }: { f: Extract<PanelField, { t
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") commit();
-          if (e.key === "Escape") setText(show(f.value));
+          if (e.key === "Escape") {
+            // Back to the value it had, and no error left to vanish under the next click.
+            setText(show(f.value));
+            setError(null);
+          }
         }}
       />
       {error ? <em className="pf-error">{error}</em> : null}

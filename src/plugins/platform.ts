@@ -106,7 +106,8 @@ function desktop(): PluginPlatform {
     },
     async pickFolder() {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const dir = await open({ directory: true, multiple: false, title: "Load an unpacked plugin folder" });
+      // recursive: the dialog adds the folder and everything under it to the fs scope.
+      const dir = await open({ directory: true, multiple: false, recursive: true, title: "Load an unpacked plugin folder" });
       if (typeof dir !== "string") return null;
       return { files: await readTree(dir), location: dir };
     },

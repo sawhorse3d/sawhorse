@@ -5,7 +5,8 @@
 //! Native-only concerns live here: file dialogs and file access (lane 6: the dialog and fs
 //! plugins), drag-and-drop of files onto the window, the render-credit device key in the
 //! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout in the
-//! system browser. The .shz file association lands in a later lane.
+//! system browser, and showing a plugin's folder (lane 11). The .shz file association lands
+//! in a later lane.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
 //! (the dialog plugin adds them to the scope) or dropped on the window (added below).
@@ -68,6 +69,20 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Show a plugin's folder in the system file manager (lane 11, the Plugins pane's "Open
+/// folder"). Only a folder that holds a plugin.json is opened, so the page cannot use this
+/// to open arbitrary paths.
+#[tauri::command]
+fn open_plugin_folder(app: AppHandle, path: String) -> Result<(), String> {
+    let dir = std::path::PathBuf::from(&path);
+    if !dir.is_dir() || !dir.join("plugin.json").is_file() {
+        return Err(format!("{path} is not a plugin folder"));
+    }
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -90,7 +105,8 @@ pub fn run() {
             shell_version,
             device_public_key,
             device_sign,
-            open_external
+            open_external,
+            open_plugin_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");

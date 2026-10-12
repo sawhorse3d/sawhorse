@@ -1030,7 +1030,7 @@ export function App() {
         namedSteps.current = [...namedSteps.current.filter((n) => n.depth !== r.scene.state.undo_depth).slice(-199), { depth: r.scene.state.undo_depth, hash: r.scene.state.stats.hash, name }];
         return r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];
       },
-      status: (text, kind, actions) => setMessage({ text, error: kind === "error" || kind === "warning", actions }),
+      status: (text, kind, actions) => setMessage({ text, error: kind === "error", actions }),
       saveFile: (name, bytes, type) => saveFile(name, bytes, type),
       pickFile: (types) => pickAnyFile(types),
       activateTool: (id) => selectToolRef.current(id as ToolId),
