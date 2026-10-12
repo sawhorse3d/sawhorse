@@ -550,6 +550,8 @@ dependencies = [
 name = "sawhorse-export"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "crc32fast",
+ "flate2",
  "glam",
  "sawhorse-inference",
  "sawhorse-kernel",

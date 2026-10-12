@@ -62,7 +62,16 @@ export type KernelOp =
   | { op: "delete_scene"; name: string }
   | { op: "activate_scene"; name: string }
   | { op: "import"; items?: ImportItem[]; strokes?: ImportStroke[]; materials?: MaterialDef[]; scenes?: SceneDef[]; hidden_tags?: string[]; definitions?: ImportDefinition[]; nodes?: ImportNode[] }
-  | { op: "define_material"; name: string; color: [number, number, number, number]; texture?: string | null }
+  | ({ op: "define_material" } & MaterialDef)
+  // Lane 10: materials, paint, texture positioning, styles and shadows (crates/kernel/src/looks.rs).
+  | { op: "rename_material"; name: string; to: string }
+  | { op: "delete_material"; name: string }
+  /** A texture image (PNG or JPEG) under assets/<name>.png|.jpg; `data` is base64. */
+  | { op: "add_texture"; path: string; mime: string; data: string }
+  | { op: "paint"; target: PaintTarget; material: string | null }
+  | { op: "set_face_uv"; object: number; face: number; uv: UvXform | null }
+  | { op: "set_style"; style: Style | null }
+  | { op: "set_shadows"; shadows: Shadows | null }
   | { op: "set_material"; object: number; material: string | null }
   | { op: "rename_object"; object: number; name: string | null }
   | { op: "delete_mesh"; mesh: number }
@@ -116,6 +125,10 @@ export interface ImportItem {
   lines?: [number, number][];
   /** Merge adjacent coplanar faces (triangle soups); false keeps drawn dividing edges. */
   merge_coplanar?: boolean;
+  /** Lane 10: each face's material (null: the item's). */
+  face_materials?: (string | null)[];
+  /** Lane 10: each face's texture mapping, two affine rows in world metres (u, v in repeats). */
+  face_uvs?: ([number[], number[]] | null)[];
 }
 
 /** A component definition in an import: geometry in its own coordinates, plus nested groups
@@ -143,7 +156,72 @@ export interface MaterialDef {
   name: string;
   /** sRGB + alpha, 0..255. */
   color: [number, number, number, number];
+  /** A texture the model holds (assets/...), or the file name of one it does not. */
   texture?: string | null;
+  /** Texture width and height, metres (absent: one foot across at the image's aspect). */
+  size?: [number, number] | null;
+  /** Texture rotation, degrees. */
+  rotation?: number;
+  /** Texture offset along the face, metres. */
+  offset?: [number, number];
+  /** What it is as stock: the cut list reads the species from it. */
+  stock?: StockLink | null;
+}
+
+/** Lumber or sheet goods, and the species or product in words (crates/kernel/src/looks.rs). */
+export interface StockLink {
+  kind: "lumber" | "sheet";
+  species?: string;
+}
+
+/** How a texture sits on one face, on top of its material's own placement. */
+export interface UvXform {
+  /** Multiplies the material's size (absent: [1, 1]). */
+  scale?: [number, number];
+  /** Degrees, counter-clockwise seen from the face's front. */
+  rotation?: number;
+  /** Metres, in the face's texture frame. */
+  offset?: [number, number];
+}
+
+/** What a paint op paints. */
+export type PaintTarget = { on: "faces"; object: number; faces: number[] } | { on: "items"; items: Item[] };
+
+export type FaceStyle = "textured" | "shaded" | "monochrome" | "hidden_line" | "wireframe" | "x_ray";
+
+export interface EdgeStyle {
+  /** Edges drawn at all (absent: true). */
+  edges?: boolean;
+  profiles?: boolean;
+  extensions?: boolean;
+  endpoints?: boolean;
+}
+
+/** A drawing style (crates/kernel/src/looks.rs `Style`). Colours are sRGB [r, g, b]. */
+export interface Style {
+  preset?: string | null;
+  face?: FaceStyle;
+  edges?: EdgeStyle;
+  /** Absent: the theme's background. */
+  background?: [number, number, number] | null;
+  sky?: [number, number, number] | null;
+  ground?: [number, number, number] | null;
+  section_cuts?: boolean;
+}
+
+/** The sun and its shadows (crates/kernel/src/looks.rs `Shadows`): local solar time, north +Y. */
+export interface Shadows {
+  on: boolean;
+  month: number;
+  day: number;
+  /** Minutes after midnight. */
+  minutes: number;
+  latitude: number;
+  /** Brightness of sunlight and of shade, 0..100. */
+  light: number;
+  dark: number;
+  ground: boolean;
+  faces: boolean;
 }
 
 /** A saved view (SketchUp scene): camera in metres, Z up. */
@@ -157,6 +235,9 @@ export interface SceneDef {
   hidden_tags?: string[];
   /** The group or instance open when the scene was saved (null: the model). */
   context?: number | null;
+  /** The style and shadows saved with the scene (lane 10); activating it brings them back. */
+  style?: Style | null;
+  shadows?: Shadows | null;
 }
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */
@@ -194,6 +275,8 @@ export type OpOutcome =
   | { kind: "swept"; objects: number[]; cut: boolean }
   | { kind: "imported"; objects: number[]; meshes: number[]; groups: number[]; sketches: number[]; notes: string[] }
   | { kind: "material_set" }
+  | { kind: "texture_added"; path: string }
+  | { kind: "style_set" }
   | { kind: "renamed" }
   | { kind: "mesh_deleted" }
   | { kind: "part_set" }
@@ -246,8 +329,49 @@ export interface DocState {
   object_info: { id: number; name: string | null; tag: string | null; material: string | null }[];
   /** Imported meshes that are not valid solids, and why. */
   meshes: { id: number; name: string; note: string; faces: number; lines: number; tag: string | null; visible: boolean }[];
-  materials: { name: string; color: [number, number, number, number]; texture: string | null }[];
+  materials: MaterialInfo[];
   scenes: SceneDef[];
+  /** Texture images the model holds (lane 10). */
+  textures?: TextureInfo[];
+  /** The drawing style and the sun (null: the defaults). */
+  style?: Style | null;
+  shadows?: Shadows | null;
+}
+
+/** A material as the Materials pane shows it (crates/wasm-api `MaterialInfo`). */
+export interface MaterialInfo {
+  name: string;
+  color: [number, number, number, number];
+  texture: string | null;
+  /** The texture is an image the model holds (not just a file name). */
+  held?: boolean;
+  /** Texture size as drawn, metres. */
+  size?: [number, number];
+  size_set?: boolean;
+  rotation?: number;
+  offset?: [number, number];
+  stock?: StockLink | null;
+  /** Faces showing it. */
+  used?: number;
+}
+
+export interface TextureInfo {
+  path: string;
+  mime: string;
+  width: number;
+  height: number;
+  /** Content digest: the worker sends each image's bytes once, by it. */
+  digest: string;
+}
+
+/** A material of the built-in library (crates/export/src/library.rs `LibraryEntry`). */
+export interface LibraryEntry {
+  name: string;
+  category: "Wood" | "Sheet goods" | "Colours" | "Glass and metal";
+  color: [number, number, number, number];
+  texture: string | null;
+  size: [number, number] | null;
+  stock: StockLink | null;
 }
 
 export type V3 = [number, number, number];
@@ -431,8 +555,14 @@ export interface MeshPart {
   normal: [number, number, number];
   u: [number, number, number];
   v: [number, number, number];
-  /** The owner's material colour, sRGB + alpha. */
+  /** The colour of the material the face shows (its own, its solid's or its container's), sRGB + alpha. */
   color?: [number, number, number, number];
+  /** The name of that material (lane 10). */
+  material?: string;
+  /** The face has a material of its own (not inherited). */
+  own?: boolean;
+  /** How a texture sits on the face, when positioned. */
+  uv?: UvXform;
 }
 
 export interface MeshData {
@@ -448,11 +578,25 @@ export interface MeshData {
   edgeOwner: Uint32Array;
   edgeOwners: { kind: "object" | "sketch" | "mesh"; id: number }[];
   parts: MeshPart[];
+  /** Texture coordinates, two per render vertex (lane 10; zero on untextured faces). */
+  uvs?: Float32Array;
+  /** The two face normals at each edge, six per edge segment (zero where there is none). */
+  edgeNormals?: Float32Array;
+}
+
+/** A texture image the UI has not seen yet (sent once per digest, transferred). */
+export interface TextureBlob {
+  path: string;
+  digest: string;
+  mime: string;
+  bytes: Uint8Array;
 }
 
 export interface SceneData {
   mesh: MeshData;
   state: DocState;
+  /** Texture images new to the UI since the last scene (lane 10). */
+  textures?: TextureBlob[];
 }
 
 /** The subset of the wasm-bindgen module the worker uses (see crates/wasm-api/src/lib.rs). */
@@ -464,6 +608,8 @@ export interface WasmMesh {
   edge_owner(): Uint32Array;
   edge_owners_json(): string;
   parts_json(): string;
+  uvs(): Float32Array;
+  edge_normals(): Float32Array;
   free(): void;
 }
 
@@ -493,6 +639,12 @@ export interface WasmDoc {
   import_file(name: string, bytes: Uint8Array, options: string): string;
   save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
   open_shz(bytes: Uint8Array): string;
+  /** The material a face shows (the Paint tool's sample), as JSON. */
+  sample(object: number, face: number): string;
+  /** The bytes of a texture image the model holds. */
+  texture(path: string): Uint8Array;
+  /** Texture coordinates a face would get with a positioning (live preview). */
+  face_uvs(object: number, face: number, uvJson: string): Float32Array;
   free(): void;
 }
 
@@ -502,6 +654,11 @@ export interface WasmModule {
   /** A document rebuilt by replaying an op log (JSON). Throws on a refused entry. */
   document_replay(opsJson: string): WasmDoc;
   kernel_version(): string;
+  /** The built-in material library, as JSON. */
+  material_library(): string;
+  /** The ops that put a library material into a model (texture + definition), as JSON. */
+  material_library_ops(name: string, asName: string): string;
+  material_library_texture(name: string): Uint8Array;
 }
 
 export type RequestBody =
@@ -525,7 +682,13 @@ export type RequestBody =
   | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
   | { kind: "openShz"; bytes: Uint8Array }
   | { kind: "cutList"; options: CutOptions }
-  | { kind: "nest"; options: NestOptions };
+  | { kind: "nest"; options: NestOptions }
+  | { kind: "sample"; object: number; face: number }
+  | { kind: "faceUvs"; object: number; face: number; uv: UvXform }
+  | { kind: "library" }
+  | { kind: "libraryOps"; name: string; asName: string }
+  | { kind: "libraryTexture"; name: string }
+  | { kind: "texture"; path: string };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -579,6 +742,11 @@ export type WorkerResponse =
       opened?: { display_units: string | null; generator: string };
       cutList?: CutList;
       nesting?: Nesting;
+      /** A sampled material (null: the default look). */
+      material?: string | null;
+      uvs?: Float32Array;
+      library?: LibraryEntry[];
+      ops?: KernelOp[];
     }
   | { id: number; ok: false; error: string; missing?: boolean };
 

@@ -1,5 +1,5 @@
 // Promise wrapper around the kernel worker, which holds the persistent document.
-import type { CutList, CutOptions, Nesting, NestOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, V3, WorkerRequest, WorkerResponse } from "./types";
+import type { CutList, CutOptions, Nesting, NestOptions, ExportFormat, ExportOptions, ImportOptions, Inference, InferQuery, KernelOp, LibraryEntry, OffsetPreview, OffsetSource, OpOutcome, Picked, PickQuery, RequestBody, SceneData, SceneGraph, UvXform, V3, WorkerRequest, WorkerResponse } from "./types";
 
 export class KernelUnavailableError extends Error {
   constructor(message: string) {
@@ -167,6 +167,40 @@ export class KernelClient {
     const n = (await this.call({ kind: "nest", options })).nesting;
     if (!n) throw new Error("kernel returned no nesting");
     return n;
+  }
+
+  /** The material face `face` of `object` shows (the Paint tool's Alt+click sample). */
+  async sample(object: number, face: number): Promise<string | null> {
+    return (await this.call({ kind: "sample", object, face })).material ?? null;
+  }
+
+  /** Texture coordinates the face would get with positioning `uv` (live preview; empty: no texture). */
+  async faceUvs(object: number, face: number, uv: UvXform): Promise<Float32Array> {
+    return (await this.call({ kind: "faceUvs", object, face, uv })).uvs ?? new Float32Array();
+  }
+
+  /** The built-in material library (read-only). */
+  async library(): Promise<LibraryEntry[]> {
+    return (await this.call({ kind: "library" })).library ?? [];
+  }
+
+  /** The ops that put library material `name` into the model (its texture and definition), named `asName`. */
+  async libraryOps(name: string, asName = ""): Promise<KernelOp[]> {
+    return (await this.call({ kind: "libraryOps", name, asName })).ops ?? [];
+  }
+
+  /** A library material's texture (PNG bytes), for swatches. */
+  async libraryTexture(name: string): Promise<Uint8Array> {
+    const r = await this.call({ kind: "libraryTexture", name });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no image");
+    return r.file;
+  }
+
+  /** The bytes of a texture image the model holds. */
+  async texture(path: string): Promise<Uint8Array> {
+    const r = await this.call({ kind: "texture", path });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no image");
+    return r.file;
   }
 
   /** A fresh document (ground sketch only), as an edit result. */

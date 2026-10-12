@@ -20,7 +20,9 @@ use sawhorse_kernel::object::Object;
 
 pub mod dxf;
 pub mod gltf;
+pub mod library;
 pub mod obj;
+pub mod png;
 pub mod stl;
 pub mod svg;
 pub mod three_mf;

@@ -44,6 +44,9 @@ cavalier_contours = { version = "0.9", default-features = false }
 threemf = "0.8"
 # Zip containers (3MF, .shz). Already in the tree through threemf; same features.
 zip = { version = "8", default-features = false, features = ["deflate"] }
+# PNG texture images (lane 10); already in the tree through zip.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+crc32fast = "1.5"
 # XML for SVG import. Already in the tree through threemf.
 quick-xml = "0.39"
 serde = { version = "1", features = ["derive"] }

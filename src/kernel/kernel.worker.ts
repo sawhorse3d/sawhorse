@@ -5,7 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
-import type { Inference, KernelOp, MeshData, OpOutcome, Picked, SceneData, SceneGraph, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+import type { DocState, Inference, KernelOp, LibraryEntry, MeshData, OpOutcome, Picked, SceneData, SceneGraph, TextureBlob, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -35,6 +35,24 @@ function document(mod: WasmModule): WasmDoc {
   return doc;
 }
 
+/** Texture digests the UI already has: each image crosses to the UI thread once (lane 10). */
+const sentTextures = new Set<string>();
+
+/** Images the state lists that the UI has not been sent yet. */
+function newTextures(d: WasmDoc, state: DocState): TextureBlob[] {
+  const out: TextureBlob[] = [];
+  for (const t of state.textures ?? []) {
+    if (sentTextures.has(t.digest)) continue;
+    try {
+      out.push({ path: t.path, digest: t.digest, mime: t.mime, bytes: d.texture(t.path) });
+      sentTextures.add(t.digest);
+    } catch {
+      // Not readable now: listed again next time.
+    }
+  }
+  return out;
+}
+
 function scene(d: WasmDoc): SceneData {
   const m = d.get_scene_mesh();
   try {
@@ -46,8 +64,11 @@ function scene(d: WasmDoc): SceneData {
       edgeOwner: m.edge_owner(),
       edgeOwners: JSON.parse(m.edge_owners_json()),
       parts: JSON.parse(m.parts_json()),
+      uvs: m.uvs(),
+      edgeNormals: m.edge_normals(),
     };
-    return { mesh, state: JSON.parse(d.state_json()) };
+    const state = JSON.parse(d.state_json()) as DocState;
+    return { mesh, state, textures: newTextures(d, state) };
   } finally {
     m.free();
   }
@@ -67,6 +88,8 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "init": {
         doc?.free();
         doc = mod.document_new();
+        // A fresh UI (or a test resetting it) has no images yet.
+        sentTextures.clear();
         res = { id: req.id, ok: true, scene: scene(doc) };
         break;
       }
@@ -123,7 +146,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         const { skpToOp } = await import("../io/skp");
         const r = skpToOp(req.bytes, req.name);
         const d = document(mod);
-        const outcome = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
+        const applied = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
+        // Texture images go in first, batched with the import: report the import itself.
+        const outcome = applied.kind === "batch" ? applied.outcomes[applied.outcomes.length - 1] : applied;
         res = { id: req.id, ok: true, outcome, notes: r.notes, scene: scene(d) };
         break;
       }
@@ -151,6 +176,24 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "nest":
         res = { id: req.id, ok: true, nesting: JSON.parse(document(mod).nest(JSON.stringify(req.options))) };
         break;
+      case "sample":
+        res = { id: req.id, ok: true, material: JSON.parse(document(mod).sample(req.object, req.face)) as string | null };
+        break;
+      case "faceUvs":
+        res = { id: req.id, ok: true, uvs: document(mod).face_uvs(req.object, req.face, JSON.stringify(req.uv)) };
+        break;
+      case "library":
+        res = { id: req.id, ok: true, library: JSON.parse(mod.material_library()) as LibraryEntry[] };
+        break;
+      case "libraryOps":
+        res = { id: req.id, ok: true, ops: JSON.parse(mod.material_library_ops(req.name, req.asName)) as KernelOp[] };
+        break;
+      case "libraryTexture":
+        res = { id: req.id, ok: true, file: mod.material_library_texture(req.name) };
+        break;
+      case "texture":
+        res = { id: req.id, ok: true, file: document(mod).texture(req.path) };
+        break;
       case "export": {
         const d = document(mod);
         const file = req.format === "stl" ? d.export_stl(req.object) : d.export_obj(req.object);
@@ -165,7 +208,11 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   if (res.ok && res.scene) {
     const m = res.scene.mesh;
     transfer.push(m.positions.buffer, m.indices.buffer, m.faceIds.buffer, m.edges.buffer, m.edgeOwner.buffer);
+    if (m.uvs) transfer.push(m.uvs.buffer);
+    if (m.edgeNormals) transfer.push(m.edgeNormals.buffer);
+    for (const t of res.scene.textures ?? []) transfer.push(t.bytes.buffer);
   }
   if (res.ok && res.file instanceof Uint8Array) transfer.push(res.file.buffer);
+  if (res.ok && res.uvs) transfer.push(res.uvs.buffer);
   ctx.postMessage(res, transfer);
 };

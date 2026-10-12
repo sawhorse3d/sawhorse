@@ -87,6 +87,21 @@ struct DocState<'a> {
     meshes: Vec<MeshInfo<'a>>,
     materials: Vec<MaterialInfo<'a>>,
     scenes: &'a [sawhorse_kernel::model::SceneDef],
+    /// Texture images the model holds (lane 10): path, type, pixel size and a digest the
+    /// worker sends each image's bytes by, once.
+    textures: Vec<TextureInfo<'a>>,
+    /// The drawing style and the sun (lane 10); `null`: the defaults.
+    style: Option<&'a sawhorse_kernel::looks::Style>,
+    shadows: Option<&'a sawhorse_kernel::looks::Shadows>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct TextureInfo<'a> {
+    path: &'a str,
+    mime: &'a str,
+    width: u32,
+    height: u32,
+    digest: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -113,6 +128,17 @@ struct MaterialInfo<'a> {
     name: &'a str,
     color: [u8; 4],
     texture: Option<&'a str>,
+    /// The texture is an image the model holds (not just a file name).
+    held: bool,
+    /// Texture size, metres (as drawn: its own, else one foot across at the image's aspect).
+    size: [f64; 2],
+    /// The size was set (not the default).
+    size_set: bool,
+    rotation: f64,
+    offset: [f64; 2],
+    stock: Option<&'a sawhorse_kernel::looks::StockLink>,
+    /// Faces showing it (their own or inherited), for the Materials pane's "in model" list.
+    used: usize,
 }
 
 /// Options for [`DocCore::export`] (JSON from the UI).
@@ -359,16 +385,48 @@ impl DocCore {
                     visible: m.is_mesh_visible(id),
                 })
                 .collect(),
-            materials: m
-                .materials()
+            materials: {
+                let mut used: std::collections::BTreeMap<&str, usize> = Default::default();
+                for (id, o) in m.objects() {
+                    for f in o.brep().persistent_face_ids() {
+                        if let Some(name) = m.face_material(id, f) {
+                            *used.entry(name).or_default() += 1;
+                        }
+                    }
+                }
+                m.materials()
+                    .iter()
+                    .map(|(name, x)| MaterialInfo {
+                        name,
+                        color: x.color,
+                        texture: x.texture.as_deref(),
+                        held: x
+                            .texture
+                            .as_deref()
+                            .is_some_and(|t| m.textures().contains_key(t)),
+                        size: sawhorse_kernel::looks::material_size(x, m.texture_px(x)),
+                        size_set: x.size.is_some(),
+                        rotation: x.rotation,
+                        offset: x.offset,
+                        stock: x.stock.as_ref(),
+                        used: used.get(name.as_str()).copied().unwrap_or(0),
+                    })
+                    .collect()
+            },
+            scenes: m.scenes(),
+            textures: m
+                .textures()
                 .iter()
-                .map(|(name, x)| MaterialInfo {
-                    name,
-                    color: x.color,
-                    texture: x.texture.as_deref(),
+                .map(|(path, t)| TextureInfo {
+                    path,
+                    mime: &t.mime,
+                    width: t.width,
+                    height: t.height,
+                    digest: t.digest_hex(),
                 })
                 .collect(),
-            scenes: m.scenes(),
+            style: m.style(),
+            shadows: m.shadows(),
         };
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
     }
@@ -387,6 +445,64 @@ impl DocCore {
     pub fn nest_json(&self, options_json: &str) -> Result<String, String> {
         let opts = nest_options(options_json)?;
         serde_json::to_string(&self.doc.model().nest(&opts)).map_err(|e| e.to_string())
+    }
+
+    /// The Paint tool's sample (Alt+click): the material face `face` of `object` shows, as
+    /// JSON (`"White oak"` or `null`).
+    pub fn sample_json(&self, object: u64, face: u64) -> Result<String, String> {
+        let s = self
+            .doc
+            .model()
+            .sample(object, face)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&s).map_err(|e| e.to_string())
+    }
+
+    /// The bytes of a texture image the model holds.
+    pub fn texture(&self, path: &str) -> Result<Vec<u8>, String> {
+        self.doc
+            .model()
+            .textures()
+            .get(path)
+            .map(|t| t.data.as_ref().clone())
+            .ok_or_else(|| format!("no texture {path}"))
+    }
+
+    /// Texture coordinates face `face` of `object` would get with positioning `uv` (JSON
+    /// `{scale?, rotation?, offset?}`), in the view mesh's vertex order: the texture handles'
+    /// live preview. Empty when the face shows no texture.
+    pub fn face_uvs(&self, object: u64, face: u64, uv_json: &str) -> Result<Vec<f32>, String> {
+        let uv: sawhorse_kernel::looks::UvXform =
+            serde_json::from_str(uv_json).map_err(|e| format!("bad positioning: {e}"))?;
+        Ok(
+            sawhorse_kernel::mesh::face_uvs(self.doc.model(), object, face, &uv)
+                .unwrap_or_default(),
+        )
+    }
+
+    /// The built-in material library (see `sawhorse_export::library`), as JSON.
+    pub fn library_json() -> String {
+        serde_json::to_string(&sawhorse_export::library::entries())
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// The ops that put library material `name` into the model (its texture image and its
+    /// definition), named `as_name` when given, as a JSON array: the UI batches them with
+    /// the paint so applying a library material is one undo step.
+    pub fn library_ops_json(name: &str, as_name: &str) -> Result<String, String> {
+        let m = sawhorse_export::library::find(name)
+            .ok_or_else(|| format!("no library material {name:?}"))?;
+        let ops = sawhorse_export::library::ops(m, (!as_name.is_empty()).then_some(as_name));
+        serde_json::to_string(&ops).map_err(|e| e.to_string())
+    }
+
+    /// The PNG of a library material's texture (for the Materials pane's swatches).
+    pub fn library_texture(name: &str) -> Result<Vec<u8>, String> {
+        let m = sawhorse_export::library::find(name)
+            .ok_or_else(|| format!("no library material {name:?}"))?;
+        sawhorse_export::library::texture_png(m)
+            .map(|p| p.as_ref().clone())
+            .ok_or_else(|| format!("{name} has no texture"))
     }
 
     /// The model's tree on its own (what the Outliner shows), as JSON.
@@ -721,6 +837,25 @@ pub fn boolean_case(case_json: &str) -> Result<String, JsError> {
     boolean_case_core(case_json).map_err(js)
 }
 
+/// The built-in material library, as JSON (see [`DocCore::library_json`]).
+#[wasm_bindgen]
+pub fn material_library() -> String {
+    DocCore::library_json()
+}
+
+/// The ops that put a library material into a model, as JSON (see
+/// [`DocCore::library_ops_json`]).
+#[wasm_bindgen]
+pub fn material_library_ops(name: &str, as_name: &str) -> Result<String, JsError> {
+    DocCore::library_ops_json(name, as_name).map_err(js)
+}
+
+/// A library material's texture PNG.
+#[wasm_bindgen]
+pub fn material_library_texture(name: &str) -> Result<Vec<u8>, JsError> {
+    DocCore::library_texture(name).map_err(js)
+}
+
 #[wasm_bindgen]
 impl Doc {
     #[wasm_bindgen(constructor)]
@@ -847,6 +982,24 @@ impl Doc {
         self.core.nest_json(options_json).map_err(js)
     }
 
+    /// The material a face shows (the Paint tool's sample), as JSON: a name or `null`.
+    pub fn sample(&self, object_id: f64, face: f64) -> Result<String, JsError> {
+        self.core.sample_json(id(object_id)?, id(face)?).map_err(js)
+    }
+
+    /// The bytes of a texture image the model holds (copied once into a fresh Uint8Array;
+    /// the worker sends each image to the UI once, by digest).
+    pub fn texture(&self, path: &str) -> Result<Vec<u8>, JsError> {
+        self.core.texture(path).map_err(js)
+    }
+
+    /// The texture handles' live preview (see [`DocCore::face_uvs`]).
+    pub fn face_uvs(&self, object_id: f64, face: f64, uv_json: &str) -> Result<Vec<f32>, JsError> {
+        self.core
+            .face_uvs(id(object_id)?, id(face)?, uv_json)
+            .map_err(js)
+    }
+
     /// Import a file into the document as one undoable step (see [`DocCore::import`]).
     pub fn import_file(
         &mut self,
@@ -887,6 +1040,14 @@ impl Mesh {
     }
     pub fn edges(&self) -> Vec<f32> {
         self.inner.edges.clone()
+    }
+    /// Texture coordinates, two per render vertex (lane 10).
+    pub fn uvs(&self) -> Vec<f32> {
+        self.inner.uvs.clone()
+    }
+    /// The two face normals at each edge, six per edge segment (lane 10: profile edges).
+    pub fn edge_normals(&self) -> Vec<f32> {
+        self.inner.edge_normals.clone()
     }
     /// One per edge segment: index into `edge_owners_json`.
     pub fn edge_owner(&self) -> Vec<u32> {
@@ -1452,6 +1613,80 @@ mod tests {
         op(&mut d, r#"{"op":"reset_stock_library"}"#);
         let n: serde_json::Value = serde_json::from_str(&d.nest_json("").unwrap()).unwrap();
         assert_eq!(n["algorithm"], "guillotine");
+    }
+
+    #[test]
+    fn materials_through_json() {
+        let lib: serde_json::Value = serde_json::from_str(&DocCore::library_json()).unwrap();
+        let woods = lib
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["category"] == "Wood")
+            .count();
+        assert_eq!(woods, 12);
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.6,"h":0.15}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.02}"#,
+        );
+        // The library material and the paint as one batch: one undo step.
+        let mut ops: Vec<serde_json::Value> =
+            serde_json::from_str(&DocCore::library_ops_json("White oak", "").unwrap()).unwrap();
+        assert_eq!(ops[0]["op"], "add_texture");
+        ops.push(serde_json::json!({"op":"paint","target":{"on":"items","items":[{"object":1}]},"material":"White oak"}));
+        let batch = serde_json::json!({"op":"batch","ops":ops}).to_string();
+        op(&mut d, &batch);
+        assert_eq!(d.sample_json(1, 2).unwrap(), "\"White oak\"");
+        let st: serde_json::Value = serde_json::from_str(&d.state_json()).unwrap();
+        let m = &st["materials"][0];
+        assert_eq!(m["name"], "White oak");
+        assert_eq!(m["held"], true);
+        assert_eq!(m["stock"]["kind"], "lumber");
+        assert_eq!(m["used"], 6);
+        let t = &st["textures"][0];
+        assert_eq!(t["path"], "assets/lib-white-oak.png");
+        assert_eq!(t["width"], 512);
+        let png = d.texture("assets/lib-white-oak.png").unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        // The view mesh carries coordinates and edge normals; the preview matches the op.
+        let mesh = d.scene_mesh().unwrap();
+        assert_eq!(mesh.uvs.len(), mesh.positions.len() / 3 * 2);
+        assert_eq!(mesh.edge_normals.len(), mesh.edges.len());
+        let uv = r#"{"rotation":30,"scale":[2,2]}"#;
+        let preview = d.face_uvs(1, 2, uv).unwrap();
+        assert!(!preview.is_empty());
+        op(
+            &mut d,
+            &format!(r#"{{"op":"set_face_uv","object":1,"face":2,"uv":{uv}}}"#),
+        );
+        let mesh = d.scene_mesh().unwrap();
+        let part = mesh
+            .parts
+            .iter()
+            .position(|p| p.owner == 1 && p.index == 2)
+            .unwrap();
+        let first = mesh
+            .indices
+            .chunks(3)
+            .zip(&mesh.face_ids)
+            .filter(|(_, f)| **f as usize == part)
+            .flat_map(|(t, _)| t.iter().copied())
+            .min()
+            .unwrap() as usize;
+        assert_eq!(
+            &mesh.uvs[2 * first..2 * first + preview.len()],
+            &preview[..]
+        );
+        // One undo takes the positioning off; another the whole library batch.
+        d.undo().unwrap();
+        d.undo().unwrap();
+        assert_eq!(d.sample_json(1, 2).unwrap(), "null");
+        assert!(d.sample_json(1, 99).is_err());
     }
 
     #[test]
