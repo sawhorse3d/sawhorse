@@ -11,11 +11,16 @@
 //! library (define, replace, delete, per-material defaults, kerf / trim / algorithm, reset),
 //! and (lane 10) materials (defined with and without a texture image and a stock link,
 //! renamed, deleted), paint on faces and on solids, groups and instances, texture
-//! positions, styles and shadows (in the document and in scenes), with undo / redo
-//! interleaved anywhere. After every accepted op every face is sampled and its texture
-//! coordinates checked (`testing::check_looks`), the cut list is worked out and checked
-//! against a brute-force count of the world (`testing::check_cut_list`), and the parts are
-//! nested with both algorithms and every layout invariant checked
+//! positions, styles and shadows (in the document and in scenes), and (lane 11) plugin
+//! batches: named batches whose ops name what earlier ops of the same batch made through
+//! placeholders (boxes drawn and pulled, imported, renamed, made components, pushed, mixed
+//! with ordinary intents and with garbage on purpose: placeholders to later ops, bad paths,
+//! forbidden ops), resolved by `refbatch` and applied as one op; a refused batch must leave
+//! the document, its log and its undo depth untouched, with undo / redo interleaved
+//! anywhere. After every accepted op every face is sampled and its texture coordinates
+//! checked (`testing::check_looks`), the cut list is worked out and checked against a
+//! brute-force count of the world (`testing::check_cut_list`), and the parts are nested
+//! with both algorithms and every layout invariant checked
 //! (`testing::check_nesting`). While a group or component is
 //! open, most intents pick what is in it, so edits propagate through definitions.
 //!
@@ -233,6 +238,36 @@ enum Fuzz {
     /// A style (index into a few) or none; shadows on / off at a time, or none.
     Style(Option<u8>),
     Shadows(Option<(bool, u16, f64)>),
+    /// Lane 11: a plugin's named batch with placeholders (resolved by `refbatch`, not by
+    /// `resolve`).
+    PluginBatch(Vec<PluginStep>),
+}
+
+/// One step of a plugin batch (lane 11). Steps that name "what step k made" use a
+/// placeholder to the op that made it; with nothing made yet they fall back to an id in the
+/// document.
+#[derive(Debug, Clone)]
+enum PluginStep {
+    /// A rectangle on the ground sketch and the extrusion of the region it made.
+    GroundBox(f64, f64, f64, f64, f64),
+    /// A new level sketch at a height, a rectangle in it, its region extruded (three
+    /// placeholders: the sketch twice, the region).
+    SketchBox([f64; 3], [f64; 2], f64),
+    /// A box as an import item (a polygon soup), as `batch.box` sends it.
+    ImportBox([f64; 3], [f64; 3]),
+    /// Rename what step k made.
+    Rename(u8),
+    /// Make a component of what step k made.
+    Component(u8),
+    /// Push face `face` (a raw persistent id) of what step k made.
+    Push(u8, u8, f64),
+    /// Move what step k made.
+    Move(u8, [f64; 3]),
+    /// An ordinary intent, resolved against the document as it was before the batch.
+    Plain(Box<Fuzz>),
+    /// Garbage on purpose: 0 a placeholder to a later op, 1 a bad path, 2 a forbidden op,
+    /// 3 an unknown op, 4 a placeholder that is not an id, 5 extra fields in a placeholder.
+    Garbage(u8),
 }
 
 /// A transform, as an intent.
@@ -409,7 +444,140 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         9 => lane4_op(),
         8 => lane5_op(),
         6 => lane10_op(),
+        3 => prop::collection::vec(plugin_step(), 1..6).prop_map(Fuzz::PluginBatch),
     ]
+}
+
+fn plugin_step() -> impl Strategy<Value = PluginStep> {
+    let size = || prop_oneof![4 => (1i32..9).prop_map(|k| f64::from(k) * 0.25), 1 => 0.05..2.0f64, 1 => Just(1e-7)];
+    prop_oneof![
+        3 => (grid(), grid(), size(), size(), distance()).prop_map(|(x, y, w, h, d)| PluginStep::GroundBox(x, y, w, h, d)),
+        2 => ((grid(), grid(), grid()), (size(), size()), distance()).prop_map(|((x, y, z), (w, h), d)| PluginStep::SketchBox([x, y, z], [w, h], d)),
+        3 => ((grid(), grid(), grid()), (size(), size(), size())).prop_map(|((x, y, z), (a, b, c))| PluginStep::ImportBox([x, y, z], [a, b, c])),
+        2 => any::<u8>().prop_map(PluginStep::Rename),
+        2 => any::<u8>().prop_map(PluginStep::Component),
+        2 => (any::<u8>(), 1u8..9, distance()).prop_map(|(k, f, d)| PluginStep::Push(k, f, d)),
+        1 => (any::<u8>(), (grid(), grid(), grid())).prop_map(|(k, (x, y, z))| PluginStep::Move(k, [x, y, z])),
+        2 => prop_oneof![
+            (any::<u8>(), grid(), grid(), grid(), grid()).prop_map(|(s, x, y, w, h)| Fuzz::Rect(s, x, y, w, h)),
+            (any::<u8>(), any::<u8>(), distance()).prop_map(|(o, f, d)| Fuzz::Push(o, f, d)),
+            (any::<u8>(), any::<u8>()).prop_map(|(o, f)| Fuzz::EraseFace(o, f)),
+            any::<u8>().prop_map(Fuzz::Delete),
+            (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(i, n)| Fuzz::Rename(i, n)),
+            prop::collection::vec(any::<u8>(), 1..3).prop_map(Fuzz::MakeGroup),
+            (any::<u8>(), any::<bool>()).prop_map(|(k, h)| Fuzz::Hide(k, h)),
+        ]
+        .prop_map(|f| PluginStep::Plain(Box::new(f))),
+        1 => (0u8..6).prop_map(PluginStep::Garbage),
+    ]
+}
+
+/// A placeholder: the value at `path` in the outcome of op `at` of the batch.
+fn placeholder(at: usize, path: &str) -> serde_json::Value {
+    serde_json::json!({ "$ref": at, "path": path })
+}
+
+/// The plugin batch request for some steps, as a plugin would build it against `d`.
+fn plugin_batch(steps: &[PluginStep], d: &Document) -> sawhorse_kernel::refbatch::NamedBatch {
+    use serde_json::json;
+    let mut ops: Vec<serde_json::Value> = Vec::new();
+    // What earlier steps made: a placeholder to a solid, and whether it is a node.
+    let mut made: Vec<(serde_json::Value, bool)> = Vec::new();
+    let objects = d.model().object_ids();
+    let thing = |made: &Vec<(serde_json::Value, bool)>, k: u8| -> (serde_json::Value, bool) {
+        if made.is_empty() {
+            (
+                json!(
+                    objects
+                        .get(k as usize % objects.len().max(1))
+                        .copied()
+                        .unwrap_or(4242)
+                ),
+                false,
+            )
+        } else {
+            made[k as usize % made.len()].clone()
+        }
+    };
+    let item = |(v, node): (serde_json::Value, bool)| {
+        if node {
+            json!({ "node": v })
+        } else {
+            json!({ "object": v })
+        }
+    };
+    for step in steps {
+        match step {
+            PluginStep::GroundBox(x, y, w, h, dist) => {
+                ops.push(json!({ "op": "add_rectangle", "sketch": 1, "x": x, "y": y, "w": w, "h": h }));
+                let rect = ops.len() - 1;
+                ops.push(json!({ "op": "extrude", "sketch": 1, "region": placeholder(rect, "regions.0"), "distance": dist }));
+                made.push((placeholder(ops.len() - 1, "object"), false));
+            }
+            PluginStep::SketchBox(at, [w, h], dist) => {
+                ops.push(json!({ "op": "new_sketch", "origin": at, "normal": [0.0, 0.0, 1.0] }));
+                let sk = ops.len() - 1;
+                ops.push(json!({ "op": "add_rectangle", "sketch": placeholder(sk, "sketch"), "x": 0.0, "y": 0.0, "w": w, "h": h }));
+                let rect = ops.len() - 1;
+                ops.push(json!({ "op": "extrude", "sketch": placeholder(sk, "sketch"), "region": placeholder(rect, "regions.0"), "distance": dist }));
+                made.push((placeholder(ops.len() - 1, "object"), false));
+            }
+            PluginStep::ImportBox(min, size) => {
+                let p = |i: usize| -> [f64; 3] {
+                    [min[0] + if i & 1 != 0 { size[0] } else { 0.0 }, min[1] + if i & 2 != 0 { size[1] } else { 0.0 }, min[2] + if i & 4 != 0 { size[2] } else { 0.0 }]
+                };
+                ops.push(json!({ "op": "import", "items": [{
+                    "name": "Plugin box",
+                    "positions": (0..8).map(p).collect::<Vec<_>>(),
+                    "faces": [[[0, 2, 3, 1]], [[4, 5, 7, 6]], [[0, 1, 5, 4]], [[2, 6, 7, 3]], [[0, 4, 6, 2]], [[1, 3, 7, 5]]],
+                }] }));
+                made.push((placeholder(ops.len() - 1, "objects.0"), false));
+            }
+            PluginStep::Rename(k) => ops.push(json!({ "op": "rename", "item": item(thing(&made, *k)), "name": format!("Part {k}") })),
+            PluginStep::Component(k) => {
+                ops.push(json!({ "op": "make_component", "items": [item(thing(&made, *k))], "name": format!("Plugin part {k}") }));
+                made.push((placeholder(ops.len() - 1, "instance"), true));
+            }
+            PluginStep::Push(k, face, dist) => {
+                let (v, node) = thing(&made, *k);
+                if !node {
+                    ops.push(json!({ "op": "push_pull", "object": v, "face": face, "distance": dist }));
+                }
+            }
+            PluginStep::Move(k, t) => {
+                let (v, node) = thing(&made, *k);
+                let xform = json!({ "linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": t });
+                ops.push(if node {
+                    json!({ "op": "transform", "objects": [], "nodes": [v], "xform": xform })
+                } else {
+                    json!({ "op": "transform", "objects": [v], "xform": xform })
+                });
+            }
+            PluginStep::Plain(f) => {
+                let op = resolve(f, d);
+                ops.push(serde_json::to_value(&op).unwrap_or(json!({ "op": "delete_guides" })));
+            }
+            PluginStep::Garbage(kind) => {
+                let at = ops.len();
+                let forbidden = ["undo", "redo", "leave_context"][at % 3];
+                ops.push(match kind {
+                    0 => json!({ "op": "rename", "item": { "object": placeholder(at + 1, "object") }, "name": "Later" }),
+                    1 => json!({ "op": "rename", "item": { "object": placeholder(at.saturating_sub(1), "no.such.path") }, "name": "Nope" }),
+                    2 => json!({ "op": forbidden }),
+                    3 => json!({ "op": "frobnicate", "object": 1 }),
+                    4 => json!({ "op": "rename", "item": { "object": placeholder(at.saturating_sub(1), "") }, "name": "Whole outcome" }),
+                    _ => json!({ "op": "rename", "item": { "object": { "$ref": 0, "path": "object", "extra": 1 } }, "name": "Extra" }),
+                });
+            }
+        }
+    }
+    if ops.is_empty() {
+        ops.push(json!({ "op": "delete_guides" }));
+    }
+    sawhorse_kernel::refbatch::NamedBatch {
+        name: "Fuzz plugin".into(),
+        ops,
+    }
 }
 
 fn pick<T: Copy>(items: &[T], k: u8) -> Option<T> {
@@ -934,6 +1102,8 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             part: part(*k),
             grain: [Grain::Length, Grain::Width, Grain::None][*g as usize % 3],
         },
+        // Resolved in `concrete` through refbatch; never reaches here in a run.
+        Fuzz::PluginBatch(_) => Op::Batch { ops: Vec::new() },
         Fuzz::Stock(k, t, sheet) => Op::SetStock {
             part: part(*k),
             stock: t.map(|i| STOCKS[i as usize % STOCKS.len()].to_string()),
@@ -1362,6 +1532,63 @@ fn concrete(intents: &[Fuzz], tally: &mut Tally) -> (Vec<Op>, Option<String>) {
     }];
     let _ = d.apply(&ops[0]);
     for f in intents {
+        if let Fuzz::PluginBatch(steps) = f {
+            let req = plugin_batch(steps, &d);
+            let before = (d.hash(), d.log().len(), d.depth());
+            let mut probe = d.clone();
+            let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sawhorse_kernel::refbatch::apply(&mut probe, &req)
+            }));
+            let req_json = serde_json::to_string(&req).unwrap_or_default();
+            match attempt {
+                Err(p) => {
+                    let msg = p
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "non-string panic".into());
+                    return (
+                        ops,
+                        Some(format!("plugin batch {req_json} panicked: {msg}")),
+                    );
+                }
+                Ok(Ok((_, op))) => {
+                    tally.plugin(true, None);
+                    // The logged op must do exactly what refbatch did, applied as itself.
+                    ops.push(op.clone());
+                    let r = d.apply(&op);
+                    tally.record(&op, &r);
+                    if r.is_err() || d.hash() != probe.hash() || d.log() != probe.log() {
+                        return (
+                            ops,
+                            Some(format!(
+                                "plugin batch {req_json}: its logged op did not land where refbatch did ({r:?})"
+                            )),
+                        );
+                    }
+                }
+                Ok(Err(e)) => {
+                    tally.plugin(false, Some(&e.to_string()));
+                    if e.is_bug() {
+                        return (
+                            ops,
+                            Some(format!(
+                                "plugin batch {req_json}: validator rejected the result: {e}"
+                            )),
+                        );
+                    }
+                    if (probe.hash(), probe.log().len(), probe.depth()) != before {
+                        return (
+                            ops,
+                            Some(format!(
+                                "plugin batch {req_json} was refused ({e}) but the document changed"
+                            )),
+                        );
+                    }
+                }
+            }
+            continue;
+        }
         let op = resolve(f, &d);
         ops.push(op.clone());
         let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| d.apply(&op)));
@@ -1409,9 +1636,35 @@ struct Tally {
     kinds: std::collections::BTreeMap<String, (usize, usize)>,
     reasons: std::collections::BTreeMap<String, usize>,
     dumped: usize,
+    /// Lane 11: plugin batches accepted and refused, and the refusals by reason.
+    plugin: (usize, usize),
+    plugin_reasons: std::collections::BTreeMap<String, usize>,
 }
 
 impl Tally {
+    fn plugin(&mut self, accepted: bool, reason: Option<&str>) {
+        if accepted {
+            self.plugin.0 += 1;
+        } else {
+            self.plugin.1 += 1;
+        }
+        if let Some(r) = reason {
+            // "op 3 (push_pull): no object #12" -> "(push_pull): no object #N"
+            let mut words: Vec<String> = Vec::new();
+            for w in r.split_whitespace().take(12) {
+                let w = if w.chars().any(|c| c.is_ascii_digit()) && !w.contains('(') {
+                    w.chars()
+                        .map(|c| if c.is_ascii_digit() { 'N' } else { c })
+                        .collect::<String>()
+                } else {
+                    w.to_string()
+                };
+                words.push(w);
+            }
+            *self.plugin_reasons.entry(words.join(" ")).or_default() += 1;
+        }
+    }
+
     fn record(
         &mut self,
         op: &Op,
@@ -1493,6 +1746,19 @@ impl Tally {
             100.0 * boolean as f64 / (pushes + sweeps).max(1) as f64,
             100.0 * push_refusals as f64 / pushes.max(1) as f64,
         );
+        out += &format!(
+            "  plugin batches (lane 11): {} accepted, {} refused (document untouched each time)
+",
+            self.plugin.0, self.plugin.1
+        );
+        let mut pr: Vec<(&String, &usize)> = self.plugin_reasons.iter().collect();
+        pr.sort_by(|a, b| b.1.cmp(a.1));
+        for (reason, n) in pr.into_iter().take(12) {
+            out += &format!(
+                "  {n:>7}  plugin batch refused: {reason}
+"
+            );
+        }
         out += &format!(
             "  plane snapping: {}
 ",
