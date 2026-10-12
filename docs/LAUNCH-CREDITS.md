@@ -4,7 +4,7 @@ The render service and the credit store are built and tested with the mock provi
 
 ## Accounts and keys
 
-- [ ] **The LLC.** Form the single-member LLC before the first paid pack (STATUS.md: "single-member LLC at first paid credit pack; NOT the maintainer's other company"). Stripe, Resend and the domain should be opened under it.
+- [ ] **The LLC.** Form the single-member LLC before the first paid pack. Stripe, Resend and the domain should be opened under it.
 - [ ] **Stripe account under the LLC.** Business details, bank account, statement descriptor (e.g. `SAWHORSE CREDITS`). Turn on the payment methods you want in Checkout. Card alone is fine to start; the delayed methods are already handled through `async_payment_succeeded`.
 - [ ] **Stripe test keys** to `~/.sawhorse/.env`:
   - `STRIPE_SECRET_KEY=sk_test_...`
@@ -15,12 +15,12 @@ The render service and the credit store are built and tested with the mock provi
 - [ ] **Replicate token** (`REPLICATE_API_TOKEN`) with billing on. Check `src/providers/replicate.ts` against `black-forest-labs/flux-depth-dev` in the same way: `control_image`, `aspect_ratio`, `megapixels`, `output_format`, `Prefer: wait` and the `output` shape.
 - [ ] **Provider cost check.** Packs are 10 cents a credit. Confirm one render's provider cost, retries included, leaves margin. If it does not, raise the cost per render (`RENDER_COST` in `src/packs.ts`), not the pack prices. ADR-0004 says never sell a pack under $10.
 - [ ] **Resend key** (`RESEND_API_KEY`) and a verified sending domain, then set `EMAIL_FROM=Sawhorse <credits@<domain>>`. Without them, production turns claim codes off (503) and says so.
-- [ ] **Postgres.** Either the personal managed Postgres project (ADR-0004: a dedicated role and database or schema, session-pooler connection string with `sslmode=require`) or a Postgres on the production host. Put the string in `DATABASE_URL`. Migrations run on start.
-- [ ] **`RENDER_URL_SECRET`**: `openssl rand -base64 48`, the production host only.
+- [ ] **Postgres.** Either a managed Postgres (ADR-0004: a dedicated role and database or schema, session-pooler connection string with `sslmode=require`) or a Postgres on the production host. Put the string in `DATABASE_URL`. Migrations run on start.
+- [ ] **`RENDER_URL_SECRET`**: `openssl rand -base64 48`, production host only.
 
 ## DNS and hosting
 
-- [ ] **A host name for the service**, e.g. `render.<sawhorse domain>`, with an `A` record to the production host's public IP. Stripe and the providers must reach it from the internet, so it cannot be the VPN-only.
+- [ ] **A host name for the service**, e.g. `render.<sawhorse domain>`, with an `A` record to the production host's public IP. Stripe and the providers must reach it from the internet, so it cannot be 
 - [ ] **TLS reverse proxy** on the production host (Caddy or the existing one) to `127.0.0.1:8787`, with a 25 MB body limit and no path rewriting. See `render-service/docs/DEPLOY.md`.
 - [ ] **App configuration for production:**
   - Build with `VITE_RENDER_SERVICE_URL=https://<render host>` (CI release workflow env).
