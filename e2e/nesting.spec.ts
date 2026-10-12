@@ -129,6 +129,7 @@ test("nesting the bookshelf: boards and a sheet, kerf, maxrects, ply, stock, and
   await expect.poll(async () => (await nest(page)).settings.kerf).toBeCloseTo((3 / 32) * IN, 12);
   await expect(kerf).toHaveValue("3/32 in");
   await expect(page.getByTestId("nest-note")).toContainText("Kerf 3/32 in");
+  await expect(hint(page)).toContainText("Nesting: kerf 3/32 in, trim none");
   n = await nest(page);
   checkLayout(n);
   expect(n.pieces[0].kerf).toBeCloseTo((3 / 32) * IN, 12);

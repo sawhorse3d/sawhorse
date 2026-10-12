@@ -1,6 +1,6 @@
 # The `.shz` file format, version 1
 
-Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
+Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, the stock library and nesting settings in lane 9, as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
 
 A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or Stored entries) with these entries:
 
@@ -40,7 +40,7 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
 }
 ```
 
-(`nodes`, `definitions`, `context` and `tag_colors` are optional and left out when empty.)
+(`nodes`, `definitions`, `context`, `tag_colors` and `stock` are optional and left out when empty, or for `stock` when the model uses the built-in library.)
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -161,6 +161,37 @@ Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`
 | `guides[]` | `{ "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). |
 | `dimensions[]` | `{ "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. |
 | `last_number` | integer, optional | The last display number handed out, so a deleted solid's number is not reused after a reopen. |
+| `stock` | stock library, optional | The sheets and boards the model's parts are nested on, each material's default stock, and the nesting settings (below). Absent: the built-in library. |
+
+### Stock library (nesting)
+
+What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-in library (4 x 8 sheets at 3/4, 1/2 and 1/4 in; 5 x 5 Baltic birch at 3/4 and 1/2 in; 4 x 8 MDF; 4/4 boards 4, 6, 8 and 12 in wide; 5/4, 6/4, 8/4 and 12/4 boards 6 in wide; all 96 in long; kerf 1/8 in, no trim, guillotine). Writers leave it out when it equals the built-in library. Readers that do not know it lose nothing but the nesting's settings.
+
+```json
+"stock": {
+  "stocks": [
+    { "name": "4 x 8 sheet, 3/4", "kind": "sheet", "length": 2.4384, "width": 1.2192, "thickness": 0.01905, "grain": "length" },
+    { "name": "4/4 x 12 x 96", "kind": "board", "length": 2.4384, "width": 0.3048, "thickness": 0.0206375, "nominal": "4/4", "grain": "length" }
+  ],
+  "defaults": { "Oak": "4/4 x 12 x 96" },
+  "settings": { "kerf": 0.003175, "trim": 0, "algorithm": "guillotine" }
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `stocks[]` | stock[] | At most 200. |
+| `stocks[].name` | string | 1 to 64 characters, no surrounding spaces, unique in the library compared without case. Parts and defaults refer to stock by it. |
+| `stocks[].kind` | `"sheet"` or `"board"` | Sheet goods (any part lies anywhere on it) or a board (parts are cut along its length, one across its width). |
+| `stocks[].length`, `width`, `thickness` | number | Metres, each 1 mm to 10 m; the thickness (actual, not nominal) at most the width and the length. `length` runs along the grain. |
+| `stocks[].nominal` | string, optional | A board's nominal thickness ("4/4", "8/4"), at most 16 characters; "n/4" also gives the board feet bought (n/4 in thick). |
+| `stocks[].grain` | `"length"` or `"none"` | The grain runs along the length (default), or there is none (MDF): only then may a grained part turn across it. |
+| `defaults` | `{ material: stock name }`, optional | Which stock the parts of a material (or of a part's stock text) come from; material names unique without case, each value the exact `name` of a stock in `stocks`. |
+| `settings.kerf` | number | Width of every cut, metres, 0 to 1/2 in (0.0127). Default 1/8 in. |
+| `settings.trim` | number | Taken off every edge of a sheet and both ends of a board first, metres, 0 to 4 in (0.1016). A trim narrower than the kerf takes a kerf. |
+| `settings.algorithm` | `"guillotine"` or `"maxrects"` | Straight cuts edge to edge (default), or the tightest rectangle packing. |
+
+A reader refuses a library that breaks any rule above (as it refuses any invalid model). The nesting itself is not stored: it is worked out from the model and this library, and is the same everywhere.
 
 ## `geometry.glb`
 
@@ -179,4 +210,4 @@ glTF 2.0 binary. One node per object and per imported mesh, named after it, flat
 
 ## Reference implementation
 
-`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).
+`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/kernel/src/stock.rs` (the stock library and its rules), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).

@@ -82,7 +82,9 @@ function PieceDiagram({ piece, rounding, lit, onHover, onSelect }: { piece: Stoc
   const d = useMemo(() => diagram(piece), [piece]);
   const [over, setOver] = useState<string | null>(null);
   const S = 1000; // millimetres: friendlier numbers in the viewBox
-  const font = Math.min(d.width, d.height) * S * 0.11;
+  // The diagram is drawn the pane's width, so a tag about 10 px tall is 1/25 of the
+  // stock's length (then smaller where a part is too small for it).
+  const font = d.width * S * 0.04;
   return (
     <svg
       className="nest-diagram"

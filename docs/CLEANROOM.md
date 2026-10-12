@@ -82,6 +82,14 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Algorithms** (templates captured and re-derived by slot, affine maps of B-reps, a tidy pass, the definition-reachability purge) were written from general knowledge.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
 
+### 2026-10-12 — lane 9 (nesting and cutting diagrams): what was read
+- **Who:** the lane-9 builder (Claude), nesting lane.
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane.
+- **OpenCutList, CutList Plus, MaxCut and Cutlist Optimizer** (cut list and sheet-optimising tools) were described from memory, as a user knows them: a stock library of sheet sizes and board sizes per material, kerf and trim settings, diagrams with numbered parts, a cut order, efficiency figures, DXF and SVG for CNC. Nothing from any of them was opened, copied or consulted; the layout of the Nesting section, the Stock dialog, the diagrams, the booklet and every word in them are our own.
+- **Algorithms** were written from general knowledge: guillotine bin packing with free-rectangle splits (best area fit, shorter-leftover and rip-first split rules), maximal-rectangles packing with best short side fit and containment pruning, first-fit-decreasing for one-dimensional cutting, a bounded depth-first subset search for the lookahead, recursive guillotine decomposition of a layout by gap sweeps, DXF R12 group codes (`LWPOLYLINE`, `POLYLINE`/`VERTEX`/`SEQEND`, `TEXT`, the `LAYER` table; the same subset `crates/export/src/dxf.rs` writes), SVG 1.1, and the lane-7 PDF writer.
+- **Third-party code used, not copied:** `dxf-parser` (MIT, already a dev dependency) reads our DXF back in tests; its API was already in use in `src/io/formats.test.ts`.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
+
 ### 2026-10-12 — lane 7 (cut list): what was read
 - **Who:** the lane-7 builder (Claude), cut list lane.
 - **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane.

@@ -213,7 +213,7 @@ So make the boards you repeat components (select, Edit > Make Component): six id
 
 **Narrow pane.** The table fits the 300 px panel at every rounding: long part names and stock end in "..." and show in full when you hover them; the right-click menu shows the row's name at the top, and the row stays marked while the menu is open.
 
-**The tiles.** Board feet = T x W x L / 144 (inches) for each lumber part times its quantity, from its exact size (not the rounded one), with the species when there is one. Sheet goods are counted as a rough number of 4 x 8 sheets (their area divided by a sheet's, rounded up), with the stock and thickness. Kerf, edge banding and nesting (laying parts out on sheets) are not included yet; the pane says so.
+**The tiles.** Board feet = T x W x L / 144 (inches) for each lumber part times its quantity, from its exact size (not the rounded one), with the species when there is one. Sheet goods are counted as a rough number of 4 x 8 sheets (their area divided by a sheet's, rounded up), with the stock and thickness. That count is a rough estimate; **Nesting** (below) lays the parts out on real sheets and boards, kerf included. Edge banding is not included.
 
 **Hidden parts** (the Outliner's eye, a hidden tag, a hidden group) stay in the list with a "hidden" note. Tick **Visible only** to leave them out of the rows and the totals.
 
@@ -235,6 +235,33 @@ Each file is offered through the same save dialog as an export, named after your
 5. Shelves: `R`, `34 1/2, 11`; `P`, `3/4`; move it 3/4 along red and 3 1/2 up. Make Component `Shelf`. `M`, tap Ctrl, click a corner, Up arrow, `18`, then `x3`.
 
 The Cut list then reads: Side 2, 3/4 x 11 1/4 x 71 1/4; Top 1, 3/4 x 11 1/4 x 36; Toe kick 1, 3/4 x 3 1/2 x 34 1/2; Shelf 4, 3/4 x 11 x 34 1/2; Back panel 1, 1/4 x 34 1/2 x 71 1/4 (sheet). That is 2,735.15625 cubic inches of lumber, **18.99 board feet**, and **1 sheet** of 1/4 in stock. Right-click the Top, Grain across: its arrow turns. Right-click the Back panel, Stock, `1/4 birch ply`, Sheet goods. Then CSV, PDF, Print and Labels.
+
+## Nesting (cutting diagrams)
+
+**Nesting ›** at the bottom of the Cut list opens the Nesting section under the list: every piece of every part laid out on real sheets and boards, the cuts that free them, and what to buy. It works itself out again a moment after every change you make, and it is the same in the browser and on the desktop: the same model always gives the same layout.
+
+**What it is cut from.** Each part's stock is chosen in this order:
+1. The part's own stock (right-click its row, **Stock / material...**), when that names a stock in the library ("4 x 8 MDF, 3/4"). A part named for a stock of the wrong thickness is listed as not placed.
+2. Its material's stock, set in the **Stock...** dialog ("Oak" from "4/4 x 8 x 96").
+3. Otherwise automatically. Sheet goods come from the sheet of their thickness (within 1/16 in, so a part drawn 3/4 in comes from 23/32 in "3/4" ply). Solid lumber comes from boards of the thinnest nominal thickness that covers it (4/4 for 3/4 in parts); all the parts of one material and thickness share one board size, the narrowest board as wide as the widest of them, so a narrow part rides on the offcuts of the wide ones.
+
+Parts of different materials never share a sheet or a board.
+
+**The library** (the **Stock...** button) starts with 4 x 8 sheets at 3/4, 1/2 and 1/4 in, 5 x 5 Baltic birch at 3/4 and 1/2 in, 4 x 8 MDF (no grain), 4/4 boards (13/16 in actual) 4, 6, 8 and 12 in wide, and 5/4, 6/4, 8/4 and 12/4 boards 6 in wide, all 8 ft long. In the dialog: pick each material's stock (or Automatic); **Edit** or **Delete** a stock; add one (name, sheet or board, width, length, thickness, a board's nominal thickness, grain along the length or none); **Built-in stock** puts everything back. Lengths run along the grain. Type sizes as anywhere else ("48", "5'", "1219mm"). Every change is one undo step and is saved with the model.
+
+**Saw, kerf and trim.** **Saw: Table saw** (the default) lays sheets out so they come apart in straight cuts from edge to edge, the way a table saw or panel saw cuts. **Tightest (CNC)** packs parts as tightly as their rectangles allow; some of its layouts need a track saw, a jigsaw or a CNC (the diagram says "not all straight cuts"). **Kerf** is the width of every cut (1/8 in to start; type 3/32 for a thin-kerf blade). **Trim** is taken off every edge of a sheet and both ends of a board before anything else (factory edges, checked ends). Both commit when you press Enter, leave the field, or stop typing.
+
+**Grain.** A part's grain runs along each sheet's and board's length, so a part is never turned across the grain; it turns 90 degrees only when it, or the stock (MDF), has no grain. Set a part's grain across (right-click its row) and it lies across the sheet.
+
+**Reading it.**
+- Three tiles: sheets (and which), boards (by nominal size, with the board feet you buy), and the overall yield: the parts' area over the stock's.
+- **Parts on no stock**, if any, with why: no stock of its kind is that thick, the stock it names is the wrong thickness, it is larger than the stock, or it would fit only with its grain across. Nothing is ever dropped silently.
+- A diagram per sheet or board, to scale, length left to right. Each part carries its tag: its row number in the cut list, and a letter when the row has more than one piece ("4c" is the third Shelf). Hover a part for its name and size; it lights up in the model too (and the part under the pointer in the view lights up in its diagram). Click it to select it in the model.
+- Under each diagram, the cuts in order ("Rip to 11 1/4 in", "Crosscut to 34 1/2 in": set the fence to that), and the parts on it.
+
+**Files.** **SVG** saves one drawing per sheet or board, 1:1 in millimetres (it prints or projects to scale): every part outlined and labelled with its tag, name and size, the overall dimensions, every cut numbered where it starts, and the cut sequence written underneath. Each diagram's own **SVG** link saves just that one. **DXF** saves every sheet and board in one file for a CNC router or a laser, in millimetres: a closed polyline per part on a layer per sheet or board (SHEET-01, BOARD-02, ...), the stock outlines on layer STOCK and the tags as text on layer LABELS, so the CAM program can cut one layer and ignore the rest. **DXF R12** is the same with old-style polylines, for programs that read only R12. **PDF** saves a booklet: a first page with what to buy (each stock and material, how many, the yield, board feet), the settings, any parts on no stock and an index; then a page per sheet or board with its diagram to scale, its parts and its cut sequence.
+
+**The bookshelf.** Build the bookshelf above and name its back panel 1/4 birch ply, then open Nesting: the carcass, top, shelves and toe kick (3/4 in, no material) come from **five 4/4 x 12 x 96 boards** (each side takes a board, with 24 5/8 in left that nothing fits; the top and the toe kick share one; the four shelves go two to a board) and the back from **one 4 x 8 sheet of 1/4 in**: 6,105 sq in of parts from 10,368 sq in of stock, **58.9% yield**. Name the carcass "3/4 birch ply" too and it becomes three sheets: two of 3/4 in (four 11 1/4 in strips fit across a sheet, but nothing 34 1/2 in long fits beside a 71 1/4 in side) and the back's.
 
 ## When a cut goes all the way through
 
