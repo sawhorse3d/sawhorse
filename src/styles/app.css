@@ -126,3 +126,7 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 /* ---- Lane 4 additions: status-line actions ("Restore unsaved work?") ---- */
 .vcb .hint .hint-action{margin-left:8px;padding:1px 8px;border:1px solid var(--accent);border-radius:4px;color:var(--accent);background:var(--bg);font:12px var(--body)}
 .vcb .hint .hint-action:hover{background:var(--accent);color:var(--accent-ink)}
+/* Scale grips: small squares on the selection's bounding box; the one under the cursor fills. */
+.vp .vlabel.grip{width:9px;height:9px;padding:0;border-radius:2px;border:1.5px solid var(--sel);background:var(--panel);transform:translate(-50%,-50%)}
+.vp .vlabel.grip.hot{background:var(--sel)}
+.vp .vlabel.grip.fixed{border-color:var(--warn);border-radius:50%}

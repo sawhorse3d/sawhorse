@@ -19,6 +19,7 @@ import { RectTool } from "./tools/rect";
 import { PushTool } from "./tools/push";
 import { MoveTool } from "./tools/move";
 import { RotateTool } from "./tools/rotate";
+import { ScaleTool } from "./tools/scale";
 import { LineTool } from "./tools/line";
 import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
@@ -347,6 +348,7 @@ export function App() {
       ["pushpull", new PushTool(host)],
       ["move", new MoveTool(host)],
       ["rotate", new RotateTool(host)],
+      ["scale", new ScaleTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? null;
