@@ -113,6 +113,19 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         res = { id: req.id, ok: true, outcome, notes: r.notes, scene: scene(d) };
         break;
       }
+      case "saveShz": {
+        const file = document(mod).save_shz(req.displayUnits, req.thumbnail);
+        res = { id: req.id, ok: true, file };
+        break;
+      }
+      case "openShz": {
+        const d = document(mod);
+        const info = JSON.parse(d.open_shz(req.bytes)) as { notes: string[]; display_units: string | null; generator: string };
+        const st = JSON.parse(d.state_json()) as { objects: number[]; meshes: unknown[]; sketches: unknown[] };
+        const outcome: OpOutcome = { kind: "restored", objects: st.objects.length, meshes: st.meshes.length, sketches: st.sketches.length };
+        res = { id: req.id, ok: true, outcome, notes: info.notes, opened: { display_units: info.display_units, generator: info.generator }, scene: scene(d) };
+        break;
+      }
       case "exportFile": {
         const file = document(mod).export_file(req.format, JSON.stringify(req.options ?? {}));
         res = { id: req.id, ok: true, file };

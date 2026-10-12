@@ -185,6 +185,28 @@ impl Gltf<'_> {
 }
 
 pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
+    read_with_ids(bytes, opts).map(|(p, _)| p)
+}
+
+/// The items of a Sawhorse-written GLB keyed by the object id in each node's
+/// `extras.sawhorse.object` (the `.shz` reader's fallback when `scene.json` has no exact
+/// B-rep for an object).
+pub fn items_by_object(
+    bytes: &[u8],
+) -> Result<std::collections::BTreeMap<u64, ImportItem>, ImportError> {
+    let (p, ids) = read_with_ids(bytes, &ImportOptions::default())?;
+    Ok(ids
+        .into_iter()
+        .zip(p.items)
+        .filter_map(|(id, item)| Some((id?, item)))
+        .collect())
+}
+
+/// [`read`], plus each item's `extras.sawhorse.object` id when its node has one.
+fn read_with_ids(
+    bytes: &[u8],
+    opts: &ImportOptions,
+) -> Result<(Parsed, Vec<Option<u64>>), ImportError> {
     let (doc, bin) = if bytes.starts_with(b"glTF") {
         split_glb(bytes)?
     } else {
@@ -198,6 +220,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
         return Err(err("only glTF 2.0 is supported"));
     }
     let mut out = Parsed::default();
+    let mut ids: Vec<Option<u64>> = Vec::new();
     let buffers = doc["buffers"]
         .as_array()
         .map(|bs| {
@@ -421,6 +444,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             ));
         }
         if !item.faces.is_empty() || !item.lines.is_empty() {
+            ids.push(node["extras"]["sawhorse"]["object"].as_u64());
             out.items.push(item);
         }
     }
@@ -438,7 +462,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
     {
         return Err(err(n.clone()));
     }
-    Ok(out)
+    Ok((out, ids))
 }
 
 #[cfg(test)]

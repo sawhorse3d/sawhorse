@@ -109,10 +109,10 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             out.items.push(soup(&n, p, f));
         }
     }
-    if opts.units.is_none() {
-        out.notes
-            .push(format!("STL has no units; read as {}", unit.label()));
-    }
+    out.notes.push(format!(
+        "STL has no units; read as {} (File > Import units)",
+        unit.label()
+    ));
     Ok(out)
 }
 
@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(p.items.len(), 2);
         assert_eq!(p.items[1].name, "b");
         assert_eq!(p.items[0].positions[1], [0.0254, 0.0, 0.0]);
-        assert!(p.notes.is_empty());
+        assert!(p.notes[0].contains("read as inches"), "{:?}", p.notes);
         let bad = "solid a\n outer loop\n vertex 0 0\n";
         assert!(read(bad.as_bytes(), &ImportOptions::default()).is_err());
         assert!(read(&[0xff, 0xfe, 0x00], &ImportOptions::default()).is_err());

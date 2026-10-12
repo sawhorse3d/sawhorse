@@ -30,6 +30,7 @@ pub mod object;
 pub mod plane;
 pub mod push;
 pub mod sketch;
+pub mod snapshot;
 #[doc(hidden)]
 pub mod testing;
 pub mod tolerance;

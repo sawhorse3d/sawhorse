@@ -451,6 +451,30 @@ impl DocCore {
             .map_err(|e| e.to_string())
     }
 
+    /// The document as a `.shz` (see `docs/format.md`), with the user's unit system and an
+    /// optional PNG thumbnail.
+    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, String> {
+        let opts = sawhorse_shz::SaveOptions {
+            display_units: (!display_units.is_empty()).then(|| display_units.to_string()),
+            thumbnail_png: (!thumbnail_png.is_empty()).then(|| thumbnail_png.to_vec()),
+            generator: None,
+        };
+        sawhorse_shz::write(self.doc.model(), &opts).map_err(|e| e.to_string())
+    }
+
+    /// Replace the document with an opened `.shz`. Returns `{"notes": [...],
+    /// "display_units": ...}` as JSON. A file that does not open changes nothing.
+    pub fn open_shz(&mut self, bytes: &[u8]) -> Result<String, String> {
+        let opened = sawhorse_shz::read(bytes).map_err(|e| e.to_string())?;
+        let info = serde_json::json!({
+            "notes": opened.notes,
+            "display_units": opened.scene.units.display,
+            "generator": opened.scene.generator,
+        });
+        *self = DocCore::from_document(opened.document);
+        Ok(info.to_string())
+    }
+
     /// Write the document (or a scope of it) in `format`: `stl`, `3mf`, `glb`, `obj`,
     /// `mtl`, `dxf`, `dxf-outline`, `svg-view`, `svg-outline`. Options as JSON (see
     /// [`ExportOptions`]); an empty string means the defaults.
@@ -668,6 +692,17 @@ impl Doc {
     /// Wavefront OBJ (mm, Z-up) of one object.
     pub fn export_obj(&self, object_id: f64) -> Result<String, JsError> {
         self.core.obj(id(object_id)?).map_err(js)
+    }
+
+    /// The document as a `.shz` file (scene.json + geometry.glb + thumbnail.png).
+    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, JsError> {
+        self.core.save_shz(display_units, thumbnail_png).map_err(js)
+    }
+
+    /// Replace this document with an opened `.shz` (nothing to undo afterwards). Returns
+    /// `{notes, display_units, generator}` as JSON; a refused file changes nothing.
+    pub fn open_shz(&mut self, bytes: &[u8]) -> Result<String, JsError> {
+        self.core.open_shz(bytes).map_err(js)
     }
 
     /// Import a file into the document as one undoable step (see [`DocCore::import`]).
@@ -969,6 +1004,39 @@ mod tests {
         assert!(
             fresh.document().model().objects().is_empty(),
             "one undo step"
+        );
+    }
+
+    #[test]
+    fn save_and_open_shz() {
+        let mut d = DocCore::default();
+        op(
+            &mut d,
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+        );
+        op(
+            &mut d,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        );
+        let h = d.document().hash_hex();
+        let bytes = d.save_shz("mm", b"").unwrap();
+        let mut fresh = DocCore::default();
+        let info: serde_json::Value =
+            serde_json::from_str(&fresh.open_shz(&bytes).unwrap()).unwrap();
+        assert_eq!(info["display_units"], "mm");
+        assert_eq!(fresh.document().hash_hex(), h);
+        assert!(fresh.undo().is_err(), "nothing to undo after open");
+        let before = fresh.document().hash_hex();
+        assert!(
+            fresh
+                .open_shz(b"junk")
+                .unwrap_err()
+                .contains("not a Sawhorse file")
+        );
+        assert_eq!(
+            fresh.document().hash_hex(),
+            before,
+            "a refused open changes nothing"
         );
     }
 

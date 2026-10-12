@@ -122,6 +122,25 @@ export class KernelClient {
     return { ...this.edit(r), notes: r.notes ?? [] };
   }
 
+  /** The document as a .shz (zip: scene.json, geometry.glb, thumbnail.png). */
+  async saveShz(displayUnits: string, thumbnail: Uint8Array): Promise<Uint8Array> {
+    const r = await this.call({ kind: "saveShz", displayUnits, thumbnail });
+    if (!(r.file instanceof Uint8Array)) throw new Error("kernel returned no file");
+    return r.file;
+  }
+
+  /** Replace the document with an opened .shz. A refused file changes nothing. */
+  async openShz(bytes: Uint8Array): Promise<EditResult & { notes: string[]; opened: { display_units: string | null; generator: string } }> {
+    const r = await this.call({ kind: "openShz", bytes });
+    return { ...this.edit(r), notes: r.notes ?? [], opened: r.opened ?? { display_units: null, generator: "" } };
+  }
+
+  /** A fresh document (ground sketch only), as an edit result. */
+  async newDocument(): Promise<EditResult> {
+    const scene = await this.init();
+    return { outcome: { kind: "restored", objects: 0, meshes: 0, sketches: scene.state.sketches.length }, scene };
+  }
+
   private edit(r: WorkerResponse & { ok: true }): EditResult {
     if (!r.outcome || !r.scene) throw new Error("kernel returned no result");
     return { outcome: r.outcome, scene: r.scene };

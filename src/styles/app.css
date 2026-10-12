@@ -119,6 +119,21 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .menu .drop button:hover{background:var(--rail)}
 .menu .drop kbd{font:11px var(--mono);color:var(--muted)}
 .menu .drop hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.menu .drop .subwrap{position:relative;display:flex;flex-direction:column}
+.menu .drop .subwrap>button{width:100%}
+.menu .drop.sub{top:-5px;left:100%;margin:0 0 0 2px;min-width:250px}
+.menu .drop button:disabled{color:var(--muted);cursor:default;background:none}
 .menu button[aria-expanded="true"]{background:var(--rail);color:var(--fg)}
 /* Viewport overlays never swallow pointer events meant for the canvas (window selection can start under them). */
 .vp .hud,.vp .legend,.vp .axes{pointer-events:none}
+
+/* Files (lane 6): drop target, import report. */
+.app.dropping .vp{outline:2px dashed var(--sel);outline-offset:-6px}
+.drop-hint{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:40;pointer-events:none;padding:14px 18px;border-radius:8px;background:var(--panel);border:1px solid var(--line);box-shadow:0 10px 30px #0003;font-size:13px;color:var(--fg);max-width:420px;text-align:center}
+.import-report{position:fixed;left:68px;bottom:64px;z-index:30;width:min(440px,calc(100vw - 32px));max-height:40vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px #0002;font-size:12px;color:var(--fg)}
+.import-report header{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.import-report header button{border:0;background:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0 2px}
+.import-report ul{margin:0;padding:6px 10px 8px 26px}
+.import-report li{margin:2px 0;line-height:1.35}
+.import-report p{margin:0;padding:6px 10px 8px;color:var(--muted)}
+.import-report.err header b{color:var(--warn)}

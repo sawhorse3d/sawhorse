@@ -103,6 +103,7 @@ export type OpOutcome =
   | { kind: "material_set" }
   | { kind: "renamed" }
   | { kind: "mesh_deleted" }
+  | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "undone" }
   | { kind: "redone" };
 
@@ -314,6 +315,8 @@ export interface WasmDoc {
   export_obj(object: number): string;
   export_file(format: string, options: string): Uint8Array;
   import_file(name: string, bytes: Uint8Array, options: string): string;
+  save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
+  open_shz(bytes: Uint8Array): string;
   free(): void;
 }
 
@@ -337,7 +340,9 @@ export type RequestBody =
   | { kind: "export"; format: "stl" | "obj"; object: number }
   | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
   | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions }
-  | { kind: "importSkp"; name: string; bytes: Uint8Array };
+  | { kind: "importSkp"; name: string; bytes: Uint8Array }
+  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
+  | { kind: "openShz"; bytes: Uint8Array };
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
@@ -385,5 +390,7 @@ export type WorkerResponse =
       file?: Uint8Array | string;
       /** Reader notes from an import (units assumed, entities skipped). */
       notes?: string[];
+      /** What opening a .shz found: the unit system it was saved in, who wrote it. */
+      opened?: { display_units: string | null; generator: string };
     }
   | { id: number; ok: false; error: string; missing?: boolean };

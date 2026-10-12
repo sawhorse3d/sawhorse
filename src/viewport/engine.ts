@@ -630,6 +630,66 @@ export class ViewportEngine {
     this.camera.updateProjectionMatrix();
   }
 
+  /** The camera as an SVG view drawing needs it (crates/export svg::ViewSpec). Metres. */
+  viewSpec(): { eye: Vec3; target: Vec3; up: Vec3; ortho: boolean; fov: number; half_height: number; width: number; height: number } {
+    const cam = this.camera;
+    const p = cam.position;
+    const t = this.controls.target;
+    const u = cam.up;
+    const base = { eye: [p.x, p.y, p.z] as Vec3, target: [t.x, t.y, t.z] as Vec3, up: [u.x, u.y, u.z] as Vec3, width: this.size.w, height: this.size.h };
+    if (cam instanceof THREE.PerspectiveCamera) {
+      // Zoom narrows the field of view.
+      const fov = (2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) / cam.zoom) * 180) / Math.PI;
+      return { ...base, ortho: false, fov, half_height: 0 };
+    }
+    return { ...base, ortho: true, fov: PERSPECTIVE_FOV_DEG, half_height: (cam.top - cam.bottom) / 2 / cam.zoom };
+  }
+
+  /** Look through a saved scene's camera (metres, Z up). */
+  lookAt(eye: Vec3, target: Vec3, up: Vec3, projection: Projection, fovDeg = PERSPECTIVE_FOV_DEG): void {
+    this.view = null;
+    this.useProjection(projection);
+    const e = new THREE.Vector3(...eye);
+    const t = new THREE.Vector3(...target);
+    const dist = Math.max(e.distanceTo(t), 1e-3);
+    const r = Math.max(this.contentBox().getBoundingSphere(new THREE.Sphere()).radius, 0.05);
+    this.camera.up.set(...up).normalize();
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.fov = fovDeg;
+      this.camera.zoom = 1;
+      this.camera.position.copy(e);
+      this.camera.near = Math.max(dist / 1000, 0.001);
+      this.camera.far = Math.max(dist, r) * 100;
+    } else {
+      // What a perspective camera at this distance would show at the target.
+      this.frame = dist * Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+      this.camera.zoom = 1;
+      const dir = e.clone().sub(t).normalize();
+      this.camera.position.copy(t).addScaledVector(dir, Math.max(dist, r * 20));
+      this.camera.near = -r * 100;
+      this.camera.far = r * 200 + dist;
+    }
+    this.controls.target.copy(t);
+    this.fitted = this.contentBox();
+    this.updateProjection();
+    this.controls.update();
+    this.updateGridVisibility();
+    this.requestRender();
+  }
+
+  /** A PNG of the current view, at most `max` pixels on its long side (.shz thumbnails). */
+  async snapshotPng(max = 512): Promise<Uint8Array> {
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const k = Math.min(1, max / Math.max(src.width, src.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(src.width * k));
+    c.height = Math.max(1, Math.round(src.height * k));
+    c.getContext("2d")?.drawImage(src, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/png"));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : new Uint8Array();
+  }
+
   /** A compact description of the camera (tests and captures watch it change). */
   cameraSummary(): { eye: Vec3; target: Vec3; projection: Projection; view: ViewId | null; zoom: number } {
     const r = (v: number) => Math.round(v * 1e4) / 1e4;

@@ -580,6 +580,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sawhorse-shz"
+version = "0.0.1"
+dependencies = [
+ "sawhorse-export",
+ "sawhorse-import",
+ "sawhorse-kernel",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "sawhorse-tessellate"
 version = "0.0.1"
 dependencies = [
@@ -600,6 +613,7 @@ dependencies = [
  "sawhorse-import",
  "sawhorse-inference",
  "sawhorse-kernel",
+ "sawhorse-shz",
  "serde",
  "serde_json",
  "wasm-bindgen",

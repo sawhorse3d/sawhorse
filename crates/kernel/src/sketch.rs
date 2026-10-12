@@ -67,6 +67,31 @@ pub struct Region {
     pub consumed: bool,
 }
 
+/// A sketch as plain data (see [`Sketch::to_raw`]).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct RawSketch {
+    /// Vertex positions in the sketch plane's frame (metres).
+    pub vertices: Vec<[f64; 2]>,
+    /// Edges as vertex index pairs.
+    pub edges: Vec<[u32; 2]>,
+    pub regions: Vec<RawRegion>,
+}
+
+/// A region as plain data: rings as vertex indices, a point inside, its flags.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct RawRegion {
+    pub outer: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<Vec<u32>>,
+    pub anchor: [f64; 2],
+    #[serde(default)]
+    pub pinched: bool,
+    #[serde(default)]
+    pub consumed: bool,
+}
+
 /// Canonical boundary of a region (outer ring, sorted hole rings).
 pub type BoundaryKey = (Vec<SVertexId>, Vec<Vec<SVertexId>>);
 
@@ -835,6 +860,90 @@ impl Sketch {
             }
         }
         self.vertices.remove(from);
+    }
+
+    // ---- plain data (the .shz snapshot) -------------------------------------------------
+
+    /// The sketch as plain data: vertices in slot order, edges and region rings as indices
+    /// into them, regions with their anchors and flags.
+    pub fn to_raw(&self) -> RawSketch {
+        let index: BTreeMap<SVertexId, u32> = self
+            .vertices
+            .keys()
+            .enumerate()
+            .map(|(i, k)| (k, i as u32))
+            .collect();
+        let ring = |r: &[SVertexId]| r.iter().map(|v| index[v]).collect::<Vec<u32>>();
+        RawSketch {
+            vertices: self.vertices.values().map(|p| p.to_array()).collect(),
+            edges: self
+                .edges
+                .values()
+                .map(|[a, b]| [index[a], index[b]])
+                .collect(),
+            regions: self
+                .regions
+                .values()
+                .map(|r| RawRegion {
+                    outer: ring(&r.outer),
+                    holes: r.holes.iter().map(|h| ring(h)).collect(),
+                    anchor: r.anchor.to_array(),
+                    pinched: r.pinched,
+                    consumed: r.consumed,
+                })
+                .collect(),
+        }
+    }
+
+    /// Rebuild a sketch from plain data, refusing anything the sketch invariants reject or
+    /// whose regions do not match the faces its edges actually form.
+    pub fn from_raw(plane: Plane, raw: &RawSketch) -> Result<Sketch, String> {
+        let mut s = Sketch::new(plane);
+        let keys: Vec<SVertexId> = raw
+            .vertices
+            .iter()
+            .map(|p| {
+                let q = DVec2::from_array(*p);
+                if !(q.is_finite() && in_bounds(q.x) && in_bounds(q.y)) {
+                    return Err("sketch vertex out of bounds".to_string());
+                }
+                Ok(s.vertices.insert(q))
+            })
+            .collect::<Result<_, _>>()?;
+        let key = |i: u32| {
+            keys.get(i as usize)
+                .copied()
+                .ok_or_else(|| format!("sketch index {i} out of range"))
+        };
+        for e in &raw.edges {
+            s.edges.insert([key(e[0])?, key(e[1])?]);
+        }
+        for r in &raw.regions {
+            let ring = |r: &[u32]| -> Result<Vec<SVertexId>, String> {
+                let v: Vec<SVertexId> = r.iter().map(|&i| key(i)).collect::<Result<_, _>>()?;
+                Ok(canonical(&v))
+            };
+            let mut holes: Vec<Vec<SVertexId>> =
+                r.holes.iter().map(|h| ring(h)).collect::<Result<_, _>>()?;
+            holes.sort();
+            s.regions.insert(Region {
+                outer: ring(&r.outer)?,
+                holes,
+                anchor: DVec2::from_array(r.anchor),
+                pinched: r.pinched,
+                consumed: r.consumed,
+            });
+        }
+        s.check()?;
+        let mut stored: Vec<BoundaryKey> = s.regions.values().map(Region::boundary_key).collect();
+        let mut found: Vec<BoundaryKey> =
+            s.detect().into_iter().map(|d| (d.outer, d.holes)).collect();
+        stored.sort();
+        found.sort();
+        if stored != found {
+            return Err("the sketch's regions do not match its edges".into());
+        }
+        Ok(s)
     }
 
     // ---- invariants --------------------------------------------------------------------

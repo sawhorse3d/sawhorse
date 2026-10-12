@@ -190,15 +190,17 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
         Some(4) => (Unit::Mm, true),
         Some(5) => (Unit::Cm, true),
         Some(6) => (Unit::M, true),
-        _ => (opts.units.unwrap_or_default(), opts.units.is_some()),
+        // The file does not say: the user's choice (File > Import units), else millimetres.
+        _ => (opts.units.unwrap_or_default(), false),
     };
     let s = unit.metres();
     if !said {
         out.notes.push(format!(
-            "DXF does not say its units; read as {}",
+            "DXF does not say its units; read as {} (File > Import units)",
             unit.label()
         ));
-    } else if insunits.is_some_and(|u| ![1, 2, 4, 5, 6].contains(&u)) {
+    }
+    if insunits.is_some_and(|u| u != 0 && ![1, 2, 4, 5, 6].contains(&u)) {
         out.notes.push(format!(
             "DXF units code {} is not supported; read as {}",
             insunits.unwrap_or(0),

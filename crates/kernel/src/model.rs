@@ -183,6 +183,11 @@ pub enum Op {
     RenameObject { object: u64, name: Option<String> },
     /// Delete an imported non-solid mesh.
     DeleteMesh { mesh: u64 },
+    /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
+    /// edit; refused (typed) when the snapshot does not validate.
+    Restore {
+        snapshot: Box<crate::snapshot::Snapshot>,
+    },
     /// Step back one op (document command; see [`crate::document::Document`]).
     Undo,
     /// Step forward again after an undo (document command).
@@ -310,6 +315,12 @@ pub enum OpOutcome {
     MaterialSet,
     Renamed,
     MeshDeleted,
+    /// A saved model was restored.
+    Restored {
+        objects: usize,
+        meshes: usize,
+        sketches: usize,
+    },
     /// The pushed solid flattened to nothing and was removed. When the flat footprint lay
     /// on the solid's source sketch it went back there as a region.
     ObjectCollapsed {
@@ -319,22 +330,22 @@ pub enum OpOutcome {
 
 #[derive(Debug, Clone, Default)]
 pub struct Model {
-    sketches: SlotMap<SketchId, Sketch>,
-    sketch_order: Vec<SketchId>,
-    objects: SlotMap<ObjectId, Object>,
-    object_order: Vec<ObjectId>,
-    groups: SlotMap<GroupId, Group>,
+    pub(crate) sketches: SlotMap<SketchId, Sketch>,
+    pub(crate) sketch_order: Vec<SketchId>,
+    pub(crate) objects: SlotMap<ObjectId, Object>,
+    pub(crate) object_order: Vec<ObjectId>,
+    pub(crate) groups: SlotMap<GroupId, Group>,
     /// Tag name -> visible. Every tag an object uses is listed here.
-    tags: BTreeMap<String, bool>,
-    guides: SlotMap<GuideId, Guide>,
-    dimensions: SlotMap<DimensionId, Dimension>,
+    pub(crate) tags: BTreeMap<String, bool>,
+    pub(crate) guides: SlotMap<GuideId, Guide>,
+    pub(crate) dimensions: SlotMap<DimensionId, Dimension>,
     /// Imported geometry that is not a valid solid (see [`crate::meshbuild`]).
-    meshes: SlotMap<MeshId, LooseMesh>,
-    mesh_order: Vec<MeshId>,
+    pub(crate) meshes: SlotMap<MeshId, LooseMesh>,
+    pub(crate) mesh_order: Vec<MeshId>,
     /// Material name -> definition.
-    materials: BTreeMap<String, Material>,
+    pub(crate) materials: BTreeMap<String, Material>,
     /// Saved views, in order.
-    scenes: Vec<SceneDef>,
+    pub(crate) scenes: Vec<SceneDef>,
 }
 
 /// A material: sRGB colour with alpha, and a texture file name kept as a reference.
@@ -915,6 +926,14 @@ impl Model {
                 }
                 self.mesh_order.retain(|&m| m != k);
                 Ok(OpOutcome::MeshDeleted)
+            }
+            Op::Restore { snapshot } => {
+                *self = Model::from_snapshot(snapshot)?;
+                Ok(OpOutcome::Restored {
+                    objects: self.object_order.len(),
+                    meshes: self.mesh_order.len(),
+                    sketches: self.sketch_order.len(),
+                })
             }
             Op::Undo | Op::Redo => Err(DocumentError::NotAModelOp.into()),
         }

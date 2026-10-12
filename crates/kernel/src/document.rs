@@ -48,6 +48,23 @@ impl Document {
         d
     }
 
+    /// A document holding a saved model: its log is the one `Restore` op (so it replays),
+    /// with nothing to undo, as a freshly opened file should be.
+    pub fn open(snapshot: crate::snapshot::Snapshot) -> Result<Document, KernelError> {
+        let mut d = Document::new();
+        d.apply(&Op::Restore {
+            snapshot: Box::new(snapshot),
+        })?;
+        d.undo.clear();
+        Ok(d)
+    }
+
+    /// Forget undo and redo (the log stays): a file just opened has nothing to undo.
+    pub fn clear_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     pub fn model(&self) -> &Model {
         &self.model
     }

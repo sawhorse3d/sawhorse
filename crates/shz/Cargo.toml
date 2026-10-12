@@ -1,0 +1,22 @@
+[package]
+name = "sawhorse-shz"
+description = "The native Sawhorse document (.shz): a zip of scene.json, geometry.glb, assets/ and thumbnail.png (docs/format.md)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sawhorse-kernel.workspace = true
+sawhorse-export.workspace = true
+sawhorse-import.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true

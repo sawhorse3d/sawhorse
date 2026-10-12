@@ -137,10 +137,10 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             mtls.into_iter().collect::<Vec<_>>().join(", ")
         ));
     }
-    if opts.units.is_none() {
-        out.notes
-            .push(format!("OBJ has no units; read as {}", unit.label()));
-    }
+    out.notes.push(format!(
+        "OBJ has no units; read as {} (File > Import units)",
+        unit.label()
+    ));
     Ok(out)
 }
 
