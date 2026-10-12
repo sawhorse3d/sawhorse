@@ -29,6 +29,8 @@ export function entityKey(e: Entity): string {
       return `o:${e.object}`;
     case "node":
       return `n:${e.node}`;
+    case "section":
+      return `s:${e.section}`;
   }
 }
 
@@ -134,6 +136,7 @@ export function objectEdges(object: number, mesh: MeshData | null): [V3, V3][] {
  */
 export function highlightFor(selection: Entity[], hover: Entity | null, mesh: MeshData | null, graph?: SceneGraph | null): Highlight {
   const h: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [], fadedParts: [] };
+  h.sections = { selected: selection.flatMap((e) => (e.kind === "section" ? [e.section] : [])), hover: hover?.kind === "section" ? hover.section : null };
   for (const e of selection) {
     h.selectedParts.push(...partsOf(e, mesh, graph));
     if (e.kind === "edge") h.selectedEdges.push([e.a, e.b]);
@@ -209,6 +212,8 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
       return { op: "erase_dimension", dimension: e.dimension };
     case "node":
       return { op: "delete_node", node: e.node };
+    case "section":
+      return { op: "delete_section", section: e.section };
   }
 }
 
@@ -220,7 +225,7 @@ export function eraseOps(sel: Entity[], state: DocState | null): { ops: KernelOp
   const deleted = new Set(sel.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object));
   const ops: KernelOp[] = [];
   const skipped: string[] = [];
-  const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, vertex: 5 })[e.kind];
+  const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, section: 4, vertex: 5 })[e.kind];
   for (const e of [...sel].sort((a, b) => order(a) - order(b))) {
     const o = objectOf(e);
     if (e.kind !== "object" && o !== null && deleted.has(o)) continue;

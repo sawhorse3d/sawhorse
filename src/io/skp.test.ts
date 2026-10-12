@@ -119,6 +119,32 @@ describe("skp mapping", () => {
     expect(r.notes).toEqual(expect.arrayContaining([expect.stringContaining("1 scene(s) without a camera"), "not imported: 1 texts", expect.stringContaining("Millimeter")]));
   });
 
+  it("section planes come in switched off: the model's after the import, a group's in the group (lane 12)", () => {
+    const empty = { id: 0, guid: "", name: "", vertices: [], edges: [], faces: [], instances: [], sectionPlanes: [], texts: [], dimensions: [], constructionLines: [], constructionPoints: [], isImage: false, alwaysFacesCamera: false, shadowsFaceSun: false };
+    const model = {
+      version: "{25.0.0}",
+      definitions: new Map([[1, { ...empty, id: 1, name: "Group#1", sectionPlanes: [{ plane: [0, 0, 2, -20], name: "", label: "B", hidden: true }] }]]),
+      root: { ...empty, sectionPlanes: [{ plane: [1, 0, 0, -12], name: "Side cut", label: "A", hidden: false }], instances: [{ refIdx: 1, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 0, 0], name: "", layer: "Layer0", hidden: false }] },
+      layers: [],
+      pages: [],
+      dimensions: [],
+      materials: [],
+      materialsById: new Map(),
+      styles: [],
+      units: null,
+    } as unknown as SkpModel;
+    const r = modelToOp(model, "Cut.skp");
+    if (r.op.op !== "batch") throw new Error(`a batch, not ${r.op.op}`);
+    const [imp, plane] = r.op.ops;
+    expect(plane).toEqual({ op: "add_section", origin: [12 * 0.0254, 0, 0], normal: [-1, 0, 0], name: "Side cut", active: false });
+    if (imp.op !== "import") throw new Error();
+    // The group's plane z = 10 in, placed 100 in along red, named by its label, hidden.
+    const g = (imp.nodes ?? [])[0];
+    expect(g.sections).toEqual([{ origin: [100 * 0.0254, 0, 10 * 0.0254], normal: [0, 0, -1], name: "B", hidden: true }]);
+    expect(r.summary.sections).toBe(2);
+    expect(r.notes).toEqual(expect.arrayContaining([expect.stringContaining("2 section planes came in switched off")]));
+  });
+
   it("refuses a file that is not a .skp with a plain message", () => {
     expect(() => skpToOp(new Uint8Array([1, 2, 3, 4]), "x.skp")).toThrow(/could not read the SketchUp file/);
   });

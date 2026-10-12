@@ -5,7 +5,8 @@ export type BuiltinToolId =
   | "select" | "erase"
   | "line" | "rect" | "circle" | "arc"
   | "pushpull" | "move" | "rotate" | "scale" | "offset" | "follow"
-  | "tape" | "dim" | "paint";
+  | "tape" | "dim" | "paint"
+  | "section";
 
 /** A plugin's tool (lane 11): `plugin:<plugin id>/<tool id>`. */
 export type PluginToolId = `plugin:${string}`;
@@ -16,7 +17,7 @@ export interface ToolDef {
   id: ToolId;
   /** Short label under the glyph. */
   label: string;
-  /** KeyboardEvent.key that activates the tool (lower case; " " is Space). */
+  /** KeyboardEvent.key that activates the tool (lower case; " " is Space; "" for none). */
   key: string;
   /** What the key cap in the rail shows. */
   keyCap: string;
@@ -53,11 +54,15 @@ export const TOOL_GROUPS: ToolDef[][] = [
     { id: "dim", label: "Dim", key: "d", keyCap: "D", hint: "Click two points, then place the dimension line.", vcb: null },
     { id: "paint", label: "Paint", key: "b", keyCap: "B", hint: "Click a face to paint the active material.", vcb: null },
   ],
+  [
+    // Lane 12: no default key (SketchUp 2017 had none either).
+    { id: "section", label: "Section", key: "", keyCap: "", hint: "Click a face to cut the model there. Alt reverses it, the arrow keys lock it to an axis, Enter places it.", vcb: null },
+  ],
 ];
 
 export const TOOLS: ToolDef[] = TOOL_GROUPS.flat();
 
-const BY_KEY = new Map(TOOLS.map((t) => [t.key, t]));
+const BY_KEY = new Map(TOOLS.filter((t) => t.key).map((t) => [t.key, t]));
 const BY_ID = new Map(TOOLS.map((t) => [t.id, t]));
 
 export function toolForKey(key: string): ToolDef | undefined {

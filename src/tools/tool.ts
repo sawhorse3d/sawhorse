@@ -7,7 +7,7 @@
 // Tools are plain classes with no React and no three.js, so their logic is unit-tested
 // with a fake host (src/tools/*.test.ts).
 import type { EditResult } from "../kernel/client";
-import type { DocState, Entity, KernelOp, MeshData, OffsetPreview, OffsetSource, Picked, SceneData, SurfaceHit, V3 } from "../kernel/types";
+import type { CapHit, DocState, Entity, KernelOp, MeshData, OffsetPreview, OffsetSource, Picked, SceneData, SurfaceHit, V3 } from "../kernel/types";
 import { INFERENCE_STYLES, type InferenceKind } from "../lib/inferenceStyle";
 import type { ToolId } from "../lib/tools";
 import type { UnitSystem } from "../lib/units";
@@ -23,6 +23,8 @@ export interface Snap {
   tip: string;
   /** The surface under the cursor, if any. */
   surface: SurfaceHit | null;
+  /** A section cap under the cursor (lane 12): not a surface tools draw on. */
+  cap?: CapHit | null;
   /** On a solid's edge or corner: the face beside it facing the eye (when the ray misses). */
   adjacent?: SurfaceHit | null;
   /** The entity the snap came from (edge, vertex, face ...), if any. */
@@ -113,6 +115,9 @@ export interface ToolHost {
   outline(t: Target): Promise<V3[][]>;
   /** What an offset would draw, or the kernel's reason it would be refused. */
   offsetPreview(source: OffsetSource, distance: number): Promise<OffsetPreview | string>;
+  /** The drawn section plane under canvas pixel (x, y), lane 12: its id, the ray parameter
+   * and whether the hit is its reverse control (the arrow at its centre). */
+  pickSection?(x: number, y: number): { section: number; t: number; control: boolean } | null;
 }
 
 export abstract class Tool {

@@ -1,0 +1,22 @@
+/* Lane 12 (ADR-0010): section planes and drawing sheets. Our own tokens and layout, in the
+   mock's voice: the section colour is a burnt orange that reads against both themes and is
+   none of the inference colours; the cut fill is a warm grey. */
+:root{
+  --section:#c4622d; --section-fill:#a79e90;
+  --paper:#ffffff; --paper-ink:#1d211f; --paper-shadow:rgba(20,24,22,.22); --sheet-desk:#d9dbd5;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --section:#e58a55; --section-fill:#6f685d;
+  --paper:#fbfbf8; --paper-ink:#1d211f; --paper-shadow:rgba(0,0,0,.55); --sheet-desk:#2a2e2b } }
+:root[data-theme="dark"]{
+  --section:#e58a55; --section-fill:#6f685d;
+  --paper:#fbfbf8; --paper-ink:#1d211f; --paper-shadow:rgba(0,0,0,.55); --sheet-desk:#2a2e2b }
+
+/* Styles pane: the cut line width. */
+.field-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted);margin:4px 0}
+.field-row select,.field-row input{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:1px 4px}
+
+/* Outliner rows for section planes. */
+.tree.outline li[data-kind="section"] .label::before{content:"";display:inline-block;width:9px;height:9px;margin-right:5px;border:1.5px solid var(--muted);border-radius:1px;transform:skewY(-18deg);vertical-align:-1px}
+.tree.outline li[data-kind="section"].active .label::before{border-color:var(--section);background:color-mix(in srgb,var(--section) 22%,transparent)}
+.tree.outline li[data-kind="section"].active .k:not(.editing){color:var(--section)}

@@ -17,7 +17,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import type { MaterialInfo, MeshData, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
+import type { GraphSection, MaterialInfo, MeshData, SectionView, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
+import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorners } from "../lib/sections";
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
 import { TextureCache, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop } from "./looks";
 import type { UnitSystem } from "../lib/units";
@@ -48,6 +49,9 @@ export const GRID_DEPTH_OFFSET = -5e-5;
 export const BACK_FACE_COLOUR = "#7f93ad";
 
 interface Theme {
+  /** Section planes (lane 12): the active plane's colour and the default cut fill. */
+  section: string;
+  sectionFill: string;
   vp: string;
   grid: string;
   gridMajor: string;
@@ -82,6 +86,8 @@ export interface Highlight {
   selectedPoints: Vec3[];
   /** Parts outside the open group or component, drawn faded (lane 5). */
   fadedParts?: number[];
+  /** Section planes selected and under the cursor (lane 12). */
+  sections?: { selected: number[]; hover: number | null };
 }
 
 export const NO_HIGHLIGHT: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [] };
@@ -90,6 +96,8 @@ function readTheme(el: Element): Theme {
   const cs = getComputedStyle(el);
   const v = (n: string, fallback: string) => cs.getPropertyValue(n).trim() || fallback;
   return {
+    section: v("--section", "#c4622d"),
+    sectionFill: v("--section-fill", "#a79e90"),
     vp: v("--vp", "#f4f5f1"),
     grid: v("--vp-grid", "#d4d8cf"),
     gridMajor: v("--vp-axis", "#9aa39a"),
@@ -176,6 +184,11 @@ export class ViewportEngine {
   private sunLight = new THREE.DirectionalLight(0xffffff, 2);
   private ambient = new THREE.AmbientLight(0xffffff, 1);
   private groundShadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.3, depthWrite: false }));
+  // Section planes (lane 12): the cuts to draw, the planes, and what draws them.
+  private sectionView: SectionView | null = null;
+  private sectionPlanes: GraphSection[] = [];
+  private sectionGroup = new THREE.Group();
+  private sectionKey = "";
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -184,7 +197,9 @@ export class ViewportEngine {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.theme = readTheme(themeRoot);
-    this.scene.add(this.axes, this.highlightGroup, this.overlayGroup, this.textured, this.styledEdges, this.backdrop);
+    this.scene.add(this.axes, this.highlightGroup, this.overlayGroup, this.textured, this.styledEdges, this.backdrop, this.sectionGroup);
+    // Section planes clip per solid (each material carries its own planes).
+    this.renderer.localClippingEnabled = true;
     this.textures = new TextureCache(this.renderer.capabilities.getMaxAnisotropy(), () => {
       // An image finished decoding: draw the faces that show it.
       if (this.faces) this.colourFaces(this.faces.geometry);
@@ -545,6 +560,10 @@ export class ViewportEngine {
       };
       const mat = lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common);
       this.faces = new THREE.Mesh(g, mat);
+      // Section cuts (lane 12): triangles grouped by the planes that clip them, each group
+      // drawn with its own clipping material.
+      const clip = this.triangleClipSets();
+      if (clip) this.faces.material = this.clipGroups(g, mat, clip, mesh.indices.length / 3);
       this.faces.renderOrder = 2;
       this.faces.visible = mode.faces;
       this.faces.castShadow = lit;
@@ -580,14 +599,21 @@ export class ViewportEngine {
         // No depth offset: the faces are pushed back by theirs, so these win where an inner
         // side faces the camera, and edges (drawn later) still show on top.
         this.backs = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide }));
+        if (clip) {
+          const backSets = new Int32Array(back.length / 3);
+          let k = 0;
+          for (let t = 0; t < mesh.faceIds.length; t++) if (mesh.parts[mesh.faceIds[t]]?.kind === "mesh") backSets[k++] = clip.sets[t];
+          this.backs.material = this.clipGroups(bg, this.backs.material as THREE.Material, { sets: backSets, planes: clip.planes }, back.length / 3);
+        }
         this.backs.renderOrder = 2;
         this.scene.add(this.backs);
       }
     }
     this.buildOverlays();
-    if (mesh && mesh.edges.length > 0) {
+    const edgeData = this.edgeData();
+    if (mesh && edgeData && edgeData.edges.length > 0) {
       const eg = new THREE.BufferGeometry();
-      eg.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+      eg.setAttribute("position", new THREE.BufferAttribute(edgeData.edges, 3));
       eg.computeBoundingBox();
       // Wireframe and X-ray show the edges behind faces too.
       this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge, depthTest: !mode.hiddenEdges, transparent: mode.hiddenEdges }));
@@ -607,8 +633,9 @@ export class ViewportEngine {
     const mesh = this.meshData;
     const g = this.faces?.geometry;
     if (!mesh || !g || !this.faces?.visible || !g.getAttribute("uv")) return;
-    const byDigest = new Map<string, { texture: THREE.Texture; tris: number[] }>();
+    const byDigest = new Map<string, { texture: THREE.Texture; tris: number[]; set: number }>();
     const counted = new Set<number>();
+    const clip = this.triangleClipSets();
     for (let t = 0; t < mesh.faceIds.length; t++) {
       const part = mesh.faceIds[t];
       const tex = this.partTexture(part);
@@ -617,12 +644,14 @@ export class ViewportEngine {
         counted.add(part);
         this.texturedParts++;
       }
-      let e = byDigest.get(tex.digest);
-      if (!e) byDigest.set(tex.digest, (e = { texture: tex.texture, tris: [] }));
+      const set = clip ? clip.sets[t] : -1;
+      const key = `${tex.digest}|${set}`;
+      let e = byDigest.get(key);
+      if (!e) byDigest.set(key, (e = { texture: tex.texture, tris: [], set }));
       e.tris.push(mesh.indices[3 * t], mesh.indices[3 * t + 1], mesh.indices[3 * t + 2]);
     }
     const lit = this.lit();
-    for (const { texture, tris } of byDigest.values()) {
+    for (const { texture, tris, set } of byDigest.values()) {
       // Compact: only the vertices these triangles use.
       const remap = new Map<number, number>();
       const index: number[] = [];
@@ -651,6 +680,7 @@ export class ViewportEngine {
         depthFunc: THREE.LessEqualDepth,
       };
       const om = new THREE.Mesh(og, lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common));
+      if (clip && set >= 0) (om.material as THREE.Material).clippingPlanes = clip.planes[set];
       om.renderOrder = 2.5;
       om.receiveShadow = this.faces.receiveShadow;
       om.castShadow = false;
@@ -700,10 +730,10 @@ export class ViewportEngine {
   /** Profile, extension and endpoint lines depend on the camera: rebuilt when it moves. */
   private updateStyledEdges(): void {
     const e = this.style.edges;
-    const mesh = this.meshData;
+    const mesh = this.edgeData();
     const need = !!mesh && e.edges && (e.profiles || e.extensions || e.endpoints);
     const cam = this.camera;
-    const key = need ? `${cam.position.toArray().join()}|${(cam as THREE.OrthographicCamera).zoom}|${this.size.w}x${this.size.h}|${this.meshData?.edges.length}` : "";
+    const key = need ? `${cam.position.toArray().join()}|${(cam as THREE.OrthographicCamera).zoom}|${this.size.w}x${this.size.h}|${mesh?.edges.length}|${this.sectionKey}` : "";
     if (key === this.styledEdgesKey) return;
     this.styledEdgesKey = key;
     for (const c of [...this.styledEdges.children]) disposeObject(c);
@@ -724,7 +754,7 @@ export class ViewportEngine {
       return out;
     };
     if (e.profiles) {
-      const segs = profileSegments(mesh.edges, mesh.edgeNormals, this.camera);
+      const segs = profileSegments(mesh.edges, mesh.normals, this.camera);
       if (segs.length) {
         const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
@@ -744,11 +774,171 @@ export class ViewportEngine {
   // ---- highlights and overlays -----------------------------------------------------------
 
   setHighlight(h: Highlight): void {
+    const planes = (s: Highlight) => JSON.stringify(s.sections ?? null);
+    const sectionsChanged = planes(h) !== planes(this.highlight);
     this.highlight = h;
     if (this.faces) this.colourFaces(this.faces.geometry);
     this.buildOverlays();
     this.rebuildHighlights();
+    if (sectionsChanged) this.rebuildSections();
     this.requestRender();
+  }
+
+  // ---- section planes (lane 12) ------------------------------------------------------
+
+  /**
+   * The section cuts to draw (`view`: caps, outlines and which planes clip what, from the
+   * kernel) and the planes (from the scene graph). The style says whether cuts, planes and
+   * the fill are shown.
+   */
+  setSections(view: SectionView | null, planes: GraphSection[]): void {
+    const key = JSON.stringify([view, planes]);
+    if (key === this.sectionKey) return;
+    this.sectionKey = key;
+    this.sectionView = view;
+    this.sectionPlanes = planes;
+    this.buildFaces();
+    this.rebuildSections();
+    this.requestRender();
+  }
+
+  /** The drawn plane under canvas pixel (x, y): its id, ray parameter, and whether the hit
+   * is its reverse control (the arrow at its centre). */
+  pickSection(x: number, y: number): { section: number; t: number; control: boolean } | null {
+    return pickSection(this.ray(x, y), this.sectionPlanes, this.style.section_planes, (p) => this.metresPerPixelAt(p));
+  }
+
+  /** What the viewport shows of the sections (tests and captures). */
+  sectionsState(): { planes: number; active: number; clipped: number; caps: number; outline: number; fill: boolean } {
+    const v = this.sectionView;
+    return {
+      planes: this.sectionPlanes.filter((s) => s.visible).length,
+      active: this.sectionPlanes.filter((s) => s.active).length,
+      clipped: (v?.clips ?? []).reduce((n, c) => n + c.objects.length, 0),
+      caps: (v?.cuts ?? []).reduce((n, c) => n + c.indices.length / 3, 0),
+      outline: (v?.cuts ?? []).reduce((n, c) => n + c.outline.length / 6, 0),
+      fill: this.style.section_fill,
+    };
+  }
+
+  /** Which clip set each triangle of the view mesh is in (-1: none), and the sets' planes. */
+  private triangleClipSets(): { sets: Int32Array; planes: THREE.Plane[][] } | null {
+    const mesh = this.meshData;
+    const v = this.sectionView;
+    if (!mesh || !v?.clips.length || !this.style.section_cuts) return null;
+    const perPart = partClipPlanes(mesh, v);
+    const index = new Map<unknown, number>();
+    const planes: THREE.Plane[][] = [];
+    for (const ps of perPart) {
+      if (!ps || index.has(ps)) continue;
+      index.set(ps, planes.length);
+      planes.push(ps.map(([x, y, z, c]) => new THREE.Plane(new THREE.Vector3(x, y, z), c)));
+    }
+    if (!planes.length) return null;
+    const sets = new Int32Array(mesh.faceIds.length);
+    for (let t = 0; t < mesh.faceIds.length; t++) {
+      const ps = perPart[mesh.faceIds[t]];
+      sets[t] = ps ? (index.get(ps) ?? -1) : -1;
+    }
+    return { sets, planes };
+  }
+
+  /** Geometry groups over runs of triangles in the same clip set, and the materials for
+   * them: `base` unclipped first, then a copy per set clipped by its planes. */
+  private clipGroups(g: THREE.BufferGeometry, base: THREE.Material, clip: { sets: Int32Array; planes: THREE.Plane[][] }, triangles: number): THREE.Material[] {
+    g.clearGroups();
+    let start = 0;
+    for (let t = 1; t <= triangles; t++) {
+      if (t === triangles || clip.sets[t] !== clip.sets[start]) {
+        g.addGroup(start * 3, (t - start) * 3, clip.sets[start] + 1);
+        start = t;
+      }
+    }
+    return [
+      base,
+      ...clip.planes.map((ps) => {
+        const m = base.clone();
+        m.clippingPlanes = ps;
+        m.clipShadows = true;
+        return m;
+      }),
+    ];
+  }
+
+  /** The edges as drawn: the view mesh's, less what active planes cut away. */
+  private edgeData(): { edges: Float32Array; normals: Float32Array | undefined } | null {
+    const mesh = this.meshData;
+    if (!mesh) return null;
+    const c = this.style.section_cuts ? clippedEdges(mesh, this.sectionView) : { edges: mesh.edges, normals: mesh.edgeNormals };
+    return { edges: c.edges, normals: c.normals };
+  }
+
+  /** The planes (rectangles, the arrows at their corners and the reverse control at their
+   * centre), and each active cut's fill and outline. */
+  private rebuildSections(): void {
+    for (const c of [...this.sectionGroup.children]) disposeObject(c);
+    const st = this.style;
+    const h = this.highlight.sections;
+    const selected = new Set(h?.selected ?? []);
+    if (st.section_planes) {
+      for (const s of this.sectionPlanes) {
+        if (!s.visible) continue;
+        const colour = selected.has(s.id) ? this.theme.sel : h?.hover === s.id ? this.theme.hover : s.active ? this.theme.section : "#8d9189";
+        const c = sectionCorners(s);
+        const rim = this.fatLines(
+          c.map((p, i) => [p, c[(i + 1) % 4]]),
+          colour,
+          selected.has(s.id) ? 3 : s.active ? 2 : 1.5,
+          !s.active,
+          true,
+          s.active || selected.has(s.id) ? 1 : 0.8,
+        );
+        rim.renderOrder = 7;
+        this.sectionGroup.add(rim);
+        const arrows = sectionArrows(s);
+        const pairs = (flat: Vec3[]) => {
+          const out: Vec3[][] = [];
+          for (let i = 0; i + 1 < flat.length; i += 2) out.push([flat[i], flat[i + 1]]);
+          return out;
+        };
+        const ar = this.fatLines(pairs([...arrows.corners, ...arrows.centre]), colour, 1.75, false, true, 0.9);
+        ar.renderOrder = 7;
+        this.sectionGroup.add(ar);
+        const fg = new THREE.BufferGeometry();
+        fg.setAttribute("position", new THREE.Float32BufferAttribute(c.flat(), 3));
+        fg.setIndex([0, 1, 2, 0, 2, 3]);
+        const fill = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: new THREE.Color(this.cssColor(colour)), transparent: true, opacity: selected.has(s.id) ? 0.14 : 0.07, side: THREE.DoubleSide, depthWrite: false }));
+        fill.renderOrder = 6;
+        this.sectionGroup.add(fill);
+      }
+    }
+    const v = this.sectionView;
+    if (v && st.section_cuts) {
+      const mode = faceMode(st);
+      for (const cut of v.cuts) {
+        if (st.section_fill && mode.faces && cut.indices.length) {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.Float32BufferAttribute(cut.positions, 3));
+          g.setIndex(cut.indices);
+          const colour = st.section_fill_color ? rgbCss(st.section_fill_color) : this.theme.sectionFill;
+          const cap = new THREE.Mesh(
+            g,
+            new THREE.MeshBasicMaterial({ color: new THREE.Color(colour), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, transparent: mode.xray, opacity: mode.xray ? 0.5 : 1 }),
+          );
+          cap.renderOrder = 2.7;
+          this.sectionGroup.add(cap);
+        }
+        if (cut.outline.length) {
+          const pairs: Vec3[][] = [];
+          const o = cut.outline;
+          for (let i = 0; i + 5 < o.length; i += 6) pairs.push([[o[i], o[i + 1], o[i + 2]], [o[i + 3], o[i + 4], o[i + 5]]]);
+          const colour = st.section_line_color ? rgbCss(st.section_line_color) : this.theme.edge;
+          const line = this.fatLines(pairs, colour, st.section_line_width, false, true);
+          line.renderOrder = 3.6;
+          this.sectionGroup.add(line);
+        }
+      }
+    }
   }
 
   private fatLines(pairs: Vec3[][], color: string, width: number, dashed = false, depthTest = true, opacity = 1): LineSegments2 {
@@ -1221,6 +1411,7 @@ export class ViewportEngine {
     this.setMesh(null);
     this.listeners.clear();
     this.textures.dispose();
+    disposeObject(this.sectionGroup);
     disposeObject(this.backdrop);
     disposeObject(this.groundShadow);
     this.controls.dispose();

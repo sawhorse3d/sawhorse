@@ -5,6 +5,7 @@ import type { DocState, Entity, KernelOp, MeshData, V3, Xform } from "../kernel/
 import { objectEdges, objectOf } from "../lib/entities";
 import { faceOf, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
+import { sectionById, sectionCorners } from "../lib/sections";
 import { add, cross, dot, len, mul, sub } from "./draw";
 
 export const IDENTITY: Xform = {
@@ -64,7 +65,16 @@ export type Subject =
    * that moves (the solids, and everything inside the nodes), for previews and bounds.
    * `names`: how the nodes are called in the status line.
    */
-  | { kind: "objects"; objects: number[]; nodes?: number[]; covered?: number[]; names?: string[] }
+  | {
+      kind: "objects";
+      objects: number[];
+      nodes?: number[];
+      covered?: number[];
+      names?: string[];
+      /** Section planes moving along (lane 12), and their rectangles for the preview. */
+      sections?: number[];
+      sectionEdges?: [V3, V3][];
+    }
   /** Part of one solid: its points (a face's corners, an edge's ends, a vertex). */
   | { kind: "geometry"; object: number; points: V3[]; what: string };
 
@@ -83,19 +93,33 @@ export function coveredSolids(s: Subject): number[] {
   return s.covered ?? s.objects;
 }
 
-/** A whole-objects subject from solids and nodes (with the scene graph for names). */
-export function objectsSubject(objects: number[], nodes: number[], state: DocState | null | undefined): Subject {
+/** A whole-objects subject from solids, nodes and section planes (with the scene graph for
+ * names and the planes' rectangles). */
+export function objectsSubject(objects: number[], nodes: number[], state: DocState | null | undefined, sections: number[] = []): Subject {
   const g = graphOf(state);
   const covered = [...new Set([...objects, ...nodes.flatMap((n) => solidsIn(g, n))])];
-  return { kind: "objects", objects, nodes, covered, names: nodes.map((n) => describeNode(g, n)) };
+  const names = [...nodes.map((n) => describeNode(g, n)), ...sections.map((k) => `section plane '${sectionById(g, k)?.name ?? k}'`)];
+  const sectionEdges: [V3, V3][] = sections.flatMap((k) => {
+    const s = sectionById(g, k);
+    if (!s) return [];
+    const c = sectionCorners(s);
+    return c.map((p, i): [V3, V3] => [p, c[(i + 1) % 4]]);
+  });
+  return { kind: "objects", objects, nodes, covered, names, ...(sections.length ? { sections, sectionEdges } : {}) };
 }
 
-/** The transform / copy / array op for a whole-objects subject. */
+/** The transform / copy / array op for a whole-objects subject: one op, or a batch (one undo
+ * step) when section planes move along (lane 12). */
 export function objectsOp(s: Extract<Subject, { kind: "objects" }>, xform: Xform, copy: boolean, count = 1): KernelOp {
   const nodes = s.nodes?.length ? { nodes: s.nodes } : {};
-  if (!copy) return { op: "transform", objects: s.objects, xform, ...nodes };
-  if (count > 1) return { op: "array", objects: s.objects, xform, count, ...nodes };
-  return { op: "copy", objects: s.objects, xform, ...nodes };
+  const ops: KernelOp[] = [];
+  if (s.objects.length || s.nodes?.length) {
+    if (!copy) ops.push({ op: "transform", objects: s.objects, xform, ...nodes });
+    else if (count > 1) ops.push({ op: "array", objects: s.objects, xform, count, ...nodes });
+    else ops.push({ op: "copy", objects: s.objects, xform, ...nodes });
+  }
+  if (s.sections?.length) ops.push(copy ? { op: "copy_sections", sections: s.sections, xform, count } : { op: "move_sections", sections: s.sections, xform });
+  return ops.length === 1 ? ops[0] : { op: "batch", ops };
 }
 
 /**
@@ -108,6 +132,11 @@ export function subjectOf(selection: Entity[], picked: Entity | null, outlines: 
   if (selection.length) {
     const objects = [...new Set(selection.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object))];
     const nodes = [...new Set(selection.filter((e) => e.kind === "node").map((e) => (e as { node: number }).node))];
+    const sections = [...new Set(selection.filter((e) => e.kind === "section").map((e) => (e as { section: number }).section))];
+    if (sections.length) {
+      if (selection.some((e) => e.kind !== "object" && e.kind !== "node" && e.kind !== "section")) return "Move section planes with whole solids, groups and components (not parts of a solid).";
+      return objectsSubject(objects, nodes, state, sections);
+    }
     if (nodes.length) return objectsSubject(objects, nodes, state);
     if (objects.length) return { kind: "objects", objects };
     if (selection.some((e) => e.kind === "region")) return "Sketch regions don't move yet: push/pull them into a solid first.";
@@ -159,7 +188,7 @@ export function facesToOutline(selection: Entity[]): { object: number; face: num
 
 /** Edges a preview shows for the subject, before the transform. */
 export function subjectEdges(s: Subject, mesh: MeshData | null): [V3, V3][] {
-  if (s.kind === "objects") return coveredSolids(s).flatMap((o) => objectEdges(o, mesh));
+  if (s.kind === "objects") return [...coveredSolids(s).flatMap((o) => objectEdges(o, mesh)), ...(s.sectionEdges ?? [])];
   // Part of a solid: every edge of that solid touching a moving point (both ends known).
   const moving = (p: V3) => s.points.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) <= 1e-7);
   return objectEdges(s.object, mesh).filter(([a, b]) => moving(a) || moving(b));

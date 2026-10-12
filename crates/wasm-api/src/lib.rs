@@ -161,6 +161,9 @@ struct ExportOptions {
     /// The MTL file an OBJ names (`mtllib`).
     #[serde(default)]
     mtl_file: Option<String>,
+    /// The section plane a slice export draws (lane 12).
+    #[serde(default)]
+    section: Option<u64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -684,7 +687,7 @@ impl DocCore {
     }
 
     /// Write the document (or a scope of it) in `format`: `stl`, `3mf`, `glb`, `obj`,
-    /// `mtl`, `dxf`, `dxf-outline`, `svg-view`, `svg-outline`. Options as JSON (see
+    /// `mtl`, `dxf`, `dxf-outline`, `svg-view`, `svg-outline`, `svg-section`, `dxf-section`. Options as JSON (see
     /// [`ExportOptions`]); an empty string means the defaults.
     pub fn export(&self, format: &str, options_json: &str) -> Result<Vec<u8>, String> {
         let opts: ExportOptions = if options_json.trim().is_empty() {
@@ -731,6 +734,19 @@ impl DocCore {
             "svg-outline" => sawhorse_export::svg::outline(&outline()?)
                 .map_err(e)?
                 .into_bytes(),
+            // Lane 12: a section plane's slice, flat, 1:1 in millimetres.
+            "svg-section" | "dxf-section" => {
+                let s = opts
+                    .section
+                    .ok_or("choose a section plane to export its slice")?;
+                if format == "svg-section" {
+                    sawhorse_export::section::svg(m, s).map_err(e)?.into_bytes()
+                } else {
+                    sawhorse_export::section::dxf(m, s, opts.flavour)
+                        .map_err(e)?
+                        .into_bytes()
+                }
+            }
             f => return Err(format!("unknown export format {f}")),
         })
     }

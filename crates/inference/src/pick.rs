@@ -36,6 +36,10 @@ pub enum Entity {
     Dimension {
         dimension: u64,
     },
+    /// A whole solid (lane 12: what a click on a section cap picks).
+    Object {
+        object: u64,
+    },
 }
 
 /// A plane frame, as the UI uses it to draw on a surface.
@@ -280,6 +284,7 @@ pub fn pick(scene: &Scene, q: &PickQuery) -> Option<Picked> {
     let entity = match h.at {
         SurfaceRef::Face { object, face } => Entity::Face { object, face },
         SurfaceRef::Region { sketch, region } => Entity::Region { sketch, region },
+        SurfaceRef::Cap { object, .. } => Entity::Object { object },
     };
     Some(Picked {
         entity,

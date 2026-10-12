@@ -3,20 +3,39 @@
 // each label). Each row has an eye (hide / show) and a lock; a click selects (Shift adds,
 // Ctrl toggles) and the viewport's selection shows here; a double-click on a name renames
 // it; right-click offers Make Group, Make Component, Make Unique, Explode, Hide, Lock,
-// Rename and Delete. The open group or component is marked "editing".
+// Rename and Delete. The open group or component is marked "editing". Section planes (lane
+// 12) are listed in their group or component; right-click activates, reverses, slices or
+// exports one.
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DocState, Entity } from "../kernel/types";
 import { entityKey } from "../lib/entities";
 import { chain, graphOf } from "../lib/scope";
 import { PanelGlyph } from "./glyphs";
 
-export type OutlinerAction = "edit" | "group" | "component" | "unique" | "explode" | "hide" | "show" | "lock" | "unlock" | "delete";
+export type OutlinerAction =
+  | "edit"
+  | "group"
+  | "component"
+  | "unique"
+  | "explode"
+  | "hide"
+  | "show"
+  | "lock"
+  | "unlock"
+  | "delete"
+  // Section planes (lane 12).
+  | "activate"
+  | "deactivate"
+  | "reverse"
+  | "slice"
+  | "export-section-svg"
+  | "export-section-dxf";
 
 export interface OutlineRow {
   key: string;
   /** What selecting the row selects (imported meshes are listed, not selectable). */
   entity: Entity | null;
-  kind: "group" | "instance" | "solid" | "mesh";
+  kind: "group" | "instance" | "solid" | "mesh" | "section";
   label: string;
   /** Muted hint: "component · 2 of 4", "group", "not a solid". */
   hint: string;
@@ -34,6 +53,8 @@ export interface OutlineRow {
   definition: number | null;
   /** How many instances its definition has (instances). */
   instances: number;
+  /** Section planes: the active one of its context. */
+  active?: boolean;
 }
 
 /** The tree as rows, depth first: in each container its groups and instances (by id), then
@@ -58,7 +79,7 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
       }
       if (n.hidden) hint += " · hidden";
       if (n.tag) hint += ` · ${n.tag}`;
-      const children = g.nodes.some((x) => x.parent === n.id) || g.objects.some((o) => o.parent === n.id) || g.meshes.some((m) => m.parent === n.id);
+      const children = g.nodes.some((x) => x.parent === n.id) || g.objects.some((o) => o.parent === n.id) || g.meshes.some((m) => m.parent === n.id) || (g.sections ?? []).some((s) => s.parent === n.id);
       rows.push({
         key: `n:${n.id}`,
         entity: { kind: "node", node: n.id },
@@ -112,6 +133,25 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
         open: false,
         definition: null,
         instances: 0,
+      });
+    }
+    for (const s of (g.sections ?? []).filter((x) => x.parent === parent)) {
+      rows.push({
+        key: `s:${s.id}`,
+        entity: { kind: "section", section: s.id },
+        kind: "section",
+        label: s.name,
+        hint: ["section", s.active ? "active" : "", s.hidden ? "hidden" : ""].filter(Boolean).join(" · "),
+        level,
+        hidden: s.hidden,
+        locked: false,
+        visible: s.visible,
+        parent: s.parent,
+        children: false,
+        open: false,
+        definition: null,
+        instances: 0,
+        active: s.active,
       });
     }
   };
@@ -194,8 +234,10 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
   const empty = rows.length === 0;
   const m = menu;
   const nodesOnly = m ? m.rows.every((r) => r.kind === "group" || r.kind === "instance") : false;
+  const sectionRow = m && m.rows.length === 1 && m.rows[0].kind === "section" ? m.rows[0] : null;
+  const anySection = m ? m.rows.some((r) => r.kind === "section") : false;
   const sameParent = m ? new Set(m.rows.map((r) => r.parent)).size === 1 : false;
-  const solidsOrNodes = m ? m.rows.every((r) => r.kind !== "mesh") : false;
+  const solidsOrNodes = m ? m.rows.every((r) => r.kind !== "mesh" && r.kind !== "section") : false;
   const anyHidden = m ? m.rows.some((r) => r.hidden) : false;
   const anyLocked = m ? m.rows.some((r) => r.locked) : false;
   const act = (a: OutlinerAction) => {
@@ -220,7 +262,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
                 aria-expanded={r.children ? expanded.has(nodeOf(r)) : undefined}
                 data-row={r.key}
                 data-kind={r.kind}
-                className={`${isSel ? "sel" : ""}${r.visible ? "" : " dim"}${r.open ? " open" : ""}`}
+                className={`${isSel ? "sel" : ""}${r.visible ? "" : " dim"}${r.open ? " open" : ""}${r.active ? " active" : ""}`}
                 style={{ paddingLeft: 4 + r.level * 14 }}
                 onClick={(e) => r.entity && onSelect(r, e.ctrlKey || e.metaKey ? "toggle" : e.shiftKey ? "add" : "replace")}
                 onContextMenu={(e) => openMenu(e, r)}
@@ -291,7 +333,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
                     aria-label={r.locked ? `Unlock ${r.label}` : `Lock ${r.label}`}
                     aria-pressed={r.locked}
                     title={r.locked ? "Unlock" : "Lock"}
-                    disabled={r.kind === "mesh"}
+                    disabled={r.kind === "mesh" || r.kind === "section"}
                     className={r.locked ? "on" : ""}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -308,6 +350,26 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
       )}
       {m ? (
         <div className="ctxmenu" ref={menuRef} role="menu" aria-label="Outliner actions" style={{ left: m.x, top: m.y }}>
+          {sectionRow ? (
+            <>
+              <button type="button" role="menuitem" onClick={() => act(sectionRow.active ? "deactivate" : "activate")}>
+                {sectionRow.active ? "Deactivate Cut" : "Activate Cut"}
+              </button>
+              <button type="button" role="menuitem" onClick={() => act("reverse")} title="Keep the other side">
+                Reverse
+              </button>
+              <button type="button" role="menuitem" onClick={() => act("slice")} title="The cut's outline as faces in a new group">
+                Create Group from Slice
+              </button>
+              <button type="button" role="menuitem" onClick={() => act("export-section-svg")}>
+                Export Slice (SVG)…
+              </button>
+              <button type="button" role="menuitem" onClick={() => act("export-section-dxf")}>
+                Export Slice (DXF)…
+              </button>
+              <hr />
+            </>
+          ) : null}
           {nodesOnly && m.rows.length === 1 ? (
             <button type="button" role="menuitem" disabled={m.rows[0].locked} onClick={() => act("edit")}>
               Edit inside
@@ -326,7 +388,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
             Explode <kbd>Ctrl+Shift+G</kbd>
           </button>
           <hr />
-          <button type="button" role="menuitem" disabled={!solidsOrNodes} onClick={() => act(anyHidden ? "show" : "hide")}>
+          <button type="button" role="menuitem" disabled={!solidsOrNodes && !anySection} onClick={() => act(anyHidden ? "show" : "hide")}>
             {anyHidden ? "Show" : "Hide"}
           </button>
           <button type="button" role="menuitem" disabled={!solidsOrNodes} onClick={() => act(anyLocked ? "unlock" : "lock")}>

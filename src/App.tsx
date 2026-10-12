@@ -67,10 +67,13 @@ import { NothingToRenderError, renderPasses } from "./render/passes";
 import { PaintTool, type PaintContext } from "./tools/paint";
 import type { ActiveRef } from "./components/MaterialsPane";
 import type { LibraryEntry, MaterialInfo, Shadows } from "./kernel/types";
-import { materialNameFor, sniffImage, texturePathFor, toBase64 } from "./lib/looks";
+import { compactStyle, fullStyle, materialNameFor, sniffImage, texturePathFor, toBase64, type FullStyle } from "./lib/looks";
 import { usePlugins } from "./plugins/usePlugins";
 import { pickFile as pickAnyFile } from "./io/files";
 import type { AppBridge } from "./plugins/manager";
+// Lane 12: section planes.
+import { SectionTool } from "./tools/section";
+import { activeSectionHere, describeSection, sceneSectionsOf, sectionById } from "./lib/sections";
 
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
@@ -902,6 +905,7 @@ export function App() {
           return friendlyError(err instanceof Error ? err.message : String(err));
         }
       },
+      pickSection: (x, y) => engineRef.current?.pickSection(x, y) ?? null,
     }),
     [apply],
   );
@@ -974,6 +978,7 @@ export function App() {
       ["offset", new OffsetTool(host)],
       ["follow", new FollowTool(host)],
       ["paint", new PaintTool(host, paintCtx)],
+      ["section", new SectionTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? pluginsRef.current?.toolFor(id) ?? null;
@@ -1193,6 +1198,8 @@ export function App() {
     if (!st) return;
     const blobs = scene?.textures ?? [];
     engineObj?.setLooks({ materials: st.materials, textures: st.textures, style: st.style ?? null, shadows: shadowPreview ?? st.shadows ?? null, blobs });
+    // Section planes and their cuts (lane 12), after the style that says how they show.
+    engineObj?.setSections(scene?.sections ?? null, st.graph?.sections ?? []);
     const fresh = blobs.filter((b) => !swatches[`tex:${b.digest}`]);
     if (fresh.length) {
       const add: Record<string, string> = {};
@@ -1208,6 +1215,10 @@ export function App() {
     w.__sawhorse = {
       ...(w.__sawhorse ?? {}),
       looks: () => engineRef.current?.looksState() ?? null,
+      // Lane 12: what the viewport shows of the section planes, and the kernel's cuts.
+      sections: () => engineRef.current?.sectionsState() ?? null,
+      sectionView: () => live.current.scene?.sections ?? null,
+      sectionAt: (x: number, y: number) => engineRef.current?.pickSection(x, y) ?? null,
       paint: {
         active: () => activeMatRef.current,
         positioning: () => paintTool.positioningFace(),
@@ -1334,9 +1345,84 @@ export function App() {
     [apply, inContext, parentOfItem, select],
   );
 
+  /** File > Export > Section slice: the selected plane's (or the active one's) cut, flat, 1:1
+   * in millimetres (lane 12). */
+  const exportSection = useCallback(
+    async (section: number | null, format: "svg-section" | "dxf-section") => {
+      const k = kernelRef.current;
+      if (!k) return;
+      const g = live.current.scene?.state.graph;
+      const picked = section ?? live.current.selection.flatMap((e) => (e.kind === "section" ? [e.section] : []))[0] ?? activeSectionHere(g)?.id ?? null;
+      if (picked === null) return void setMessage({ text: "Select a section plane (or activate one) to export its slice.", error: true });
+      const name = sectionById(g, picked)?.name ?? "Section";
+      const svg = format === "svg-section";
+      try {
+        await queue.current;
+        const bytes = await k.exportFile(format, { section: picked });
+        const type = svg ? { description: "SVG", mime: "image/svg+xml", extensions: [".svg"] } : { description: "DXF", mime: "image/vnd.dxf", extensions: [".dxf"] };
+        const res = await saveFile(`${docName ? stem(docName) : "Untitled"} ${name}${svg ? ".svg" : ".dxf"}`, bytes, type);
+        if (res) setMessage({ text: `Exported ${res.name}: the slice of ${quoted(name)}, 1:1 in millimetres${svg ? ", filled" : ", closed polylines"}.`, error: false });
+      } catch (e) {
+        setMessage({ text: `Export refused: ${friendlyError(e instanceof Error ? e.message : String(e))}`, error: true });
+      }
+    },
+    [docName],
+  );
+
+  /** One section-plane action, opening the plane's group or component first when an edit
+   * needs it (lane 12). */
+  const sectionAction = useCallback(
+    async (action: OutlinerAction, ids: number[]) => {
+      const g = live.current.scene?.state.graph;
+      const one = ids[0];
+      const sec = sectionById(g, one);
+      if (!sec) return;
+      const name = quoted(sec.name);
+      switch (action) {
+        case "activate":
+        case "deactivate":
+          void apply({ op: "set_section_active", section: one, active: action === "activate" }, () => (action === "activate" ? `Section plane ${name} active: it cuts ${sec.parent === null ? "the model" : "its group or component"}.` : `Section plane ${name} switched off.`));
+          return;
+        case "hide":
+        case "show": {
+          const ops: KernelOp[] = ids.map((section) => ({ op: "set_section_hidden", section, hidden: action === "hide" }));
+          void apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(ids.length, "section plane")}${action === "hide" ? " (an active one still cuts)" : ""}.`);
+          return;
+        }
+        case "reverse":
+          if (!(await inContext(sec.parent))) return;
+          void apply({ op: "flip_section", section: one }, () => `Reversed ${describeSection(g, one)}: it keeps the other side now.`);
+          return;
+        case "slice":
+          void apply({ op: "slice_to_group", section: one }, (r) => (r.outcome.kind === "sliced" ? `Made a group from the slice of ${name}: its faces are ready to push.` : "Made a group from the slice."));
+          return;
+        case "export-section-svg":
+        case "export-section-dxf":
+          void exportSection(one, action === "export-section-svg" ? "svg-section" : "dxf-section");
+          return;
+        case "delete": {
+          if (!(await inContext(sec.parent))) return;
+          const ops: KernelOp[] = ids.map((section) => ({ op: "delete_section", section }));
+          const r = await apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Deleted ${plural(ids.length, "section plane")}.`);
+          if (r) select([]);
+          return;
+        }
+        default:
+          return;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [apply, exportSection],
+  );
+
   const outlinerAction = useCallback(
     (action: OutlinerAction, rows: OutlineRow[]) => {
       const entities = rows.flatMap((r) => (r.entity ? [r.entity] : []));
+      const sectionIds = entities.flatMap((e) => (e.kind === "section" ? [e.section] : []));
+      if (sectionIds.length) {
+        void sectionAction(action, sectionIds);
+        if (sectionIds.length === entities.length) return;
+      }
       const items = itemsOf(entities);
       const nodes = items.flatMap((it) => ("node" in it ? [it.node] : []));
       switch (action) {
@@ -1403,6 +1489,10 @@ export function App() {
     (row: OutlineRow, name: string | null) => {
       const e = row.entity;
       if (!e) return;
+      if (e.kind === "section") {
+        if (name) void apply({ op: "rename_section", section: e.section, name }, () => `Section plane renamed to ${quoted(name)}.`);
+        return;
+      }
       const g = graphOf(live.current.scene?.state);
       if (e.kind === "node") {
         const n = g.nodes.find((x) => x.id === e.node);
@@ -1457,6 +1547,8 @@ export function App() {
       // The style and the sun go with the scene (lane 10).
       style: st.style ?? null,
       shadows: st.shadows ?? null,
+      // And which section planes are active and hidden (lane 12).
+      ...(st.graph?.sections?.length ? { sections: sceneSectionsOf(st.graph) } : {}),
     };
   }, []);
 
@@ -1976,6 +2068,22 @@ export function App() {
   const overlay = useMemo(() => [...contextBox, ...grain, ...annotations.overlay, ...toolView.overlay], [contextBox, grain, annotations, toolView.overlay]);
   const labels = useMemo(() => [...annotations.labels, ...toolView.labels], [annotations, toolView.labels]);
 
+  /** Switch one of the style's section settings (one undo step). */
+  const setSectionStyle = useCallback(
+    (next: Partial<FullStyle>) => {
+      const s = fullStyle(live.current.scene?.state.style);
+      const style = compactStyle({ ...s, preset: null, ...next });
+      const what =
+        next.section_planes !== undefined
+          ? `Section planes ${next.section_planes ? "shown" : "hidden"}`
+          : next.section_cuts !== undefined
+            ? `Section cuts ${next.section_cuts ? "on" : "off"}`
+            : `Section fill ${next.section_fill ? "on" : "off"}`;
+      void apply({ op: "set_style", style }, () => `${what}.`);
+    },
+    [apply],
+  );
+
   const menus = useMemo<Record<string, MenuItem[]>>(
     () => ({
       File: [
@@ -2002,7 +2110,12 @@ export function App() {
         },
         {
           label: "Export",
-          items: EXPORTS.map((c) => ({ label: c.label, title: c.hint, onSelect: () => void exportAs(c) })),
+          items: [
+            ...EXPORTS.map((c) => ({ label: c.label, title: c.hint, onSelect: () => void exportAs(c) })),
+            "-" as const,
+            { label: "Section slice (SVG)…", disabled: !st?.graph?.sections?.length, title: "The selected (or active) section plane's cut, filled, 1:1 in millimetres", onSelect: () => void exportSection(null, "svg-section") },
+            { label: "Section slice (DXF)…", disabled: !st?.graph?.sections?.length, title: "The selected (or active) section plane's cut as closed polylines, 1:1 in millimetres", onSelect: () => void exportSection(null, "dxf-section") },
+          ],
         },
       ],
       Edit: [
@@ -2010,6 +2123,19 @@ export function App() {
         { label: "Redo", keys: "Ctrl+Y", disabled: !st?.can_redo, onSelect: () => void redo() },
         "-",
         { label: "Select All", keys: "Ctrl+A", onSelect: selectAll },
+        ...(selection.length === 1 && selection[0].kind === "section"
+          ? (() => {
+              const id = (selection[0] as { section: number }).section;
+              const sec = sectionById(st?.graph, id);
+              return [
+                "-" as const,
+                { label: sec?.active ? "Deactivate Cut" : "Activate Cut", onSelect: () => void sectionAction(sec?.active ? "deactivate" : "activate", [id]) },
+                { label: "Reverse Section Plane", onSelect: () => void sectionAction("reverse", [id]) },
+                { label: "Create Group from Slice", onSelect: () => void sectionAction("slice", [id]) },
+                "-" as const,
+              ];
+            })()
+          : []),
         { label: "Select None", keys: "Esc", onSelect: () => setSelection([]) },
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
         { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
@@ -2050,6 +2176,11 @@ export function App() {
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
         "-",
         { label: "Add Scene", title: "Save this view (camera, hidden tags, open group) as a scene tab", onSelect: addScene },
+        "-",
+        // Lane 12: the style's section switches, here as in SketchUp's View menu.
+        { label: "Section Planes", checked: fullStyle(st?.style).section_planes, onSelect: () => setSectionStyle({ section_planes: !fullStyle(st?.style).section_planes }) },
+        { label: "Section Cuts", checked: fullStyle(st?.style).section_cuts, onSelect: () => setSectionStyle({ section_cuts: !fullStyle(st?.style).section_cuts }) },
+        { label: "Section Fill", checked: fullStyle(st?.style).section_fill, disabled: !fullStyle(st?.style).section_cuts, onSelect: () => setSectionStyle({ section_fill: !fullStyle(st?.style).section_fill }) },
         ...(st?.scenes?.length
           ? [
               "-" as const,
@@ -2062,6 +2193,7 @@ export function App() {
           : []),
       ],
       Plugins: plugins.menu,
+      Tools: [{ label: "Section Plane", title: "Cut the model with a plane (no default key)", checked: toolId === "section", onSelect: () => selectTool("section") }],
       // The browser demo's way back to the site (the desktop app has no Help entries yet).
       ...(isWebDemo()
         ? {
@@ -2075,7 +2207,8 @@ export function App() {
           }
         : {}),
     }),
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu],
   );
 
   const valueLabel = active?.valueLabel() ?? null;

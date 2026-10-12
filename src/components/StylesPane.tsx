@@ -1,6 +1,7 @@
 // The Styles pane (lane 10, ADR-0008): six presets, how faces are drawn (shaded with
 // textures, shaded, monochrome, hidden line, wireframe, X-ray), edges (on, profiles,
-// extensions, endpoints), the background, sky and ground colours, and the sun: shadows on or
+// extensions, endpoints), the background, sky and ground colours, section cuts, planes, fill
+// and the cut line (lane 12, ADR-0010), and the sun: shadows on or
 // off, the date, the time, the latitude, light and dark. Sliders show their effect live and
 // are one undo step when let go; styles and shadows are saved with the document and with
 // each scene.
@@ -116,7 +117,25 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
       <Colour label="Background" value={s.background} fallback="#f4f5f1" onChange={(v) => set({ background: v })} />
       <Colour label="Sky" value={s.sky} fallback="#a8cae8" onChange={(v) => set({ sky: v })} />
       <Colour label="Ground" value={s.ground} fallback="#c4bca0" onChange={(v) => set({ ground: v })} />
-      <Toggle label="Section cuts" checked={s.section_cuts} disabled title="Kept with the style for the section planes of a later lane" onChange={(v) => set({ section_cuts: v })} />
+
+      <h4>Sections</h4>
+      <div className="radios" data-testid="section-style">
+        <Toggle label="Section cuts" checked={s.section_cuts} title="Active section planes cut the model" onChange={(v) => set({ section_cuts: v })} />
+        <Toggle label="Section planes" checked={s.section_planes} title="Draw the section planes themselves" onChange={(v) => set({ section_planes: v })} />
+        <Toggle label="Section fill" checked={s.section_fill} disabled={!s.section_cuts} title="Fill the faces a section plane cuts" onChange={(v) => set({ section_fill: v })} />
+      </div>
+      <Colour label="Fill colour" value={s.section_fill_color} fallback="#a79e90" onChange={(v) => set({ section_fill_color: v })} />
+      <Colour label="Cut line colour" value={s.section_line_color} fallback="#1f2421" onChange={(v) => set({ section_line_color: v })} />
+      <label className="field-row">
+        Cut line width
+        <select aria-label="Cut line width" value={s.section_line_width} disabled={!s.section_cuts} onChange={(e) => set({ section_line_width: Number(e.target.value) })}>
+          {Array.from({ length: 12 }, (_, i) => (
+            <option key={i} value={i + 1}>
+              {i + 1} px
+            </option>
+          ))}
+        </select>
+      </label>
 
       <h4>Shadows</h4>
       <div className="shadows" data-testid="shadows">

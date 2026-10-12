@@ -4,7 +4,7 @@
 // was made. "Resolved" means: the eye ray, what is under the cursor (a pick) and where the
 // cursor snaps (an inference), both answered by the kernel worker.
 import type { KernelClient } from "../kernel/client";
-import type { Inference, InferQuery, Picked, V3 } from "../kernel/types";
+import type { CapHit, Inference, InferQuery, Picked, SurfaceHit, V3 } from "../kernel/types";
 import type { ViewportPointer } from "../components/Viewport";
 import type { ViewportEngine } from "../viewport/engine";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
@@ -35,9 +35,18 @@ export function snapFromPick(picked: Picked | null, ray: { origin: V3; dir: V3 }
   return { point: [ray.origin[0] + ray.dir[0] * t, ray.origin[1] + ray.dir[1] * t, 0], kind: "free", tip: "", surface: null, entity: null, lines: [] };
 }
 
+/** A surface hit the kernel answered with, split into what tools draw on (a face or a region)
+ * and a section cap (lane 12), which no tool draws on or pushes. */
+export function splitCap(s: SurfaceHit | null | undefined): { surface: SurfaceHit | null; cap: CapHit | null } {
+  const at = s?.at as { kind: string; object?: number; section?: number } | undefined;
+  if (s && at?.kind === "cap") return { surface: null, cap: { object: at.object ?? 0, section: at.section ?? 0, frame: s.frame, point: s.point, t: s.t } };
+  return { surface: s ?? null, cap: null };
+}
+
 /** A snap from the inference engine's answer. */
 export function snapOf(inf: Inference): Snap {
-  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface: inf.surface, entity: inf.entity, lines: inf.lines, adjacent: inf.adjacent };
+  const { surface, cap } = splitCap(inf.surface);
+  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface, cap, entity: inf.entity, lines: inf.lines, adjacent: splitCap(inf.adjacent).surface };
 }
 
 const ANCHOR_KINDS = new Set(["endpoint", "midpoint", "intersection", "centre", "guide-point"]);
@@ -102,7 +111,8 @@ export function kernelResolver(
     }
     memory.observe(inf);
     onInference?.(inf, q);
-    const picked: Picked | null = inf?.picked ?? null;
+    const raw: Picked | null = inf?.picked ?? null;
+    const picked: Picked | null = raw ? { ...raw, surface: splitCap(raw.surface).surface } : null;
     return { ray, picked, snap: inf ? snapOf(inf) : snapFromPick(null, ray) };
   };
 }

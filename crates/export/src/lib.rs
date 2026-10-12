@@ -8,6 +8,7 @@
 //! | Wavefront OBJ | [`obj`] | mm, Z up | solids and meshes; `o` and `g` per object, `usemtl` + MTL |
 //! | DXF (ASCII) | [`dxf`] | mm | `3DFACE` + `LINE` for the model; `LWPOLYLINE` outline of a face |
 //! | SVG | [`svg`] | mm (parallel views and outlines) | hidden-line drawing of a view; outline of a face |
+//! | Section slice (SVG, DXF) | [`section`] | mm, 1:1 | a section plane's caps and outline (lane 12) |
 //!
 //! A [`Scope`] says what to export: every visible solid and mesh, or a selection.
 //! Printable formats refuse a scope holding anything that is not a watertight solid: a
@@ -23,6 +24,7 @@ pub mod gltf;
 pub mod library;
 pub mod obj;
 pub mod png;
+pub mod section;
 pub mod stl;
 pub mod svg;
 pub mod three_mf;

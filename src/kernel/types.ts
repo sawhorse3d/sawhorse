@@ -86,6 +86,18 @@ export type KernelOp =
   | { op: "set_material_stock"; material: string; stock: string | null }
   | { op: "set_nest_settings"; settings: NestSettings }
   | { op: "reset_stock_library" }
+  // Lane 12: section planes (crates/kernel/src/section.rs). `normal` points at the side kept.
+  | { op: "add_section"; origin: V3; normal: V3; name?: string | null; active?: boolean; hidden?: boolean }
+  | { op: "place_section"; section: number; origin: V3; normal: V3 }
+  | { op: "flip_section"; section: number }
+  | { op: "set_section_active"; section: number; active: boolean }
+  | { op: "rename_section"; section: number; name: string }
+  | { op: "set_section_hidden"; section: number; hidden: boolean }
+  | { op: "delete_section"; section: number }
+  | { op: "move_sections"; sections: number[]; xform: Xform }
+  | { op: "copy_sections"; sections: number[]; xform: Xform; count?: number }
+  /** Create Group from Slice: the cut's outline as a sketch in a new group. */
+  | { op: "slice_to_group"; section: number; name?: string | null }
   | { op: "undo" }
   | { op: "redo" };
 
@@ -137,11 +149,22 @@ export interface ImportDefinition {
   name: string;
   items: ImportItem[];
   children?: ImportNode[];
+  /** Section planes drawn in it (its own coordinates); each placed copy gets them. */
+  sections?: ImportSection[];
 }
 
 /** A group (geometry in the enclosing frame) or an instance of an import definition (index,
  * placed by `xform` in the enclosing frame). */
-export type ImportNode = { name?: string | null; tag?: string | null; hidden?: boolean } & (
+/** A section plane in an import (lane 12): it comes in inactive. */
+export interface ImportSection {
+  origin: V3;
+  /** The side kept. */
+  normal: V3;
+  name?: string | null;
+  hidden?: boolean;
+}
+
+export type ImportNode = { name?: string | null; tag?: string | null; hidden?: boolean; sections?: ImportSection[] } & (
   | { kind: "group"; items: ImportItem[]; children?: ImportNode[] }
   | { kind: "instance"; definition: number; xform: Xform }
 );
@@ -206,7 +229,16 @@ export interface Style {
   background?: [number, number, number] | null;
   sky?: [number, number, number] | null;
   ground?: [number, number, number] | null;
+  /** Active section planes cut the model (lane 12; absent: true). */
   section_cuts?: boolean;
+  /** Section planes drawn (absent: true). */
+  section_planes?: boolean;
+  /** Cut faces filled (absent: true). */
+  section_fill?: boolean;
+  section_fill_color?: [number, number, number] | null;
+  section_line_color?: [number, number, number] | null;
+  /** Screen pixels, 1..12 (absent: 3). */
+  section_line_width?: number | null;
 }
 
 /** The sun and its shadows (crates/kernel/src/looks.rs `Shadows`): local solar time, north +Y. */
@@ -238,6 +270,8 @@ export interface SceneDef {
   /** The style and shadows saved with the scene (lane 10); activating it brings them back. */
   style?: Style | null;
   shadows?: Shadows | null;
+  /** The section planes active and hidden when it was saved (lane 12). */
+  sections?: { active?: number[]; hidden?: number[] } | null;
 }
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */
@@ -282,6 +316,12 @@ export type OpOutcome =
   | { kind: "part_set" }
   | { kind: "stock_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
+  | { kind: "section_added"; section: number }
+  | { kind: "section_set" }
+  | { kind: "section_deleted" }
+  | { kind: "sections_moved"; sections: number[] }
+  | { kind: "sections_copied"; sections: number[] }
+  | { kind: "sliced"; group: number; sketch: number }
   | { kind: "undone" }
   | { kind: "redone" };
 
@@ -432,6 +472,33 @@ export interface SceneGraph {
   definitions: GraphDefinition[];
   /** Tag colours as #rrggbb. */
   tag_colors: Record<string, string>;
+  /** Section planes (lane 12), in id order. */
+  sections?: GraphSection[];
+}
+
+/** A section plane (crates/kernel/src/nodes.rs `GraphSection`). */
+export interface GraphSection {
+  id: number;
+  name: string;
+  parent: number | null;
+  active: boolean;
+  hidden: boolean;
+  /** Drawn: not hidden and its context shown. */
+  visible: boolean;
+  origin: V3;
+  /** The side kept. */
+  normal: V3;
+  u: V3;
+  v: V3;
+  /** The rectangle it is drawn as, in its frame: [x0, y0, x1, y1], metres. */
+  extent: [number, number, number, number];
+}
+
+/** What the viewport needs for section cuts (crates/wasm-api drawings.rs `SectionView`). */
+export interface SectionView {
+  cuts: { section: number; positions: number[]; indices: number[]; outline: number[]; area: number }[];
+  /** Planes as [nx, ny, nz, c] keeping n . p + c >= 0, and what each set clips. */
+  clips: { planes: [number, number, number, number][]; objects: number[]; meshes: number[]; sketches: number[] }[];
 }
 
 export interface SolidInfo {
@@ -468,7 +535,9 @@ export type Entity =
   | { kind: "dimension"; dimension: number }
   | { kind: "object"; object: number }
   /** A group or component instance, picked or selected as one (lane 5). */
-  | { kind: "node"; node: number };
+  | { kind: "node"; node: number }
+  /** A section plane (lane 12). */
+  | { kind: "section"; section: number };
 
 /** A plane frame (u x v = normal). */
 export interface FrameData {
@@ -478,8 +547,20 @@ export interface FrameData {
   v: V3;
 }
 
+/** A surface hit as tools see it: a face or a sketch region. (The kernel also answers with the
+ * cap a section plane cuts through a solid, lane 12: the tool driver moves those to
+ * `Snap.cap` and leaves `surface` empty, so no tool draws on or pushes a cap.) */
 export interface SurfaceHit {
   at: { kind: "face"; object: number; face: number } | { kind: "region"; sketch: number; region: number };
+  frame: FrameData;
+  point: V3;
+  t: number;
+}
+
+/** The cap a section plane cuts through a solid, under the cursor (lane 12). */
+export interface CapHit {
+  object: number;
+  section: number;
   frame: FrameData;
   point: V3;
   t: number;
@@ -597,6 +678,8 @@ export interface SceneData {
   state: DocState;
   /** Texture images new to the UI since the last scene (lane 10). */
   textures?: TextureBlob[];
+  /** Section cuts to draw (lane 12; absent when the model has no section plane). */
+  sections?: SectionView;
 }
 
 /** The subset of the wasm-bindgen module the worker uses (see crates/wasm-api/src/lib.rs). */
@@ -647,6 +730,8 @@ export interface WasmDoc {
   texture(path: string): Uint8Array;
   /** Texture coordinates a face would get with a positioning (live preview). */
   face_uvs(object: number, face: number, uvJson: string): Float32Array;
+  /** What the viewport draws for section cuts (lane 12), as JSON. */
+  section_view(): string;
   free(): void;
 }
 
@@ -699,7 +784,7 @@ export type RequestBody =
 export type WorkerRequest = RequestBody & { id: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
-export type ExportFormat = "stl" | "3mf" | "glb" | "obj" | "mtl" | "dxf" | "dxf-outline" | "svg-view" | "svg-outline";
+export type ExportFormat = "stl" | "3mf" | "glb" | "obj" | "mtl" | "dxf" | "dxf-outline" | "svg-view" | "svg-outline" | "svg-section" | "dxf-section";
 
 /** The camera of an SVG view drawing (crates/export svg::ViewSpec). */
 export interface ViewSpec {
@@ -727,6 +812,8 @@ export interface ExportOptions {
   outline?: { kind: "face" | "region"; owner: number; index: number };
   flavour?: "lwpolyline" | "r12";
   mtl_file?: string;
+  /** The section plane a slice export draws (lane 12). */
+  section?: number;
 }
 
 export type WorkerResponse =

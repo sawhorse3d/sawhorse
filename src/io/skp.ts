@@ -22,7 +22,7 @@
 // mapping it gives in world metres, which the kernel fits to a scale, a rotation and an
 // offset (skew and projected textures are dropped, with a note).
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
-import type { ImportDefinition, ImportItem, ImportNode, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
+import type { ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
 
 export const M_PER_IN = 0.0254;
 
@@ -92,6 +92,8 @@ export interface SkpSummary {
   textures: number;
   layers: number;
   scenes: number;
+  /** Section planes imported (lane 12). */
+  sections: number;
 }
 
 export interface SkpImport {
@@ -367,8 +369,52 @@ function layerTag(layer: string | undefined | null): string | null {
   return DEFAULT_LAYERS.has(l) ? null : l;
 }
 
+/**
+ * A SketchUp section plane (lane 12) in the frame `m` places it in (inches to metres). The
+ * file stores the plane as a, b, c, d (a x + b y + c z + d = 0, inches); the side kept is
+ * taken to be the one opposite (a, b, c), the way a plane laid on a face keeps what is behind
+ * it (if a file's cut comes in the wrong way round, Reverse fixes it). Which plane was
+ * active is not read (openskp does not expose it), so every plane comes in inactive.
+ */
+export function sectionOf(plane: { plane: number[]; name?: string; label?: string; hidden?: boolean }, m: Placement): ImportSection | null {
+  const [a, b, c, d] = plane.plane ?? [];
+  const n2 = a * a + b * b + c * c;
+  if (![a, b, c, d].every(Number.isFinite) || !(n2 > 1e-18)) return null;
+  // A point on the plane, and the kept direction, in the definition's frame (inches).
+  const p: V3 = [(-d * a) / n2, (-d * b) / n2, (-d * c) / n2];
+  const keep: V3 = [-a, -b, -c];
+  // The point placed; the normal by the inverse transpose of the placement's 3x3.
+  const q = apply(m, p);
+  const inv = inv3([m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]]);
+  if (!inv) return null;
+  const n: V3 = [inv[0] * keep[0] + inv[3] * keep[1] + inv[6] * keep[2], inv[1] * keep[0] + inv[4] * keep[1] + inv[7] * keep[2], inv[2] * keep[0] + inv[5] * keep[1] + inv[8] * keep[2]];
+  const len = Math.hypot(n[0], n[1], n[2]);
+  if (!(len > 1e-18)) return null;
+  const name = (plane.name || plane.label || "").trim();
+  // No negative zeros (the op log stays tidy).
+  const z = (x: number) => (x === 0 ? 0 : x);
+  return {
+    origin: [z(q[0] * M_PER_IN), z(q[1] * M_PER_IN), z(q[2] * M_PER_IN)],
+    normal: [z(n[0] / len), z(n[1] / len), z(n[2] / len)],
+    name: name ? name.slice(0, 64) : null,
+    hidden: !!plane.hidden,
+  };
+}
+
+/** A definition's (or the model's) section planes, placed by `m`. */
+function sectionsIn(ctx: Ctx, def: Definition, m: Placement): ImportSection[] {
+  const out: ImportSection[] = [];
+  for (const sp of (def.sectionPlanes as { plane: number[]; name?: string; label?: string; hidden?: boolean }[] | undefined) ?? []) {
+    const s = sectionOf(sp, m);
+    if (s) out.push(s);
+    else bump(ctx.skipped, "section planes without a usable position");
+  }
+  ctx.summary.sections += out.length;
+  return out;
+}
+
 function countSkipped(ctx: Ctx, def: Definition) {
-  for (const k of ["sectionPlanes", "texts", "dimensions", "constructionLines", "constructionPoints"] as const) {
+  for (const k of ["texts", "dimensions", "constructionLines", "constructionPoints"] as const) {
     const n = (def[k] as unknown[] | undefined)?.length ?? 0;
     if (n) bump(ctx.skipped, k, n);
   }
@@ -409,7 +455,9 @@ function nodeFor(ctx: Ctx, inst: Instance, m: Placement, depth: number, inherite
   const name = own || child.name.trim() || "Group";
   const item = itemOf(ctx, child, p, name, { inherited: material });
   const children = child.instances.map((i) => nodeFor(ctx, i, p, depth + 1, material)).filter((n): n is ImportNode => n !== null);
-  return { name: GROUP_DEF.test(name) ? null : name, tag, hidden: !!inst.hidden, kind: "group", items: item ? [item] : [], children };
+  // Section planes drawn in the group (lane 12), in the enclosing frame like its geometry.
+  const sections = sectionsIn(ctx, child, p);
+  return { name: GROUP_DEF.test(name) ? null : name, tag, hidden: !!inst.hidden, kind: "group", items: item ? [item] : [], children, ...(sections.length ? { sections } : {}) };
 }
 
 /** The component definition for `def` painted with `material` where its faces inherit
@@ -431,7 +479,9 @@ function defFor(ctx: Ctx, def: Definition, material: number | null, depth: numbe
   if (variant) ctx.notes.add(`${base}: placed with different paint, so it came in as one component per paint`);
   const item = itemOf(ctx, def, IDENTITY, base, { inherited: material });
   const children = def.instances.map((i) => nodeFor(ctx, i, IDENTITY, depth + 1, material)).filter((n): n is ImportNode => n !== null);
-  ctx.defs.push({ name, items: item ? [item] : [], children });
+  // Its section planes in its own coordinates: each copy placed at the top gets them (lane 12).
+  const sections = sectionsIn(ctx, def, IDENTITY);
+  ctx.defs.push({ name, items: item ? [item] : [], children, ...(sections.length ? { sections } : {}) });
   const index = ctx.defs.length - 1;
   ctx.defIndex.set(key, index);
   ctx.summary.components++;
@@ -439,7 +489,6 @@ function defFor(ctx: Ctx, def: Definition, material: number | null, depth: numbe
 }
 
 const SKIPPED_LABEL: Record<string, string> = {
-  sectionPlanes: "section planes",
   texts: "texts",
   dimensions: "dimensions",
   constructionLines: "guide lines",
@@ -473,6 +522,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       textures: model.materials.filter((m) => m.texture).length,
       layers: model.layers.length,
       scenes: model.pages.length,
+      sections: 0,
     },
   };
   // Texture images: PNG and JPEG come in, one per material, under a path the kernel takes.
@@ -497,6 +547,9 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   if (root) ctx.items.push(root);
   countSkipped(ctx, model.root);
   const nodes = model.root.instances.map((i) => nodeFor(ctx, i, IDENTITY, 0, null)).filter((n): n is ImportNode => n !== null);
+  // Section planes drawn at the top of the model (lane 12): placed after the import, in the
+  // same undo step, inactive.
+  const rootSections = sectionsIn(ctx, model.root, IDENTITY);
 
   const materials: MaterialDef[] = model.materials
     .filter((m) => ctx.usedMaterials.has(m.name))
@@ -529,10 +582,14 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} placed more than once came in as components: editing one copy changes them all`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
+  if (ctx.summary.sections)
+    ctx.notes.add(`${ctx.summary.sections} section plane${ctx.summary.sections === 1 ? "" : "s"} came in switched off (the file does not say which one was active): activate one from the Outliner`);
   const hidden_tags = [...ctx.hiddenTags];
   const importOp: KernelOp = { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes };
-  // The images go in first, in the same undo step.
-  const op: KernelOp = images.length ? { op: "batch", ops: [...images.map(([, t]): KernelOp => ({ op: "add_texture", path: t.path, mime: t.mime, data: base64(t.bytes) })), importOp] } : importOp;
+  const planes: KernelOp[] = rootSections.map((s) => ({ op: "add_section", origin: s.origin, normal: s.normal, name: s.name ?? null, active: false, ...(s.hidden ? { hidden: true } : {}) }));
+  // The images go in first, the top-level section planes after, all in the same undo step.
+  const op: KernelOp =
+    images.length || planes.length ? { op: "batch", ops: [...images.map(([, t]): KernelOp => ({ op: "add_texture", path: t.path, mime: t.mime, data: base64(t.bytes) })), importOp, ...planes] } : importOp;
   return {
     op,
     notes: [...ctx.notes],

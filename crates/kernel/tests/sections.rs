@@ -122,6 +122,7 @@ fn add(d: &mut Document, origin: [f64; 3], normal: [f64; 3]) -> u64 {
             normal,
             name: None,
             active: true,
+            hidden: false,
         },
     ) {
         OpOutcome::SectionAdded { section } => section,
@@ -231,6 +232,7 @@ fn one_active_plane_per_context() {
             normal: [0.0, 0.0, -1.0],
             name: Some("Plan cut".into()),
             active: false,
+            hidden: false,
         },
     ) {
         OpOutcome::SectionAdded { section } => section,
@@ -284,6 +286,7 @@ fn one_active_plane_per_context() {
             normal: [0.0; 3],
             name: None,
             active: true,
+            hidden: false,
         },
     );
     refused(
@@ -293,6 +296,7 @@ fn one_active_plane_per_context() {
             normal: [1.0, 0.0, 0.0],
             name: None,
             active: true,
+            hidden: false,
         },
     );
     refused(&mut d, Op::FlipSection { section: 999 });
@@ -736,6 +740,57 @@ fn a_model_without_sections_hashes_as_before() {
     assert_ne!(e.hash(), h);
     ok(&mut e, Op::DeleteSection { section: s });
     assert_eq!(e.model().hash(), d.model().hash());
+}
+
+#[test]
+fn imported_planes_land_in_their_groups_and_components() {
+    let cube = |x: f64| {
+        serde_json::json!({
+            "name": "Cube",
+            "positions": [[x,0,0],[x+1.0,0,0],[x+1.0,1,0],[x,1,0],[x,0,1],[x+1.0,0,1],[x+1.0,1,1],[x,1,1]],
+            "faces": [[[0,3,2,1]],[[4,5,6,7]],[[0,1,5,4]],[[1,2,6,5]],[[2,3,7,6]],[[3,0,4,7]]]
+        })
+    };
+    let op: Op = serde_json::from_value(serde_json::json!({
+        "op": "import",
+        "definitions": [{
+            "name": "Box",
+            "items": [cube(0.0)],
+            "sections": [{"origin": [0.5, 0, 0], "normal": [-1, 0, 0], "name": "Box cut"}]
+        }],
+        "nodes": [
+            {"kind": "group", "name": "G", "items": [cube(5.0)],
+             "sections": [{"origin": [5.5, 0, 0], "normal": [-1, 0, 0], "name": "Group cut", "hidden": true}]},
+            {"kind": "instance", "definition": 0, "xform": {"linear": [[1,0,0],[0,1,0],[0,0,1]], "translation": [10, 0, 0]}},
+            {"kind": "instance", "definition": 0, "xform": {"linear": [[1,0,0],[0,1,0],[0,0,1]], "translation": [20, 0, 0]}}
+        ]
+    }))
+    .unwrap();
+    let mut d = Document::with_ground_sketch();
+    ok(&mut d, op);
+    let m = d.model();
+    let planes = m.sections();
+    assert_eq!(planes.len(), 3);
+    assert!(planes.iter().all(|(_, s)| !s.active && s.parent.is_some()));
+    let g = planes.iter().find(|(_, s)| s.name == "Group cut").unwrap();
+    assert!(g.1.hidden);
+    let mut xs: Vec<f64> = planes
+        .iter()
+        .filter(|(_, s)| s.name == "Box cut")
+        .map(|(_, s)| s.origin.x)
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs, vec![10.5, 20.5]);
+    // Activated, the group's plane cuts its cube in half.
+    let (gid, _) = *g;
+    ok(
+        &mut d,
+        Op::SetSectionActive {
+            section: gid,
+            active: true,
+        },
+    );
+    assert!(close(d.model().section_cut(gid).unwrap().area, 1.0, 1e-12));
 }
 
 // ---- property tests on random boxes ---------------------------------------------------

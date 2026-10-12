@@ -159,6 +159,9 @@ export function itemOfEntity(e: Entity | null | undefined, state: DocState | nul
       return { kind: "guide", id: e.guide };
     case "dimension":
       return { kind: "dimension", id: e.dimension };
+    case "section":
+      // Section planes (lane 12) are not part of the plugin API yet.
+      return null;
   }
 }
 

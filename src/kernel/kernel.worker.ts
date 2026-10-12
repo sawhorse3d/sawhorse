@@ -5,7 +5,7 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
-import type { DocState, Inference, KernelOp, LibraryEntry, MeshData, OpOutcome, Picked, SceneData, SceneGraph, TextureBlob, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
+import type { DocState, Inference, KernelOp, LibraryEntry, MeshData, OpOutcome, Picked, SceneData, SceneGraph, SectionView, TextureBlob, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
 // import.meta.glob tolerates a missing package: the browser build still works
 // (with a "kernel not built" HUD) on a machine that has not run `npm run wasm`.
@@ -68,7 +68,9 @@ function scene(d: WasmDoc): SceneData {
       edgeNormals: m.edge_normals(),
     };
     const state = JSON.parse(d.state_json()) as DocState;
-    return { mesh, state, textures: newTextures(d, state) };
+    // Section cuts (lane 12): only for a model that has a section plane.
+    const sections = state.graph?.sections?.length ? (JSON.parse(d.section_view()) as SectionView) : undefined;
+    return { mesh, state, textures: newTextures(d, state), sections };
   } finally {
     m.free();
   }

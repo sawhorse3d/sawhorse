@@ -2,6 +2,11 @@
 //! visible face and sketch region (f64, exact, not the f32 view mesh), every edge, the arcs
 //! and circles found among them, and guide lines, with a BVH over triangles and one over
 //! edges. Built from the model after each edit; never mutates anything.
+//!
+//! Section planes (lane 12): with the style's section cuts on, what an active plane cuts
+//! away is left out (triangles and edges clipped to the kept side, as the viewport draws
+//! them), and each cut adds its caps (surfaces that select their solid) and its outline
+//! (edges of that solid), so the cut's corners and edges snap like any other.
 
 use glam::{DVec2, DVec3};
 use sawhorse_kernel::ids::to_public;
@@ -31,12 +36,60 @@ pub struct Owner {
     pub id: u64,
 }
 
-/// A pickable surface: an object face (persistent id) or a sketch region.
+/// A pickable surface: an object face (persistent id), a sketch region, or (lane 12) the
+/// cap a section plane cuts through a solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceRef {
     Face { object: u64, face: u64 },
     Region { sketch: u64, region: u64 },
+    Cap { object: u64, section: u64 },
+}
+
+/// The kept side of a plane: points with `(p - origin) . normal >= 0`.
+type Keep = (DVec3, DVec3);
+
+fn kept(p: DVec3, planes: &[Keep]) -> bool {
+    planes.iter().all(|(o, n)| (p - *o).dot(*n) >= 0.0)
+}
+
+/// The part of polygon `ring` on the kept side of every plane (Sutherland-Hodgman).
+fn clip_polygon(ring: &[DVec3], planes: &[Keep]) -> Vec<DVec3> {
+    let mut out = ring.to_vec();
+    for (o, n) in planes {
+        let pts = std::mem::take(&mut out);
+        for i in 0..pts.len() {
+            let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
+            let (dp, dq) = ((p - *o).dot(*n), (q - *o).dot(*n));
+            if dp >= 0.0 {
+                out.push(p);
+            }
+            if (dp >= 0.0) != (dq >= 0.0) {
+                out.push(p + (q - p) * (dp / (dp - dq)));
+            }
+        }
+    }
+    out
+}
+
+/// The part of segment `a`-`b` on the kept side of every plane.
+fn clip_segment(a: DVec3, b: DVec3, planes: &[Keep]) -> Option<(DVec3, DVec3)> {
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (o, n) in planes {
+        let (da, db) = ((a - *o).dot(*n), (b - *o).dot(*n));
+        if da < 0.0 && db < 0.0 {
+            return None;
+        }
+        if da < 0.0 || db < 0.0 {
+            let t = da / (da - db);
+            if da < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+    (t1 - t0 > 1e-12).then(|| (a.lerp(b, t0), a.lerp(b, t1)))
 }
 
 /// A surface with its plane frame (what a tool draws on).
@@ -109,10 +162,24 @@ impl Scene {
     /// Everything visible in `model`.
     pub fn build(model: &Model) -> Scene {
         let mut s = Scene::default();
+        // Active section planes cut (lane 12), unless the style turns the cuts off.
+        let cuts = model.style().is_none_or(|st| st.section_cuts);
+        let planes_over = |parent: Option<sawhorse_kernel::ids::NodeId>| -> Vec<Keep> {
+            if !cuts {
+                return Vec::new();
+            }
+            model
+                .active_sections_over(parent)
+                .into_iter()
+                .filter_map(|id| model.section(id))
+                .map(|x| (x.origin, x.normal))
+                .collect()
+        };
         for (oid, o) in model.objects() {
             if !model.is_visible(oid) {
                 continue;
             }
+            let clip = planes_over(o.membership().parent);
             let b = o.brep();
             let owner = Owner {
                 kind: OwnerKind::Object,
@@ -123,7 +190,7 @@ impl Scene {
                 surface_of.insert(fid, s.surfaces.len());
                 let outer = b.loop_points(f.outer);
                 let holes: Vec<Vec<DVec3>> = f.holes.iter().map(|&h| b.loop_points(h)).collect();
-                s.add_surface(
+                s.add_clipped_surface(
                     SurfaceRef::Face {
                         object: oid,
                         face: f.id,
@@ -131,6 +198,7 @@ impl Scene {
                     f.plane,
                     &outer,
                     &holes,
+                    &clip,
                 );
                 for ring in std::iter::once(&outer).chain(holes.iter()) {
                     s.find_arcs(ring, true, owner);
@@ -138,6 +206,9 @@ impl Scene {
             }
             for (e, edge) in b.edges() {
                 let (a, bb) = b.edge_points(e);
+                let Some((a, bb)) = clip_segment(a, bb, &clip) else {
+                    continue;
+                };
                 let side = |h: Option<sawhorse_kernel::ids::HalfEdgeId>| {
                     let he = b.half_edge(h?)?;
                     let face = b.lp(he.lp)?.face;
@@ -161,6 +232,11 @@ impl Scene {
                 kind: OwnerKind::Sketch,
                 id: sid,
             };
+            let clip = planes_over(
+                model
+                    .sketch_parent(sid)
+                    .map(sawhorse_kernel::ids::from_public),
+            );
             for (rid, r) in sk.regions() {
                 let (o, h) = sk.region_rings(r);
                 let outer: Vec<DVec3> = o.iter().map(|&q| plane.to_world(q)).collect();
@@ -168,7 +244,7 @@ impl Scene {
                     .iter()
                     .map(|ring| ring.iter().map(|&q| plane.to_world(q)).collect())
                     .collect();
-                s.add_surface(
+                s.add_clipped_surface(
                     SurfaceRef::Region {
                         sketch: sid,
                         region: to_public(rid),
@@ -176,6 +252,7 @@ impl Scene {
                     plane,
                     &outer,
                     &holes,
+                    &clip,
                 );
             }
             // Arcs among sketch strokes: chains through vertices with exactly two edges.
@@ -183,10 +260,12 @@ impl Scene {
             for (_, [a, b]) in sk.edges() {
                 adj.entry(a).or_default().push(b);
                 adj.entry(b).or_default().push(a);
-                if let (Some(p), Some(q)) = (sk.vertex(a), sk.vertex(b)) {
+                if let (Some(p), Some(q)) = (sk.vertex(a), sk.vertex(b))
+                    && let Some((p, q)) = clip_segment(plane.to_world(p), plane.to_world(q), &clip)
+                {
                     s.segs.push(Seg {
-                        a: plane.to_world(p),
-                        b: plane.to_world(q),
+                        a: p,
+                        b: q,
                         owner,
                         drawn: true,
                         faces: [None, None],
@@ -252,6 +331,51 @@ impl Scene {
         for (id, d) in model.dimensions() {
             s.dims.push((id, d.a + d.offset, d.b + d.offset));
         }
+        // The caps and outlines of active cuts (lane 12).
+        if cuts {
+            for (id, x) in model.sections() {
+                if !x.active {
+                    continue;
+                }
+                let Ok(cut) = model.section_cut(id) else {
+                    continue;
+                };
+                let frame = sawhorse_kernel::plane::Plane::new(x.origin, -x.normal)
+                    .unwrap_or(sawhorse_kernel::plane::Plane::GROUND);
+                for c in &cut.caps {
+                    let outer: Vec<DVec3> = c.outer.iter().map(|p| cut.to_world(*p)).collect();
+                    let holes: Vec<Vec<DVec3>> = c
+                        .holes
+                        .iter()
+                        .map(|h| h.iter().map(|p| cut.to_world(*p)).collect())
+                        .collect();
+                    let surface = s.surfaces.len();
+                    s.add_surface(
+                        SurfaceRef::Cap {
+                            object: c.object,
+                            section: id,
+                        },
+                        frame,
+                        &outer,
+                        &holes,
+                    );
+                    for ring in std::iter::once(&outer).chain(holes.iter()) {
+                        for k in 0..ring.len() {
+                            s.segs.push(Seg {
+                                a: ring[k],
+                                b: ring[(k + 1) % ring.len()],
+                                owner: Owner {
+                                    kind: OwnerKind::Object,
+                                    id: c.object,
+                                },
+                                drawn: false,
+                                faces: [Some(surface), None],
+                            });
+                        }
+                    }
+                }
+            }
+        }
         s.dedup_arcs();
         s.index();
         s
@@ -261,6 +385,37 @@ impl Scene {
     pub fn with_guides(mut self, guides: Vec<GuideLine>) -> Scene {
         self.guides = guides;
         self
+    }
+
+    /// A surface with its triangles clipped to the kept side of `clip` (section planes).
+    #[allow(clippy::too_many_arguments)]
+    fn add_clipped_surface(
+        &mut self,
+        at: SurfaceRef,
+        plane: Plane,
+        outer: &[DVec3],
+        holes: &[Vec<DVec3>],
+        clip: &[Keep],
+    ) {
+        if clip.is_empty() {
+            return self.add_surface(at, plane, outer, holes);
+        }
+        let first = self.tris.len();
+        self.add_surface(at, plane, outer, holes);
+        let tris = self.tris.split_off(first);
+        for t in tris {
+            if t.p.iter().all(|p| kept(*p, clip)) {
+                self.tris.push(t);
+                continue;
+            }
+            let poly = clip_polygon(&t.p, clip);
+            for k in 1..poly.len().saturating_sub(1) {
+                self.tris.push(Tri {
+                    p: [poly[0], poly[k], poly[k + 1]],
+                    surface: t.surface,
+                });
+            }
+        }
     }
 
     fn add_surface(&mut self, at: SurfaceRef, plane: Plane, outer: &[DVec3], holes: &[Vec<DVec3>]) {

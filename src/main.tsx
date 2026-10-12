@@ -10,6 +10,7 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./styles/tokens.css";
 import "./styles/app.css";
+import "./styles/drawings.css";
 import { App } from "./App";
 
 // ?theme=dark or ?theme=light forces a theme (screenshots, demos); otherwise follow the OS.

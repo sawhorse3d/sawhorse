@@ -74,7 +74,11 @@ test("the File menu: open, save, import, units and every export", async ({ page 
     "DXF outline of selected face…",
     "SVG drawing of this view…",
     "SVG outline of selected face…",
+    // Lane 12: a section plane's slice (greyed out until the model has a section plane).
+    "Section slice (SVG)…",
+    "Section slice (DXF)…",
   ]);
+  await expect(page.getByRole("menuitem", { name: "Section slice (SVG)…" })).toBeDisabled();
 });
 
 test("import an STL, export STL and 3MF, re-import the STL", async ({ page }) => {

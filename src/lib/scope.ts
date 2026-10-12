@@ -73,6 +73,13 @@ export function scopeEntity(e: Entity | null, state: DocState | null | undefined
     const p = placementOf(g, nodeById(g, e.node)?.parent ?? null);
     return p.kind === "here" ? e : p.kind === "inside" ? { kind: "node", node: p.node } : null;
   }
+  if (e.kind === "section") {
+    // A section plane belongs to its group or component like a solid does (lane 12).
+    const s = g.sections?.find((x) => x.id === e.section);
+    if (!s) return null;
+    const p = placementOf(g, s.parent);
+    return p.kind === "here" ? e : p.kind === "inside" ? { kind: "node", node: p.node } : null;
+  }
   const o = ownerObject(e);
   if (o !== null) {
     const p = placementOf(g, objectParent(g, o));
@@ -88,7 +95,16 @@ export function scopeEntity(e: Entity | null, state: DocState | null | undefined
 export function reachableContext(e: Entity, state: DocState | null | undefined): number | null {
   const g = graphOf(state);
   const o = ownerObject(e);
-  const parent = e.kind === "node" ? (nodeById(g, e.node)?.parent ?? null) : o !== null ? objectParent(g, o) : e.kind === "region" ? sketchParent(g, e.sketch) : null;
+  const parent =
+    e.kind === "node"
+      ? (nodeById(g, e.node)?.parent ?? null)
+      : o !== null
+        ? objectParent(g, o)
+        : e.kind === "region"
+          ? sketchParent(g, e.sketch)
+          : e.kind === "section"
+            ? (g.sections?.find((x) => x.id === e.section)?.parent ?? null)
+            : null;
   const a = chain(g, parent);
   let k = 0;
   while (k < g.path.length && k < a.length && g.path[k] === a[k]) k++;
@@ -143,6 +159,7 @@ export function describeNode(g: SceneGraph, id: number): string {
 export function entityShown(e: Entity, state: DocState | null | undefined): boolean {
   const g = graphOf(state);
   if (e.kind === "node") return g.nodes.find((n) => n.id === e.node)?.visible ?? false;
+  if (e.kind === "section") return g.sections?.find((s) => s.id === e.section)?.visible ?? false;
   const object = e.kind === "object" || e.kind === "face" ? e.object : (e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object" ? e.owner.id : null;
   if (object !== null) return g.objects.find((o) => o.id === object)?.visible ?? true;
   return true;

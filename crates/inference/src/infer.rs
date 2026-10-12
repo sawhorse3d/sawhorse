@@ -572,6 +572,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
             entity: hit.map(|h| match h.at {
                 SurfaceRef::Face { object, face } => Entity::Face { object, face },
                 SurfaceRef::Region { sketch, region } => Entity::Region { sketch, region },
+                SurfaceRef::Cap { object, .. } => Entity::Object { object },
             }),
             lines: Vec::new(),
         })

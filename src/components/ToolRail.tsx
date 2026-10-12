@@ -26,11 +26,12 @@ export function ToolRail({ active, onSelect, plugins = [] }: ToolRailProps) {
               className="tool"
               data-tool={t.id}
               aria-pressed={active === t.id}
-              aria-keyshortcuts={t.plugin ? undefined : t.key === " " ? "Space" : t.keyCap}
-              title={t.plugin ? `${t.label} (${t.plugin})${t.keyCap ? ` ${t.keyCap}` : ""}` : `${t.label} (${t.key === " " ? "Space" : t.keyCap})`}
+              aria-keyshortcuts={t.plugin ? undefined : t.key === " " ? "Space" : t.keyCap || undefined}
+              title={t.plugin ? `${t.label} (${t.plugin})${t.keyCap ? ` ${t.keyCap}` : ""}` : t.key ? `${t.label} (${t.key === " " ? "Space" : t.keyCap})` : t.label}
               onClick={() => onSelect(t.id)}
             >
-              <kbd>{t.plugin ? "" : t.keyCap}</kbd>
+              {/* Lane 12's Section Plane has no key: no key cap. */}
+              {t.plugin || t.keyCap ? <kbd>{t.plugin ? "" : t.keyCap}</kbd> : null}
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 {glyph(t)}
               </svg>

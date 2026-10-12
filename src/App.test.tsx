@@ -25,7 +25,10 @@ describe("App shell", () => {
     render(<App />);
     const caps = [...document.querySelectorAll(".tool kbd")].map((k) => k.textContent);
     expect(caps).toEqual(["␣", "E", "L", "R", "C", "A", "P", "M", "Q", "S", "F", "W", "T", "D", "B"]);
-    expect(TOOLS).toHaveLength(15);
+    // Lane 12's Section Plane has no default key (SketchUp 2017 had none either).
+    expect(TOOLS).toHaveLength(16);
+    expect(TOOLS.find((t) => t.id === "section")?.key).toBe("");
+    expect(document.querySelector('.tool[data-tool="section"] kbd')).toBeNull();
     expect(pressed("select")).toBe(true);
   });
 

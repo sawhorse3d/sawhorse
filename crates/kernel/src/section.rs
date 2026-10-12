@@ -721,6 +721,7 @@ impl Model {
         normal: &[f64; 3],
         name: Option<&str>,
         active: bool,
+        hidden: bool,
     ) -> Result<OpOutcome, KernelError> {
         let (o, n) = plane_from(origin, normal)?;
         let name = match name {
@@ -733,7 +734,7 @@ impl Model {
             normal: n,
             parent: self.context,
             active,
-            hidden: false,
+            hidden,
         };
         s.check()?;
         let k = self.sections.insert(s);

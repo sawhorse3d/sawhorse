@@ -486,6 +486,9 @@ pub enum Op {
         name: Option<String>,
         #[serde(default = "yes", skip_serializing_if = "is_true")]
         active: bool,
+        /// Placed hidden (an import's hidden planes).
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
     },
     /// Put a section plane exactly here (it must be in the open context).
     PlaceSection {
@@ -649,6 +652,10 @@ fn is_true(b: &bool) -> bool {
     *b
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A saved view (SketchUp "scene"): camera in metres, Z up, and the tags it hides.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -694,6 +701,23 @@ pub struct ImportDefinition {
     pub items: Vec<ImportItem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<ImportNode>,
+    /// Section planes drawn in the definition (lane 12), in its own coordinates: each copy
+    /// placed at the top of the import gets its own, inactive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<ImportSection>,
+}
+
+/// A section plane in an import (lane 12): a point, the direction of the side it keeps, a
+/// name, hidden or not. Imported planes come in inactive.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ImportSection {
+    pub origin: [f64; 3],
+    pub normal: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// A group (geometry in the enclosing frame's coordinates, plus nested nodes) or an instance
@@ -708,6 +732,10 @@ pub struct ImportNode {
     pub tag: Option<String>,
     #[serde(default)]
     pub hidden: bool,
+    /// Section planes drawn in the group (lane 12), in the enclosing frame (world for a
+    /// group at the top of the import); they come in inactive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<ImportSection>,
     #[serde(flatten)]
     pub kind: ImportNodeKind,
 }
@@ -1798,7 +1826,8 @@ impl Model {
                 normal,
                 name,
                 active,
-            } => self.add_section(origin, normal, name.as_deref(), *active),
+                hidden,
+            } => self.add_section(origin, normal, name.as_deref(), *active, *hidden),
             Op::PlaceSection {
                 section,
                 origin,
@@ -2304,8 +2333,17 @@ impl Model {
             def_ids.push(self.defs.insert(def));
         }
         let mut made_nodes = Vec::new();
+        let def_sections: Vec<&[ImportSection]> =
+            definitions.iter().map(|d| d.sections.as_slice()).collect();
         for n in nodes {
-            made_nodes.push(self.import_node(n, ctx, &def_ids, &mut notes, &mut meshes)?);
+            made_nodes.push(self.import_node(
+                n,
+                ctx,
+                &def_ids,
+                &def_sections,
+                &mut notes,
+                &mut meshes,
+            )?);
         }
         if !made_nodes.is_empty() {
             let kids = self.kids();
@@ -2554,6 +2592,54 @@ impl Model {
         n: &ImportNode,
         parent: Option<NodeId>,
         def_ids: &[DefId],
+        def_sections: &[&[ImportSection]],
+        notes: &mut Vec<String>,
+        meshes: &mut Vec<u64>,
+    ) -> Result<NodeId, KernelError> {
+        let node = self.import_node_inner(n, parent, def_ids, def_sections, notes, meshes)?;
+        // Section planes (lane 12): the group's own, in the enclosing frame; an instance's
+        // come from its definition, placed with it. All inactive.
+        let mut planes: Vec<(ImportSection, Option<Xform>)> =
+            n.sections.iter().map(|s| (s.clone(), None)).collect();
+        if let ImportNodeKind::Instance { definition, xform } = &n.kind {
+            planes.extend(
+                def_sections
+                    .get(*definition)
+                    .into_iter()
+                    .flat_map(|x| x.iter())
+                    .map(|s| (s.clone(), Some(*xform))),
+            );
+        }
+        for (s, x) in planes {
+            let Ok((origin, normal)) = crate::section::plane_from(&s.origin, &s.normal) else {
+                notes.push("a section plane without a usable position was left out".into());
+                continue;
+            };
+            let mut plane = crate::section::SectionPlane {
+                name: s
+                    .name
+                    .as_deref()
+                    .map_or_else(|| "Section".to_string(), |x| clip_name(x, "Section")),
+                origin,
+                normal,
+                parent: Some(node),
+                active: false,
+                hidden: s.hidden,
+            };
+            if let Some(x) = x {
+                plane = plane.mapped(&x)?;
+            }
+            self.sections.insert(plane);
+        }
+        Ok(node)
+    }
+
+    fn import_node_inner(
+        &mut self,
+        n: &ImportNode,
+        parent: Option<NodeId>,
+        def_ids: &[DefId],
+        def_sections: &[&[ImportSection]],
         notes: &mut Vec<String>,
         meshes: &mut Vec<u64>,
     ) -> Result<NodeId, KernelError> {
@@ -2610,7 +2696,7 @@ impl Model {
                     }
                 }
                 for c in children {
-                    self.import_node(c, Some(g), def_ids, notes, meshes)?;
+                    self.import_node(c, Some(g), def_ids, def_sections, notes, meshes)?;
                 }
                 Ok(g)
             }

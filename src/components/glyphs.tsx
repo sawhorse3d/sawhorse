@@ -50,6 +50,8 @@ export const TOOL_GLYPHS: Record<BuiltinToolId, ReactElement> = {
   tape: <path d="M3 15l12-12 6 6-12 12z M7 11l2 2M10 8l2 2M13 5l2 2" />,
   dim: <path d="M3 12h18M3 8v8M21 8v8" />,
   paint: <path d="M4 20c0-3 2-5 5-5l6-9 4 4-9 6c0 3-2 5-6 4z M12 8l4 4" />,
+  // Lane 12: a plane seen at an angle, with the arrows that show the side it keeps.
+  section: <path d="M5 8l10-4v12L5 20z M15 10h5 M18 8l2 2-2 2 M10 9v6" />,
 };
 
 export function BrandMark() {

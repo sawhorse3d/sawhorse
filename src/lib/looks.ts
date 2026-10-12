@@ -13,8 +13,18 @@ export interface FullStyle {
   background: [number, number, number] | null;
   sky: [number, number, number] | null;
   ground: [number, number, number] | null;
+  /** Section planes (lane 12): active planes cut, planes drawn, cut faces filled. */
   section_cuts: boolean;
+  section_planes: boolean;
+  section_fill: boolean;
+  section_fill_color: [number, number, number] | null;
+  section_line_color: [number, number, number] | null;
+  /** Screen pixels. */
+  section_line_width: number;
 }
+
+/** The cut outline's width when the style does not say (screen pixels). */
+export const DEFAULT_SECTION_LINE_WIDTH = 3;
 
 export function fullStyle(s: Style | null | undefined): FullStyle {
   return {
@@ -30,6 +40,11 @@ export function fullStyle(s: Style | null | undefined): FullStyle {
     sky: s?.sky ?? null,
     ground: s?.ground ?? null,
     section_cuts: s?.section_cuts ?? true,
+    section_planes: s?.section_planes ?? true,
+    section_fill: s?.section_fill ?? true,
+    section_fill_color: s?.section_fill_color ?? null,
+    section_line_color: s?.section_line_color ?? null,
+    section_line_width: s?.section_line_width ?? DEFAULT_SECTION_LINE_WIDTH,
   };
 }
 
@@ -50,6 +65,11 @@ export function compactStyle(s: FullStyle): Style | null {
   if (s.sky) out.sky = s.sky;
   if (s.ground) out.ground = s.ground;
   if (!s.section_cuts) out.section_cuts = false;
+  if (!s.section_planes) out.section_planes = false;
+  if (!s.section_fill) out.section_fill = false;
+  if (s.section_fill_color) out.section_fill_color = s.section_fill_color;
+  if (s.section_line_color) out.section_line_color = s.section_line_color;
+  if (s.section_line_width !== DEFAULT_SECTION_LINE_WIDTH) out.section_line_width = Math.max(1, Math.min(12, Math.round(s.section_line_width)));
   return Object.keys(out).length ? out : null;
 }
 
