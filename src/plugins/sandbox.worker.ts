@@ -7,8 +7,10 @@
 // messages: requests out, answers, callbacks, events and watchdog pings in.
 //
 // No DOM, no window, no network unless granted (and then only through the app), no
-// importScripts, no eval. A plugin that throws, loops or crashes takes down this worker
-// and nothing else.
+// importScripts, no eval: the global object is cut down to an allowlist (lockdown.ts), and
+// the worker runs under the page's content security policy (it is started from a blob:
+// URL, host.ts). A plugin that throws, loops or crashes takes down this worker and nothing
+// else.
 import { lockdown } from "./lockdown";
 import { createRuntime, type Runtime } from "../../packages/plugin-api/src/runtime.ts";
 import { decodeHostMessage, logText, transferables, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";

@@ -7,7 +7,8 @@
 //   - the words that must be there are there (the pitch, the licence, the trademark
 //     notice, the unsigned-builds note, the maintainer's handle);
 //   - screenshots under 400 KB; CNAME says sawhorse3d.com; .nojekyll present;
-//   - the demo in app/ is built for <base>app/, with the kernel WASM and its worker;
+//   - the demo in app/ is built for <base>app/, with the kernel WASM and its worker, and
+//     carries its content security policy (the plugin sandbox's second lock);
 //   - no machine paths or personal names anywhere in the output;
 //   - with --online, every download link answers (follows GitHub's redirect to the file).
 //
@@ -116,6 +117,10 @@ if (existsSync(path.join(dir, "app", "index.html"))) {
   const app = readFileSync(path.join(dir, "app", "index.html"), "utf8");
   const scripts = [...app.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
   if (!scripts.length) bad("app/index.html: no module script");
+  // The demo's content security policy is the plugin sandbox's second lock (ADR-0009).
+  const csp = (/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(app)?.[1] ?? "").replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&");
+  if (!csp) bad("app/index.html: no Content-Security-Policy meta tag (vite.config.ts cspMeta)");
+  else for (const want of ["script-src 'self' 'wasm-unsafe-eval' blob:", "font-src 'self' data:", "worker-src 'self' blob:", "object-src 'none'"]) if (!csp.includes(want)) bad(`app/index.html: the content security policy lacks "${want}"`);
   for (const s of scripts) if (!s.startsWith(`${base}app/assets/`)) bad(`app/index.html: script ${s} is not under ${base}app/assets/`);
   const assets = existsSync(path.join(dir, "app", "assets")) ? readdirSync(path.join(dir, "app", "assets")) : [];
   if (!assets.some((a) => a.endsWith(".wasm"))) bad("app/assets: no kernel .wasm (run npm run wasm before building the site)");

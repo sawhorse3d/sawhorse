@@ -2,7 +2,8 @@ import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { checkToolView } from "../tools/plugin";
 import { loadPackage } from "./loader";
-import { removeEverywhere } from "./lockdown";
+import { sandboxBootstrap } from "./host";
+import { ALLOWED_GLOBALS, ALLOWED_NAVIGATOR, BLOCKED_GLOBALS, BLOCKED_NAVIGATOR, removeEverywhere, stripToAllowlist } from "./lockdown";
 import { checkBody, patchFields, valuesOf } from "./panel";
 import { readPluginZip, writePluginZip } from "./zip";
 
@@ -101,5 +102,48 @@ describe("lockdown", () => {
     const scope = Object.create(null);
     Object.defineProperty(scope, "fetch", { value: () => 1, configurable: false, writable: false });
     expect(removeEverywhere(scope, "fetch")).toBe(true);
+  });
+  // The verifier's escapes: FontFace(...).load() fetched any URL with the model in it, and
+  // webkitRequestFileSystemSync gave an origin-wide file system, because the old lockdown
+  // removed a list of known names. Now the global is cut to an allowlist, so a name nobody
+  // listed (including the next browser's new API) is gone.
+  it("cuts a worker-like global down to the allowlist, through its prototypes", () => {
+    const eventTargetProto = { addEventListener() {}, dispatchEvent() {} };
+    const workerScopeProto = Object.create(eventTargetProto, {
+      constructor: { value: function WorkerGlobalScope() {}, configurable: true },
+      fetch: { value: () => 1, configurable: true, writable: true },
+      fonts: { get: () => ({}), configurable: true },
+      importScripts: { value: () => 1, configurable: true, writable: true },
+      setTimeout: { value: () => 1, configurable: true, writable: true },
+    });
+    const scope = Object.create(workerScopeProto) as Record<string, unknown>;
+    const one = (): number => 1;
+    const own: Record<string, unknown> = { FontFace: class {}, webkitRequestFileSystemSync: one, webkitRequestFileSystem: one, TEMPORARY: 0, SomeNewNetworkApi: one, TextEncoder: class {}, Math, JSON, console };
+    for (const [k, v] of Object.entries(own)) {
+      Object.defineProperty(scope, k, { value: v, configurable: true, writable: true });
+    }
+    const survivors = stripToAllowlist(scope, ALLOWED_GLOBALS, [eventTargetProto]);
+    expect(survivors).toEqual([]);
+    for (const gone of ["FontFace", "webkitRequestFileSystemSync", "webkitRequestFileSystem", "TEMPORARY", "SomeNewNetworkApi", "fetch", "fonts", "importScripts"]) expect(gone in scope, gone).toBe(false);
+    for (const kept of ["TextEncoder", "Math", "JSON", "console", "setTimeout", "addEventListener", "dispatchEvent", "constructor"]) expect(kept in scope, kept).toBe(true);
+  });
+  it("reports what it cannot remove", () => {
+    const scope = {} as Record<string, unknown>;
+    Object.defineProperty(scope, "FontFace", { value: class {}, configurable: false, writable: false });
+    expect(stripToAllowlist(scope, ALLOWED_GLOBALS)).toEqual(["FontFace"]);
+  });
+  it("cuts navigator down to facts", () => {
+    const proto = { storage: {}, storageBuckets: {}, locks: {}, usb: {}, serial: {}, hid: {}, gpu: {}, language: "en", languages: ["en"], hardwareConcurrency: 8, userAgent: "x" };
+    const nav = Object.create(proto);
+    expect(stripToAllowlist(nav, ALLOWED_NAVIGATOR)).toEqual([]);
+    expect(Object.keys(proto).filter((k) => k in nav).sort()).toEqual(["hardwareConcurrency", "language", "languages", "userAgent"]);
+  });
+  it("never allows a name it promises to block", () => {
+    for (const name of BLOCKED_GLOBALS) expect(ALLOWED_GLOBALS.has(name), name).toBe(false);
+    for (const name of BLOCKED_NAVIGATOR) expect(ALLOWED_NAVIGATOR.has(name), name).toBe(false);
+  });
+  it("starts the sandbox from a blob module that imports the sandbox script by its absolute URL", () => {
+    expect(sandboxBootstrap("./assets/sandbox.worker-abc.js", "https://sawhorse3d.com/app/")).toBe('import "https://sawhorse3d.com/app/assets/sandbox.worker-abc.js";\n');
+    expect(sandboxBootstrap("/src/plugins/sandbox.worker.ts?worker_file&type=module", "http://localhost:5211/")).toBe('import "http://localhost:5211/src/plugins/sandbox.worker.ts?worker_file&type=module";\n');
   });
 });

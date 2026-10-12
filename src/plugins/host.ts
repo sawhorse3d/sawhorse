@@ -13,6 +13,7 @@
 import type { Permission } from "../../packages/plugin-api/src/manifest.ts";
 import { decodePluginMessage, PROTOCOL, ProtocolError, transferables, type Data, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";
 import { moduleFiles, type PluginPackage } from "./loader";
+import sandboxScriptUrl from "./sandbox.worker.ts?worker&url";
 
 /** What each request method needs. */
 export const METHODS: Record<string, Permission | null> = {
@@ -80,9 +81,24 @@ export interface Channel {
   terminate(): void;
 }
 
-/** A plugin's real home: its own module Web Worker running the sandbox. */
+/**
+ * The source of the blob: module that starts a sandbox: one static import of the sandbox
+ * script at its absolute URL. A worker started from a blob: URL runs under the policy of the
+ * page that made it (CSP 3, "local scheme" inheritance); one started from its own URL would
+ * run under that response's headers, which a static host cannot set. So the page's content
+ * security policy (vite.config.ts in the browser build, tauri.conf.json on the desktop)
+ * also governs every plugin: no scripts or fonts from anywhere but the app itself.
+ */
+export function sandboxBootstrap(sandboxUrl: string, base: string): string {
+  return `import ${JSON.stringify(new URL(sandboxUrl, base).href)};\n`;
+}
+
+/** A plugin's real home: its own module Web Worker running the sandbox, under the page's policy. */
 export function workerChannel(name: string): Channel {
-  const w = new Worker(new URL("./sandbox.worker.ts", import.meta.url), { type: "module", name });
+  const boot = URL.createObjectURL(new Blob([sandboxBootstrap(sandboxScriptUrl, document.baseURI)], { type: "text/javascript" }));
+  const w = new Worker(boot, { type: "module", name });
+  // The worker has fetched (or is fetching) its script; the URL is not needed again.
+  setTimeout(() => URL.revokeObjectURL(boot), 60_000);
   return {
     post: (msg, transfer = []) => w.postMessage(msg, transfer),
     onMessage: (cb) => w.addEventListener("message", (e: MessageEvent) => cb(e.data)),

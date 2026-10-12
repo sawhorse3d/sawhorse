@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 // This checkout's own root (forward slashes), so watch exclusions below match only what is
@@ -12,8 +12,58 @@ const root = fileURLToPath(new URL(".", import.meta.url)).replace(/\\/g, "/").re
 // Tauri 2 webview. Tauri expects a fixed dev port and no screen clearing.
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * The browser build's content security policy, written into index.html as a meta tag.
+ *
+ * It is the second lock on plugins (ADR-0009): each plugin's worker is started from a blob:
+ * URL (src/plugins/host.ts), so it runs under this policy, and a plugin that got past the
+ * sandbox's lockdown still could not load a script or a font from anywhere but the app
+ * itself (a font load is a request to any URL; so is an import()). `connect-src` stays wide
+ * because a plugin's granted `net` requests are made by the page (to the hosts its manifest
+ * lists, checked in src/plugins/manager.ts), and the render service may be on another host.
+ *
+ * The desktop build gets its policy from src-tauri/tauri.conf.json instead (Tauri sends it
+ * with every page and may add nonces and hashes for its own scripts, which a second policy
+ * written here would also have to allow), so the tag is left out when the Tauri CLI runs
+ * the build (it sets TAURI_ENV_PLATFORM). Both policies refuse outside scripts and fonts.
+ * Development (vite serve) has none: the dev client injects inline scripts.
+ */
+export function contentSecurityPolicy(renderService = process.env.VITE_RENDER_SERVICE_URL || "http://127.0.0.1:8787"): string {
+  let render = "";
+  try {
+    render = new URL(renderService).origin;
+  } catch {
+    render = "";
+  }
+  const withRender = (list: string) => (render ? `${list} ${render}` : list);
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' blob:",
+    "style-src 'self' 'unsafe-inline'",
+    withRender("img-src 'self' data: blob:"),
+    "font-src 'self' data:",
+    "worker-src 'self' blob:",
+    withRender("connect-src 'self'") + " https: http://localhost:* http://127.0.0.1:*",
+    "media-src 'self' data: blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'none'",
+  ].join("; ");
+}
+
+function cspMeta(): Plugin {
+  return {
+    name: "sawhorse-csp",
+    apply: "build",
+    transformIndexHtml() {
+      if (process.env.TAURI_ENV_PLATFORM) return [];
+      return [{ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy() }, injectTo: "head-prepend" }];
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), cspMeta()],
   clearScreen: false,
   // Relative by default (the Tauri webview and any static folder). The public demo is built
   // with VITE_BASE=/app/ (.github/workflows/pages.yml, scripts/build-site.mjs) so it is

