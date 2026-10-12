@@ -267,6 +267,8 @@ export interface GraphLeaf {
   hidden: boolean;
   locked: boolean;
   visible: boolean;
+  /** Part of a component definition (inside an instance). */
+  in_component: boolean;
 }
 
 export interface GraphDefinition {

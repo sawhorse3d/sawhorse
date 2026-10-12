@@ -19,13 +19,15 @@ export function hexToRgb(hex: string): [number, number, number] {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
 }
 
-/** How many solids, groups and components are on each tag (and on none). */
+/** How many solids, groups and components are on each tag (and on none). What is inside a
+ * component is counted once, in its definition, not once per copy. */
 export function tagCounts(state: DocState | null): Map<string | null, number> {
   const g = graphOf(state);
   const out = new Map<string | null, number>();
   const bump = (t: string | null) => out.set(t, (out.get(t) ?? 0) + 1);
-  for (const o of state?.object_info ?? []) bump(o.tag);
-  for (const n of g.nodes) bump(n.tag);
+  const inside = new Set(g.objects.filter((o) => o.in_component).map((o) => o.id));
+  for (const o of state?.object_info ?? []) if (!inside.has(o.id)) bump(o.tag);
+  for (const n of g.nodes) if (!n.in_component) bump(n.tag);
   return out;
 }
 

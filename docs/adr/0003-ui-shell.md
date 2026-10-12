@@ -55,3 +55,12 @@ People who already model furniture have SketchUp in their hands: the keys, the p
   - Can carry actions: the dev autosave's "Restore unsaved work?" with Restore / Discard (also Edit > Restore Unsaved Work).
 - Rect: the preview labels each side's length and direction ("12 in −red") with ticks at the first corner, and the message states them.
 - Not yet: Paint says "arrives in a later lane". The Outliner, Tags and Cut list panes still carry the mock's example content (lane 5 and the cut-list lane).
+
+## Implementation status (lane 5, groups and components)
+
+- The Outliner and Tags panes are live (they replace the mock's example rows, in its layout: indented rows with a muted kind hint, the tag swatch). The Cut list pane says plainly that it is not built yet (lane 7) instead of showing example rows.
+- Scene tabs sit in their own row above the viewport (not in the mock; styled like the side panel's tabs). The rail and the side panel span that row.
+- Keys added: Ctrl+G (Make Group), Ctrl+Shift+G (Explode); Esc closes the open group or component after cancelling the gesture and clearing the selection.
+- Outside the open group or component the model is drawn faded and the open one gets a dashed box (our own drawing, in the accent colour); the HUD shows the trail ("Edit: Model › Carcass › Side").
+- Panel glyphs (eye, lock, chevrons, tag, bin, plus) are our own 16 px line drawings in `src/components/glyphs.tsx`.
+- User-facing summary: `docs/USER-GUIDE.md` (Groups and components, Tags, Scenes).

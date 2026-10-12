@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 4): looking around, drawing, push/pull, measuring, guides and dimensions, and the transform tools (Move, Rotate, Scale, Offset, Follow Me). Paint is on the tool rail but says "arrives in a later lane"; the Outliner, Tags and Cut list panes still show the design mock's example content. Copies are separate solids for now; components arrive in lane 5.
+Sawhorse is pre-alpha. This page covers what works today (lane 5): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes. Paint is on the tool rail but says "arrives in a later lane"; the Cut list pane says it is not built yet.
 
 ## The first ten minutes
 
@@ -35,7 +35,7 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 
 | Key | Tool | Gesture | VCB takes |
 |---|---|---|---|
-| Space | Select | Click; double-click selects the whole solid; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
+| Space | Select | Click; double-click selects the whole solid, or opens a group or component; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
 | E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; drag across several (one undo step) | - |
 | L | Line | Click, click, click; stops when it closes, when a face forms, or on Esc | a length along the direction shown |
 | R | Rectangle | Click two corners, or click one and type `w, d`; with nothing clicked, it starts at the origin | `w, d` (a negative value goes the other way) |
@@ -54,9 +54,11 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 | D | Dimension | Click two points (or one edge), then click where the dimension line goes | - |
 | Shift+Z | | Zoom extents | |
 | Ctrl+Z / Ctrl+Y | | Undo / redo (Ctrl+Shift+Z also redoes) | |
-| Ctrl+A | | Select all | |
+| Ctrl+A | | Select all (in the open group or component) | |
+| Ctrl+G | | Make Group from the selection | |
+| Ctrl+Shift+G | | Explode the selected groups and components | |
 | Delete | | Erase the selection | |
-| Esc | | Cancels the gesture, then clears the selection, then leaves the group | |
+| Esc | | Cancels the gesture, then clears the selection, then closes the open group or component | |
 
 **Axis locks** (any tool drawing from a start point):
 - Right arrow locks the red axis, Left arrow the green, Up arrow the blue.
@@ -165,9 +167,33 @@ The profile travels along the path and turns on a miter at every corner. A regio
 
 Paths with arcs come later.
 
+## Groups and components
+
+**Groups.** Select solids (or other groups) and press Ctrl+G (Edit > Make Group). A group selects as one: a click on any of its solids selects the whole group, and Move, Rotate and Scale move it as a unit. Double-click it to open it for editing: the rest of the model fades, a dashed box marks the group, and the status bar shows where you are ("Edit: Model › Carcass"). Inside, you edit its solids as usual; strokes you draw only stick to strokes drawn in the same group, never to the ones outside. Esc closes it again (after clearing the selection). Clicking something outside the open group closes it too and selects what you clicked. Ctrl+Shift+G (Edit > Explode) takes a group apart; its solids stay exactly where they are.
+
+**Components.** Edit > Make Component asks for a name and turns the selection into a component: a definition (the shared parts) and one copy of it, called an instance. Copies you make of an instance with Move and Ctrl, or with a Move array (`x3`, `/4`), are more instances of the same component. Open any instance and change it (push a face, draw on it, add a part) and every instance changes with it. To change only one, right-click it in the Outliner and choose **Make Unique**: it gets its own copy of the definition ("Shelf (2)"). A cut that splits a solid in two inside a component does that by itself, so the other instances keep their solid pieces. Copies of plain solids stay plain solids.
+
+**A bookshelf in components.**
+1. `R`, type `3/4, 11 1/4`, Enter; `P`, type `72`, Enter. Ctrl+A, then Edit > Make Component, name it `Side`.
+2. `M`, tap Ctrl, click the side's front bottom corner, press the Right arrow (red), type `35 1/4`, Enter. Two sides, one component.
+3. `R`, type `34 1/2, 11 1/4`; `P`, `3/4`. Double-click the new board to select it, `M`, click it, Right arrow, `3/4`: it sits between the sides. Make Component `Shelf`.
+4. `M`, tap Ctrl, click a shelf corner, Up arrow (blue), type `23 3/4`, Enter, then type `x3`: four shelves.
+5. Double-click one shelf, click its top face, `P`, type `1/4`: all four shelves are 1 in thick now. Esc, Esc.
+6. Right-click the top shelf in the Outliner, Make Unique, double-click it and push its top back `-1/4`: only that one changes.
+
+**The Outliner** (right panel) is the model's tree: groups, component instances ("component · 2 of 4") and solids, folded except around the group you have open (marked "editing"). Click a row to select it (Shift adds, Ctrl toggles); selecting something inside a closed group opens what holds it. The eye hides and shows, the padlock locks (a locked group cannot be opened, moved, exploded or deleted). Double-click a name to rename it; renaming a component renames it everywhere. Right-click for Edit inside, Make Group, Make Component, Make Unique, Explode, Hide, Lock, Rename and Delete.
+
+## Tags
+
+Tags control what you see, nothing else: geometry stays where it is and in its group. The Tags pane lists **Untagged** first (everything starts there), then your tags with their colour and how many things are on each. **New tag** adds one and lets you type its name. Select solids, groups or components and click a tag's label button to put them on it (Untagged's takes them off). The eye shows or hides everything on the tag, including what is inside a tagged group. Click the swatch to change the colour, double-click the name to rename (scenes follow), the bin deletes the tag (what was on it becomes untagged).
+
+## Scenes
+
+A scene remembers the camera, which tags are hidden and which group or component is open. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+
 ## When a cut goes all the way through
 
-A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piece that keeps the board's smallest face id keeps its name ("solid 3"); the other gets the next number. Both stay in the board's groups.
+A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piece that keeps the board's smallest face id keeps its name ("solid 3"); the other gets the next number. Both stay in the board's group. Inside a component used more than once, the cut makes that instance unique first, so the other instances are not cut.
 
 ## Unsaved work
 

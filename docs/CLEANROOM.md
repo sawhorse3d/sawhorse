@@ -73,3 +73,11 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published URL of any kind was read, and no third-party source (including the npm `openskp` package and the cargo registry) was opened.
 - **Written from general knowledge:** the triangulator's fallback (`ear_clip` in `crates/tessellate`) is textbook ear clipping with holes bridged at their rightmost vertex to a visible outer vertex; the merge resolutions only combined the lanes' own code.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
+
+### 2026-10-11 — lane 5 (groups, components, tags, scenes): what was read
+- **Who:** the lane-5 builder (Claude), groups and components lane.
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page was opened for this lane.
+- **npm `openskp@1.3.0` (MIT, a dependency per ADR-0002):** read the `Definition`, `Instance`, `SkpModel`, `Layer` and `Page` declarations in its packaged `dist/index.d.ts` to map definitions and placements onto Sawhorse components, and parsed our own generated corpus files with it to see how its writer names group definitions. Nothing was copied; `src/io/skp.ts` is our own code.
+- **SketchUp behaviour** (groups vs components, editing in place with the rest of the model faded, Make Unique, Explode, the Outliner, layers as visibility only, scenes as tabs) was described from memory, as a user knows it, and from the lane brief. The Outliner and Tags layout follows the approved Sawhorse mock; the glyphs, wording, the faded context and the dashed context box are our own.
+- **Algorithms** (templates captured and re-derived by slot, affine maps of B-reps, a tidy pass, the definition-reachability purge) were written from general knowledge.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.

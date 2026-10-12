@@ -4,6 +4,35 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 5, groups, components, tags and scenes, 2026-10-11)
+
+- **Groups**: Ctrl+G (Edit > Make Group) groups the selection. A click on anything in a closed group selects the whole group; Move, Rotate and Scale move it as a unit (face ids inside unchanged, the group's axes follow); double-click opens it for editing, with the rest of the model faded, a dashed box round it and the trail in the HUD ("Edit: Model › Carcass"); Esc closes it; a click outside closes it and selects what was clicked. Strokes drawn inside a group stick only to that group's strokes. Ctrl+Shift+G (Edit > Explode) takes it apart.
+- **Components**: Edit > Make Component (asks for a name) turns the selection into a definition with one instance. Ctrl+Move copies and Move arrays of an instance are instances; an edit inside any instance (push/pull, draw, erase, offset, Follow Me, moves, grouping, adding or deleting parts) changes every instance. Make Unique gives one instance its own definition ("Shelf (2)"); a cut that severs a solid inside a shared instance makes that instance unique first. Copies of plain solids stay plain.
+- **Outliner** (replaces the mock's example rows): the tree of groups, instances ("component · 2 of 4") and solids, folded except around the open context; eye (hide / show) and lock per row; click to select (Shift adds, Ctrl toggles), selection shown both ways; double-click to rename (a component renames its definition); right-click for Edit inside, Make Group, Make Component, Make Unique, Explode, Hide, Lock, Rename, Delete.
+- **Tags pane** (replaces the example tags): Untagged first, then each tag with its colour (a colour picker), item count, show / hide, put the selection on it, rename, delete; New tag. Tags hide and show only; hiding a tag on a group hides everything in it.
+- **Scenes**: tabs in their own row above the viewport. + saves the camera, the hidden tags and the open group; a click goes to it; right-click updates, renames or deletes; double-click renames. View > Add Scene and the scene list.
+- **Kernel** (`crates/kernel/src/nodes.rs`, ADR-0005): the model is a tree of groups and instances over world-space solids. Definitions are templates by slot in their own coordinates; instance solids are derived from them bit for bit (validated). After every op the changed instance is captured into its definition and every instance re-derived (ids and display numbers kept). The editing context is model state: SetContext / LeaveContext are logged but never undo steps, and undo returns to where the edit was made. New ops: MakeGroup, MakeComponent, MakeUnique, Explode, DeleteNode, Rename, RenameDefinition, SetHidden, SetLocked, TagItems, CreateTag, RenameTag, SetTagColor, DeleteTag, AddScene, UpdateScene, DeleteScene, ActivateScene; Transform, Copy and Array take nodes. Typed refusals: `StructureError`.
+- **Scene graph across the worker**: `DocState.graph` and `Doc.scene_graph()` (nodes with labels and kinds, where every solid is, definitions with instance counts and their own-axes bounds for the cut list, the context and its path, tag colours).
+- **.shz** (`docs/format.md`): `nodes`, `definitions` (each component's geometry once), memberships, sketch parents, `context`, `tag_colors`, scene contexts; instance solids derived on open. Lane-6 files still open; files stay version 1 (optional fields).
+- **.skp import** (`docs/skp-compat.md`): definitions placed more than once become components with one instance per placement, placed once become groups; nesting kept; hidden placements come in hidden; layers become tags of their groups and instances.
+- **Tests**: `crates/kernel/tests/structure.rs` (a bookshelf of components, groups, scoped stickiness, severance, nesting, tags, scenes, hidden / locked, mirrored and rotated instances, the snapshot), `structure_props.rs` (instance edits propagate, Make Unique forks, Make Component / Make Group then Explode are the identity on hashes), golden `components.json` (WASM == native), shz and wasm-api round trips, `src/lib/scope.test.ts`, `src/components/structure.test.tsx`, `e2e/groups.spec.ts`; the fuzzer drives every lane-5 op (50,000 sequences clean, `docs/DEVELOPMENT.md`). `scripts/capture-lane05.mjs` builds the bookshelf from components in the running app.
+
+### Fixed (lane 5)
+
+- The first `.skp` import no longer reloads the dev page (openskp is pre-bundled by Vite).
+- A dev server run from inside a lane worktree (`<repo>/.worktrees/<lane>`) now sees edits: Vite's watch exclusions are anchored at the checkout, where the bare `**/.worktrees/**` had excluded every file of such a server.
+- The Outliner keeps names readable when a row's hint is long (the hint shortens first); the Tags pane counts what is inside a component once (in its definition), not once per copy.
+- The measurements box clears after undo and redo (a tape reading of geometry that is gone no longer lingers); the active tool's gesture ends.
+- No raw ids in the status line: every error is reworded (group, component, definition and mesh refusals too, and any bare public id); the tape's guide message no longer shows a guide id.
+- Face edits (draw, imprint, split, erase) that bring a corner within 0.01 mm of another face of the solid (a loop drawn on a sliver a few micrometres thick) are refused, typed, instead of reaching the validator as a kernel bug. Found by the fuzzer; kept as `tests/repro/2026-10-11-imprint-on-a-five-micron-sliver.json` and `-imprint-near-a-folded-face.json`.
+
+### Changed (lane 5)
+
+- What is directly in the open context is what tools edit: solids inside a closed group are selected, moved and deleted as the group, and push/pull, drawing and erasing inside it need it open. Lane-2 groups behave like this too (the `import_mixed` golden now opens its group before its push/pull; its hash is unchanged).
+- Hidden SketchUp placements come in hidden (the Outliner's eye) instead of on a hidden "Hidden in SketchUp" tag.
+- The Cut list pane says plainly that it is not built yet (and which components will be its parts) instead of showing example rows.
+- The corpus render harness hides the scene-tab row so the canvas keeps the size its references were rendered at.
+
 ### Integration (lanes 4, 6 and 8 merged, 2026-10-11)
 
 - Lanes 4 (transforms), 6 (file import/export) and 8 (render service and credit store) are merged into `main`; every gate passes on the merged tree (cargo test, clippy, fmt, wasm32 check, Vitest, build, golden:wasm, boolean:diff, the 200-file `.skp` corpus, all Playwright specs with `REQUIRE_KERNEL=1 REQUIRE_CORPUS=1`, and the render service's tests).

@@ -625,10 +625,11 @@ export function App() {
     });
   }, [pendingRestore, restore, discardRestore]);
 
-  // Read-only hooks for e2e tests: every solid with its display number, bounds and volume.
+  // Read-only hooks for e2e tests: every solid with its display number, bounds and volume,
+  // and the scene graph (groups, components, the open context).
   useEffect(() => {
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-    w.__sawhorse = { ...(w.__sawhorse ?? {}), solids: () => live.current.scene?.state.solids ?? [] };
+    w.__sawhorse = { ...(w.__sawhorse ?? {}), solids: () => live.current.scene?.state.solids ?? [], graph: () => live.current.scene?.state.graph ?? null };
   }, []);
 
   // ---- tools -----------------------------------------------------------------------------

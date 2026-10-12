@@ -178,8 +178,8 @@ button.chip:hover{border-color:var(--accent)}
 .tree.outline li:hover,.tree.tags li:hover{background:color-mix(in srgb,var(--rail) 70%,transparent)}
 .tree.outline li.sel{background:color-mix(in srgb,var(--accent) 18%,transparent)}
 .tree li.dim .label{opacity:.55}
-.tree li .label{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tree li .k{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree li .label{flex:0 0 auto;max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree li .k{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree li .k.editing{flex:0 0 auto;color:var(--accent);font-weight:500}
 .tree li.open>.label{font-weight:600}
 .tree li .chev{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:0 0 14px;padding:0;border:0;background:none;color:var(--muted)}

@@ -1,6 +1,6 @@
 # ADR-0001: Geometry kernel
 
-- Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations), lane 2 (kernel core), lane 3 (feel) and lane 4 (transforms) implemented, 2026-10-11
+- Status: Accepted, 2026-10-11 (seed decisions); lane 1 (foundations), lane 2 (kernel core), lane 3 (feel), lane 4 (transforms) and lane 5 (groups and components, ADR-0005) implemented, 2026-10-11
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed
 
@@ -102,7 +102,7 @@ Decisions this lane built to (made before it started): copies and arrays are sep
 - ~~Inference and the draw tools' UI~~ (closed in lane 3, above). Strokes crossing a face's edges are `split_face` cuts (lane-2 open question 1: yes).
 - ~~Move / Copy / arrays, Rotate, Scale, Offset, Follow Me~~ (closed in lane 4, above). Follow Me along arcs and curves, and copies as component instances: later lanes (copies stay separate objects until lane 5 decides).
 - Boolean refusals on tilted planes after transforms: about 2.6% of accepted push/pulls and sweeps in the lane-4 fuzzer (lane 3 measured 0.5% before transforms put faces on tilted planes). Plane snapping and the output weld take off about 6%. Most of what is left is a zero-thickness fin: a pushed face's swept side wall lies, up to rounding, in the plane of a tilted outer wall, and the engine resolves the near-coincidence inconsistently. A coplanar-cancel repair (remove overlapping opposite-facing coplanar regions after re-polygonising) is the next step; until then these are typed refusals and nothing changes.
-- Groups and components in the UI (enter / exit, outliner, tags pane): lane 5. The kernel has groups and tags; double-click calls the `enterGroup` hook.
+- ~~Groups and components in the UI (enter / exit, outliner, tags pane)~~: closed in lane 5, see [ADR-0005](0005-groups-components.md). Stickiness is scoped to the editing context as decided above: strokes join only strokes of the same group or component.
 - Booleans on sliver geometry: Manifold's simplification can leave a triangle off its source plane; the kernel relabels it from a neighbour or refuses the op (typed). Differential tests run against npm `manifold-3d` (the C++ engine compiled to WASM); a native `manifold-csg` CI job is still open.
 - Tilted planes: positions are f64, so faces that should be coincident after a push on an off-axis plane can miss by 1e-16 m; the kernel snaps where it can (exact edge splits, prism base = the face's own vertices, push-through reach) and otherwise refuses rather than commit a sliver.
 - The `i_triangle` triangulation fallback, explicit boolean ops between objects in the UI, .shz save/load of the op log: their lanes. (Offsets landed in lane 4; until .shz exists the UI keeps a dev autosave of the op log in IndexedDB.)

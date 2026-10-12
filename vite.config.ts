@@ -1,6 +1,12 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// This checkout's own root (forward slashes), so watch exclusions below match only what is
+// inside it: a dev server started inside a lane worktree (<repo>/.worktrees/<lane>) must
+// still watch its own files.
+const root = fileURLToPath(new URL(".", import.meta.url)).replace(/\\/g, "/").replace(/\/$/, "");
 
 // One front end, two hosts: the plain browser build (zero-install demo) and the
 // Tauri 2 webview. Tauri expects a fixed dev port and no screen clearing.
@@ -15,9 +21,11 @@ export default defineConfig({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 5174 } : undefined,
-    // Other lanes' git worktrees (.worktrees/) and lane-end captures (_captures/) never
-    // trigger a reload.
-    watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/.worktrees/**", "**/_captures/**"] },
+    // Other lanes' git worktrees (this checkout's .worktrees/) and lane-end captures
+    // (_captures/) never trigger a reload. Anchored at this checkout: a bare
+    // "**/.worktrees/**" also matched every file of a server run from inside a worktree, so
+    // edits there were never picked up.
+    watch: { ignored: [`${root}/src-tauri/**`, `${root}/crates/**`, `${root}/.worktrees/**`, "**/_captures/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   // openskp is only imported on the first .skp import (by the kernel worker). Without this,

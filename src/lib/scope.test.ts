@@ -31,11 +31,11 @@ function graph(context: number | null = null): SceneGraph {
     path,
     nodes: [node(1, "group", null, "Carcass"), node(2, "instance", 1, "Side", 1), node(3, "instance", 1, "Side", 1), node(4, "instance", null, "Shelf", 2), node(5, "instance", null, "Shelf", 2)],
     objects: [
-      { id: 10, parent: 2, hidden: false, locked: false, visible: true },
-      { id: 11, parent: 3, hidden: false, locked: false, visible: true },
-      { id: 12, parent: 4, hidden: false, locked: false, visible: true },
-      { id: 13, parent: 5, hidden: false, locked: false, visible: true },
-      { id: 14, parent: null, hidden: false, locked: true, visible: true },
+      { id: 10, parent: 2, hidden: false, locked: false, visible: true, in_component: true },
+      { id: 11, parent: 3, hidden: false, locked: false, visible: true, in_component: true },
+      { id: 12, parent: 4, hidden: false, locked: false, visible: true, in_component: true },
+      { id: 13, parent: 5, hidden: false, locked: false, visible: true, in_component: true },
+      { id: 14, parent: null, hidden: false, locked: true, visible: true, in_component: false },
     ],
     meshes: [],
     sketches: [
