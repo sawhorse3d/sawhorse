@@ -612,6 +612,132 @@ fn rounding_follows_the_choice_and_is_deterministic() {
     assert_eq!(list(again.model()).hash, a.hash);
 }
 
+const ROUNDINGS: [Rounding; 3] = [
+    Rounding::Sixteenth,
+    Rounding::ThirtySecond,
+    Rounding::HalfMm,
+];
+
+/// What must not depend on the rounding: per row (name, qty, sheet, board feet, area) and
+/// the totals (board feet, sheet count, per-stock sheets).
+type Classified = (
+    Vec<(String, usize, bool, f64, f64)>,
+    f64,
+    u32,
+    Vec<(Option<String>, f64, u32, bool)>,
+);
+
+fn classified(l: &CutList) -> Classified {
+    (
+        l.rows
+            .iter()
+            .map(|r| (r.name.clone(), r.qty, r.sheet, r.board_feet, r.area_m2))
+            .collect(),
+        l.totals.board_feet,
+        l.totals.sheet_count,
+        l.totals
+            .sheets
+            .iter()
+            .map(|s| (s.material.clone(), s.area_m2, s.sheets, s.oversize))
+            .collect(),
+    )
+}
+
+/// Rounding is display only (the lane-7 verifier's first finding): sheet goods, board feet,
+/// areas and sheet counts come from the exact sizes, so every rounding (and so every unit
+/// system: fractional, decimal and ft-in inches use 1/16 in or 1/32 in, metric 0.5 mm)
+/// gives the bookshelf's 18.994140625 board feet and one sheet.
+#[test]
+fn every_rounding_classifies_and_totals_the_same() {
+    let (d, ..) = bookshelf();
+    let lists: Vec<CutList> = ROUNDINGS
+        .iter()
+        .map(|&rounding| {
+            d.model().cut_list(&CutOptions {
+                rounding,
+                visible_only: false,
+            })
+        })
+        .collect();
+    for l in &lists {
+        assert_eq!(l.totals.board_feet, 18.994140625, "{:?}", l.rounding);
+        assert_eq!(l.totals.sheet_count, 1, "{:?}", l.rounding);
+        assert!(row(l, "Back panel").sheet, "{:?}", l.rounding);
+        assert_eq!(
+            l.rows.iter().filter(|r| r.sheet).count(),
+            1,
+            "{:?}",
+            l.rounding
+        );
+        assert_eq!(classified(l), classified(&lists[0]), "{:?}", l.rounding);
+    }
+    // The displayed thickness of the sheet follows the rounding; the group does not.
+    let steps: Vec<i64> = lists.iter().map(|l| l.totals.sheets[0].steps).collect();
+    assert_eq!(steps, [4, 8, 13], "1/4 in = 4/16 = 8/32 = 6.5 mm");
+}
+
+/// Parts at the edge of 1/4 in: a panel 0.26 in thick rounds to 1/4 in at 1/16 in and to
+/// 6.5 mm at 0.5 mm, but it is thicker than 1/4 in, so it is lumber at every rounding; a
+/// 6.35 mm panel drawn in millimetres is 1/4 in, so it is sheet goods at every rounding;
+/// and two sheet stocks 6.3 mm and 6.1 mm thick (both 6 mm or 6.5 mm, or 1/4 in, once
+/// rounded) stay two groups, so the sheet count never changes.
+#[test]
+fn the_quarter_inch_line_uses_the_exact_thickness() {
+    let mut d = Document::with_ground_sketch();
+    ok(
+        &mut d,
+        Op::DefineMaterial {
+            name: "Ply".into(),
+            color: [220, 200, 160, 255],
+            texture: None,
+        },
+    );
+    part(&mut d, "Thick", None, [0.0, 0.0, 0.0, 30.0, 20.0, 0.26]);
+    part(
+        &mut d,
+        "Quarter",
+        None,
+        [40.0, 0.0, 0.0, 30.0, 20.0, 6.35 / 25.4],
+    );
+    part(
+        &mut d,
+        "Ply A",
+        Some("Ply"),
+        [80.0, 0.0, 0.0, 47.0, 95.0, 6.3 / 25.4],
+    );
+    part(
+        &mut d,
+        "Ply B",
+        Some("Ply"),
+        [140.0, 0.0, 0.0, 47.0, 95.0, 6.1 / 25.4],
+    );
+    let lists: Vec<CutList> = ROUNDINGS
+        .iter()
+        .map(|&rounding| {
+            d.model().cut_list(&CutOptions {
+                rounding,
+                visible_only: false,
+            })
+        })
+        .collect();
+    assert_eq!(row(&lists[0], "Thick").steps[0], 4, "0.26 in shows as 1/4");
+    for l in &lists {
+        assert!(!row(l, "Thick").sheet, "{:?}", l.rounding);
+        assert!(row(l, "Quarter").sheet, "{:?}", l.rounding);
+        assert_eq!(
+            row(l, "Thick").board_feet,
+            lists[0].rows[0].board_feet,
+            "{:?}",
+            l.rounding
+        );
+        assert_eq!(l.totals.sheets.len(), 3, "{:?}", l.rounding);
+        assert_eq!(classified(l), classified(&lists[0]), "{:?}", l.rounding);
+    }
+    // 0.26 x 20 x 30 in = 156 in^3 = 13/12 board feet (0.26 is not a binary fraction, so
+    // within the 24 nm noise grid).
+    assert!((row(&lists[0], "Thick").board_feet - 156.0 / 144.0).abs() < 1e-5);
+}
+
 #[test]
 fn part_attributes_survive_the_snapshot() {
     let (mut d, side, shelves, top, _) = bookshelf();

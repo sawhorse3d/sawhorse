@@ -210,6 +210,17 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   await expect(page.getByTestId("tile-sheets")).toHaveText("1sheet 4×8, 1/4");
   const kernel = await page.evaluate(async () => (await (window as unknown as { __sawhorse: { cutList(): Promise<{ totals: { board_feet: number } }> } }).__sawhorse.cutList()).totals.board_feet);
   expect(kernel).toBe(2735.15625 / 144);
+  // Rounding is display only: every rounding (so every unit system) gives the same totals.
+  const totals = await page.evaluate(async () => {
+    const api = (window as unknown as { __sawhorse: { cutList(o: { rounding: string }): Promise<{ totals: { board_feet: number; sheet_count: number }; rows: { name: string; sheet: boolean }[] }> } }).__sawhorse;
+    const out: [number, number, string[]][] = [];
+    for (const rounding of ["sixteenth", "thirty_second", "half_mm"]) {
+      const l = await api.cutList({ rounding });
+      out.push([l.totals.board_feet, l.totals.sheet_count, l.rows.filter((r) => r.sheet).map((r) => r.name)]);
+    }
+    return out;
+  });
+  expect(totals).toEqual([0, 1, 2].map(() => [18.994140625, 1, ["Back panel"]]));
 
   // Stock from the right-click menu: the carcass and shelves are white oak, the back ply.
   for (const name of ["Side", "Top", "Toe kick", "Shelf"]) {

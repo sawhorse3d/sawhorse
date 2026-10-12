@@ -27,12 +27,14 @@
 //! the 2D convex hull across it): the blank it comes out of. Only `+ - * /` and `sqrt` are
 //! used, so native and WASM agree bit for bit.
 //!
-//! **Lumber terms.** Sizes are finished sizes, rounded to the nearest 1/16 in (or 1/32 in,
-//! or 0.5 mm). Grain runs along the length unless a part says otherwise
+//! **Lumber terms.** Sizes are finished sizes, shown rounded to the nearest 1/16 in (or
+//! 1/32 in, or 0.5 mm). Rounding is for display only: whether a part is sheet goods, its
+//! board feet, its area and the sheet count all come from the exact sizes, so changing the
+//! rounding (or the units, which only pick a rounding) never changes a total. Grain runs along the length unless a part says otherwise
 //! ([`crate::model::Op::SetGrain`]). Material is the part's own (its first solid's) unless
 //! the part names its stock ([`crate::model::Op::SetStock`]). A part is sheet goods when it
-//! says so, when its material reads like sheet stock (ply, MDF, ...), or when it is 1/4 in
-//! thick or less; everything else is solid lumber in board feet (T x W x L / 144, inches).
+//! says so, when its material reads like sheet stock (ply, MDF, ...), or when its exact
+//! thickness is 1/4 in or less (within [`SHEET_EPSILON`]); everything else is solid lumber in board feet (T x W x L / 144, inches).
 //! Sheet goods report their area and a rough count of 4 x 8 ft sheets (true nesting, kerf
 //! and edge banding are later work).
 //!
@@ -56,6 +58,15 @@ pub const M_PER_IN: f64 = 0.0254;
 pub const SHEET_SIZE: [f64; 2] = [48.0 * M_PER_IN, 96.0 * M_PER_IN];
 /// Parts this thin or thinner are sheet goods (1/4 in), whatever their material.
 pub const SHEET_MAX_THICKNESS: f64 = 0.25 * M_PER_IN;
+/// Slack on [`SHEET_MAX_THICKNESS`] (metres, one micrometre): a 1/4 in panel drawn in
+/// millimetres (6.35 mm) is still 1/4 in. Compared with the exact thickness, never the
+/// rounded one, so the rounding cannot move a part between lumber and sheet goods.
+pub const SHEET_EPSILON: f64 = 1e-6;
+/// Grid (per inch) the exact sizes are snapped to before board feet and areas: 2^20 per
+/// inch, about 24 nm, far below the kernel's tolerance. It only drops floating-point
+/// noise, so a board drawn 3/4 in thick counts as exactly 3/4 in (and the bookshelf as
+/// exactly 2,735.15625 in^3); it is not a rounding anyone sees.
+const NOISE_PER_IN: f64 = 1_048_576.0;
 /// Material names that read as sheet stock (lower case, matched anywhere in the name).
 pub const SHEET_WORDS: [&str; 10] = [
     "ply",
@@ -291,9 +302,10 @@ pub struct CutRow {
     pub sheet: bool,
     /// Sheet or lumber was said explicitly.
     pub sheet_set: bool,
-    /// Board feet for the counted pieces (0 for sheet goods), from the rounded sizes.
+    /// Board feet for the counted pieces (0 for sheet goods), from the exact sizes (the
+    /// rounding is display only).
     pub board_feet: f64,
-    /// Area of the counted pieces (sheet goods; 0 for lumber), m², from the rounded sizes.
+    /// Area of the counted pieces (sheet goods; 0 for lumber), m², from the exact sizes.
     pub area_m2: f64,
     /// Every piece, counted or not.
     pub occurrences: Vec<Occurrence>,
@@ -310,7 +322,8 @@ pub struct LumberTotal {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SheetTotal {
     pub material: Option<String>,
-    /// Thickness, metres (rounded), and in rounding steps.
+    /// Thickness, metres (rounded for display), and in rounding steps. Sheets are grouped by
+    /// their exact thickness, so the rounding never merges or splits a group.
     pub thickness: f64,
     pub steps: i64,
     pub area_m2: f64,
@@ -732,6 +745,16 @@ fn qbits(x: f64) -> i64 {
     (x / 1e-7).round() as i64
 }
 
+/// Exact metres as inches, snapped to [`NOISE_PER_IN`] (floating-point noise only).
+fn exact_inches(x: f64) -> f64 {
+    (x / M_PER_IN * NOISE_PER_IN).round() / NOISE_PER_IN
+}
+
+/// Sheet goods by thickness alone: the exact thickness, 1/4 in or less.
+pub fn thin_enough_for_sheet(thickness: f64) -> bool {
+    thickness <= SHEET_MAX_THICKNESS + SHEET_EPSILON
+}
+
 impl Model {
     /// Set what is said about a part ([`crate::model::Op::SetGrain`],
     /// [`crate::model::Op::SetStock`]). A component instance stands for its definition;
@@ -1071,7 +1094,6 @@ impl Model {
             *sizes_per_key.entry(*k).or_default() += 1;
         }
         let r = opts.rounding;
-        let per_in = r.per_inch();
         let mut rows = Vec::new();
         for k in &order {
             let idx = &groups[k];
@@ -1087,21 +1109,21 @@ impl Model {
             let stock = attrs.stock.clone().filter(|s| !s.trim().is_empty());
             let stock_set = stock.is_some();
             let material = stock.or(material);
+            // Classification, board feet and area from the exact sizes: the rounding (and
+            // the units, which pick it) is display only and never changes a total.
             let sheet = attrs.sheet.unwrap_or_else(|| {
-                material.as_deref().is_some_and(is_sheet_word)
-                    || rounded[0] <= SHEET_MAX_THICKNESS + 1e-12
+                material.as_deref().is_some_and(is_sheet_word) || thin_enough_for_sheet(size[0])
             });
+            let inches = size.map(exact_inches);
             let board_feet = if sheet {
                 0.0
             } else {
-                // In f64: a 10 km solid has steps whose product overflows an i64 (found by
-                // the fuzzer). Up to 2^53 the product is still exact.
-                (steps[0] as f64 * steps[1] as f64 * steps[2] as f64)
-                    / (per_in * per_in * per_in * 144.0)
-                    * qty as f64
+                // In f64 (a 10 km solid once overflowed an i64 step product; found by the
+                // fuzzer).
+                inches[0] * inches[1] * inches[2] / 144.0 * qty as f64
             };
             let area_m2 = if sheet {
-                rounded[1] * rounded[2] * qty as f64
+                inches[1] * inches[2] * (M_PER_IN * M_PER_IN) * qty as f64
             } else {
                 0.0
             };
@@ -1163,15 +1185,17 @@ impl Model {
 
 fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
     let mut lumber: BTreeMap<Option<String>, f64> = BTreeMap::new();
-    let mut sheets: BTreeMap<(Option<String>, i64), (f64, bool)> = BTreeMap::new();
+    // Grouped by material and exact thickness (0.1 um), never by the rounded thickness: a
+    // coarser rounding must not merge two stocks (and so change the sheet count).
+    let mut sheets: BTreeMap<(Option<String>, i64), (f64, bool, i64)> = BTreeMap::new();
     for row in rows {
         if row.sheet {
             let e = sheets
-                .entry((row.material.clone(), row.steps[0]))
-                .or_insert((0.0, false));
+                .entry((row.material.clone(), qbits(row.size[0])))
+                .or_insert((0.0, false, row.steps[0]));
             e.0 += row.area_m2;
-            let over =
-                row.rounded[1] > SHEET_SIZE[0] + 1e-9 || row.rounded[2] > SHEET_SIZE[1] + 1e-9;
+            let over = row.size[1] > SHEET_SIZE[0] + SHEET_EPSILON
+                || row.size[2] > SHEET_SIZE[1] + SHEET_EPSILON;
             e.1 |= over && row.qty > 0;
         } else {
             *lumber.entry(row.material.clone()).or_default() += row.board_feet;
@@ -1180,7 +1204,7 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
     let sheet_area = SHEET_SIZE[0] * SHEET_SIZE[1];
     let sheets: Vec<SheetTotal> = sheets
         .into_iter()
-        .map(|((material, steps), (area, oversize))| SheetTotal {
+        .map(|((material, _), (area, oversize, steps))| SheetTotal {
             material,
             thickness: steps as f64 * r.step(),
             steps,
