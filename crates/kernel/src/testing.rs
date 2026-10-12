@@ -11,6 +11,8 @@
 //!   definition, each solid its definition's solid under the instance's placement;
 //! - (lane 7) the cut list works out without panicking and agrees with a brute-force
 //!   count of the world ([`check_cut_list`]);
+//! - (lane 9) the nesting works out with both algorithms, deterministically, and keeps
+//!   every layout invariant ([`check_nesting`]);
 //!
 //! and finally that replaying the same sequence again gives the same hash (determinism).
 //! Failing sequences are written as JSON by [`write_repro`] and replayed forever after by
@@ -64,7 +66,247 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {
         return Err("render mesh index/face-id mismatch".into());
     }
-    check_cut_list(m)
+    check_cut_list(m)?;
+    check_nesting(m)
+}
+
+/// The nesting (lane 9) of any committed model: with both algorithms, everything and the
+/// drawn pieces only, it never panics, it is deterministic, and it keeps every invariant
+/// of [`check_nesting_of`].
+pub fn check_nesting(m: &Model) -> Result<(), String> {
+    use crate::cutlist::CutOptions;
+    use crate::nesting::NestOptions;
+    use crate::stock::NestAlgorithm;
+    let runs = [
+        (false, Some(NestAlgorithm::Guillotine)),
+        (false, Some(NestAlgorithm::Maxrects)),
+        (true, None),
+    ];
+    for (visible_only, algorithm) in runs {
+        let opts = NestOptions {
+            visible_only,
+            algorithm,
+        };
+        let n = catch_unwind(AssertUnwindSafe(|| m.nest(&opts)))
+            .map_err(|p| format!("nesting panicked: {}", panic_message(p)))?;
+        if m.nest(&opts).hash != n.hash {
+            return Err("nesting: not deterministic".into());
+        }
+        let list = m.cut_list(&CutOptions {
+            visible_only,
+            ..CutOptions::default()
+        });
+        check_nesting_of(&list, &n).map_err(|e| format!("nesting ({opts:?}): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Every invariant of a nesting of `list`: each counted piece is placed or reported exactly
+/// once (pieces in = placed + unplaced), as its own item; a placement is the part's width
+/// and length, turned only when the grain allows, inside the usable area of its stock, of
+/// a thickness the stock covers; no two placements overlap and every two are a kerf apart;
+/// no cut crosses a part; areas, efficiency and totals add up; a guillotine or board layout
+/// comes apart in straight cuts; a part reported too large or grain-bound really is.
+pub fn check_nesting_of(
+    list: &crate::cutlist::CutList,
+    n: &crate::nesting::Nesting,
+) -> Result<(), String> {
+    use crate::cutlist::Grain;
+    use crate::nesting::{CutDir, EPS, UnplacedReason, effective_trim};
+    use crate::stock::{
+        NestAlgorithm, SHEET_THICKNESS_SLACK, STOCK_EPSILON, StockGrain, StockKind,
+    };
+    use std::collections::BTreeSet;
+    let counted = |row: &crate::cutlist::CutRow| -> Vec<crate::nodes::Item> {
+        row.occurrences
+            .iter()
+            .filter(|o| !list.visible_only || o.visible)
+            .map(|o| o.item)
+            .collect()
+    };
+    let mut want = BTreeSet::new();
+    for (ri, row) in list.rows.iter().enumerate() {
+        for c in 1..=counted(row).len() {
+            want.insert((ri, c));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let kerf = n.settings.kerf;
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    let mut placed = 0;
+    for (pi, p) in n.pieces.iter().enumerate() {
+        let bad = |what: String| Err(format!("piece {} ({}): {what}", p.index, p.stock));
+        if p.index != pi + 1 || p.placements.is_empty() {
+            return bad("numbered wrong or empty".into());
+        }
+        if !(p.kerf == kerf && p.trim == effective_trim(n.settings.trim, kerf)) {
+            return bad("kerf or trim is not the settings'".into());
+        }
+        let [x0, y0, x1, y1] = p.usable;
+        for (k, q) in p.placements.iter().enumerate() {
+            let row = list
+                .rows
+                .get(q.row)
+                .ok_or_else(|| format!("piece {}: no row {}", p.index, q.row))?;
+            if !seen.insert((q.row, q.copy)) {
+                return bad(format!("{} placed twice", q.tag));
+            }
+            if counted(row).get(q.copy.wrapping_sub(1)) != Some(&q.item) {
+                return bad(format!("{} is not its row's piece", q.tag));
+            }
+            let (w, l) = (row.size[1], row.size[2]);
+            let dims_ok = if q.turned {
+                q.dx == w && q.dy == l
+            } else {
+                q.dx == l && q.dy == w
+            };
+            if !dims_ok || !(q.x.is_finite() && q.y.is_finite()) {
+                return bad(format!("{} is not its part's width and length", q.tag));
+            }
+            let along_grain = p.grain == StockGrain::Length && row.grain != Grain::None && w != l;
+            if along_grain && q.turned != (row.grain == Grain::Width) {
+                return bad(format!("{}'s grain is across the stock's", q.tag));
+            }
+            if q.x < x0 - EPS || q.y < y0 - EPS || q.x + q.dx > x1 + EPS || q.y + q.dy > y1 + EPS {
+                return bad(format!("{} is outside the usable area", q.tag));
+            }
+            let t = row.size[0];
+            let thick_ok = match p.kind {
+                StockKind::Sheet => {
+                    (p.thickness - t).abs() <= SHEET_THICKNESS_SLACK + STOCK_EPSILON
+                }
+                StockKind::Board => p.thickness >= t - STOCK_EPSILON,
+            };
+            if !thick_ok {
+                return bad(format!("{} is not this stock's thickness", q.tag));
+            }
+            for r in &p.placements[k + 1..] {
+                let apart = q.x + q.dx + kerf <= r.x + EPS
+                    || r.x + r.dx + kerf <= q.x + EPS
+                    || q.y + q.dy + kerf <= r.y + EPS
+                    || r.y + r.dy + kerf <= q.y + EPS;
+                if !apart {
+                    return bad(format!(
+                        "{} and {} overlap or are closer than the kerf",
+                        q.tag, r.tag
+                    ));
+                }
+            }
+        }
+        // No cut crosses a part.
+        for c in &p.cuts {
+            if c.n == 0 || !(c.at.is_finite() && c.from <= c.to + EPS) {
+                return bad(format!("cut {} is malformed", c.n));
+            }
+            for q in &p.placements {
+                let (span_lo, span_hi, lo, hi) = match c.dir {
+                    CutDir::Rip => (q.x, q.x + q.dx, q.y, q.y + q.dy),
+                    CutDir::Crosscut => (q.y, q.y + q.dy, q.x, q.x + q.dx),
+                };
+                let on_line = span_hi > c.from + EPS && span_lo < c.to - EPS;
+                let crosses = hi > c.at + EPS && lo < c.at + kerf - EPS;
+                if on_line && crosses {
+                    return bad(format!("cut {} crosses {}", c.n, q.tag));
+                }
+            }
+        }
+        if p.cuts
+            .iter()
+            .enumerate()
+            .any(|(k, c)| c.n as usize != k + 1)
+        {
+            return bad("cuts are not numbered in order".into());
+        }
+        let area: f64 = p.placements.iter().map(|q| q.dx * q.dy).sum();
+        if !close(area, p.parts_area)
+            || !close(p.stock_area, p.length * p.width)
+            || !close(p.waste_area, p.stock_area - p.parts_area)
+            || !close(p.efficiency, p.parts_area / p.stock_area)
+            || p.efficiency > 1.0 + 1e-9
+        {
+            return bad("areas or efficiency do not add up".into());
+        }
+        if !p.guillotine && (n.algorithm == NestAlgorithm::Guillotine || p.kind == StockKind::Board)
+        {
+            return bad("a guillotine or board layout does not come apart in straight cuts".into());
+        }
+        placed += p.placements.len();
+    }
+    for u in &n.unplaced {
+        let row = list
+            .rows
+            .get(u.row)
+            .ok_or_else(|| format!("unplaced: no row {}", u.row))?;
+        if !seen.insert((u.row, u.copy)) {
+            return Err(format!(
+                "{} is placed and reported, or reported twice",
+                u.tag
+            ));
+        }
+        if counted(row).get(u.copy.wrapping_sub(1)) != Some(&u.item) {
+            return Err(format!("unplaced {} is not its row's piece", u.tag));
+        }
+        if let (Some(name), UnplacedReason::TooLarge | UnplacedReason::Grain) = (&u.stock, u.reason)
+        {
+            let s = n
+                .library
+                .find(name)
+                .ok_or_else(|| format!("unplaced {} names a missing stock", u.tag))?
+                .1;
+            let trim = effective_trim(n.settings.trim, kerf);
+            let (uw, uh) = match s.kind {
+                StockKind::Sheet => (s.length - 2.0 * trim, s.width - 2.0 * trim),
+                StockKind::Board => (s.length - 2.0 * trim, s.width),
+            };
+            let holds = |dx: f64, dy: f64| dx <= uw + EPS && dy <= uh + EPS;
+            let (w, l) = (row.size[1], row.size[2]);
+            let free = s.grain == StockGrain::None || row.grain == Grain::None;
+            let fits_allowed = if free {
+                holds(l, w) || holds(w, l)
+            } else if row.grain == Grain::Width {
+                holds(w, l)
+            } else {
+                holds(l, w)
+            };
+            let fits_any = holds(l, w) || holds(w, l);
+            let ok = match u.reason {
+                UnplacedReason::TooLarge => !fits_any,
+                _ => fits_any && !fits_allowed,
+            };
+            if !ok {
+                return Err(format!("{} reported {:?} but it is not", u.tag, u.reason));
+            }
+        }
+    }
+    if seen != want {
+        return Err(format!(
+            "pieces in {} but placed or reported {}",
+            want.len(),
+            seen.len()
+        ));
+    }
+    let t = &n.totals;
+    let sheets = n
+        .pieces
+        .iter()
+        .filter(|p| p.kind == StockKind::Sheet)
+        .count();
+    let boards = n.pieces.len() - sheets;
+    if t.parts_in != want.len()
+        || t.placed != placed
+        || t.unplaced != n.unplaced.len()
+        || t.parts_in != t.placed + t.unplaced
+        || t.sheets != sheets
+        || t.boards != boards
+        || t.groups.iter().map(|g| g.count).sum::<usize>() != n.pieces.len()
+        || t.groups.iter().map(|g| g.parts).sum::<usize>() != placed
+        || !close(t.parts_area, n.pieces.iter().map(|p| p.parts_area).sum())
+        || !close(t.stock_area, n.pieces.iter().map(|p| p.stock_area).sum())
+        || t.efficiency > 1.0 + 1e-9
+    {
+        return Err("totals do not add up".into());
+    }
+    Ok(())
 }
 
 /// The placement determinant of the innermost component instance around node `n` (or `n`

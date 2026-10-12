@@ -270,6 +270,23 @@ pub enum StructureError {
     BadStructure(String),
 }
 
+/// Errors from the stock library and the nesting settings (lane 9). Nothing changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum StockError {
+    #[error("a stock or material name must be 1 to 64 characters")]
+    BadName,
+    #[error("that stock cannot be used: {0}")]
+    BadStock(&'static str),
+    #[error("a stock named {0:?} already exists")]
+    Exists(String),
+    #[error("no stock named {0:?}")]
+    NoSuchStock(String),
+    #[error("a library holds at most 200 stocks")]
+    TooMany,
+    #[error("{0}")]
+    BadSettings(&'static str),
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
@@ -290,6 +307,8 @@ pub enum KernelError {
     Boolean(#[from] BooleanError),
     #[error(transparent)]
     Structure(#[from] StructureError),
+    #[error(transparent)]
+    Stock(#[from] StockError),
     #[error(transparent)]
     Tessellate(#[from] TessellateError),
     /// The validator rejected the result of an operation. Always a kernel bug: the

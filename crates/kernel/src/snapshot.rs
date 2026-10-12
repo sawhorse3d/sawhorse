@@ -351,6 +351,9 @@ pub struct Snapshot {
     /// a reopen. Optional (0 = derive it from the objects' numbers).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub last_number: u64,
+    /// The stock library and nesting settings (lane 9); absent: the built-in library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stock: Option<crate::stock::StockLibrary>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -570,6 +573,7 @@ impl Model {
                 })
                 .collect(),
             last_number: self.last_number,
+            stock: self.stock.clone(),
         }
     }
 
@@ -670,6 +674,14 @@ impl Model {
         for (t, c) in &s.tag_colors {
             let c = parse_hex(c).ok_or_else(|| bad(format!("tag {t:?}: colour {c:?}")))?;
             m.tag_colors.insert(t.clone(), c);
+        }
+        if let Some(lib) = &s.stock {
+            lib.check()
+                .map_err(|e| bad(format!("stock library: {e}")))?;
+            // The built-in library is stored as nothing, so the reopened model hashes the same.
+            if *lib != crate::stock::StockLibrary::builtin() {
+                m.stock = Some(lib.clone());
+            }
         }
         // Definitions: keys first (members refer to each other by index), then members.
         let def_ids: Vec<DefId> = s

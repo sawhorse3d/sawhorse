@@ -1,0 +1,458 @@
+{
+  "name": "nesting",
+  "description": "Lane 9: the bookshelf with a 3/4 birch ply carcass defaulted to a new 5 x 10 Baltic birch stock and a 1/4 ply back, kerf 3/32 in, trim 1/4 in, maxrects. Its nesting hash proves WASM lays out the same sheets as native.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "define_material",
+      "name": "Oak",
+      "color": [
+        196,
+        160,
+        110,
+        255
+      ],
+      "texture": null
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.0,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ],
+        [
+          0.0,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.80975
+    },
+    {
+      "op": "set_material",
+      "object": 1,
+      "material": "Oak"
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Side"
+    },
+    {
+      "op": "copy",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.89535,
+          0.0,
+          0.0
+        ]
+      },
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.08889999999999999
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.0,
+          0.08889999999999999
+        ],
+        [
+          0.89535,
+          0.0,
+          0.08889999999999999
+        ],
+        [
+          0.89535,
+          0.2794,
+          0.08889999999999999
+        ],
+        [
+          0.019049999999999997,
+          0.2794,
+          0.08889999999999999
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 2,
+      "region": 1,
+      "distance": 0.019049999999999997
+    },
+    {
+      "op": "set_material",
+      "object": 3,
+      "material": "Oak"
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 3
+        }
+      ],
+      "name": "Shelf"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.4572
+        ]
+      },
+      "count": 3,
+      "nodes": [
+        3
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          1.80975
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          1.80975
+        ],
+        [
+          0.9144,
+          0.0,
+          1.80975
+        ],
+        [
+          0.9144,
+          0.28575,
+          1.80975
+        ],
+        [
+          0.0,
+          0.28575,
+          1.80975
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 3,
+      "region": 1,
+      "distance": 0.019049999999999997
+    },
+    {
+      "op": "set_material",
+      "object": 7,
+      "material": "Oak"
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 7
+        }
+      ],
+      "name": "Top"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.0508,
+          0.0
+        ],
+        [
+          0.89535,
+          0.0508,
+          0.0
+        ],
+        [
+          0.89535,
+          0.06985,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.06985,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 4294967297,
+      "distance": 0.08889999999999999
+    },
+    {
+      "op": "set_material",
+      "object": 8,
+      "material": "Oak"
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 8
+        }
+      ],
+      "name": "Toe kick"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.019049999999999997,
+          0.2794,
+          0.0
+        ],
+        [
+          0.89535,
+          0.2794,
+          0.0
+        ],
+        [
+          0.89535,
+          0.28575,
+          0.0
+        ],
+        [
+          0.019049999999999997,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 8589934593,
+      "distance": 1.80975
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 9
+        }
+      ],
+      "name": "Back panel"
+    },
+    {
+      "op": "set_stock",
+      "part": {
+        "definition": 1
+      },
+      "stock": "3/4 birch ply",
+      "sheet": null
+    },
+    {
+      "op": "set_stock",
+      "part": {
+        "definition": 2
+      },
+      "stock": "3/4 birch ply",
+      "sheet": null
+    },
+    {
+      "op": "set_stock",
+      "part": {
+        "definition": 3
+      },
+      "stock": "3/4 birch ply",
+      "sheet": null
+    },
+    {
+      "op": "set_stock",
+      "part": {
+        "definition": 4
+      },
+      "stock": "3/4 birch ply",
+      "sheet": null
+    },
+    {
+      "op": "set_stock",
+      "part": {
+        "definition": 5
+      },
+      "stock": "1/4 birch ply",
+      "sheet": null
+    },
+    {
+      "op": "define_stock",
+      "stock": {
+        "name": "5 x 10 Baltic birch, 3/4",
+        "kind": "sheet",
+        "length": 3.048,
+        "width": 1.524,
+        "thickness": 0.019049999999999997,
+        "grain": "length"
+      }
+    },
+    {
+      "op": "set_material_stock",
+      "material": "3/4 birch ply",
+      "stock": "5 x 10 Baltic birch, 3/4"
+    },
+    {
+      "op": "set_nest_settings",
+      "settings": {
+        "kerf": 0.0023812499999999997,
+        "trim": 0.00635,
+        "algorithm": "maxrects"
+      }
+    }
+  ],
+  "hash": "3d9d01ac22a50165",
+  "stats": {
+    "objects": 9,
+    "faces": 54,
+    "edges": 108,
+    "vertices": 72,
+    "genus": 0,
+    "watertight": true
+  },
+  "cut_list": "4e7162fa2451cc22",
+  "nesting": "f29efb9e577bad48"
+}

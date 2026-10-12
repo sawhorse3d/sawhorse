@@ -27,6 +27,7 @@ pub mod intersect;
 pub mod mesh;
 pub mod meshbuild;
 pub mod model;
+pub mod nesting;
 pub mod nodes;
 pub mod object;
 pub mod offset;
@@ -36,6 +37,7 @@ pub mod sever;
 pub mod sketch;
 pub mod snap;
 pub mod snapshot;
+pub mod stock;
 pub mod sweep;
 #[doc(hidden)]
 pub mod testing;
@@ -46,7 +48,7 @@ pub mod validate;
 pub use document::Document;
 pub use error::{
     BuildError, DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError,
-    StructureError, SweepError, TransformError,
+    StockError, StructureError, SweepError, TransformError,
 };
 pub use glam::{DVec2, DVec3};
 pub use model::{Model, ModelStats, Op, OpOutcome};

@@ -401,6 +401,30 @@ pub enum Op {
         #[serde(default)]
         sheet: Option<bool>,
     },
+    /// Nesting (lane 9): add a stock to the document's library, or replace the stock named
+    /// `replace` with it (a rename carries the per-material defaults along).
+    DefineStock {
+        stock: crate::stock::StockDef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace: Option<String>,
+    },
+    /// Nesting: remove a stock from the library (materials that defaulted to it go back to
+    /// the automatic choice).
+    DeleteStock {
+        name: String,
+    },
+    /// Nesting: which stock a material's parts come from (`None`: chosen automatically).
+    SetMaterialStock {
+        material: String,
+        #[serde(default)]
+        stock: Option<String>,
+    },
+    /// Nesting: the saw's kerf, the trim per edge and the algorithm.
+    SetNestSettings {
+        settings: crate::stock::NestSettings,
+    },
+    /// Nesting: back to the built-in stock library and settings.
+    ResetStockLibrary,
     /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
     /// edit; refused (typed) when the snapshot does not validate.
     Restore {
@@ -639,6 +663,8 @@ pub enum OpOutcome {
     MeshDeleted,
     /// A part's grain or stock was set (cut list).
     PartSet,
+    /// The stock library or the nesting settings changed.
+    StockSet,
     /// A saved model was restored.
     Restored {
         objects: usize,
@@ -681,6 +707,8 @@ pub struct Model {
     pub(crate) scenes: Vec<SceneDef>,
     /// Last display number handed to an object (see [`Object::number`]).
     pub(crate) last_number: u64,
+    /// The stock library and nesting settings (lane 9); `None`: the built-in library.
+    pub(crate) stock: Option<crate::stock::StockLibrary>,
 }
 
 /// A material: sRGB colour with alpha, and a texture file name kept as a reference.
@@ -909,6 +937,32 @@ impl Model {
     /// Saved views, in order.
     pub fn scenes(&self) -> &[SceneDef] {
         &self.scenes
+    }
+
+    /// The stock library and nesting settings (the built-in ones until someone edits them).
+    pub fn stock_library(&self) -> std::borrow::Cow<'_, crate::stock::StockLibrary> {
+        match &self.stock {
+            Some(l) => std::borrow::Cow::Borrowed(l),
+            None => std::borrow::Cow::Owned(crate::stock::StockLibrary::builtin()),
+        }
+    }
+
+    /// The library as stored: `None` when it is the built-in one.
+    pub fn stored_stock_library(&self) -> Option<&crate::stock::StockLibrary> {
+        self.stock.as_ref()
+    }
+
+    /// Edit the library; a library edited back to the built-in one is stored as `None`.
+    fn edit_stock(
+        &mut self,
+        f: impl FnOnce(&mut crate::stock::StockLibrary) -> Result<(), crate::error::StockError>,
+    ) -> Result<OpOutcome, KernelError> {
+        let builtin = crate::stock::StockLibrary::builtin();
+        let mut lib = self.stock.clone().unwrap_or_else(|| builtin.clone());
+        f(&mut lib)?;
+        lib.check()?;
+        self.stock = (lib != builtin).then_some(lib);
+        Ok(OpOutcome::StockSet)
     }
 
     /// Public ids of the sketches, in creation order.
@@ -1464,6 +1518,22 @@ impl Model {
                     a.stock = stock;
                     a.sheet = sheet;
                 })
+            }
+            Op::DefineStock { stock, replace } => {
+                self.edit_stock(|l| l.define(stock, replace.as_deref()))
+            }
+            Op::DeleteStock { name } => self.edit_stock(|l| l.delete(name)),
+            Op::SetMaterialStock { material, stock } => {
+                self.edit_stock(|l| l.set_default(material, stock.as_deref()))
+            }
+            Op::SetNestSettings { settings } => self.edit_stock(|l| {
+                settings.check()?;
+                l.settings = *settings;
+                Ok(())
+            }),
+            Op::ResetStockLibrary => {
+                self.stock = None;
+                Ok(OpOutcome::StockSet)
             }
             Op::Restore { snapshot } => {
                 *self = Model::from_snapshot(snapshot)?;

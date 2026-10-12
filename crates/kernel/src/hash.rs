@@ -448,6 +448,11 @@ pub fn model_hash(m: &Model) -> u64 {
             sc.hidden_tags.iter().for_each(|t| h.tag(t));
         }
     }
+    // The stock library (lane 9): only when it is not the built-in one, so every older
+    // document keeps its hash.
+    if let Some(lib) = m.stored_stock_library() {
+        lib.hash_into(&mut h);
+    }
     h.finish()
 }
 
