@@ -1,0 +1,263 @@
+{
+  "name": "components",
+  "description": "Lane 5: a shelf made a component, arrayed three more times (instances), one instance opened and pushed (all four follow), another made unique and pushed back (undo and redo inside it), a tag with a colour on the instances, the lower two grouped, two scenes (one opening the group) activated, one instance hidden, one exploded. Replayed through Document::replay and in WASM.",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.8509,
+          0.0,
+          0.0
+        ],
+        [
+          0.8509,
+          0.28575,
+          0.0
+        ],
+        [
+          0.0,
+          0.28575,
+          0.0
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.01905
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Shelf"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.60325
+        ]
+      },
+      "count": 3,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 3
+    },
+    {
+      "op": "push_pull",
+      "object": 3,
+      "face": 2,
+      "distance": 0.00635
+    },
+    {
+      "op": "leave_context"
+    },
+    {
+      "op": "make_unique",
+      "node": 4
+    },
+    {
+      "op": "set_context",
+      "node": 4
+    },
+    {
+      "op": "push_pull",
+      "object": 4,
+      "face": 2,
+      "distance": -0.00635
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "leave_context"
+    },
+    {
+      "op": "create_tag",
+      "name": "Shelves",
+      "color": [
+        106,
+        155,
+        90
+      ]
+    },
+    {
+      "op": "tag_items",
+      "items": [
+        {
+          "node": 1
+        },
+        {
+          "node": 2
+        },
+        {
+          "node": 3
+        },
+        {
+          "node": 4
+        }
+      ],
+      "tag": "Shelves"
+    },
+    {
+      "op": "make_group",
+      "items": [
+        {
+          "node": 1
+        },
+        {
+          "node": 2
+        }
+      ],
+      "name": "Lower"
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "Front",
+        "eye": [
+          0.4,
+          -3.0,
+          0.9
+        ],
+        "target": [
+          0.4,
+          0.0,
+          0.9
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": true,
+        "hidden_tags": [
+          "Shelves"
+        ]
+      }
+    },
+    {
+      "op": "add_scene",
+      "scene": {
+        "name": "Iso",
+        "eye": [
+          3.0,
+          -3.0,
+          3.0
+        ],
+        "target": [
+          0.4,
+          0.14,
+          0.9
+        ],
+        "up": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "fov": 35.0,
+        "parallel": false,
+        "context": 5
+      }
+    },
+    {
+      "op": "activate_scene",
+      "name": "Front"
+    },
+    {
+      "op": "activate_scene",
+      "name": "Iso"
+    },
+    {
+      "op": "set_hidden",
+      "items": [
+        {
+          "node": 4
+        }
+      ],
+      "hidden": true
+    },
+    {
+      "op": "leave_context"
+    },
+    {
+      "op": "explode",
+      "node": 3
+    }
+  ],
+  "hash": "eaec169bb7371ad3",
+  "stats": {
+    "objects": 4,
+    "faces": 24,
+    "edges": 48,
+    "vertices": 32,
+    "genus": 0,
+    "watertight": true
+  }
+}

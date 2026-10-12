@@ -219,6 +219,53 @@ pub enum DocumentError {
     BadSnapshot(String),
 }
 
+/// Errors from groups, components, the editing context, tags and scenes (lane 5). Nothing
+/// changed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum StructureError {
+    #[error("no group or component #{0}")]
+    NoSuchNode(u64),
+    #[error("no component definition #{0}")]
+    NoSuchDefinition(u64),
+    /// Only what is directly inside the open group or component can be edited.
+    #[error(
+        "that is inside a group or component that is not open: double-click it to edit inside it"
+    )]
+    OutsideContext,
+    #[error("that is locked: unlock it first")]
+    Locked,
+    #[error("you are already editing the whole model")]
+    NothingToLeave,
+    #[error("select at least one solid, group or component")]
+    NothingSelected,
+    #[error("that is not a component")]
+    NotAnInstance,
+    #[error("this component is already unique: it is its definition's only copy")]
+    AlreadyUnique,
+    #[error("you are editing inside it: leave it first (Esc)")]
+    OnContextPath,
+    #[error("a tag named {0:?} already exists")]
+    TagExists(String),
+    #[error("no tag named {0:?}")]
+    NoSuchTag(String),
+    #[error("\"Untagged\" is the default; pick another name for a tag")]
+    ReservedTag,
+    #[error("a scene named {0:?} already exists")]
+    SceneExists(String),
+    #[error("no scene named {0:?}")]
+    NoSuchScene(String),
+    #[error("a scene needs a finite camera")]
+    BadScene,
+    #[error("a component cannot contain itself")]
+    Cycle,
+    /// An edit inside a component would leave one of its other copies an invalid solid
+    /// (a copy scaled so that the change folds it, or moved past 10 km).
+    #[error("that would leave another copy of this component invalid ({0})")]
+    InstanceInvalid(String),
+    #[error("the import's groups and components do not fit together: {0}")]
+    BadStructure(String),
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum KernelError {
     #[error(transparent)]
@@ -237,6 +284,8 @@ pub enum KernelError {
     Sweep(#[from] SweepError),
     #[error(transparent)]
     Boolean(#[from] BooleanError),
+    #[error(transparent)]
+    Structure(#[from] StructureError),
     #[error(transparent)]
     Tessellate(#[from] TessellateError),
     /// The validator rejected the result of an operation. Always a kernel bug: the

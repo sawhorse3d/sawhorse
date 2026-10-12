@@ -64,7 +64,7 @@ pub struct ImportItem {
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
 /// never pushed or pulled. `note` says why it is not a solid.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct LooseMesh {
     pub name: String,
     pub positions: Vec<DVec3>,
@@ -73,6 +73,8 @@ pub struct LooseMesh {
     pub tag: Option<String>,
     pub material: Option<String>,
     pub note: String,
+    /// Its group or component instance, slot and hidden / locked flags.
+    pub member: crate::nodes::Membership,
 }
 
 impl LooseMesh {
@@ -928,6 +930,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             tag: item.tag.clone(),
             material: item.material.clone(),
             note,
+            member: Default::default(),
         })
     };
     Ok(Built {

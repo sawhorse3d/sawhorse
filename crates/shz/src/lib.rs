@@ -207,66 +207,92 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
         )));
     }
     let mut notes = Vec::new();
-    let mut document =
-        Document::open(scene.model.clone()).map_err(|e| ShzError::Model(e.to_string()))?;
-    // Objects saved without an exact B-rep come back from geometry.glb.
-    let missing: Vec<&sawhorse_kernel::snapshot::SnapObject> = scene
-        .model
+    // Objects saved without an exact B-rep (and not derived from a component definition)
+    // come back from geometry.glb: in place, when the mesh rebuilds into exactly one solid
+    // (so they keep their id, group and order); otherwise imported afterwards.
+    let mut model = scene.model.clone();
+    let missing: Vec<usize> = model
         .objects
         .iter()
-        .filter(|o| o.brep.is_none())
+        .enumerate()
+        .filter(|(_, o)| o.brep.is_none() && o.slot.is_none())
+        .map(|(i, _)| i)
         .collect();
+    let mut leftovers: Vec<ImportItem> = Vec::new();
+    let mut rebuilt = 0usize;
     if !missing.is_empty() {
         let glb = entry(&mut zip, &scene.geometry)?
             .ok_or_else(|| ShzError::Damaged(format!("{} is missing", scene.geometry)))?;
         let by_id = sawhorse_import::gltf::items_by_object(&glb)
             .map_err(|e| ShzError::Damaged(e.to_string()))?;
-        let mut items: Vec<ImportItem> = Vec::new();
-        for o in &missing {
-            match by_id.get(&o.id) {
-                Some(it) => {
-                    let mut it = it.clone();
-                    it.name = o.name.clone().unwrap_or_else(|| format!("Object {}", o.id));
-                    it.tag = o.tag.clone();
-                    it.material = o.material.clone();
-                    it.group = scene
-                        .model
-                        .groups
-                        .iter()
-                        .find(|g| g.objects.contains(&o.id))
-                        .map(|g| g.name.clone());
-                    items.push(it);
-                }
-                None => notes.push(format!(
+        let mut drop = Vec::new();
+        for i in missing {
+            let o = &model.objects[i];
+            let Some(it) = by_id.get(&o.id) else {
+                notes.push(format!(
                     "object {} has no geometry in scene.json or {}; left out",
                     o.id, scene.geometry
-                )),
-            }
-        }
-        if !items.is_empty() {
-            let out = document
-                .apply(&Op::Import {
-                    items,
-                    strokes: vec![],
-                    materials: vec![],
-                    scenes: vec![],
-                    hidden_tags: vec![],
-                })
-                .map_err(|e| ShzError::Model(e.to_string()))?;
-            if let OpOutcome::Imported {
-                objects, notes: n, ..
-            } = out
-            {
-                notes.push(format!(
-                    "rebuilt {} object{} from {}",
-                    objects.len(),
-                    if objects.len() == 1 { "" } else { "s" },
-                    scene.geometry
                 ));
-                notes.extend(n);
+                drop.push(i);
+                continue;
+            };
+            let mut it = it.clone();
+            it.name = o.name.clone().unwrap_or_else(|| format!("Object {}", o.id));
+            it.tag = o.tag.clone();
+            it.material = o.material.clone();
+            match sawhorse_kernel::meshbuild::build_item(&it) {
+                Ok(b) if b.solids.len() == 1 && b.loose.is_none() => {
+                    let solid = &b.solids[0];
+                    let so = &mut model.objects[i];
+                    so.brep = Some(sawhorse_kernel::snapshot::snap_brep(solid));
+                    so.next_face_id = so.next_face_id.max(solid.next_face_id());
+                    rebuilt += 1;
+                    notes.extend(b.notes);
+                }
+                _ => {
+                    it.group = None;
+                    leftovers.push(it);
+                    drop.push(i);
+                }
             }
-            document.clear_history();
         }
+        // What did not rebuild in place is imported below (or was left out).
+        for i in drop.into_iter().rev() {
+            model.objects.remove(i);
+        }
+    }
+    let mut document = Document::open(model).map_err(|e| ShzError::Model(e.to_string()))?;
+    if !leftovers.is_empty() {
+        let out = document
+            .apply(&Op::Import {
+                items: leftovers,
+                strokes: vec![],
+                materials: vec![],
+                scenes: vec![],
+                hidden_tags: vec![],
+                definitions: vec![],
+                nodes: vec![],
+            })
+            .map_err(|e| ShzError::Model(e.to_string()))?;
+        if let OpOutcome::Imported {
+            objects, notes: n, ..
+        } = out
+        {
+            rebuilt += objects.len();
+            notes.extend(n);
+        }
+        document.clear_history();
+    }
+    if rebuilt > 0 {
+        notes.insert(
+            0,
+            format!(
+                "rebuilt {} object{} from {}",
+                rebuilt,
+                if rebuilt == 1 { "" } else { "s" },
+                scene.geometry
+            ),
+        );
     }
     let thumbnail = match &scene.thumbnail {
         Some(t) => entry(&mut zip, t)?,

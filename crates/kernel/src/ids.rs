@@ -30,8 +30,10 @@ slotmap::new_key_type! {
     /// A sketch region (a face of the sketch graph). Stable across edits: re-detection keeps
     /// the id of the region it matches (same boundary, or containing the old anchor point).
     pub struct RegionId;
-    /// A named group of objects.
-    pub struct GroupId;
+    /// A group or a component instance: a node of the model's tree (see [`crate::nodes`]).
+    pub struct NodeId;
+    /// A component definition: the geometry and structure its instances share.
+    pub struct DefId;
     /// A guide line or guide point (Tape measure).
     pub struct GuideId;
     /// A linear dimension annotation.

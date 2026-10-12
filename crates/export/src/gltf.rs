@@ -194,13 +194,24 @@ pub fn document(model: &Model, scope: &Scope) -> Result<Vec<u8>, ExportError> {
         material_index.push(name.to_string());
         Some(materials.len() - 1)
     };
+    // The groups and components around a solid, outermost first.
+    let graph = model.graph();
     let groups_of = |id: u64| -> Vec<String> {
-        model
-            .groups()
+        let mut at = graph
+            .objects
             .iter()
-            .filter(|(_, g)| g.objects.contains(&id))
-            .map(|(_, g)| g.name.clone())
-            .collect()
+            .find(|o| o.id == id)
+            .and_then(|o| o.parent);
+        let mut names = Vec::new();
+        while let Some(p) = at {
+            let Some(n) = graph.nodes.iter().find(|n| n.id == p) else {
+                break;
+            };
+            names.push(n.label.clone());
+            at = n.parent;
+        }
+        names.reverse();
+        names
     };
     let mut meshes = Vec::new();
     let mut nodes = Vec::new();

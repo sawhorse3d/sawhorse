@@ -43,6 +43,9 @@ pub struct Object {
     /// public id (which carries slot-reuse bits). Not part of the model hash: it is a pure
     /// function of the op history, like the ids.
     pub(crate) number: u64,
+    /// Where it sits in the model's tree (its group or component instance), and whether it
+    /// is hidden or locked (see [`crate::nodes`]).
+    pub(crate) member: crate::nodes::Membership,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
@@ -166,6 +169,7 @@ impl Object {
             material: None,
             next_face_id: faces.len() as u64 + 1,
             number: 0,
+            member: Default::default(),
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -211,14 +215,20 @@ impl Object {
         self.material.as_deref()
     }
 
-    /// Carry provenance, tag, name, material and display number over from the object this
-    /// one replaces.
+    /// Carry provenance, tag, name, material, display number and place in the tree over
+    /// from the object this one replaces.
     pub(crate) fn copy_meta(&mut self, from: &Object) {
         self.source = from.source.clone();
         self.tag = from.tag.clone();
         self.name = from.name.clone();
         self.material = from.material.clone();
         self.number = from.number;
+        self.member = from.member.clone();
+    }
+
+    /// Its group or component instance, slot and hidden / locked flags.
+    pub fn membership(&self) -> &crate::nodes::Membership {
+        &self.member
     }
 
     /// Faces in deterministic order (index = the face ordinal).
@@ -357,6 +367,7 @@ impl Object {
             material: None,
             next_face_id: next,
             number: 0,
+            member: Default::default(),
         }
     }
 

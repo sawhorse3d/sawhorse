@@ -220,6 +220,9 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
         }
     }
     for (sid, s) in model.sketches() {
+        if !model.is_sketch_visible(sid) {
+            continue;
+        }
         let plane = *s.plane();
         for (rid, r) in s.regions() {
             let (o, h) = s.region_rings(r);

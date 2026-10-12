@@ -78,8 +78,11 @@ fn import_op() -> Op {
             fov: 35.0,
             parallel: false,
             hidden_tags: vec![],
+            context: None,
         }],
         hidden_tags: vec!["Legs".into()],
+        definitions: vec![],
+        nodes: vec![],
     }
 }
 
@@ -155,7 +158,8 @@ fn import_makes_solids_meshes_strokes_groups_and_is_one_undo_step() {
     assert_eq!(d.hash(), before);
     d.redo().unwrap();
     assert_eq!(d.hash(), replayed.hash());
-    // The imported solid edits like any other: push its top.
+    // The imported solid edits like any other, inside its group: push its top.
+    d.apply(&Op::SetContext { node: Some(1) }).unwrap();
     d.apply(&Op::PushPull {
         object: 2,
         face: 2,
@@ -167,6 +171,8 @@ fn import_makes_solids_meshes_strokes_groups_and_is_one_undo_step() {
         Some("Top"),
         "metadata survives edits"
     );
+    // The mesh is not in the group: delete it from the top level.
+    d.apply(&Op::LeaveContext).unwrap();
     d.apply(&Op::DeleteMesh { mesh: 1 }).unwrap();
     assert!(d.model().meshes().is_empty());
 }
@@ -181,6 +187,8 @@ fn refusals_change_nothing() {
         materials: vec![],
         scenes: vec![],
         hidden_tags: vec![],
+        definitions: vec![],
+        nodes: vec![],
     };
     assert_eq!(
         d.apply(&empty),
@@ -195,6 +203,8 @@ fn refusals_change_nothing() {
             materials: vec![],
             scenes: vec![],
             hidden_tags: vec![],
+            definitions: vec![],
+            nodes: vec![],
         }),
         Err(KernelError::Document(DocumentError::BadImport(_)))
     ));

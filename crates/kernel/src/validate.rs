@@ -72,6 +72,9 @@ pub enum Violation {
     /// before 2026-10-11 it showed up as a volume of exactly 0.
     Untessellatable(String),
     SketchInvalid(String),
+    /// The model's tree (groups, component instances and definitions, tags, the editing
+    /// context) is inconsistent (see `crate::nodes`).
+    Structure(String),
     EulerOdd {
         shell: usize,
         chi: i64,

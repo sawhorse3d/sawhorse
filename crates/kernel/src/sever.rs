@@ -153,6 +153,8 @@ impl Object {
                 // sketch (collapsing it never returns a footprint).
                 o.source = None;
                 o.number = 0;
+                // Inside a component it is a new member of the definition (see nodes.rs).
+                o.member.slot = None;
             }
             out.push(o);
         }

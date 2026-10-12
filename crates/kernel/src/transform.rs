@@ -292,7 +292,20 @@ impl Object {
     /// This solid under `x` (see the module docs). Face ids, user edges, the tag, the source
     /// and the display number are kept; the result is validated.
     pub fn transformed(&self, x: &Xform) -> Result<Object, TransformError> {
+        let o = self.mapped(x)?;
+        o.validate().map_err(|e| typed(&e))?;
+        Ok(o)
+    }
+
+    /// This solid under `x` without the final validation: how a component instance's solids
+    /// are derived from its definition (the model validates them with everything else). The
+    /// identity gives an exact copy, so a definition captured from an unmoved instance
+    /// matches it bit for bit.
+    pub fn mapped(&self, x: &Xform) -> Result<Object, TransformError> {
         x.check()?;
+        if *x == Xform::IDENTITY {
+            return Ok(self.clone());
+        }
         let a = x.to_affine();
         let mut p = self.brep.to_polys();
         for q in &mut p.points {
@@ -311,7 +324,8 @@ impl Object {
                 reverse_rings(f);
             }
         }
-        self.finish(p)
+        // A build error means two moved vertices met, or a face turned over onto another.
+        self.rebuilt(p).map_err(|_| TransformError::FoldsOntoItself)
     }
 
     /// Rebuild from edited plain data keeping ids, then validate (typed refusals).

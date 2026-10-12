@@ -207,6 +207,9 @@ pub struct Sketch {
     vertices: SlotMap<SVertexId, DVec2>,
     edges: SlotMap<SEdgeId, [SVertexId; 2]>,
     regions: SlotMap<RegionId, Region>,
+    /// The group or component instance it was drawn in (`None`: the model). Strokes only
+    /// stick to strokes of the same editing context (see [`crate::nodes`]).
+    pub(crate) parent: Option<crate::ids::NodeId>,
 }
 
 /// A region before it has an id.
@@ -223,6 +226,7 @@ impl Sketch {
             vertices: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             regions: SlotMap::with_key(),
+            parent: None,
         }
     }
 
@@ -944,6 +948,45 @@ impl Sketch {
             return Err("the sketch's regions do not match its edges".into());
         }
         Ok(s)
+    }
+
+    /// This sketch under an affine map (its group moved): the plane frame is mapped and every
+    /// vertex re-expressed in it; a mirror reverses the region rings so outers stay
+    /// counter-clockwise. Region flags (consumed, pinched) are kept; region ids are renumbered.
+    pub(crate) fn mapped(
+        &self,
+        x: &crate::transform::Xform,
+    ) -> Result<Sketch, crate::error::TransformError> {
+        use crate::error::TransformError;
+        x.check()?;
+        let a = x.to_affine();
+        let plane = crate::transform::map_plane(&a, &self.plane).ok_or(TransformError::Singular)?;
+        let mut raw = self.to_raw();
+        let map = |q: [f64; 2]| -> [f64; 2] {
+            let w = a.transform_point3(self.plane.to_world(DVec2::from_array(q)));
+            plane.to_local(w).to_array()
+        };
+        for v in &mut raw.vertices {
+            *v = map(*v);
+        }
+        let mirror = x.determinant() < 0.0;
+        for r in &mut raw.regions {
+            r.anchor = map(r.anchor);
+            if mirror {
+                r.outer.reverse();
+                for h in &mut r.holes {
+                    h.reverse();
+                }
+            }
+        }
+        let mut s = Sketch::from_raw(plane, &raw).map_err(TransformError::InvalidResult)?;
+        s.parent = self.parent;
+        Ok(s)
+    }
+
+    /// The group or component instance it belongs to (public id).
+    pub fn parent(&self) -> Option<u64> {
+        self.parent.map(crate::ids::to_public)
     }
 
     // ---- invariants --------------------------------------------------------------------

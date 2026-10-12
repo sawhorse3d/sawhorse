@@ -7,6 +7,8 @@
 //! - a refused op returns a typed refusal (never a validator "bug" error) and leaves the
 //!   model bit-for-bit unchanged (same hash);
 //! - nothing panics (in debug builds the per-mutation validator panics on corruption);
+//! - (lane 5) the tree validates too: every component instance holds exactly its
+//!   definition, each solid its definition's solid under the instance's placement;
 //!
 //! and finally that replaying the same sequence again gives the same hash (determinism).
 //! Failing sequences are written as JSON by [`write_repro`] and replayed forever after by
@@ -85,7 +87,8 @@ pub fn check_sequence(ops: &[Op]) -> Result<RunSummary, String> {
             Err(p) => return Err(format!("op {i} {op:?} panicked: {}", panic_message(p))),
             Ok((next, Ok(_))) => {
                 check_model(next.model()).map_err(|e| format!("op {i} {op:?}: {e}"))?;
-                if !matches!(op, Op::Undo | Op::Redo) {
+                // Navigation (opening and closing groups) is not an undo step.
+                if !matches!(op, Op::Undo | Op::Redo) && !op.is_navigation() {
                     let mut probe = next.clone();
                     probe
                         .undo()

@@ -145,6 +145,176 @@ pub fn sketch_hash(s: &Sketch) -> u64 {
     h.finish()
 }
 
+/// A solid's geometry, topology, face ids and drawn edges (positions quantised).
+fn hash_solid(h: &mut StableHasher, o: &crate::object::Object) {
+    let b = o.brep();
+    let vord = ordinals(&b.vertices);
+    h.usize(b.vertices.len());
+    for v in b.vertices.values() {
+        h.len(v.pos.x);
+        h.len(v.pos.y);
+        h.len(v.pos.z);
+    }
+    h.usize(b.faces.len());
+    h.u64(o.next_face_id());
+    for f in b.faces.values() {
+        h.u64(f.id);
+        h.usize(1 + f.holes.len());
+        for l in f.loops() {
+            let vs = b.loop_vertices(l);
+            h.usize(vs.len());
+            for v in vs {
+                h.usize(vord[&v]);
+            }
+        }
+    }
+    let mut user: Vec<(usize, usize)> = b
+        .edges
+        .values()
+        .filter(|e| e.user)
+        .map(|e| {
+            let (x, y) = (vord[&b.half_edges[e.he].origin], vord[&b.dest(e.he)]);
+            (x.min(y), x.max(y))
+        })
+        .collect();
+    user.sort();
+    h.usize(user.len());
+    for (x, y) in user {
+        h.usize(x);
+        h.usize(y);
+    }
+    h.u64(u64::from(o.is_watertight()));
+}
+
+fn xform(h: &mut StableHasher, x: &crate::transform::Xform) {
+    x.linear.iter().flatten().for_each(|&v| h.len(v));
+    x.translation.iter().for_each(|&v| h.len(v));
+}
+
+fn opt(h: &mut StableHasher, s: Option<&str>) {
+    match s {
+        Some(t) => h.tag(t),
+        None => h.u64(u64::MAX),
+    }
+}
+
+fn membership(h: &mut StableHasher, m: &crate::nodes::Membership) {
+    h.u64(m.parent.map_or(0, crate::ids::to_public));
+    h.u64(m.slot.map_or(u64::MAX, u64::from));
+    h.u64(u64::from(m.hidden) | (u64::from(m.locked) << 1));
+}
+
+fn hash_mesh_geometry(h: &mut StableHasher, mesh: &crate::meshbuild::LooseMesh) {
+    h.usize(mesh.positions.len());
+    for p in &mesh.positions {
+        h.len(p.x);
+        h.len(p.y);
+        h.len(p.z);
+    }
+    h.usize(mesh.faces.len());
+    for f in &mesh.faces {
+        h.usize(f.len());
+        for r in f {
+            h.usize(r.len());
+            r.iter().for_each(|&i| h.u64(u64::from(i)));
+        }
+    }
+}
+
+/// Groups, instances, definitions, memberships, sketch parents, the editing context, tag
+/// colours and scene contexts (lane 5). Written only when any of it is present.
+fn hash_structure(h: &mut StableHasher, m: &Model) {
+    use crate::nodes::{MemberKind, NodeKind};
+    h.tag("structure");
+    h.u64(m.context().unwrap_or(0));
+    let nodes = m.nodes();
+    h.usize(nodes.len());
+    for (id, n) in nodes {
+        h.u64(id);
+        match n.kind {
+            NodeKind::Group => h.u64(0),
+            NodeKind::Instance(d) => h.u64(m.definition_id(d)),
+        }
+        opt(h, n.name.as_deref());
+        opt(h, n.tag.as_deref());
+        membership(h, &n.member);
+        xform(h, &n.xform);
+    }
+    let defs = m.definitions();
+    h.usize(defs.len());
+    for (id, d) in defs {
+        h.u64(id);
+        h.tag(&d.name);
+        h.u64(u64::from(d.next_slot));
+        h.usize(d.members.len());
+        for (&slot, mem) in &d.members {
+            h.u64(u64::from(slot));
+            h.u64(mem.parent.map_or(u64::MAX, u64::from));
+            opt(h, mem.name.as_deref());
+            opt(h, mem.tag.as_deref());
+            h.u64(u64::from(mem.hidden) | (u64::from(mem.locked) << 1));
+            match &mem.kind {
+                MemberKind::Solid(o) => {
+                    h.tag("solid");
+                    hash_solid(h, o);
+                    opt(h, o.material());
+                }
+                MemberKind::Mesh(x) => {
+                    h.tag("mesh");
+                    hash_mesh_geometry(h, x);
+                    opt(h, x.material.as_deref());
+                }
+                MemberKind::Group(x) => {
+                    h.tag("group");
+                    xform(h, x);
+                }
+                MemberKind::Instance(e, x) => {
+                    h.tag("instance");
+                    h.u64(m.definition_id(*e));
+                    xform(h, x);
+                }
+            }
+        }
+    }
+    for (id, o) in m.objects() {
+        if o.membership() != &crate::nodes::Membership::default() {
+            h.u64(id);
+            membership(h, o.membership());
+        }
+    }
+    h.tag("meshes");
+    for (id, x) in m.meshes() {
+        if x.member != crate::nodes::Membership::default() {
+            h.u64(id);
+            membership(h, &x.member);
+        }
+    }
+    h.tag("sketches");
+    for (k, (_, s)) in m.sketches().into_iter().enumerate() {
+        if let Some(p) = s.parent() {
+            h.usize(k);
+            h.u64(p);
+        }
+    }
+    h.tag("colours");
+    for (t, c) in m.tag_colors() {
+        h.tag(t);
+        h.bytes(c);
+    }
+    h.tag("scenes");
+    for sc in m.scenes() {
+        h.u64(sc.context.unwrap_or(0));
+    }
+}
+
+/// Hash of one solid's shape (what [`hash_solid`] writes), for comparing a component
+/// instance's solids with their definition.
+pub fn object_hash(o: &crate::object::Object) -> u64 {
+    let mut h = StableHasher::default();
+    hash_solid(&mut h, o);
+    h.finish()
+}
+
 pub fn model_hash(m: &Model) -> u64 {
     let mut h = StableHasher::default();
     h.tag(HASH_FORMAT);
@@ -162,43 +332,7 @@ pub fn model_hash(m: &Model) -> u64 {
             Some(t) => h.tag(t),
             None => h.u64(u64::MAX),
         }
-        let b = o.brep();
-        let vord = ordinals(&b.vertices);
-        h.usize(b.vertices.len());
-        for v in b.vertices.values() {
-            h.len(v.pos.x);
-            h.len(v.pos.y);
-            h.len(v.pos.z);
-        }
-        h.usize(b.faces.len());
-        h.u64(o.next_face_id());
-        for f in b.faces.values() {
-            h.u64(f.id);
-            h.usize(1 + f.holes.len());
-            for l in f.loops() {
-                let vs = b.loop_vertices(l);
-                h.usize(vs.len());
-                for v in vs {
-                    h.usize(vord[&v]);
-                }
-            }
-        }
-        let mut user: Vec<(usize, usize)> = b
-            .edges
-            .values()
-            .filter(|e| e.user)
-            .map(|e| {
-                let (x, y) = (vord[&b.half_edges[e.he].origin], vord[&b.dest(e.he)]);
-                (x.min(y), x.max(y))
-            })
-            .collect();
-        user.sort();
-        h.usize(user.len());
-        for (x, y) in user {
-            h.usize(x);
-            h.usize(y);
-        }
-        h.u64(u64::from(o.is_watertight()));
+        hash_solid(&mut h, o);
         // Names and materials only when set, so older documents keep their hashes.
         if o.name().is_some() || o.material().is_some() {
             h.tag("meta");
@@ -230,6 +364,8 @@ pub fn model_hash(m: &Model) -> u64 {
             }
         }
     }
+    // Groups as lane 2 hashed them (name and solids directly inside), so documents with
+    // plain groups keep their hashes; everything else about the tree is in "structure".
     let groups = m.groups();
     h.usize(groups.len());
     for (id, g) in groups {
@@ -237,6 +373,9 @@ pub fn model_hash(m: &Model) -> u64 {
         h.tag(&g.name);
         h.usize(g.objects.len());
         g.objects.iter().for_each(|&o| h.u64(o));
+    }
+    if m.has_structure() {
+        hash_structure(&mut h, m);
     }
     h.usize(m.tags().len());
     for (t, visible) in m.tags() {

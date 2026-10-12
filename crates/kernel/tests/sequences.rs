@@ -591,16 +591,19 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             Op::Transform {
                 objects,
                 xform: xform_of(x),
+                nodes: vec![],
             }
         }
         Fuzz::Copy(o, x) => Op::Copy {
             objects: vec![object(*o)],
             xform: xform_of(x),
+            nodes: vec![],
         },
         Fuzz::Array(o, x, n) => Op::Array {
             objects: vec![object(*o)],
             xform: xform_of(x),
             count: u32::from(*n),
+            nodes: vec![],
         },
         Fuzz::MoveGeometry {
             object: o,

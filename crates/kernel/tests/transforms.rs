@@ -65,7 +65,11 @@ fn near(a: DVec3, b: DVec3) -> bool {
 }
 
 fn transform(objects: Vec<u64>, xform: Xform) -> Op {
-    Op::Transform { objects, xform }
+    Op::Transform {
+        objects,
+        xform,
+        nodes: vec![],
+    }
 }
 
 fn refused(m: &mut Model, op: Op) -> TransformError {
@@ -87,7 +91,13 @@ fn move_keeps_face_ids_and_volume() {
         &mut m,
         transform(vec![o], Xform::translation(DVec3::new(2.0, -1.0, 0.5))),
     );
-    assert_eq!(out, OpOutcome::Transformed { objects: vec![o] });
+    assert_eq!(
+        out,
+        OpOutcome::Transformed {
+            objects: vec![o],
+            nodes: vec![]
+        }
+    );
     assert_eq!(
         face_ids(&m, o),
         ids,
@@ -263,9 +273,10 @@ fn copies_and_arrays_are_new_objects() {
         Op::Copy {
             objects: vec![o],
             xform: Xform::translation(DVec3::new(1.0, 0.0, 0.0)),
+            nodes: vec![],
         },
     );
-    let OpOutcome::Copied { objects } = out else {
+    let OpOutcome::Copied { objects, .. } = out else {
         panic!("{out:?}")
     };
     assert_eq!(objects.len(), 1);
@@ -282,9 +293,10 @@ fn copies_and_arrays_are_new_objects() {
             objects: vec![o],
             xform: Xform::translation(DVec3::new(0.0, 0.75, 0.0)),
             count: 3,
+            nodes: vec![],
         },
     );
-    let OpOutcome::Copied { objects } = out else {
+    let OpOutcome::Copied { objects, .. } = out else {
         panic!("{out:?}")
     };
     assert_eq!(objects.len(), 3);
@@ -307,9 +319,10 @@ fn copies_and_arrays_are_new_objects() {
             objects: vec![o],
             xform: step,
             count: 3,
+            nodes: vec![],
         },
     );
-    let OpOutcome::Copied { objects } = out else {
+    let OpOutcome::Copied { objects, .. } = out else {
         panic!("{out:?}")
     };
     assert_eq!(objects.len(), 3);
@@ -320,6 +333,7 @@ fn copies_and_arrays_are_new_objects() {
         Op::Copy {
             objects: vec![o],
             xform: Xform::translation(DVec3::new(0.25, 0.0, 0.0)),
+            nodes: vec![],
         },
     );
     for bad in [0, 1001] {
@@ -329,7 +343,8 @@ fn copies_and_arrays_are_new_objects() {
                 Op::Array {
                     objects: vec![o],
                     xform: Xform::IDENTITY,
-                    count: bad
+                    count: bad,
+                    nodes: vec![],
                 }
             ),
             TransformError::BadCount
@@ -530,13 +545,17 @@ fn a_through_cut_severs_the_board_into_two_solids() {
 fn severed_pieces_stay_in_their_group() {
     let mut m = Model::with_ground_sketch();
     let o = box_at(&mut m, 0.0, 0.0, 1.0, 0.3, 0.05);
-    apply(
+    let OpOutcome::GroupCreated { group } = apply(
         &mut m,
         Op::CreateGroup {
             name: "Board".into(),
             objects: vec![o],
         },
-    );
+    ) else {
+        panic!()
+    };
+    // Its solid is edited inside the group (lane 5).
+    apply(&mut m, Op::SetContext { node: Some(group) });
     let out = apply(
         &mut m,
         Op::Draw {

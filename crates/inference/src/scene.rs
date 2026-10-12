@@ -153,6 +153,9 @@ impl Scene {
             }
         }
         for (sid, sk) in model.sketches() {
+            if !model.is_sketch_visible(sid) {
+                continue;
+            }
             let plane = *sk.plane();
             let owner = Owner {
                 kind: OwnerKind::Sketch,

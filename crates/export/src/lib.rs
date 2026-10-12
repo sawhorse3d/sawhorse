@@ -312,6 +312,8 @@ pub(crate) mod fixtures {
                 materials: vec![],
                 scenes: vec![],
                 hidden_tags: vec![],
+                definitions: vec![],
+                nodes: vec![],
             },
         ] {
             m.apply(&op).unwrap();

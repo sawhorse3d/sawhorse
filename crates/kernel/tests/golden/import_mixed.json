@@ -1,6 +1,6 @@
 {
   "name": "import_mixed",
-  "description": "Lane 6: one import op (two STL-style triangle-soup boxes merged into six-face solids in a group, on a tag, painted; an open quad kept as a non-solid mesh with a loose line; a stroke into the ground sketch; a material; a scene), then a push/pull on the imported solid, undo, redo and hiding the tag.",
+  "description": "Lane 6: one import op (two STL-style triangle-soup boxes merged into six-face solids in a group, on a tag, painted; an open quad kept as a non-solid mesh with a loose line; a stroke into the ground sketch; a material; a scene), then a push/pull on the imported solid, undo, redo and hiding the tag. Lane 5: the push/pull happens inside the \"Parts\" group (opened with set_context, closed with leave_context; navigation is not an undo step).",
   "ops": [
     {
       "op": "new_sketch",
@@ -663,6 +663,10 @@
       "hidden_tags": []
     },
     {
+      "op": "set_context",
+      "node": 1
+    },
+    {
       "op": "push_pull",
       "object": 1,
       "face": 2,
@@ -673,6 +677,9 @@
     },
     {
       "op": "redo"
+    },
+    {
+      "op": "leave_context"
     },
     {
       "op": "set_tag_visible",

@@ -73,7 +73,11 @@ struct DocState<'a> {
     /// Per solid, in creation order: display number, bounds and volume.
     solids: Vec<SolidInfo>,
     sketches: Vec<SketchInfo>,
-    groups: Vec<GroupInfo<'a>>,
+    /// Groups (not instances): name and the solids directly in each (lane-2 shape).
+    groups: Vec<GroupInfo>,
+    /// The model's tree: groups, instances, definitions, where every solid is, the open
+    /// editing context and the path to it, tag colours (see `sawhorse_kernel::nodes::Graph`).
+    graph: sawhorse_kernel::nodes::Graph,
     guides: Vec<GuideInfo>,
     dimensions: Vec<DimensionInfo>,
     tags: &'a std::collections::BTreeMap<String, bool>,
@@ -168,10 +172,10 @@ struct DimensionInfo {
 }
 
 #[derive(Debug, serde::Serialize)]
-struct GroupInfo<'a> {
+struct GroupInfo {
     id: u64,
-    name: &'a str,
-    objects: &'a [u64],
+    name: String,
+    objects: Vec<u64>,
 }
 
 impl DocCore {
@@ -306,10 +310,11 @@ impl DocCore {
                 .into_iter()
                 .map(|(id, g)| GroupInfo {
                     id,
-                    name: &g.name,
-                    objects: &g.objects,
+                    name: g.name,
+                    objects: g.objects,
                 })
                 .collect(),
+            graph: m.graph(),
             guides: m
                 .guides()
                 .into_iter()
@@ -366,6 +371,11 @@ impl DocCore {
             scenes: m.scenes(),
         };
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// The model's tree on its own (what the Outliner shows), as JSON.
+    pub fn scene_graph_json(&self) -> String {
+        serde_json::to_string(&self.doc.model().graph()).unwrap_or_else(|_| "{}".to_string())
     }
 
     pub fn log_json(&self) -> String {
@@ -724,6 +734,12 @@ impl Doc {
     /// Stats, undo/redo availability, object ids and tags, as JSON.
     pub fn state_json(&self) -> String {
         self.core.state_json()
+    }
+
+    /// The model's tree (groups, component instances and definitions, where every solid
+    /// is, the open editing context), as JSON: what the Outliner draws.
+    pub fn scene_graph(&self) -> String {
+        self.core.scene_graph_json()
     }
 
     /// World rings (outer first) of a face (`"face"`, object id, face id) or a region

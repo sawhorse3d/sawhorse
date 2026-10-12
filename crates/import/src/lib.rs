@@ -160,6 +160,8 @@ impl Parsed {
             materials: self.materials.clone(),
             scenes: self.scenes.clone(),
             hidden_tags: self.hidden_tags.clone(),
+            definitions: vec![],
+            nodes: vec![],
         }
     }
 

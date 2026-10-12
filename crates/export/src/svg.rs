@@ -188,7 +188,10 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
             }
         }
     }
-    for (_, s) in model.sketches() {
+    for (sid, s) in model.sketches() {
+        if !model.is_sketch_visible(sid) {
+            continue;
+        }
         let plane = s.plane();
         for (_, [a, b]) in s.edges() {
             if let (Some(p), Some(q)) = (s.vertex(a), s.vertex(b)) {

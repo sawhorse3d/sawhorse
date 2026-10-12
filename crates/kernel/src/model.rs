@@ -22,9 +22,11 @@ use crate::error::{
     DocumentError, FaceEditError, KernelError, OffsetError, PushError, SketchError, TransformError,
 };
 use crate::ids::{
-    DimensionId, GroupId, GuideId, MeshId, ObjectId, RegionId, SketchId, from_public, to_public,
+    DefId, DimensionId, GuideId, MeshId, NodeId, ObjectId, RegionId, SketchId, from_public,
+    to_public,
 };
 use crate::meshbuild::{ImportItem, LooseMesh, build_item};
+use crate::nodes::{Definition, Dirty, Item, Node, NodeKind, Thing};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::offset::OffsetSource;
 use crate::plane::Plane;
@@ -43,7 +45,10 @@ pub const MAX_ARRAY: u32 = 1000;
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     /// New empty sketch on the plane through `origin` with `normal`.
-    NewSketch { origin: [f64; 3], normal: [f64; 3] },
+    NewSketch {
+        origin: [f64; 3],
+        normal: [f64; 3],
+    },
     /// Rectangle in the sketch's 2D frame: corner (x, y), size (w, h).
     AddRectangle {
         sketch: u64,
@@ -125,11 +130,19 @@ pub enum Op {
     },
     /// Erase face `face` (persistent id) of `object` into a coplanar neighbour across a drawn
     /// line (an imprint, one side of a cut). Refused where it would open the solid.
-    EraseFace { object: u64, face: u64 },
+    EraseFace {
+        object: u64,
+        face: u64,
+    },
     /// Erase a sketch region: its edges that bound no other region leave the sketch.
-    EraseRegion { sketch: u64, region: u64 },
+    EraseRegion {
+        sketch: u64,
+        region: u64,
+    },
     /// Several ops as one transaction and one undo step (no undo, redo or batch inside).
-    Batch { ops: Vec<Op> },
+    Batch {
+        ops: Vec<Op>,
+    },
     /// Add a guide: an infinite line through `point` along `dir`, or a guide point when
     /// `dir` is absent (the Tape measure). Guides are construction help: inferable, never
     /// part of a solid.
@@ -138,7 +151,9 @@ pub enum Op {
         dir: Option<[f64; 3]>,
     },
     /// Remove one guide.
-    EraseGuide { guide: u64 },
+    EraseGuide {
+        guide: u64,
+    },
     /// Remove every guide.
     DeleteGuides,
     /// Add a linear dimension between `a` and `b`, its line drawn `offset` away from them.
@@ -148,22 +163,40 @@ pub enum Op {
         offset: [f64; 3],
     },
     /// Remove one dimension.
-    EraseDimension { dimension: u64 },
-    /// Move, rotate, scale or mirror whole solids by an affine map (Move, Rotate and Scale
-    /// tools). Face ids, drawn edges, tags and display numbers stay; each result must
-    /// validate (see [`crate::transform`]). Solids never weld to what they touch.
-    Transform { objects: Vec<u64>, xform: Xform },
-    /// Copy solids, each copy mapped by `xform` (Ctrl with Move / Rotate). The copies are new
-    /// objects (new ids and display numbers) with the originals' face ids, tags and drawn
-    /// edges; they join no group.
-    Copy { objects: Vec<u64>, xform: Xform },
-    /// An array: `count` copies of each solid, copy k mapped by `xform` applied k times
-    /// (x3 after a 36 in move: copies at 36, 72 and 108 in; /4 is the same with a quarter
-    /// of the move). Copies are made in order k = 1..=count, object by object.
+    EraseDimension {
+        dimension: u64,
+    },
+    /// Move, rotate, scale or mirror whole solids, groups and component instances by an
+    /// affine map (Move, Rotate and Scale tools). Face ids, drawn edges, tags and display
+    /// numbers stay; each result must validate (see [`crate::transform`]). Solids never weld
+    /// to what they touch. A group moves with everything in it; an instance's placement
+    /// changes and its solids are re-derived from its definition.
+    Transform {
+        objects: Vec<u64>,
+        xform: Xform,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<u64>,
+    },
+    /// Copy solids, groups and instances, each copy mapped by `xform` (Ctrl with Move /
+    /// Rotate). Solid copies are new plain solids (new ids and display numbers) with the
+    /// originals' face ids, tags and drawn edges, in the open context. A group's copy is a
+    /// new group with copies of everything in it; an instance's copy is a new instance of
+    /// the same definition.
+    Copy {
+        objects: Vec<u64>,
+        xform: Xform,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<u64>,
+    },
+    /// An array: `count` copies of each solid (and node), copy k mapped by `xform` applied k
+    /// times (x3 after a 36 in move: copies at 36, 72 and 108 in; /4 is the same with a
+    /// quarter of the move). Copies are made in order k = 1..=count, solids then nodes.
     Array {
         objects: Vec<u64>,
         xform: Xform,
         count: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<u64>,
     },
     /// Move (or scale, or turn) part of a solid: the vertices at `points` (world positions)
     /// by `xform`. A face bent out of its plane is refused unless `autofold` (then it folds
@@ -178,7 +211,10 @@ pub enum Op {
     /// for an open chain, positive is to its left). The result is drawn like a stroke: on
     /// the solid when it lies on its faces (imprints, cuts), else into a sketch on the plane
     /// (see [`crate::offset`]).
-    Offset { source: OffsetSource, distance: f64 },
+    Offset {
+        source: OffsetSource,
+        distance: f64,
+    },
     /// Follow Me: sweep a profile along a path of straight segments (world points; `closed`
     /// joins the last to the first). A region profile becomes a new solid; a face profile
     /// adds to its solid (path leaving the face) or cuts it (path running into it). See
@@ -188,16 +224,122 @@ pub enum Op {
         path: Vec<[f64; 3]>,
         closed: bool,
     },
-    /// Delete an object (it also leaves any group).
-    DeleteObject { object: u64 },
-    /// Group objects under a name.
-    CreateGroup { name: String, objects: Vec<u64> },
-    /// Dissolve a group (its objects stay).
-    DeleteGroup { group: u64 },
+    /// Delete an object (in the open context).
+    DeleteObject {
+        object: u64,
+    },
+    /// Group solids under a name (lane 2's form of [`Op::MakeGroup`]).
+    CreateGroup {
+        name: String,
+        objects: Vec<u64>,
+    },
+    /// Dissolve a group, keeping what is in it (lane 2's form of [`Op::Explode`]).
+    DeleteGroup {
+        group: u64,
+    },
+    /// Open a group or component instance for editing (`None`: the whole model). Not an
+    /// undo step: Ctrl+Z still undoes the last edit (and returns to where it was made).
+    SetContext {
+        node: Option<u64>,
+    },
+    /// Close the open group or instance (one level up). Not an undo step.
+    LeaveContext,
+    /// Make Group: solids, groups and instances directly in the open context go into a new
+    /// group there.
+    MakeGroup {
+        items: Vec<Item>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// Make Component: the items become a new definition named `name` with one instance
+    /// where they were (nothing moves).
+    MakeComponent {
+        items: Vec<Item>,
+        name: String,
+    },
+    /// Give one instance its own copy of its definition.
+    MakeUnique {
+        node: u64,
+    },
+    /// Explode a group or instance: what is inside moves up a level, unchanged.
+    Explode {
+        node: u64,
+    },
+    /// Delete a group or instance and everything in it.
+    DeleteNode {
+        node: u64,
+    },
+    /// Name a solid, group or instance (`None` clears it).
+    Rename {
+        item: Item,
+        name: Option<String>,
+    },
+    /// Rename a component definition (every instance shows the new name).
+    RenameDefinition {
+        definition: u64,
+        name: String,
+    },
+    /// Hide or show solids, groups and instances (the Outliner's eye).
+    SetHidden {
+        items: Vec<Item>,
+        hidden: bool,
+    },
+    /// Lock or unlock solids, groups and instances.
+    SetLocked {
+        items: Vec<Item>,
+        locked: bool,
+    },
+    /// Put solids, groups and instances on a tag (`None` or "Untagged": no tag). Tags
+    /// control visibility only; nothing moves.
+    TagItems {
+        items: Vec<Item>,
+        tag: Option<String>,
+    },
+    /// Create a tag (visible), with an sRGB colour for the Tags pane.
+    CreateTag {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<[u8; 3]>,
+    },
+    /// Rename a tag everywhere it is used (items, definitions, scenes).
+    RenameTag {
+        tag: String,
+        name: String,
+    },
+    SetTagColor {
+        tag: String,
+        color: Option<[u8; 3]>,
+    },
+    /// Delete a tag: whatever was on it becomes untagged and stays where it is.
+    DeleteTag {
+        tag: String,
+    },
+    /// Save a scene: camera, hidden tags and the open context.
+    AddScene {
+        scene: SceneDef,
+    },
+    /// Replace the scene named `name` (also renames it).
+    UpdateScene {
+        name: String,
+        scene: SceneDef,
+    },
+    DeleteScene {
+        name: String,
+    },
+    /// Switch to a scene's tag visibility and editing context (the UI sets its camera).
+    ActivateScene {
+        name: String,
+    },
     /// Put an object on a tag (layer), or take it off (`None`). New tags start visible.
-    SetTag { object: u64, tag: Option<String> },
+    SetTag {
+        object: u64,
+        tag: Option<String>,
+    },
     /// Show or hide every object on a tag.
-    SetTagVisible { tag: String, visible: bool },
+    SetTagVisible {
+        tag: String,
+        visible: bool,
+    },
     /// Bring in geometry from a file as one undoable step: polygon soups become solids
     /// where they are valid solids and non-solid meshes (with a note) where they are not,
     /// strokes go into sketches, plus materials, scenes and hidden tags. See
@@ -213,6 +355,13 @@ pub enum Op {
         scenes: Vec<SceneDef>,
         #[serde(default)]
         hidden_tags: Vec<String>,
+        /// Component definitions the import places (a `.skp`'s components), in dependency
+        /// order: a definition only places definitions listed before it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        definitions: Vec<ImportDefinition>,
+        /// Groups and component instances, top level (put in the open context).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<ImportNode>,
     },
     /// Add or replace a material (a colour, plus the file name of a texture if it had one).
     DefineMaterial {
@@ -227,9 +376,14 @@ pub enum Op {
         material: Option<String>,
     },
     /// Name an object, or clear its name (`None`).
-    RenameObject { object: u64, name: Option<String> },
+    RenameObject {
+        object: u64,
+        name: Option<String>,
+    },
     /// Delete an imported non-solid mesh.
-    DeleteMesh { mesh: u64 },
+    DeleteMesh {
+        mesh: u64,
+    },
     /// Replace the whole model with a saved one (opening a `.shz`). Validated like any
     /// edit; refused (typed) when the snapshot does not validate.
     Restore {
@@ -239,6 +393,13 @@ pub enum Op {
     Undo,
     /// Step forward again after an undo (document command).
     Redo,
+}
+
+impl Op {
+    /// Opening or closing a group or component for editing: logged, never an undo step.
+    pub fn is_navigation(&self) -> bool {
+        matches!(self, Op::SetContext { .. } | Op::LeaveContext)
+    }
 }
 
 /// Where a stroke goes.
@@ -289,10 +450,57 @@ pub struct SceneDef {
     pub parallel: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_tags: Vec<String>,
+    /// The group or instance open when the scene was saved (public id; `None`: the model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
 }
 
 fn default_fov() -> f64 {
     35.0
+}
+
+/// A component definition in an import: its own geometry (in its own coordinates) and the
+/// groups and instances nested in it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ImportDefinition {
+    pub name: String,
+    #[serde(default)]
+    pub items: Vec<ImportItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<ImportNode>,
+}
+
+/// A group (geometry in the enclosing frame's coordinates, plus nested nodes) or an instance
+/// of an import definition (index into `definitions`, placed by `xform` in the enclosing
+/// frame).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ImportNode {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(flatten)]
+    pub kind: ImportNodeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImportNodeKind {
+    Group {
+        #[serde(default)]
+        items: Vec<ImportItem>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        children: Vec<ImportNode>,
+    },
+    Instance {
+        definition: usize,
+        xform: Xform,
+    },
 }
 
 /// What an op did, with the ids the UI needs next.
@@ -347,6 +555,29 @@ pub enum OpOutcome {
         group: u64,
     },
     GroupDeleted,
+    /// The editing context changed (`None`: the model).
+    ContextChanged {
+        context: Option<u64>,
+    },
+    ComponentCreated {
+        instance: u64,
+        definition: u64,
+    },
+    MadeUnique {
+        definition: u64,
+    },
+    /// A node was exploded: the solids and nodes that were directly in it.
+    Exploded {
+        objects: Vec<u64>,
+        nodes: Vec<u64>,
+    },
+    NodeDeleted,
+    VisibilitySet,
+    LockSet,
+    SceneSet,
+    SceneActivated {
+        context: Option<u64>,
+    },
     TagSet,
     Undone,
     Redone,
@@ -356,13 +587,17 @@ pub enum OpOutcome {
         objects: Vec<u64>,
         cut: bool,
     },
-    /// Solids were moved, turned or scaled (the same ids).
+    /// Solids (and groups and instances) were moved, turned or scaled (the same ids).
     Transformed {
         objects: Vec<u64>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<u64>,
     },
-    /// New solids from a copy or an array, in creation order.
+    /// New solids (and groups and instances) from a copy or an array, in creation order.
     Copied {
         objects: Vec<u64>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        nodes: Vec<u64>,
     },
     /// Part of a solid moved; the persistent ids of the faces that changed (folds included).
     GeometryMoved {
@@ -404,9 +639,18 @@ pub struct Model {
     pub(crate) sketch_order: Vec<SketchId>,
     pub(crate) objects: SlotMap<ObjectId, Object>,
     pub(crate) object_order: Vec<ObjectId>,
-    pub(crate) groups: SlotMap<GroupId, Group>,
+    /// Groups and component instances (see [`crate::nodes`]).
+    pub(crate) nodes: SlotMap<NodeId, Node>,
+    /// Component definitions.
+    pub(crate) defs: SlotMap<DefId, Definition>,
+    /// The open group or instance (`None`: the model).
+    pub(crate) context: Option<NodeId>,
     /// Tag name -> visible. Every tag an object uses is listed here.
     pub(crate) tags: BTreeMap<String, bool>,
+    /// Tag name -> sRGB colour (the Tags pane), for tags that have one.
+    pub(crate) tag_colors: BTreeMap<String, [u8; 3]>,
+    /// What the op in progress changed (propagation; transient).
+    pub(crate) dirty: Dirty,
     pub(crate) guides: SlotMap<GuideId, Guide>,
     pub(crate) dimensions: SlotMap<DimensionId, Dimension>,
     /// Imported geometry that is not a valid solid (see [`crate::meshbuild`]).
@@ -454,7 +698,7 @@ fn finite3(p: &[f64; 3]) -> Option<DVec3> {
     (v.is_finite() && v.abs().max_element() <= crate::tolerance::MAX_COORD).then_some(v)
 }
 
-/// A named set of objects (by public id).
+/// A group as lane 2 saw it: its name and the solids directly in it (public ids).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
     pub name: String,
@@ -557,9 +801,54 @@ impl Model {
             .collect()
     }
 
-    /// Groups with their public ids, in id order.
-    pub fn groups(&self) -> Vec<(u64, &Group)> {
-        self.groups.iter().map(|(k, g)| (to_public(k), g)).collect()
+    /// Groups (not instances) with their public ids, in id order: name ("Group" when it
+    /// has none) and the solids directly in each.
+    pub fn groups(&self) -> Vec<(u64, Group)> {
+        self.nodes
+            .iter()
+            .filter(|(_, n)| n.kind == NodeKind::Group)
+            .map(|(k, n)| {
+                (
+                    to_public(k),
+                    Group {
+                        name: n.name.clone().unwrap_or_else(|| "Group".into()),
+                        objects: self
+                            .object_order
+                            .iter()
+                            .filter(|&&o| self.objects[o].member.parent == Some(k))
+                            .map(|&o| to_public(o))
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Anything lane 5 added beyond lane 2's flat, named groups of solids: instances,
+    /// definitions, nested or non-default nodes, hidden / locked items, sketches and meshes
+    /// in groups, the editing context, tag colours, scene contexts. Hashed only when
+    /// present, so older documents keep their hashes.
+    pub(crate) fn has_structure(&self) -> bool {
+        !self.defs.is_empty()
+            || self.context.is_some()
+            || !self.tag_colors.is_empty()
+            || self.nodes.values().any(|n| {
+                n.kind != NodeKind::Group
+                    || n.name.is_none()
+                    || n.tag.is_some()
+                    || n.member != crate::nodes::Membership::default()
+                    || n.xform != Xform::IDENTITY
+            })
+            || self
+                .objects
+                .values()
+                .any(|o| o.member.hidden || o.member.locked || o.member.slot.is_some())
+            || self
+                .meshes
+                .values()
+                .any(|m| m.member != crate::nodes::Membership::default())
+            || self.sketches.values().any(|s| s.parent.is_some())
+            || self.scenes.iter().any(|s| s.context.is_some())
     }
 
     /// Tags and their visibility, by name.
@@ -567,12 +856,11 @@ impl Model {
         &self.tags
     }
 
-    /// True when the object is shown (untagged, or on a visible tag).
+    /// True when the object is shown: not hidden, untagged or on a visible tag, and every
+    /// group and instance around it shown.
     pub fn is_visible(&self, object: u64) -> bool {
-        self.object(object).is_some_and(|o| {
-            o.tag()
-                .is_none_or(|t| self.tags.get(t).copied().unwrap_or(true))
-        })
+        self.object(object)
+            .is_some_and(|o| self.member_shown(&o.member, o.tag()))
     }
 
     /// Imported non-solid meshes in import order, with their public ids.
@@ -587,13 +875,10 @@ impl Model {
         self.meshes.get(from_public::<MeshId>(id))
     }
 
-    /// True when the mesh is shown (untagged, or on a visible tag).
+    /// True when the mesh is shown (see [`Model::is_visible`]).
     pub fn is_mesh_visible(&self, mesh: u64) -> bool {
-        self.mesh(mesh).is_some_and(|m| {
-            m.tag
-                .as_deref()
-                .is_none_or(|t| self.tags.get(t).copied().unwrap_or(true))
-        })
+        self.mesh(mesh)
+            .is_some_and(|m| self.member_shown(&m.member, m.tag.as_deref()))
     }
 
     /// Materials by name.
@@ -614,7 +899,9 @@ impl Model {
     /// Apply an op transactionally.
     pub fn apply(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
         let mut next = self.clone();
+        next.dirty = Dirty::default();
         let outcome = next.apply_in_place(op)?;
+        next.tidy()?;
         next.validate()?;
         *self = next;
         Ok(outcome)
@@ -653,30 +940,39 @@ impl Model {
         }
     }
 
+    /// One op, then propagation of what it changed into component definitions.
     fn apply_in_place(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
+        let out = self.apply_op(op)?;
+        self.propagate()?;
+        Ok(out)
+    }
+
+    fn apply_op(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
         match op {
             Op::NewSketch { origin, normal } => {
                 let plane = Plane::new(DVec3::from_array(*origin), DVec3::from_array(*normal))
                     .map_err(SketchError::from)?;
-                let id = self.sketches.insert(Sketch::new(plane));
+                let mut sk = Sketch::new(plane);
+                sk.parent = self.context;
+                let id = self.sketches.insert(sk);
                 self.sketch_order.push(id);
                 Ok(OpOutcome::SketchCreated {
                     sketch: to_public(id),
                 })
             }
             Op::AddRectangle { sketch, x, y, w, h } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let r = self.sketches[sid].add_rectangle(DVec2::new(*x, *y), DVec2::new(*w, *h))?;
                 Ok(Self::edited(r))
             }
             Op::InsertSegment { sketch, a, b } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let r = self.sketches[sid]
                     .insert_segment(DVec2::from_array(*a), DVec2::from_array(*b))?;
                 Ok(Self::edited(r))
             }
             Op::EraseSegment { sketch, a, b } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let r = self.sketches[sid]
                     .erase_segment(DVec2::from_array(*a), DVec2::from_array(*b))?;
                 Ok(Self::edited(r))
@@ -686,7 +982,7 @@ impl Model {
                 points,
                 closed,
             } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let pts: Vec<DVec2> = points.iter().map(|p| DVec2::from_array(*p)).collect();
                 let r = self.sketches[sid].insert_polyline(&pts, *closed)?;
                 Ok(Self::edited(r))
@@ -696,7 +992,7 @@ impl Model {
                 region,
                 distance,
             } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let rid = from_public::<RegionId>(*region);
                 let s = &self.sketches[sid];
                 let r = s.region(rid).ok_or(SketchError::NoSuchRegion(*region))?;
@@ -709,8 +1005,10 @@ impl Model {
                 let (outer, holes) = s.region_rings(r);
                 let mut obj = Object::extrude(s.plane(), &outer, &holes, *distance)?;
                 obj.source = Some(Provenance { sketch: sid });
+                obj.member.parent = self.context;
                 self.sketches[sid].consume_region(rid)?;
                 let id = self.insert_object(obj);
+                self.mark(self.context);
                 Ok(OpOutcome::ObjectCreated {
                     object: to_public(id),
                 })
@@ -726,6 +1024,7 @@ impl Model {
                 distance,
             } => {
                 let oid = self.object_key(*object)?;
+                self.editable_object(oid)?;
                 let o = &mut self.objects[oid];
                 let pushed = match op {
                     Op::PushPullNewFace { .. } => o.push_pull_new_face(*face, *distance)?,
@@ -733,6 +1032,7 @@ impl Model {
                 };
                 match pushed {
                     PushOutcome::Moved => {
+                        self.touch(oid);
                         let pieces = self.sever(oid);
                         if pieces.len() > 1 {
                             Ok(OpOutcome::Severed {
@@ -745,7 +1045,7 @@ impl Model {
                     PushOutcome::Collapsed { footprint } => {
                         let removed = self.objects.remove(oid).expect("object exists");
                         self.object_order.retain(|&k| k != oid);
-                        self.forget_object(*object);
+                        self.mark(removed.member.parent);
                         let regions = match removed.source {
                             Some(src) => self.return_footprint(src.sketch, &footprint)?,
                             None => Vec::new(),
@@ -781,6 +1081,39 @@ impl Model {
             } => {
                 let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
                 match target {
+                    // A stroke on a face or sketch outside the open context goes into the
+                    // context's own sketch on that plane (strokes never stick across
+                    // contexts).
+                    DrawTarget::Face { object, face }
+                        if self
+                            .objects
+                            .get(from_public::<ObjectId>(*object))
+                            .is_some_and(|_| {
+                                !self.object_is_editable(from_public::<ObjectId>(*object))
+                            }) =>
+                    {
+                        let o = &self.objects[from_public::<ObjectId>(*object)];
+                        let fi = o
+                            .face_ordinal(*face)
+                            .ok_or(FaceEditError::NoSuchFace(*face))?;
+                        let plane = o
+                            .brep()
+                            .to_polys()
+                            .plane(fi)
+                            .ok_or(FaceEditError::Degenerate)?;
+                        self.draw_on_plane(&plane, &pts, *closed)
+                    }
+                    DrawTarget::Sketch { sketch }
+                        if self
+                            .sketches
+                            .get(from_public::<SketchId>(*sketch))
+                            .is_some_and(|_| {
+                                !self.sketch_is_editable(from_public::<SketchId>(*sketch))
+                            }) =>
+                    {
+                        let plane = *self.sketches[from_public::<SketchId>(*sketch)].plane();
+                        self.draw_on_plane(&plane, &pts, *closed)
+                    }
                     DrawTarget::Face { object, face } => {
                         let (o, fi) = self.face_edit_target(*object, *face)?;
                         let (faces, inside) = o.draw(fi, &pts, *closed)?;
@@ -792,7 +1125,7 @@ impl Model {
                         })
                     }
                     DrawTarget::Sketch { sketch } => {
-                        let sid = self.sketch_key(*sketch)?;
+                        let sid = self.sketch_edit_key(*sketch)?;
                         let regions = self.draw_in_sketch(sid, &pts, *closed)?;
                         Ok(OpOutcome::Drawn {
                             sketch: Some(*sketch),
@@ -805,23 +1138,19 @@ impl Model {
                         let plane =
                             Plane::new(DVec3::from_array(*origin), DVec3::from_array(*normal))
                                 .map_err(SketchError::from)?;
-                        let sid = self.sketch_on(&plane);
-                        let regions = self.draw_in_sketch(sid, &pts, *closed)?;
-                        Ok(OpOutcome::Drawn {
-                            sketch: Some(to_public(sid)),
-                            regions: regions.into_iter().map(to_public).collect(),
-                            faces: Vec::new(),
-                            inside: self.region_inside(sid, &pts, *closed),
-                        })
+                        self.draw_on_plane(&plane, &pts, *closed)
                     }
                 }
             }
             Op::EraseEdge { object, a, b } => {
-                let o = self
-                    .objects
-                    .get_mut(from_public::<ObjectId>(*object))
-                    .ok_or(FaceEditError::NoSuchObject(*object))?;
-                let face = o.erase_edge(DVec3::from_array(*a), DVec3::from_array(*b))?;
+                let k = from_public::<ObjectId>(*object);
+                if !self.objects.contains_key(k) {
+                    return Err(FaceEditError::NoSuchObject(*object).into());
+                }
+                self.editable_object(k)?;
+                let face =
+                    self.objects[k].erase_edge(DVec3::from_array(*a), DVec3::from_array(*b))?;
+                self.touch(k);
                 Ok(OpOutcome::FacesMerged { face })
             }
             Op::EraseFace { object, face } => {
@@ -830,7 +1159,7 @@ impl Model {
                 Ok(OpOutcome::FacesMerged { face })
             }
             Op::EraseRegion { sketch, region } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let r = self.sketches[sid].erase_region(from_public::<RegionId>(*region))?;
                 Ok(Self::edited(r))
             }
@@ -840,7 +1169,14 @@ impl Model {
                 }
                 let mut outcomes = Vec::with_capacity(ops.len());
                 for op in ops {
-                    if matches!(op, Op::Undo | Op::Redo | Op::Batch { .. }) {
+                    if matches!(
+                        op,
+                        Op::Undo
+                            | Op::Redo
+                            | Op::Batch { .. }
+                            | Op::SetContext { .. }
+                            | Op::LeaveContext
+                    ) {
                         return Err(DocumentError::NotInBatch.into());
                     }
                     outcomes.push(self.apply_in_place(op)?);
@@ -897,32 +1233,47 @@ impl Model {
                     .ok_or(DocumentError::NoSuchAnnotation(*dimension))?;
                 Ok(OpOutcome::AnnotationErased)
             }
-            Op::Transform { objects, xform } => {
-                let keys = self.transform_targets(objects)?;
+            Op::Transform {
+                objects,
+                xform,
+                nodes,
+            } => {
+                let (keys, nkeys) = self.transform_targets(objects, nodes)?;
+                xform.check()?;
                 for &k in &keys {
                     let next = self.objects[k].transformed(xform)?;
                     self.objects[k] = next;
+                    self.touch(k);
+                }
+                for &n in &nkeys {
+                    self.transform_node(n, xform)?;
                 }
                 Ok(OpOutcome::Transformed {
                     objects: keys.into_iter().map(to_public).collect(),
+                    nodes: nkeys.into_iter().map(to_public).collect(),
                 })
             }
-            Op::Copy { objects, xform } => {
-                let keys = self.transform_targets(objects)?;
-                let made = self.copies(&keys, xform, 1)?;
-                Ok(OpOutcome::Copied { objects: made })
+            Op::Copy {
+                objects,
+                xform,
+                nodes,
+            } => {
+                let (keys, nkeys) = self.transform_targets(objects, nodes)?;
+                let (objects, nodes) = self.copies(&keys, &nkeys, xform, 1)?;
+                Ok(OpOutcome::Copied { objects, nodes })
             }
             Op::Array {
                 objects,
                 xform,
                 count,
+                nodes,
             } => {
                 if *count == 0 || *count > MAX_ARRAY {
                     return Err(TransformError::BadCount.into());
                 }
-                let keys = self.transform_targets(objects)?;
-                let made = self.copies(&keys, xform, *count)?;
-                Ok(OpOutcome::Copied { objects: made })
+                let (keys, nkeys) = self.transform_targets(objects, nodes)?;
+                let (objects, nodes) = self.copies(&keys, &nkeys, xform, *count)?;
+                Ok(OpOutcome::Copied { objects, nodes })
             }
             Op::TransformGeometry {
                 object,
@@ -935,9 +1286,11 @@ impl Model {
                     .objects
                     .get(k)
                     .ok_or(TransformError::NoSuchObject(*object))?;
+                self.editable_object(k)?;
                 let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
                 let (next, faces) = o.transform_geometry(&pts, xform, *autofold)?;
                 self.objects[k] = next;
+                self.touch(k);
                 Ok(OpOutcome::GeometryMoved { faces })
             }
             Op::Offset { source, distance } => self.offset(source, *distance),
@@ -948,11 +1301,13 @@ impl Model {
             } => self.follow_me(profile, path, *closed),
             Op::DeleteObject { object } => {
                 let k = from_public::<ObjectId>(*object);
-                if self.objects.remove(k).is_none() {
+                if !self.objects.contains_key(k) {
                     return Err(DocumentError::NoSuchObject(*object).into());
                 }
+                self.editable_object(k)?;
+                let removed = self.objects.remove(k).expect("checked");
                 self.object_order.retain(|&o| o != k);
-                self.forget_object(*object);
+                self.mark(removed.member.parent);
                 Ok(OpOutcome::ObjectDeleted)
             }
             Op::CreateGroup { name, objects } => {
@@ -960,42 +1315,48 @@ impl Model {
                 if objects.is_empty() {
                     return Err(DocumentError::EmptyGroup.into());
                 }
-                let mut members: Vec<u64> = Vec::new();
-                for &o in objects {
-                    if self.object(o).is_none() {
-                        return Err(DocumentError::NoSuchObject(o).into());
-                    }
-                    if !members.contains(&o) {
-                        members.push(o);
-                    }
-                }
-                let g = self.groups.insert(Group {
-                    name: name.clone(),
-                    objects: members,
-                });
-                Ok(OpOutcome::GroupCreated {
-                    group: to_public(g),
-                })
+                let items: Vec<Item> = objects.iter().map(|&o| Item::Object(o)).collect();
+                self.make_group(&items, Some(name))
             }
             Op::DeleteGroup { group } => {
-                if self.groups.remove(from_public::<GroupId>(*group)).is_none() {
+                let k = from_public::<NodeId>(*group);
+                if self.nodes.get(k).is_none_or(|n| n.kind != NodeKind::Group) {
                     return Err(DocumentError::NoSuchGroup(*group).into());
                 }
+                self.explode(*group)?;
                 Ok(OpOutcome::GroupDeleted)
             }
+            Op::SetContext { node } => self.set_context(*node),
+            Op::LeaveContext => self.leave_context(),
+            Op::MakeGroup { items, name } => self.make_group(items, name.as_deref()),
+            Op::MakeComponent { items, name } => self.make_component(items, name),
+            Op::MakeUnique { node } => self.make_unique(*node),
+            Op::Explode { node } => self.explode(*node),
+            Op::DeleteNode { node } => self.delete_node(*node),
+            Op::Rename { item, name } => self.rename(*item, name.as_deref()),
+            Op::RenameDefinition { definition, name } => self.rename_definition(*definition, name),
+            Op::SetHidden { items, hidden } => self.set_flag(items, false, *hidden),
+            Op::SetLocked { items, locked } => self.set_flag(items, true, *locked),
+            Op::TagItems { items, tag } => self.tag_items(items, tag.as_deref()),
+            Op::CreateTag { name, color } => self.create_tag(name, *color),
+            Op::RenameTag { tag, name } => self.rename_tag(tag, name),
+            Op::SetTagColor { tag, color } => self.set_tag_color(tag, *color),
+            Op::DeleteTag { tag } => self.delete_tag(tag),
+            Op::AddScene { scene } => self.add_scene(scene),
+            Op::UpdateScene { name, scene } => self.update_scene(name, scene),
+            Op::DeleteScene { name } => self.delete_scene(name),
+            Op::ActivateScene { name } => self.activate_scene(name),
             Op::SetTag { object, tag } => {
-                if let Some(t) = tag {
+                let items = [Item::Object(*object)];
+                if let Some(t) = tag
+                    && !crate::nodes::is_untagged_name(t)
+                {
                     check_name(t)?;
                 }
-                let o = self
-                    .objects
-                    .get_mut(from_public::<ObjectId>(*object))
-                    .ok_or(DocumentError::NoSuchObject(*object))?;
-                o.tag = tag.clone();
-                if let Some(t) = tag {
-                    self.tags.entry(t.clone()).or_insert(true);
+                if self.object(*object).is_none() {
+                    return Err(DocumentError::NoSuchObject(*object).into());
                 }
-                Ok(OpOutcome::TagSet)
+                self.tag_items(&items, tag.as_deref())
             }
             Op::SetTagVisible { tag, visible } => {
                 check_name(tag)?;
@@ -1008,7 +1369,17 @@ impl Model {
                 materials,
                 scenes,
                 hidden_tags,
-            } => self.import(items, strokes, materials, scenes, hidden_tags),
+                definitions,
+                nodes,
+            } => self.import(
+                items,
+                strokes,
+                materials,
+                scenes,
+                hidden_tags,
+                definitions,
+                nodes,
+            ),
             Op::DefineMaterial {
                 name,
                 color,
@@ -1035,25 +1406,25 @@ impl Model {
                     .get_mut(from_public::<ObjectId>(*object))
                     .ok_or(DocumentError::NoSuchObject(*object))?;
                 o.material = material.clone();
+                let p = o.member.parent;
+                self.mark(p);
                 Ok(OpOutcome::MaterialSet)
             }
             Op::RenameObject { object, name } => {
-                if let Some(n) = name {
-                    check_name(n)?;
+                if self.object(*object).is_none() {
+                    return Err(DocumentError::NoSuchObject(*object).into());
                 }
-                let o = self
-                    .objects
-                    .get_mut(from_public::<ObjectId>(*object))
-                    .ok_or(DocumentError::NoSuchObject(*object))?;
-                o.name = name.clone();
-                Ok(OpOutcome::Renamed)
+                self.rename(Item::Object(*object), name.as_deref())
             }
             Op::DeleteMesh { mesh } => {
                 let k = from_public::<MeshId>(*mesh);
-                if self.meshes.remove(k).is_none() {
+                if !self.meshes.contains_key(k) {
                     return Err(DocumentError::NoSuchMesh(*mesh).into());
                 }
+                self.editable_mesh(k)?;
+                let removed = self.meshes.remove(k).expect("checked");
                 self.mesh_order.retain(|&m| m != k);
+                self.mark(removed.member.parent);
                 Ok(OpOutcome::MeshDeleted)
             }
             Op::Restore { snapshot } => {
@@ -1157,7 +1528,7 @@ impl Model {
         let path: Vec<DVec3> = path.iter().map(|p| DVec3::from_array(*p)).collect();
         match profile {
             Profile::Region { sketch, region } => {
-                let sid = self.sketch_key(*sketch)?;
+                let sid = self.sketch_edit_key(*sketch)?;
                 let rid = from_public::<RegionId>(*region);
                 let s = &self.sketches[sid];
                 let r = s.region(rid).ok_or(SketchError::NoSuchRegion(*region))?;
@@ -1175,9 +1546,11 @@ impl Model {
                     .collect();
                 let (p, _) =
                     sweep_with_direction(&wound(&plane, &rings), plane.normal, &path, closed)?;
-                let obj = swept_object(&p)?;
+                let mut obj = swept_object(&p)?;
+                obj.member.parent = self.context;
                 self.sketches[sid].consume_region(rid)?;
                 let id = self.insert_object(obj);
+                self.mark(self.context);
                 Ok(OpOutcome::ObjectCreated {
                     object: to_public(id),
                 })
@@ -1188,6 +1561,7 @@ impl Model {
                     .objects
                     .get(k)
                     .ok_or(FaceEditError::NoSuchObject(*object))?;
+                self.editable_object(k)?;
                 let fi = o
                     .face_ordinal(*face)
                     .ok_or(FaceEditError::NoSuchFace(*face))?;
@@ -1233,6 +1607,7 @@ impl Model {
                 next.validate()
                     .map_err(|e| crate::boolean::BooleanError::InvalidResult(e.to_string()))?;
                 self.objects[k] = next;
+                self.touch(k);
                 let pieces = self.sever(k);
                 Ok(OpOutcome::Swept {
                     objects: pieces.into_iter().map(to_public).collect(),
@@ -1290,7 +1665,7 @@ impl Model {
         }
         // Into a sketch: the region's own, or the sketch on the plane.
         let sid = match source {
-            OffsetSource::Region { sketch, .. } => self.sketch_key(*sketch)?,
+            OffsetSource::Region { sketch, .. } => self.sketch_edit_key(*sketch)?,
             _ => self.sketch_on(&plane),
         };
         let mut regions: Vec<RegionId> = Vec::new();
@@ -1308,42 +1683,65 @@ impl Model {
         })
     }
 
-    /// The live objects named by `objects` (duplicates dropped, order kept).
-    fn transform_targets(&self, objects: &[u64]) -> Result<Vec<ObjectId>, TransformError> {
-        if objects.is_empty() {
-            return Err(TransformError::NothingSelected);
+    /// The live objects and nodes named (duplicates dropped, order kept), each directly in
+    /// the open context and unlocked.
+    fn transform_targets(
+        &self,
+        objects: &[u64],
+        nodes: &[u64],
+    ) -> Result<(Vec<ObjectId>, Vec<NodeId>), KernelError> {
+        if objects.is_empty() && nodes.is_empty() {
+            return Err(TransformError::NothingSelected.into());
         }
         let mut keys: Vec<ObjectId> = Vec::with_capacity(objects.len());
         for &o in objects {
             let k = from_public::<ObjectId>(o);
             if !self.objects.contains_key(k) {
-                return Err(TransformError::NoSuchObject(o));
+                return Err(TransformError::NoSuchObject(o).into());
             }
+            self.editable_object(k)?;
             if !keys.contains(&k) {
                 keys.push(k);
             }
         }
-        Ok(keys)
+        let mut nkeys: Vec<NodeId> = Vec::with_capacity(nodes.len());
+        for &n in nodes {
+            let k = self.node_key(n)?;
+            self.editable_node(k)?;
+            if !nkeys.contains(&k) {
+                nkeys.push(k);
+            }
+        }
+        Ok((keys, nkeys))
     }
 
-    /// `count` copies of each object, copy k mapped by `xform` k times. Returns the new ids.
+    /// `count` copies of each object and node, copy k mapped by `xform` k times. Returns the
+    /// new ids (solids, nodes). Solids stay plain solids; an instance's copy is an instance.
     fn copies(
         &mut self,
         keys: &[ObjectId],
+        nkeys: &[NodeId],
         xform: &Xform,
         count: u32,
-    ) -> Result<Vec<u64>, TransformError> {
+    ) -> Result<(Vec<u64>, Vec<u64>), KernelError> {
         xform.check()?;
         let mut made = Vec::with_capacity(keys.len() * count as usize);
+        let mut made_nodes = Vec::with_capacity(nkeys.len() * count as usize);
         for k in 1..=count {
             let x = xform.power(k);
             for &key in keys {
                 let mut copy = self.objects[key].transformed(&x)?;
                 copy.source = None;
+                copy.member.slot = None;
+                copy.member.locked = false;
                 made.push(to_public(self.insert_object(copy)));
             }
+            for &n in nkeys {
+                made_nodes.push(to_public(self.copy_node(n, &x, self.context)?));
+            }
         }
-        Ok(made)
+        self.mark(self.context);
+        Ok((made, made_nodes))
     }
 
     /// Split an object that has come apart into one object per piece (see
@@ -1357,17 +1755,11 @@ impl Model {
         let first = it.next().expect("at least two pieces");
         self.objects[oid] = first;
         let mut keys = vec![oid];
-        let original = to_public(oid);
         for piece in it {
-            let k = self.insert_object(piece);
-            let id = to_public(k);
-            for g in self.groups.values_mut() {
-                if g.objects.contains(&original) {
-                    g.objects.push(id);
-                }
-            }
-            keys.push(k);
+            keys.push(self.insert_object(piece));
         }
+        // Inside a shared component, a cut that comes apart makes that copy unique.
+        self.mark_severed(self.objects[oid].member.parent);
         keys
     }
 
@@ -1380,7 +1772,9 @@ impl Model {
         id
     }
 
-    /// [`Op::Import`]: everything or nothing (the caller validates and commits).
+    /// [`Op::Import`]: everything or nothing (the caller validates and commits). Everything
+    /// goes into the open context.
+    #[allow(clippy::too_many_arguments)]
     fn import(
         &mut self,
         items: &[ImportItem],
@@ -1388,6 +1782,8 @@ impl Model {
         materials: &[MaterialDef],
         scenes: &[SceneDef],
         hidden_tags: &[String],
+        definitions: &[ImportDefinition],
+        nodes: &[ImportNode],
     ) -> Result<OpOutcome, KernelError> {
         let mut notes = Vec::new();
         for m in materials {
@@ -1400,14 +1796,12 @@ impl Model {
             );
         }
         let (mut objects, mut meshes) = (Vec::new(), Vec::new());
-        let mut groups: Vec<(String, Vec<u64>)> = Vec::new();
+        let mut groups: Vec<(String, Vec<Thing>)> = Vec::new();
+        let ctx = self.context;
         for item in items {
             let built = build_item(item)?;
             notes.extend(built.notes);
-            let tag = item.tag.as_deref().map(|t| clip_name(t, "Untagged"));
-            if let Some(t) = &tag {
-                self.tags.entry(t.clone()).or_insert(true);
-            }
+            let tag = self.import_tag(item.tag.as_deref());
             let material = match item.material.as_deref().map(|m| clip_name(m, "Material")) {
                 Some(m) if self.materials.contains_key(&m) => Some(m),
                 Some(m) => {
@@ -1430,16 +1824,20 @@ impl Model {
                 });
                 o.tag = tag.clone();
                 o.material = material.clone();
+                o.member.parent = ctx;
                 let id = self.insert_object(o);
-                made.push(to_public(id));
+                made.push(Thing::Object(id));
+                objects.push(to_public(id));
             }
             if let Some(mut m) = built.loose {
                 m.name = base.clone();
                 m.tag = tag.clone();
                 m.material = material.clone();
+                m.member.parent = ctx;
                 let id = self.meshes.insert(m);
                 self.mesh_order.push(id);
                 meshes.push(to_public(id));
+                made.push(Thing::Mesh(id));
             }
             if let Some(g) = &item.group
                 && !made.is_empty()
@@ -1450,16 +1848,56 @@ impl Model {
                     None => groups.push((g, made.clone())),
                 }
             }
-            objects.extend(made);
         }
         let mut group_ids = Vec::new();
         for (name, members) in groups {
-            let g = self.groups.insert(Group {
-                name,
-                objects: members,
+            let g = self.nodes.insert(Node {
+                name: Some(name),
+                kind: NodeKind::Group,
+                xform: Xform::IDENTITY,
+                tag: None,
+                member: crate::nodes::Membership {
+                    parent: ctx,
+                    ..Default::default()
+                },
             });
+            for t in members {
+                match t {
+                    Thing::Object(k) => self.objects[k].member.parent = Some(g),
+                    Thing::Mesh(k) => self.meshes[k].member.parent = Some(g),
+                    Thing::Node(_) => {}
+                }
+            }
             group_ids.push(to_public(g));
         }
+        // Groups and components (a `.skp`'s structure).
+        let mut def_ids: Vec<DefId> = Vec::with_capacity(definitions.len());
+        for d in definitions {
+            let mut def = Definition {
+                name: clip_name(&d.name, crate::nodes::DEFAULT_COMPONENT_NAME),
+                members: BTreeMap::new(),
+                next_slot: 1,
+            };
+            self.template_items(&mut def, None, &d.items, &mut notes)?;
+            self.template_nodes(&mut def, None, &d.children, &def_ids, &mut notes)?;
+            def_ids.push(self.defs.insert(def));
+        }
+        let mut made_nodes = Vec::new();
+        for n in nodes {
+            made_nodes.push(self.import_node(n, ctx, &def_ids, &mut notes, &mut meshes)?);
+        }
+        if !made_nodes.is_empty() {
+            let kids = self.kids();
+            for &n in &made_nodes {
+                for t in self.subtree_things(&kids, n) {
+                    if let Thing::Object(k) = t {
+                        objects.push(to_public(k));
+                    }
+                }
+            }
+            group_ids.extend(made_nodes.iter().map(|&n| to_public(n)));
+        }
+        self.mark(ctx);
         let mut sketches = Vec::new();
         let mut skipped = 0usize;
         for st in strokes {
@@ -1528,9 +1966,12 @@ impl Model {
             }
         }
         for t in hidden_tags {
-            self.tags.insert(clip_name(t, "Untagged"), false);
+            if !crate::nodes::is_untagged_name(t) {
+                self.tags.insert(clip_name(t, "Tag"), false);
+            }
         }
         if objects.is_empty()
+            && group_ids.is_empty()
             && meshes.is_empty()
             && sketches.is_empty()
             && materials.is_empty()
@@ -1547,19 +1988,265 @@ impl Model {
         })
     }
 
-    /// The sketch lying on `plane` (either facing, within the planarity tolerance), or a
-    /// new one on it.
+    /// A tag from a file: "", "Untagged" and "Layer0"-style defaults mean none; otherwise the
+    /// tag is listed (visible unless it already is listed hidden).
+    fn import_tag(&mut self, tag: Option<&str>) -> Option<String> {
+        let t = tag?;
+        if crate::nodes::is_untagged_name(t) {
+            return None;
+        }
+        let t = clip_name(t, "Tag");
+        self.tags.entry(t.clone()).or_insert(true);
+        Some(t)
+    }
+
+    /// Import items as template members of `def` (definition coordinates).
+    fn template_items(
+        &mut self,
+        def: &mut Definition,
+        parent: Option<u32>,
+        items: &[ImportItem],
+        notes: &mut Vec<String>,
+    ) -> Result<(), KernelError> {
+        use crate::nodes::{Member, MemberKind};
+        for item in items {
+            let built = build_item(item)?;
+            notes.extend(built.notes);
+            let tag = self.import_tag(item.tag.as_deref());
+            let material = item
+                .material
+                .as_deref()
+                .map(|m| clip_name(m, "Material"))
+                .filter(|m| self.materials.contains_key(m));
+            let base = clip_name(&item.name, "Imported");
+            let n = built.solids.len();
+            for (k, mut o) in built.solids.into_iter().enumerate() {
+                o.material = material.clone();
+                let name = if n == 1 {
+                    base.clone()
+                } else {
+                    clip_name(&format!("{base} {}", k + 1), "Imported")
+                };
+                let slot = def.next_slot;
+                def.next_slot += 1;
+                def.members.insert(
+                    slot,
+                    Member {
+                        parent,
+                        name: Some(name),
+                        tag: tag.clone(),
+                        hidden: false,
+                        locked: false,
+                        kind: MemberKind::Solid(Box::new(o)),
+                    },
+                );
+            }
+            if let Some(mut m) = built.loose {
+                m.name = base.clone();
+                m.material = material.clone();
+                let slot = def.next_slot;
+                def.next_slot += 1;
+                def.members.insert(
+                    slot,
+                    Member {
+                        parent,
+                        name: Some(base.clone()),
+                        tag: tag.clone(),
+                        hidden: false,
+                        locked: false,
+                        kind: MemberKind::Mesh(Box::new(m)),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Import nested groups and instances as template members of `def`.
+    fn template_nodes(
+        &mut self,
+        def: &mut Definition,
+        parent: Option<u32>,
+        nodes: &[ImportNode],
+        def_ids: &[DefId],
+        notes: &mut Vec<String>,
+    ) -> Result<(), KernelError> {
+        use crate::nodes::{Member, MemberKind};
+        for n in nodes {
+            let slot = def.next_slot;
+            def.next_slot += 1;
+            let tag = self.import_tag(n.tag.as_deref());
+            let name = n.name.as_deref().map(|x| clip_name(x, "Group"));
+            match &n.kind {
+                ImportNodeKind::Group { items, children } => {
+                    def.members.insert(
+                        slot,
+                        Member {
+                            parent,
+                            name,
+                            tag,
+                            hidden: n.hidden,
+                            locked: false,
+                            kind: MemberKind::Group(Xform::IDENTITY),
+                        },
+                    );
+                    self.template_items(def, Some(slot), items, notes)?;
+                    self.template_nodes(def, Some(slot), children, def_ids, notes)?;
+                }
+                ImportNodeKind::Instance { definition, xform } => {
+                    let d = *def_ids.get(*definition).ok_or_else(|| {
+                        crate::error::StructureError::BadStructure(
+                            "a definition places one that is not listed before it".into(),
+                        )
+                    })?;
+                    xform.check()?;
+                    def.members.insert(
+                        slot,
+                        Member {
+                            parent,
+                            name,
+                            tag,
+                            hidden: n.hidden,
+                            locked: false,
+                            kind: MemberKind::Instance(d, *xform),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Import a group or instance into the world under `parent`.
+    fn import_node(
+        &mut self,
+        n: &ImportNode,
+        parent: Option<NodeId>,
+        def_ids: &[DefId],
+        notes: &mut Vec<String>,
+        meshes: &mut Vec<u64>,
+    ) -> Result<NodeId, KernelError> {
+        let tag = self.import_tag(n.tag.as_deref());
+        let member = crate::nodes::Membership {
+            parent,
+            slot: None,
+            hidden: n.hidden,
+            locked: false,
+        };
+        match &n.kind {
+            ImportNodeKind::Group { items, children } => {
+                let g = self.nodes.insert(Node {
+                    name: n.name.as_deref().map(|x| clip_name(x, "Group")),
+                    kind: NodeKind::Group,
+                    xform: Xform::IDENTITY,
+                    tag,
+                    member,
+                });
+                for item in items {
+                    let built = build_item(item)?;
+                    notes.extend(built.notes);
+                    let tag = self.import_tag(item.tag.as_deref());
+                    let material = item
+                        .material
+                        .as_deref()
+                        .map(|m| clip_name(m, "Material"))
+                        .filter(|m| self.materials.contains_key(m));
+                    let base = clip_name(&item.name, "Imported");
+                    let count = built.solids.len();
+                    for (k, mut o) in built.solids.into_iter().enumerate() {
+                        o.name = Some(if count == 1 {
+                            base.clone()
+                        } else {
+                            clip_name(&format!("{base} {}", k + 1), "Imported")
+                        });
+                        o.tag = tag.clone();
+                        o.material = material.clone();
+                        o.member.parent = Some(g);
+                        self.insert_object(o);
+                    }
+                    if let Some(mut m) = built.loose {
+                        m.name = base.clone();
+                        m.tag = tag.clone();
+                        m.material = material.clone();
+                        m.member.parent = Some(g);
+                        let id = self.meshes.insert(m);
+                        self.mesh_order.push(id);
+                        meshes.push(to_public(id));
+                    }
+                }
+                for c in children {
+                    self.import_node(c, Some(g), def_ids, notes, meshes)?;
+                }
+                Ok(g)
+            }
+            ImportNodeKind::Instance { definition, xform } => {
+                let d = *def_ids.get(*definition).ok_or_else(|| {
+                    crate::error::StructureError::BadStructure(
+                        "an instance places a definition that is not in the import".into(),
+                    )
+                })?;
+                xform.check()?;
+                let i = self.nodes.insert(Node {
+                    name: n.name.as_deref().map(|x| clip_name(x, "Component")),
+                    kind: NodeKind::Instance(d),
+                    xform: *xform,
+                    tag,
+                    member,
+                });
+                self.rederive(i)?;
+                let kids = self.kids();
+                for t in self.subtree_things(&kids, i) {
+                    if let Thing::Mesh(k) = t {
+                        meshes.push(to_public(k));
+                    }
+                }
+                Ok(i)
+            }
+        }
+    }
+
+    /// The open context's sketch lying on `plane` (either facing, within the planarity
+    /// tolerance), or a new one on it there. Strokes only stick to strokes of the same
+    /// editing context.
     fn sketch_on(&mut self, plane: &Plane) -> SketchId {
         let found = self.sketch_order.iter().copied().find(|&k| {
-            let sp = self.sketches[k].plane();
-            sp.normal.dot(plane.normal).abs() >= 1.0 - 1e-12
+            let s = &self.sketches[k];
+            let sp = s.plane();
+            s.parent == self.context
+                && sp.normal.dot(plane.normal).abs() >= 1.0 - 1e-12
                 && sp.signed_distance(plane.origin).abs() <= PLANARITY
         });
         found.unwrap_or_else(|| {
-            let id = self.sketches.insert(Sketch::new(*plane));
+            let mut s = Sketch::new(*plane);
+            s.parent = self.context;
+            let id = self.sketches.insert(s);
             self.sketch_order.push(id);
             id
         })
+    }
+
+    /// A stroke onto a plane: into the open context's sketch on it (or a new one).
+    fn draw_on_plane(
+        &mut self,
+        plane: &Plane,
+        pts: &[DVec3],
+        closed: bool,
+    ) -> Result<OpOutcome, KernelError> {
+        let sid = self.sketch_on(plane);
+        let regions = self.draw_in_sketch(sid, pts, closed)?;
+        Ok(OpOutcome::Drawn {
+            sketch: Some(to_public(sid)),
+            regions: regions.into_iter().map(to_public).collect(),
+            faces: Vec::new(),
+            inside: self.region_inside(sid, pts, closed),
+        })
+    }
+
+    /// A sketch that may be edited: it exists and belongs to the open context.
+    fn sketch_edit_key(&self, id: u64) -> Result<SketchId, KernelError> {
+        let k = self.sketch_key(id)?;
+        self.editable_sketch(k)?;
+        Ok(k)
     }
 
     /// The region a closed stroke encloses (holding an interior point of it), if any.
@@ -1598,25 +2285,19 @@ impl Model {
         s.insert_polyline(&local, closed)
     }
 
-    /// Drop a removed object from every group (and empty groups with it).
-    fn forget_object(&mut self, object: u64) {
-        for g in self.groups.values_mut() {
-            g.objects.retain(|&o| o != object);
-        }
-        self.groups.retain(|_, g| !g.objects.is_empty());
-    }
-
     /// The object and the ordinal of its face with persistent id `face`.
     fn face_edit_target(
         &mut self,
         object: u64,
         face: u64,
-    ) -> Result<(&mut Object, usize), FaceEditError> {
+    ) -> Result<(&mut Object, usize), KernelError> {
         let k = from_public::<ObjectId>(object);
-        let o = self
-            .objects
-            .get_mut(k)
-            .ok_or(FaceEditError::NoSuchObject(object))?;
+        if !self.objects.contains_key(k) {
+            return Err(FaceEditError::NoSuchObject(object).into());
+        }
+        self.editable_object(k)?;
+        self.touch(k);
+        let o = &mut self.objects[k];
         let fi = o
             .face_ordinal(face)
             .ok_or(FaceEditError::NoSuchFace(face))?;
@@ -1655,10 +2336,11 @@ impl Model {
             violations: vec![Violation::DanglingKey(what)],
             report: Default::default(),
         };
-        for g in self.groups.values() {
-            if g.objects.is_empty() || g.objects.iter().any(|&o| self.object(o).is_none()) {
-                return Err(dangling("group names a missing object"));
-            }
+        if let Err(e) = self.check_structure() {
+            return Err(TopologyError {
+                violations: vec![Violation::Structure(e)],
+                report: Default::default(),
+            });
         }
         for (_, o) in self.objects() {
             if o.tag().is_some_and(|t| !self.tags.contains_key(t)) {

@@ -11,6 +11,12 @@
 //!
 //! Every op still goes through [`Model::apply`] (clone, mutate, validate, commit), so a
 //! refused op changes nothing: not the model, not the log, not the undo ring.
+//!
+//! Opening and closing a group or component for editing ([`Op::SetContext`],
+//! [`Op::LeaveContext`]) is navigation, not an edit: it is logged (so the log replays) but
+//! is not an undo step, and it keeps the redo stack. Undo restores the model as it was
+//! before the last edit, editing context included, so it returns to where that edit was
+//! made.
 
 use std::collections::VecDeque;
 
@@ -92,6 +98,11 @@ impl Document {
         match op {
             Op::Undo => self.undo(),
             Op::Redo => self.redo(),
+            _ if op.is_navigation() => {
+                let out = self.model.apply(op)?;
+                self.log.push(op.clone());
+                Ok(out)
+            }
             _ => {
                 let before = self.model.clone();
                 let out = self.model.apply(op)?;
@@ -299,10 +310,25 @@ mod tests {
         assert!(!d.model().is_visible(2));
         let mesh = crate::mesh::view_mesh(d.model()).unwrap();
         assert_eq!(mesh.triangle_count(), 12, "only the visible box is drawn");
+        // What is inside a group is edited inside it (lane 5).
+        assert!(d.apply(&Op::DeleteObject { object: 1 }).is_err());
+        let depth = d.depth();
+        d.apply(&Op::SetContext { node: Some(1) }).unwrap();
+        assert_eq!(d.depth(), depth, "opening a group is not an undo step");
         d.apply(&Op::DeleteObject { object: 1 }).unwrap();
         assert_eq!(d.model().groups()[0].1.objects, vec![2]);
         d.apply(&Op::DeleteObject { object: 2 }).unwrap();
+        assert_eq!(
+            d.model().groups().len(),
+            1,
+            "the open group stays while it is open"
+        );
+        d.apply(&Op::LeaveContext).unwrap();
         assert!(d.model().groups().is_empty(), "an emptied group goes away");
+        // Undo returns to the group (where the last edit was made), with its solid back.
+        d.undo().unwrap();
+        assert_eq!(d.model().context(), Some(1));
+        assert_eq!(d.model().groups()[0].1.objects, vec![2]);
         for bad in [
             Op::CreateGroup {
                 name: " ".into(),
