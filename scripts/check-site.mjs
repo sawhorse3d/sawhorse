@@ -7,6 +7,9 @@
 //   - the words that must be there are there (the pitch, the licence, the trademark
 //     notice, the unsigned-builds note, the maintainer's handle);
 //   - screenshots under 400 KB; CNAME says sawhorse3d.com; .nojekyll present;
+//   - the demo video (lane 15): a WebM under 4 MB with a poster (under 400 KB), or an
+//     animated WebP under 3 MB, above the fold on the home page; the comparison table with
+//     its date and the trademark footnote;
 //   - the demo in app/ is built for <base>app/, with the kernel WASM and its worker, and
 //     carries its content security policy (the plugin sandbox's second lock);
 //   - no machine paths or personal names anywhere in the output;
@@ -32,6 +35,8 @@ const online = argv.includes("--online");
 const problems = [];
 const bad = (msg) => problems.push(msg);
 const MAX_IMG = 400 * 1024;
+const MAX_VIDEO = 4 * 1024 * 1024;
+const MAX_ANIMATION = 3 * 1024 * 1024;
 
 function walk(d) {
   return readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
@@ -104,12 +109,30 @@ for (const must of [
   if (!home.includes(must)) bad(`index.html: missing "${must}"`);
 }
 for (const os of ["Windows", "macOS (Apple Silicon)", "Linux"]) if (!home.includes(`<h3>${os}</h3>`)) bad(`index.html: no ${os} download`);
+// Lane 15: the comparison, dated, with the trademark footnote; the other free options.
+for (const must of ["How it compares", "as of 12 October 2026", "SketchUp is a trademark of Trimble Inc.", "OpenCutList is the work and the name of its authors", "Other free options", "Not yet"]) {
+  if (!home.includes(must)) bad(`index.html: missing "${must}"`);
+}
+// Lane 15: the demo, above the fold (in the hero), silent and looping.
+const hero = /<section class="hero">([\s\S]*?)<\/section>/.exec(home)?.[1] ?? "";
+const video = /<video\b[^>]*>/.exec(hero)?.[0] ?? "";
+if (video) {
+  for (const attr of ["autoplay", "muted", "loop", "playsinline", "poster="]) if (!video.includes(attr)) bad(`index.html: the demo video lacks ${attr}`);
+  if (!/<source src="[^"]+\.webm" type="video\/webm">/.test(hero)) bad("index.html: the demo video has no WebM source");
+} else if (!/<img[^>]+src="[^"]*demo\.webp"/.test(hero)) bad("index.html: no demo video (or animated WebP) in the hero");
 if (downloads.size < 3) bad(`index.html: ${downloads.size} download links (want at least 3)`);
 
 // ---- images ---------------------------------------------------------------------------
 for (const f of files.filter((f) => /\.(png|jpe?g|webp)$/i.test(f) && !rel(f).startsWith("app/"))) {
   const size = statSync(f).size;
-  if (size > MAX_IMG) bad(`${rel(f)}: ${Math.round(size / 1024)} KB (limit 400 KB)`);
+  // The demo's animated WebP fallback has a cap of its own.
+  const cap = /(^|\/)demo\.webp$/.test(rel(f)) ? MAX_ANIMATION : MAX_IMG;
+  if (size > cap) bad(`${rel(f)}: ${Math.round(size / 1024)} KB (limit ${Math.round(cap / 1024)} KB)`);
+}
+for (const f of files.filter((f) => /\.(webm|mp4)$/i.test(f) && !rel(f).startsWith("app/"))) {
+  const size = statSync(f).size;
+  if (!/\.webm$/i.test(f)) bad(`${rel(f)}: the site's video is WebM only`);
+  if (size > MAX_VIDEO) bad(`${rel(f)}: ${(size / 1024 / 1024).toFixed(1)} MB (limit 4 MB)`);
 }
 
 // ---- the demo -------------------------------------------------------------------------

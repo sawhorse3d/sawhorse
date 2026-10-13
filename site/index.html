@@ -52,11 +52,10 @@
         </div>
       </div>
       <figure class="shot">
-        <picture>
-          <source srcset="img/app-dark.png" media="(prefers-color-scheme: dark)">
-          <img src="img/app-light.png" width="1440" height="900" alt="Sawhorse with a bookshelf built from components: the tool rail on the left, the 3D view in the middle, the side panel on the right and the value box at the bottom.">
-        </picture>
-        <figcaption>The browser build: the same app as the desktop one.</figcaption>
+        <video class="demo" autoplay muted loop playsinline preload="metadata" width="1280" height="800" poster="media/demo-poster.png" aria-label="A one-minute silent demo: a bookshelf opens, the view turns round it, the Cut list lists its parts, Nesting lays them out on oak boards and a plywood sheet, and the PDF booklet is saved.">
+          <source src="media/demo.webm" type="video/webm">
+        </video>
+        <figcaption>The browser build, recorded as it runs: open, look round, cut list, nesting, PDF.</figcaption>
       </figure>
     </div>
   </section>
@@ -68,17 +67,50 @@
       <div class="features">
         <div class="feature">
           <h3><span class="dot" style="background:var(--inf-end)"></span>Opens .skp, exports watertight</h3>
-          <p>Bring SketchUp models in, with their groups, components and layers. Every STL and 3MF that leaves is a closed solid, ready for the slicer or the CNC.</p>
+          <p>Bring SketchUp models in (2013 and later, <a href="https://github.com/sawhorse3d/sawhorse/blob/main/docs/skp-compat.md">with known limits</a>), with their groups, components, layers and soft edges. Every STL and 3MF that leaves is a closed solid, ready for the slicer or the CNC.</p>
         </div>
         <div class="feature">
           <h3><span class="dot" style="background:var(--grain)"></span>Cut list and nesting built in</h3>
-          <p>Parts, sizes, grain and board feet as you draw; sheets and boards laid out with your kerf, and cutting diagrams as SVG, DXF and PDF.</p>
+          <p>Parts, finished sizes, grain and board feet on the rough lumber you buy, as you draw, even from furniture that is not a closed solid; sheets and boards laid out with your kerf, and cutting diagrams as SVG, DXF and PDF.</p>
         </div>
         <div class="feature">
           <h3><span class="dot" style="background:var(--inf-mid)"></span>Offline, no account</h3>
           <p>Your models stay on your machine. No sign-up, no subscription, no tracking. The browser version uploads nothing, and the desktop app works with the network unplugged.</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="compare" aria-labelledby="cmp-h">
+    <div class="wrap">
+      <h2 id="cmp-h">How it compares</h2>
+      <p class="sub">Sawhorse is an alpha. Here is where it stands next to what most woodworkers use today, as of 12 October 2026.</p>
+      <div class="table-scroll">
+        <table class="compare">
+          <thead>
+            <tr><th scope="col"></th><th scope="col">Sawhorse 0.1 alpha</th><th scope="col">SketchUp Free</th><th scope="col">SketchUp with OpenCutList</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Price</th><td>Free</td><td>Free</td><td>SketchUp Pro subscription, paid yearly; OpenCutList free</td></tr>
+            <tr><th scope="row">Account required</th><td>No</td><td>Yes (Trimble ID)</td><td>Yes (Trimble ID, for the subscription)</td></tr>
+            <tr><th scope="row">Works offline</th><td>Yes (desktop app; the browser version needs the network only to load)</td><td>No (a web app)</td><td>Yes (desktop app)</td></tr>
+            <tr><th scope="row">Windows / macOS / Linux / browser</th><td>Yes / Yes / Yes / Yes</td><td>Browser only</td><td>Windows and macOS; extensions do not run in the browser versions</td></tr>
+            <tr><th scope="row">Cut list with board feet</th><td>Built in</td><td>No (no extensions)</td><td>Yes, with OpenCutList</td></tr>
+            <tr><th scope="row">Sheet and board nesting</th><td>Built in (sheets and boards, kerf, grain)</td><td>No</td><td>Yes, with OpenCutList</td></tr>
+            <tr><th scope="row">Opens .skp</th><td>Yes, SketchUp 2013 and later, <a href="https://github.com/sawhorse3d/sawhorse/blob/main/docs/skp-compat.md">with known limits</a></td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Watertight STL / 3MF</th><td>Yes: both, and an open mesh is refused by name</td><td>STL export, no solid check</td><td>STL built in; solid checks and 3MF through extensions</td></tr>
+            <tr><th scope="row">Section planes</th><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Scaled drawings</th><td>Yes: drawing sheets, new and still young</td><td>No</td><td>Yes (LayOut, with Pro)</td></tr>
+            <tr><th scope="row">Fillet / chamfer</th><td>Not yet (a chamfer can be routed with Follow Me)</td><td>Not built in</td><td>Through extensions</td></tr>
+            <tr><th scope="row">.skp export</th><td>Not yet</td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row">Licence</th><td>Open source: MIT OR Apache-2.0</td><td>Proprietary</td><td>SketchUp proprietary; OpenCutList open source</td></tr>
+            <tr><th scope="row">Commercial use allowed</th><td>Yes</td><td>No (personal use only)</td><td>Yes, with a Pro subscription</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine">From each product's public pages and terms on 12 October 2026; prices, plans and terms change, so check them before you decide. SketchUp is a trademark of Trimble Inc.; OpenCutList is the work and the name of its authors. Neither is affiliated with Sawhorse.</p>
+      <h3 class="others">Other free options</h3>
+      <p class="others-text"><a href="https://ingetrazo.com/en/">IngeTrazo</a> is a free, open-source SketchUp-style modeler for architecture with drawing sheets and IFC, built first for Linux. <a href="https://hew3d.com">Hew</a> is a free, open-source, solids-first modeler for woodworkers and makers that works like SketchUp, on the desktop and in the browser. <a href="https://www.freecad.org">FreeCAD</a> is a free, open-source parametric CAD program for when you want every dimension driven by constraints. <a href="https://docs.opencutlist.org/">OpenCutList</a> is the free, open-source cut-list and cutting-diagram extension for SketchUp's desktop versions.</p>
     </div>
   </section>
 

@@ -392,6 +392,14 @@ Writing plugins: `docs/PLUGINS.md`.
 
 A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piece that keeps the board's smallest face id keeps its name ("solid 3"); the other gets the next number. Both stay in the board's group. Inside a component used more than once, the cut makes that instance unique first, so the other instances are not cut.
 
+## Settings
+
+**Edit > Settings…** holds one setting today: the **render service**. Renders (and the Credits chip and the Render pane) are not part of this alpha: they appear only when a render service address is saved here and that service answers when the app starts. Without one, the line under the field says "Renders are off" and nothing about credits is shown. Nothing else in Sawhorse needs a network or an account.
+
+## Known limits
+
+How large a model has been tried, which SketchUp files do not open, and the hard limits: [LIMITS](https://github.com/sawhorse3d/sawhorse/blob/main/docs/LIMITS.md).
+
 ## Unsaved work
 
 Sawhorse keeps your work in this browser as you go. If the tab closes or reloads, the status line offers **Restore unsaved work?** with Restore and Discard; Edit > Restore Unsaved Work does the same while the offer stands. Restoring brings the undo history back too. Real files (.shz) arrive with their lane.

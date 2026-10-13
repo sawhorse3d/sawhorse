@@ -111,3 +111,17 @@ footer p{margin:0}
   .features,.downloads{grid-template-columns:1fr}
   .toc ul{columns:1}
 }
+
+/* Lane 15: the demo video, the comparison table, other options */
+.shot video{display:block;width:100%;height:auto;background:var(--panel)}
+.table-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.compare{border-collapse:collapse;width:100%;min-width:640px;font-size:14.5px}
+.compare th,.compare td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.compare thead th{font-family:var(--display);font-weight:600;font-size:17px;letter-spacing:.02em;background:var(--rail)}
+.compare thead th:nth-child(2){color:var(--accent)}
+.compare tbody th{font-weight:500;color:var(--muted);white-space:nowrap}
+.compare tbody tr:last-child th,.compare tbody tr:last-child td{border-bottom:0}
+.compare td:nth-child(2){background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.fine{color:var(--muted);font-size:13px;margin:10px 0 0}
+.others{margin:26px 0 6px}
+.others-text{margin:0;max-width:820px}
