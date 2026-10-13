@@ -280,12 +280,15 @@ test("a dimension on the model follows it when the model changes; a click on it 
   // Back in the model, pull the right side out 6 in.
   await page.locator('.sheet-tabs .mode-switch [data-mode="model"]').click();
   await expect(page.locator("main.vp")).toBeVisible();
-  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  // The Right view looks straight at that face (+X), so the click lands on it.
+  await page.getByRole("button", { name: "Right", exact: true }).click();
   await page.keyboard.press("p");
   await clickAt(page, [30, 6, 18], "on-face");
   await expect(hint(page)).toContainText("Pushing face");
   await type(page, "6");
   await expect(hint(page)).toContainText("Pulled 6 in");
+  const solid = await page.evaluate(() => (window as unknown as { __sawhorse: { solids(): { max: V3 }[] } }).__sawhorse.solids());
+  expect(solid[0].max[0] / IN).toBeCloseTo(36, 9);
 
   // The sheet says 36", and its ends are 4 1/2 in apart at 1:8 (factor f), on the new corner.
   await sheetsMode(page);
