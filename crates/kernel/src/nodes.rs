@@ -1041,7 +1041,7 @@ impl Model {
                     part: PartAttrs::default(),
                     material: None,
                 });
-                let piece = crate::meshbuild::LooseMesh {
+                let piece = crate::meshbuild::LooseMeshData {
                     name: mesh.name.clone(),
                     positions,
                     faces: pf,
@@ -1057,7 +1057,7 @@ impl Model {
                     },
                     edge_flags: flags,
                 };
-                made.push(self.meshes.insert(piece));
+                made.push(self.meshes.insert(piece.into()));
                 groups.push(to_public(g));
             }
             if !stray.is_empty() {
@@ -1761,9 +1761,9 @@ impl Model {
                     d = self.fork(i);
                 }
                 if self.capture(i)? {
-                    for j in self.instances_of(d) {
-                        self.rederive(j)?;
-                    }
+                    // Every copy from one map of the tree (lane 16).
+                    let copies = self.instances_of(d);
+                    self.rederive_all(&copies)?;
                 }
             }
         }
@@ -1962,10 +1962,22 @@ impl Model {
     /// Rebuild instance `i`'s world contents from its definition, keeping the ids (and
     /// display numbers) of everything that matches a template member by slot.
     pub(crate) fn rederive(&mut self, i: NodeId) -> Result<(), KernelError> {
-        self.rederive_at(i, 0)
+        self.rederive_all(&[i])
     }
 
-    fn rederive_at(&mut self, i: NodeId, depth: usize) -> Result<(), KernelError> {
+    /// [`Model::rederive`] for several instances, none inside another, from one map of the
+    /// tree (lane 16). Each instance's re-derivation changes only what is inside it, so the
+    /// map stays right for the others and for the instances nested in each; a vanished
+    /// member is removed with a fresh map (its kept contents may have moved).
+    pub(crate) fn rederive_all(&mut self, list: &[NodeId]) -> Result<(), KernelError> {
+        let kids = self.kids();
+        for &i in list {
+            self.rederive_at(i, 0, &kids)?;
+        }
+        Ok(())
+    }
+
+    fn rederive_at(&mut self, i: NodeId, depth: usize, kids: &Kids) -> Result<(), KernelError> {
         if depth > 64 {
             return Err(StructureError::Cycle.into());
         }
@@ -1978,8 +1990,7 @@ impl Model {
             .get(d)
             .ok_or(StructureError::NoSuchDefinition(to_public(d)))?
             .clone();
-        let kids = self.kids();
-        let scope = self.scope_in(&kids, i);
+        let scope = self.scope_in(kids, i);
         let fits = |m: &Member, t: Thing| match (&m.kind, t) {
             (MemberKind::Solid(_), Thing::Object(_)) | (MemberKind::Mesh(_), Thing::Mesh(_)) => {
                 true
@@ -2107,7 +2118,7 @@ impl Model {
             }
         }
         for k in nested {
-            self.rederive_at(k, depth + 1)?;
+            self.rederive_at(k, depth + 1, kids)?;
         }
         // Every derived solid must be a valid solid (a copy scaled so the change folds it,
         // for example): refuse the edit with a typed error rather than commit it.

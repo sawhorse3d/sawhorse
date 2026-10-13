@@ -249,8 +249,10 @@ impl DocCore {
         &self.doc
     }
 
-    /// Apply one op given as JSON; returns the outcome as JSON.
+    /// Apply one op given as JSON; returns the outcome as JSON. Refused unread over
+    /// [`MAX_OP_JSON`] (lane 16).
     pub fn apply_json(&mut self, op_json: &str) -> Result<String, String> {
+        too_big("an op", op_json, MAX_OP_JSON)?;
         let op: Op = serde_json::from_str(op_json).map_err(|e| format!("bad op: {e}"))?;
         let out = self.doc.apply(&op).map_err(|e| e.to_string())?;
         self.scene.replace(None);
@@ -293,6 +295,7 @@ impl DocCore {
     /// `sawhorse_kernel::refbatch`). Returns the batch's outcome as JSON; a refusal names
     /// the op and changes nothing.
     pub fn apply_named_batch_json(&mut self, json: &str) -> Result<String, String> {
+        too_big("a plugin batch", json, MAX_BATCH_JSON)?;
         let batch: sawhorse_kernel::refbatch::NamedBatch =
             serde_json::from_str(json).map_err(|e| format!("bad batch: {e}"))?;
         let (out, _) =
@@ -686,22 +689,41 @@ impl DocCore {
             opts.name = name.to_string();
         }
         let parsed = sawhorse_import::read(None, bytes, &opts).map_err(|e| e.to_string())?;
-        let out = self.doc.apply(&parsed.op()).map_err(|e| e.to_string())?;
+        // The parsed soup moves into the op (lane 16: it used to be cloned, one more copy of
+        // every imported point at the moment memory peaks).
+        let (op, notes) = parsed.into_op();
+        let out = self.doc.apply_owned(op).map_err(|e| e.to_string())?;
         self.scene.replace(None);
         self.snaps.replace(None);
-        serde_json::to_string(&serde_json::json!({ "outcome": out, "notes": parsed.notes }))
+        serde_json::to_string(&serde_json::json!({ "outcome": out, "notes": notes }))
             .map_err(|e| e.to_string())
     }
 
     /// The document as a `.shz` (see `docs/format.md`), with the user's unit system and an
     /// optional PNG thumbnail.
-    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn save_shz(
+        &self,
+        display_units: &str,
+        thumbnail_png: &[u8],
+        plugin_data: &str,
+    ) -> Result<Vec<u8>, String> {
         let opts = sawhorse_shz::SaveOptions {
             display_units: (!display_units.is_empty()).then(|| display_units.to_string()),
             thumbnail_png: (!thumbnail_png.is_empty()).then(|| thumbnail_png.to_vec()),
             generator: None,
+            // Lane 16: the plugins' document stores go in through the kernel's writer.
+            plugin_data: (!plugin_data.is_empty()).then(|| plugin_data.to_string()),
         };
-        sawhorse_shz::write(self.doc.model(), &opts).map_err(|e| e.to_string())
+        let bytes = sawhorse_shz::write(self.doc.model(), &opts).map_err(|e| e.to_string())?;
+        // Lane 16: what is written is read back (its directory, CRCs, limits and scene)
+        // before it leaves the kernel, so a file that would not open is never written over
+        // the person's last good copy.
+        let back = sawhorse_shz::read(&bytes)
+            .map_err(|e| format!("the file did not read back as written: {e}"))?;
+        if back.document.hash() != self.doc.model().hash() {
+            return Err("the file did not read back as written: the model differs".into());
+        }
+        Ok(bytes)
     }
 
     /// Replace the document with an opened `.shz`. Returns `{"notes": [...],
@@ -712,6 +734,8 @@ impl DocCore {
             "notes": opened.notes,
             "display_units": opened.scene.units.display,
             "generator": opened.scene.generator,
+            // Lane 16: read (capped) here, so the app never unzips the file itself.
+            "plugin_data": opened.plugin_data,
         });
         *self = DocCore::from_document(opened.document);
         Ok(info.to_string())
@@ -859,6 +883,27 @@ pub struct Doc {
     core: DocCore,
 }
 
+/// Largest op the kernel reads as JSON (lane 16): an import of a large SketchUp model is
+/// the biggest legitimate one.
+pub const MAX_OP_JSON: usize = 256 * 1024 * 1024;
+/// Largest plugin batch (lane 16): a plugin's message is at most 4 MiB on the wire.
+pub const MAX_BATCH_JSON: usize = 32 * 1024 * 1024;
+/// Largest op log replayed (autosave restore, a restarted worker).
+pub const MAX_LOG_JSON: usize = 1024 * 1024 * 1024;
+
+/// Refuse a JSON text over `max` bytes before parsing any of it.
+fn too_big(what: &str, json: &str, max: usize) -> Result<(), String> {
+    if json.len() > max {
+        Err(format!(
+            "{what} of {} MB is larger than the {} MB the kernel reads",
+            json.len() / 1024 / 1024,
+            max / 1024 / 1024
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// A new document with the ground sketch (sketch id 1).
 #[wasm_bindgen]
 pub fn document_new() -> Doc {
@@ -868,6 +913,7 @@ pub fn document_new() -> Doc {
 /// A document rebuilt by replaying a JSON op log (undo and redo entries included).
 #[wasm_bindgen]
 pub fn document_replay(ops_json: &str) -> Result<Doc, JsError> {
+    too_big("an op log", ops_json, MAX_LOG_JSON).map_err(js)?;
     let ops: Vec<Op> = serde_json::from_str(ops_json).map_err(|e| JsError::new(&e.to_string()))?;
     let doc = Document::replay(&ops).map_err(|(i, e)| JsError::new(&format!("op {i}: {e}")))?;
     Ok(Doc {
@@ -1038,9 +1084,49 @@ impl Doc {
         self.core.obj(id(object_id)?).map_err(js)
     }
 
-    /// The document as a `.shz` file (scene.json + geometry.glb + thumbnail.png).
-    pub fn save_shz(&self, display_units: &str, thumbnail_png: &[u8]) -> Result<Vec<u8>, JsError> {
-        self.core.save_shz(display_units, thumbnail_png).map_err(js)
+    /// The document as a `.shz` file (scene.json + geometry.glb + thumbnail.png, and
+    /// `plugin_data` as plugin-data.json when not empty).
+    pub fn save_shz(
+        &self,
+        display_units: &str,
+        thumbnail_png: &[u8],
+        plugin_data: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        self.core
+            .save_shz(display_units, thumbnail_png, plugin_data)
+            .map_err(js)
+    }
+
+    /// Entries in the op log (lane 16).
+    pub fn op_log_len(&self) -> f64 {
+        self.core.document().log().len() as f64
+    }
+
+    /// The op log from entry `from` on, one JSON text per op (lane 16): what the app keeps
+    /// so it can rebuild the document in a fresh worker if this one fails.
+    pub fn op_log_tail(&self, from: f64) -> Vec<String> {
+        let from = if from.is_finite() && from > 0.0 {
+            from as usize
+        } else {
+            0
+        };
+        self.core
+            .document()
+            .log()
+            .iter()
+            .skip(from)
+            .map(|op| serde_json::to_string(op).unwrap_or_default())
+            .collect()
+    }
+
+    /// Lane 16, tests only: fail the way a kernel bug or an out-of-memory would, in the
+    /// middle of an edit (a Rust panic is a WebAssembly trap with this document borrowed).
+    /// The app must notice, start a fresh worker and rebuild the document from its log.
+    pub fn fail_for_test(&mut self, how: &str) -> Result<String, JsError> {
+        match how {
+            "panic" => panic!("fail_for_test: a deliberate kernel panic"),
+            _ => Err(JsError::new("fail_for_test: unknown failure")),
+        }
     }
 
     /// Replace this document with an opened `.shz` (nothing to undo afterwards). Returns
@@ -1488,7 +1574,7 @@ mod tests {
             r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
         );
         let h = d.document().hash_hex();
-        let bytes = d.save_shz("mm", b"").unwrap();
+        let bytes = d.save_shz("mm", b"", "").unwrap();
         let mut fresh = DocCore::default();
         let info: serde_json::Value =
             serde_json::from_str(&fresh.open_shz(&bytes).unwrap()).unwrap();
@@ -1599,7 +1685,7 @@ mod tests {
         );
         // Save and open: the same document.
         let h = d.document().hash_hex();
-        let bytes = d.save_shz("frac-in", b"").unwrap();
+        let bytes = d.save_shz("frac-in", b"", "").unwrap();
         let mut fresh = DocCore::default();
         fresh.open_shz(&bytes).unwrap();
         assert_eq!(fresh.document().hash_hex(), h);
@@ -1738,7 +1824,7 @@ mod tests {
             serde_json::from_str(&replay_nesting_core(&log, "{}").unwrap()).unwrap();
         let here: serde_json::Value = serde_json::from_str(&d.nest_json("{}").unwrap()).unwrap();
         assert_eq!(again["hash"], here["hash"]);
-        let bytes = d.save_shz("frac-in", b"").unwrap();
+        let bytes = d.save_shz("frac-in", b"", "").unwrap();
         let mut fresh = DocCore::default();
         fresh.open_shz(&bytes).unwrap();
         let opened: serde_json::Value =
@@ -1829,5 +1915,38 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(text).unwrap();
         let h = replay_hash_core(&v["ops"].to_string()).unwrap();
         assert_eq!(h, v["hash"].as_str().unwrap());
+    }
+
+    #[test]
+    fn lane_16_the_log_is_handed_out_by_tail_and_big_json_is_refused_unread() {
+        let mut d = Doc::default();
+        assert_eq!(d.op_log_len(), 1.0, "the ground sketch");
+        d.core
+            .apply_json(r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#)
+            .unwrap();
+        assert_eq!(d.op_log_len(), 2.0);
+        let tail = d.op_log_tail(1.0);
+        assert_eq!(tail.len(), 1);
+        assert!(
+            tail[0].starts_with(r#"{"op":"add_rectangle""#),
+            "{}",
+            tail[0]
+        );
+        assert_eq!(d.op_log_tail(0.0).len(), 2);
+        assert!(d.op_log_tail(f64::NAN).len() == 2 && d.op_log_tail(9.0).is_empty());
+        // The client's copy of the log rebuilds the same document.
+        let json = format!("[{}]", d.op_log_tail(0.0).join(","));
+        assert_eq!(
+            replay_hash_core(&json).unwrap(),
+            d.core.document().hash_hex()
+        );
+        assert!(too_big("an op", "x".repeat(11).as_str(), 10).is_err());
+        assert!(too_big("an op", "x".repeat(10).as_str(), 10).is_ok());
+    }
+
+    #[test]
+    #[should_panic(expected = "fail_for_test")]
+    fn lane_16_the_test_fault_is_a_panic() {
+        let _ = Doc::default().fail_for_test("panic");
     }
 }

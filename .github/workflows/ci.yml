@@ -140,3 +140,6 @@ jobs:
       - name: device key tests (ADR-0004; the OS keychain test is ignored on runners)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-device-key
+      - name: atomic save tests (lane 16)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-safe-save

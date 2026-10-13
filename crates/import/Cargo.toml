@@ -17,10 +17,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 threemf.workspace = true
 zip.workspace = true
-quick-xml.workspace = true
+quick-xml = { workspace = true, features = ["serialize"] }
 
 [dev-dependencies]
 sawhorse-export.workspace = true
+# Lane 16 tests: zip bombs built in milliseconds.
+flate2.workspace = true
+crc32fast.workspace = true
 
 [lints]
 workspace = true

@@ -7,12 +7,12 @@
 // - each plugin's app-scoped store (localStorage, 256 KB per plugin);
 // - each plugin's document-scoped store: in memory for the open document, written into the
 //   .shz as `plugin-data.json` on save and read back on open (readers ignore entries they
-//   do not know, docs/format.md), cleared by New;
+//   do not know, docs/format.md), cleared by New. Lane 16: the kernel writes and reads that
+//   entry (capped) and hands the text over; the app never unzips a user's file;
 // - packages installed from a .zip in the browser build (IndexedDB). The desktop build keeps
 //   them as folders in app data (platform.ts).
 //
 // Every storage access is wrapped: a blocked or full store degrades to "nothing kept".
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import type { Permission } from "../../packages/plugin-api/src/manifest.ts";
 import { sha256Hex } from "../lib/sha256";
 
@@ -328,20 +328,16 @@ export class DocStore {
     return this.empty() ? null : JSON.stringify({ version: 1, plugins: this.data });
   }
 
-  /** The .shz with this store added as plugin-data.json (unchanged when nothing is stored). */
-  attach(shz: Uint8Array): Uint8Array {
-    if (this.empty()) return shz;
-    const entries = unzipSync(shz);
-    entries[DOC_ENTRY] = strToU8(JSON.stringify({ version: 1, plugins: this.snapshot() }));
-    return zipSync(entries);
-  }
-
-  /** Read plugin-data.json from an opened .shz (none: an empty store). */
-  extract(shz: Uint8Array): void {
+  /**
+   * Take a document's plugin-data.json (as the kernel read it from the .shz, capped there):
+   * `{"version": 1, "plugins": {...}}`. Text that is not that, or too long, is an empty
+   * store (lane 16: the app used to unzip the user's file itself to find it).
+   */
+  loadJson(text: string | null): void {
+    this.clear();
+    if (!text || text.length > 4 * DOC_TOTAL) return;
     try {
-      const entries = unzipSync(shz, { filter: (f) => f.name === DOC_ENTRY });
-      const raw = entries[DOC_ENTRY];
-      this.load(raw ? (JSON.parse(strFromU8(raw)) as { plugins?: unknown }).plugins : null);
+      this.load((JSON.parse(text) as { plugins?: unknown }).plugins);
     } catch {
       this.clear();
     }

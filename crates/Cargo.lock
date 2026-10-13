@@ -567,6 +567,8 @@ dependencies = [
 name = "sawhorse-import"
 version = "0.1.0-alpha.2"
 dependencies = [
+ "crc32fast",
+ "flate2",
  "glam",
  "quick-xml",
  "sawhorse-export",
@@ -610,6 +612,8 @@ dependencies = [
 name = "sawhorse-shz"
 version = "0.1.0-alpha.2"
 dependencies = [
+ "crc32fast",
+ "flate2",
  "sawhorse-export",
  "sawhorse-import",
  "sawhorse-kernel",

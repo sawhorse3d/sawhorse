@@ -201,15 +201,219 @@ fn split_at_repeats(c: &[SVertexId]) -> Vec<Vec<SVertexId>> {
     pieces
 }
 
+/// A sketch's graph: plane, vertices, edges and regions (see [`Sketch`]).
 #[derive(Debug, Clone)]
-pub struct Sketch {
+pub struct SketchData {
     plane: Plane,
     vertices: SlotMap<SVertexId, DVec2>,
     edges: SlotMap<SEdgeId, [SVertexId; 2]>,
     regions: SlotMap<RegionId, Region>,
+    /// [`Sketch::check`]'s answer, once worked out (dropped by any change).
+    checked: std::sync::OnceLock<Result<(), String>>,
+}
+
+/// A sketch. Lane 16: a shared, copy-on-write handle to its graph, so copies of the model
+/// (each edit, the undo ring) share a sketch until it changes, and its invariants are
+/// checked once per change instead of on every edit anywhere in the model (the check
+/// compares every pair of edges).
+#[derive(Debug, Clone)]
+pub struct Sketch {
+    inner: std::sync::Arc<SketchData>,
     /// The group or component instance it was drawn in (`None`: the model). Strokes only
     /// stick to strokes of the same editing context (see [`crate::nodes`]).
     pub(crate) parent: Option<crate::ids::NodeId>,
+}
+
+impl std::ops::Deref for Sketch {
+    type Target = SketchData;
+    fn deref(&self) -> &SketchData {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for Sketch {
+    fn deref_mut(&mut self) -> &mut SketchData {
+        let d = std::sync::Arc::make_mut(&mut self.inner);
+        d.checked = std::sync::OnceLock::new();
+        d
+    }
+}
+
+/// Edge boxes binned in a uniform grid (lane 16): for each edge, the edges after it whose
+/// boxes come within the merge distance, ascending.
+struct EdgeGrid {
+    cell: f64,
+    origin: DVec2,
+    bins: std::collections::HashMap<(i64, i64), Vec<u32>>,
+    big: Vec<u32>,
+    boxes: Vec<(DVec2, DVec2)>,
+}
+
+impl EdgeGrid {
+    fn new(boxes: &[(DVec2, DVec2)]) -> Option<EdgeGrid> {
+        if boxes.len() < 64 {
+            return None;
+        }
+        let lo = boxes
+            .iter()
+            .fold(DVec2::splat(f64::INFINITY), |m, b| m.min(b.0));
+        let mut sides: Vec<f64> = boxes.iter().map(|b| (b.1 - b.0).max_element()).collect();
+        if !lo.is_finite() || sides.iter().any(|x| !x.is_finite()) {
+            return None;
+        }
+        let mid = sides.len() / 2;
+        sides.select_nth_unstable_by(mid, f64::total_cmp);
+        let cell = (sides[mid] * 2.0).max(POINT_MERGE * 1e3);
+        let mut g = EdgeGrid {
+            cell,
+            origin: lo - DVec2::splat(cell),
+            bins: std::collections::HashMap::new(),
+            big: Vec::new(),
+            boxes: boxes.to_vec(),
+        };
+        for (i, b) in boxes.iter().enumerate() {
+            let (a, z) = (
+                g.at(b.0 - DVec2::splat(POINT_MERGE)),
+                g.at(b.1 + DVec2::splat(POINT_MERGE)),
+            );
+            if (z.0 - a.0 + 1) * (z.1 - a.1 + 1) > 64 {
+                g.big.push(i as u32);
+                continue;
+            }
+            for x in a.0..=z.0 {
+                for y in a.1..=z.1 {
+                    g.bins.entry((x, y)).or_default().push(i as u32);
+                }
+            }
+        }
+        Some(g)
+    }
+
+    fn at(&self, p: DVec2) -> (i64, i64) {
+        let q = (p - self.origin) / self.cell;
+        (q.x.floor() as i64, q.y.floor() as i64)
+    }
+
+    fn near(&self, i: usize) -> Vec<usize> {
+        let b = self.boxes[i];
+        let (a, z) = (
+            self.at(b.0 - DVec2::splat(POINT_MERGE)),
+            self.at(b.1 + DVec2::splat(POINT_MERGE)),
+        );
+        let mut out: Vec<u32> = self
+            .big
+            .iter()
+            .copied()
+            .filter(|&j| j as usize > i)
+            .collect();
+        if (z.0 - a.0 + 1).saturating_mul(z.1 - a.1 + 1) > 4096 {
+            return (i + 1..self.boxes.len()).collect();
+        }
+        for x in a.0..=z.0 {
+            for y in a.1..=z.1 {
+                if let Some(v) = self.bins.get(&(x, y)) {
+                    out.extend(v.iter().copied().filter(|&j| j as usize > i));
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out.into_iter().map(|j| j as usize).collect()
+    }
+}
+
+/// The first pair (i, j), i < j, of points within the merge distance, in index order, or
+/// None (lane 16: a sweep in x instead of every pair).
+fn first_close_pair(verts: &[(SVertexId, DVec2)]) -> Option<(usize, usize)> {
+    let mut order: Vec<usize> = (0..verts.len()).collect();
+    order.sort_by(|&a, &b| verts[a].1.x.total_cmp(&verts[b].1.x).then(a.cmp(&b)));
+    let mut best: Option<(usize, usize)> = None;
+    for (n, &i) in order.iter().enumerate() {
+        let pi = verts[i].1;
+        for &j in &order[n + 1..] {
+            let pj = verts[j].1;
+            if pj.x - pi.x > POINT_MERGE {
+                break;
+            }
+            if pi.distance(pj) <= POINT_MERGE {
+                let pair = (i.min(j), i.max(j));
+                if best.is_none_or(|b| pair < b) {
+                    best = Some(pair);
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Points binned in a uniform grid (lane 16): the points whose cells meet a box grown by the
+/// merge distance, ascending. Few points are simply all returned.
+struct PointGrid {
+    cell: f64,
+    origin: DVec2,
+    bins: std::collections::HashMap<(i64, i64), Vec<u32>>,
+    all: usize,
+}
+
+impl PointGrid {
+    fn new(pts: &[DVec2]) -> PointGrid {
+        let mut g = PointGrid {
+            cell: 1.0,
+            origin: DVec2::ZERO,
+            bins: std::collections::HashMap::new(),
+            all: pts.len(),
+        };
+        if pts.len() < 64 {
+            return g;
+        }
+        let lo = pts
+            .iter()
+            .fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
+        let hi = pts
+            .iter()
+            .fold(DVec2::splat(f64::NEG_INFINITY), |m, p| m.max(*p));
+        if !(lo.is_finite() && hi.is_finite()) {
+            return g;
+        }
+        // About one point a cell on average over the occupied area.
+        let span = (hi - lo).max_element().max(POINT_MERGE);
+        g.cell = (span / (pts.len() as f64).sqrt()).max(POINT_MERGE * 1e3);
+        g.origin = lo - DVec2::splat(g.cell);
+        for (i, p) in pts.iter().enumerate() {
+            let c = g.at(*p);
+            g.bins.entry(c).or_default().push(i as u32);
+        }
+        g.all = 0;
+        g
+    }
+
+    fn at(&self, p: DVec2) -> (i64, i64) {
+        let q = (p - self.origin) / self.cell;
+        (q.x.floor() as i64, q.y.floor() as i64)
+    }
+
+    fn near(&self, lo: DVec2, hi: DVec2, pts: &[DVec2]) -> Vec<usize> {
+        if self.all > 0 {
+            return (0..self.all).collect();
+        }
+        let (a, z) = (
+            self.at(lo - DVec2::splat(POINT_MERGE)),
+            self.at(hi + DVec2::splat(POINT_MERGE)),
+        );
+        if (z.0 - a.0 + 1).saturating_mul(z.1 - a.1 + 1) > 4096 {
+            return (0..pts.len()).collect();
+        }
+        let mut out: Vec<usize> = Vec::new();
+        for x in a.0..=z.0 {
+            for y in a.1..=z.1 {
+                if let Some(v) = self.bins.get(&(x, y)) {
+                    out.extend(v.iter().map(|&i| i as usize));
+                }
+            }
+        }
+        out.sort_unstable();
+        out
+    }
 }
 
 /// A region before it has an id.
@@ -222,15 +426,37 @@ struct Detected {
 impl Sketch {
     pub fn new(plane: Plane) -> Sketch {
         Sketch {
-            plane,
-            vertices: SlotMap::with_key(),
-            edges: SlotMap::with_key(),
-            regions: SlotMap::with_key(),
+            inner: std::sync::Arc::new(SketchData {
+                plane,
+                vertices: SlotMap::with_key(),
+                edges: SlotMap::with_key(),
+                regions: SlotMap::with_key(),
+                checked: std::sync::OnceLock::new(),
+            }),
             parent: None,
         }
     }
 
+    /// Whether two handles share one sketch's graph.
+    pub fn shares_with(&self, other: &Sketch) -> bool {
+        std::sync::Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     // ---- queries -----------------------------------------------------------------------
+
+    /// Bytes the sketch takes (estimated): what the undo history is charged for it.
+    pub fn approx_bytes(&self) -> usize {
+        512 + self.vertices.len() * 40
+            + self.edges.len() * 32
+            + self
+                .regions
+                .values()
+                .map(|r| {
+                    128 + r.outer.len() * 8
+                        + r.holes.iter().map(|h| 24 + h.len() * 8).sum::<usize>()
+                })
+                .sum::<usize>()
+    }
 
     pub fn plane(&self) -> &Plane {
         &self.plane
@@ -794,21 +1020,25 @@ impl Sketch {
         Err(SketchError::Degenerate)
     }
 
+    /// One repair (lane 16: each of the three searches looks only near where it looks, through
+    /// a sweep or a grid, instead of at every pair; each still finds the first case in the
+    /// order a full scan would, so repairs happen exactly as before).
     fn repair_step(&mut self) -> bool {
         let verts: Vec<(SVertexId, DVec2)> = self.vertices.iter().map(|(k, p)| (k, *p)).collect();
-        for i in 0..verts.len() {
-            for j in i + 1..verts.len() {
-                if verts[i].1.distance(verts[j].1) <= POINT_MERGE {
-                    self.merge_vertex(verts[j].0, verts[i].0);
-                    return true;
-                }
-            }
+        // 1. Two vertices within the merge distance: the first pair in vertex order.
+        if let Some((i, j)) = first_close_pair(&verts) {
+            self.merge_vertex(verts[j].0, verts[i].0);
+            return true;
         }
         let edges: Vec<(SEdgeId, [SVertexId; 2])> =
             self.edges.iter().map(|(e, ab)| (e, *ab)).collect();
+        // 2. A vertex on an edge it does not end: the first edge, then its first vertex.
+        let pts: Vec<DVec2> = verts.iter().map(|v| v.1).collect();
+        let grid = PointGrid::new(&pts);
         for &(e, [a, b]) in &edges {
             let (pa, pb) = (self.vertices[a], self.vertices[b]);
-            for &(w, pw) in &verts {
+            for k in grid.near(pa.min(pb), pa.max(pb), &pts) {
+                let (w, pw) = verts[k];
                 if w != a && w != b && point_segment_distance(pw, pa, pb) <= POINT_MERGE {
                     self.edges.remove(e);
                     for (u, x) in [(a, w), (w, b)] {
@@ -820,8 +1050,21 @@ impl Sketch {
                 }
             }
         }
+        // 3. Two edges crossing: the first pair in edge order.
+        let boxes: Vec<(DVec2, DVec2)> = edges
+            .iter()
+            .map(|&(_, [a, b])| {
+                let (pa, pb) = (self.vertices[a], self.vertices[b]);
+                (pa.min(pb), pa.max(pb))
+            })
+            .collect();
+        let egrid = EdgeGrid::new(&boxes);
         for i in 0..edges.len() {
-            for j in i + 1..edges.len() {
+            let cands: Vec<usize> = match &egrid {
+                Some(g) => g.near(i),
+                None => (i + 1..edges.len()).collect(),
+            };
+            for j in cands {
                 let (e1, [a, b]) = edges[i];
                 let (e2, [c, d]) = edges[j];
                 let (pa, pb, pc, pd) = (
@@ -997,6 +1240,13 @@ impl Sketch {
     /// CW holes and an anchor strictly inside. Runs in `Model::validate` and, in debug
     /// builds, after every sketch mutation.
     pub fn check(&self) -> Result<(), String> {
+        self.inner.checked.get_or_init(|| self.check_now()).clone()
+    }
+
+    /// [`Sketch::check`], worked out. The pairwise edge tests look only at edges whose boxes
+    /// come within the merge distance of each other (lane 16: through a grid of edge boxes,
+    /// once a sketch has more than a few dozen edges).
+    fn check_now(&self) -> Result<(), String> {
         let edges: Vec<[SVertexId; 2]> = self.edges.values().copied().collect();
         for &[a, b] in &edges {
             let (Some(pa), Some(pb)) = (self.vertices.get(a), self.vertices.get(b)) else {
@@ -1010,8 +1260,28 @@ impl Sketch {
         if used.len() != self.vertices.len() {
             return Err("isolated sketch vertex".into());
         }
+        // Candidates per edge from a grid of edge boxes, in index order, so pairs are tried
+        // in the order a full scan tries them (and the first problem is the same).
+        let grid = EdgeGrid::new(
+            &edges
+                .iter()
+                .map(|&[a, b]| {
+                    (
+                        self.vertices[a].min(self.vertices[b]),
+                        self.vertices[a].max(self.vertices[b]),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         for i in 0..edges.len() {
-            for j in i + 1..edges.len() {
+            let cands: Vec<usize> = match &grid {
+                Some(g) => g.near(i),
+                None => (i + 1..edges.len()).collect(),
+            };
+            for j in cands {
+                if j <= i {
+                    continue;
+                }
                 let [a, b] = edges[i];
                 let [c, d] = edges[j];
                 let (pa, pb, pc, pd) = (

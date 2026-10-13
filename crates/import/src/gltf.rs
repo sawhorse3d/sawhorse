@@ -13,7 +13,10 @@ use glam::{DMat4, DQuat, DVec3};
 use serde_json::Value;
 
 use crate::util::{base64_decode, linear_to_srgb, plural};
-use crate::{ImportError, ImportOptions, Parsed, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
+
+/// Values one accessor without a buffer view may stand for (all zeros, glTF's default).
+const MAX_EMPTY_ACCESSOR: usize = 4_000_000;
 use sawhorse_kernel::meshbuild::ImportItem;
 use sawhorse_kernel::model::MaterialDef;
 
@@ -89,10 +92,18 @@ impl Gltf<'_> {
             5125 | 5126 => 4,
             _ => return Err(err(format!("component type {ct} is not supported"))),
         };
-        let count = a["count"].as_u64().unwrap_or(0) as usize;
+        // Lane 16: the count is checked before anything is allocated for it, in u64 (a
+        // count over 2^32 must not wrap on wasm32).
+        let count64 = a["count"].as_u64().unwrap_or(0);
         let normalized = a["normalized"].as_bool().unwrap_or(false);
         let Some(vi) = a["bufferView"].as_u64() else {
-            return Ok((vec![0.0; count * comps], comps));
+            let n = count64.saturating_mul(comps as u64);
+            if n > MAX_EMPTY_ACCESSOR as u64 {
+                return Err(err(format!(
+                    "accessor {i} stands for {n} values without data (at most {MAX_EMPTY_ACCESSOR})"
+                )));
+            }
+            return Ok((vec![0.0; n as usize], comps));
         };
         let v = self
             .arr("bufferViews")
@@ -104,12 +115,30 @@ impl Gltf<'_> {
             .get(b)
             .and_then(|x| x.as_deref())
             .ok_or_else(|| err(format!("buffer {b} is an external file a single-file import cannot read; use .glb or embedded buffers")))?;
-        let start = v["byteOffset"].as_u64().unwrap_or(0) as usize
-            + a["byteOffset"].as_u64().unwrap_or(0) as usize;
-        let stride = v["byteStride"]
+        let elem = (size * comps) as u64;
+        let start = v["byteOffset"]
             .as_u64()
-            .map(|s| s as usize)
-            .unwrap_or(size * comps);
+            .unwrap_or(0)
+            .checked_add(a["byteOffset"].as_u64().unwrap_or(0))
+            .ok_or_else(|| err("accessor offset overflows"))?;
+        let stride = v["byteStride"].as_u64().unwrap_or(elem);
+        if stride < elem || stride > 252 {
+            return Err(err(format!(
+                "accessor {i}: stride {stride} does not fit its elements"
+            )));
+        }
+        // The last element must end inside the buffer: checked before allocating.
+        if count64 > 0 {
+            let end = (count64 - 1)
+                .checked_mul(stride)
+                .and_then(|x| x.checked_add(start))
+                .and_then(|x| x.checked_add(elem))
+                .ok_or_else(|| err("accessor runs past its buffer"))?;
+            if end > data.len() as u64 {
+                return Err(err("accessor runs past its buffer"));
+            }
+        }
+        let (count, start, stride) = (count64 as usize, start as usize, stride as usize);
         let mut out = Vec::with_capacity(count * comps);
         for k in 0..count {
             for c in 0..comps {
@@ -293,6 +322,10 @@ fn read_with_ids(
         None => (0..g.arr("nodes").len()).collect(),
     };
     let (mut skipped_points, mut failed) = (0usize, Vec::new());
+    let mut budget = Budget::default();
+    // Lane 16: glTF nodes form a tree; a node reached twice (a node listed as the child of
+    // two parents, or twice by one) would be walked again for every path to it.
+    let mut visited = vec![false; g.arr("nodes").len()];
     let mut stack: Vec<(usize, DMat4, usize)> = roots
         .into_iter()
         .rev()
@@ -302,6 +335,11 @@ fn read_with_ids(
         let Some(node) = g.arr("nodes").get(ni) else {
             continue;
         };
+        if std::mem::replace(&mut visited[ni], true) {
+            return Err(err(format!(
+                "node {ni} is reached more than once (glTF nodes form a tree)"
+            )));
+        }
         if depth > 64 {
             return Err(err("the node tree is deeper than 64 levels (a cycle?)"));
         }
@@ -355,6 +393,7 @@ fn read_with_ids(
             if comps != 3 {
                 return Err(err("POSITION must be VEC3"));
             }
+            budget.points("glTF", pos.len() / 3)?;
             let base = item.positions.len() as u32;
             for c in pos.chunks(3) {
                 let w = world.transform_point3(DVec3::new(c[0], c[1], c[2]));
@@ -373,8 +412,13 @@ fn read_with_ids(
             if idx.iter().any(|&i| i >= n) {
                 return Err(err("an index points past the vertices"));
             }
+            // One label per vertex, or none (lane 16: a short label list used to index past
+            // its end).
             let labels: Option<Vec<f64>> = match p["attributes"]["_FACE_ID"].as_u64() {
-                Some(a) => Some(g.accessor(a as usize)?.0),
+                Some(a) => match g.accessor(a as usize)? {
+                    (l, 1) if l.len() == n as usize => Some(l),
+                    _ => None,
+                },
                 None => None,
             };
             let mode = p["mode"].as_u64().unwrap_or(4);
@@ -412,6 +456,7 @@ fn read_with_ids(
                 }
                 _ => skipped_points += 1,
             }
+            budget.faces("glTF", tris.len() + item.lines.len())?;
             for t in tris {
                 let t = if mirrored { [t[0], t[2], t[1]] } else { t };
                 item.faces.push(vec![t.iter().map(|&v| base + v).collect()]);
@@ -430,6 +475,8 @@ fn read_with_ids(
                 failed.push(format!("{name}: {e}"));
             }
         }
+        // A primitive failing is a note; the file as a whole over the limits is a refusal.
+        budget.check("glTF")?;
         if !all_labelled {
             item.face_labels.clear();
         }
@@ -444,6 +491,7 @@ fn read_with_ids(
             ));
         }
         if !item.faces.is_empty() || !item.lines.is_empty() {
+            budget.items("glTF", 1)?;
             ids.push(node["extras"]["sawhorse"]["object"].as_u64());
             out.items.push(item);
         }

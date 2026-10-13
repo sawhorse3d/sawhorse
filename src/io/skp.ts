@@ -29,11 +29,67 @@
 // position (SketchUp's `uvTransform`, or the default projection) comes in as the affine
 // mapping it gives in world metres, which the kernel fits to a scale, a rotation and an
 // offset (skew and projected textures are dropped, with a note).
+//
+// Lane 16, limits: a SketchUp 2021+ file is a zip, and openskp's own guard reads only
+// declared sizes per entry; before it parses, the archive's directory is read here with
+// nothing inflated, and a file declaring more than SKP_LIMITS.inflated bytes or entries
+// in all is refused. While mapping, groups (which, unlike components, are expanded once
+// per placement) and their geometry are counted against the import limits, and a texture
+// image too large for the kernel (bytes, pixels, or past the 512th) is left out with a note
+// instead of refusing the whole import.
+import { unzipSync } from "fflate";
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
+import { imageSize } from "../lib/imageSize";
 import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, OpOutcome, SceneDef, V3, Xform } from "../kernel/types";
 import type { UnitSystem } from "../lib/units";
 
 export const M_PER_IN = 0.0254;
+
+/** What one .skp may expand to (lane 16): bytes and entries its archive declares, and the
+ * groups, instances, points and faces mapping it may produce (crates/kernel/src/limits.rs
+ * keeps the kernel's own, which checks the op again). */
+export const SKP_LIMITS = {
+  inflated: 512 * 1024 * 1024,
+  entries: 5000,
+  nodes: 100_000,
+  points: 3_000_000,
+  faces: 1_500_000,
+  textureBytes: 16 * 1024 * 1024,
+  texturePixels: 4096 * 4096,
+  textures: 512,
+};
+
+/** A file that expands past SKP_LIMITS. */
+export class SkpTooLarge extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkpTooLarge";
+  }
+}
+
+/**
+ * Lane 16: a zip-format .skp's directory, read with nothing inflated (fflate's filter sees
+ * every entry's declared size and is told to take none): refused past SKP_LIMITS.
+ */
+export function checkSkpArchive(bytes: Uint8Array): void {
+  if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return;
+  let entries = 0;
+  let total = 0;
+  try {
+    unzipSync(bytes, {
+      filter: (f) => {
+        entries++;
+        total += f.originalSize;
+        if (entries > SKP_LIMITS.entries) throw new SkpTooLarge(`the SketchUp file holds more than ${SKP_LIMITS.entries} entries`);
+        if (total > SKP_LIMITS.inflated) throw new SkpTooLarge(`the SketchUp file unpacks to more than ${SKP_LIMITS.inflated / 1024 / 1024} MB`);
+        return false;
+      },
+    });
+  } catch (e) {
+    if (e instanceof SkpTooLarge) throw e;
+    // Not a zip after all (openskp says why), or a broken one: openskp decides.
+  }
+}
 
 /** SketchUp's default layer: geometry on it is untagged. */
 const DEFAULT_LAYERS = new Set(["", "Layer0", "Untagged"]);
@@ -168,6 +224,19 @@ interface Ctx {
   defs: ImportDefinition[];
   /** (definition id, inherited material) -> index into `defs`. */
   defIndex: Map<string, number>;
+  /** Lane 16: what mapping has produced so far, held to SKP_LIMITS. */
+  spent: { nodes: number; points: number; faces: number };
+}
+
+/** Count what mapping produced; refuse past the limits. */
+function spend(ctx: Ctx, nodes: number, points: number, faces: number): void {
+  const s = ctx.spent;
+  s.nodes += nodes;
+  s.points += points;
+  s.faces += faces;
+  if (s.nodes > SKP_LIMITS.nodes) throw new SkpTooLarge(`the SketchUp file expands to more than ${SKP_LIMITS.nodes} groups and copies (groups placed inside groups placed many times?)`);
+  if (s.points > SKP_LIMITS.points) throw new SkpTooLarge(`the SketchUp file expands to more than ${SKP_LIMITS.points} points`);
+  if (s.faces > SKP_LIMITS.faces) throw new SkpTooLarge(`the SketchUp file expands to more than ${SKP_LIMITS.faces} faces`);
 }
 
 function materialName(ctx: Ctx, id: number | null | undefined): string | null {
@@ -269,6 +338,7 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   }
   const perFace = faceMaterials.some((x) => x !== material) || faceUvs.some((x) => x !== null);
   if (opts.tag) ctx.usedTags.add(opts.tag);
+  spend(ctx, 0, positions.length, faces.length + lines.length);
   return {
     name,
     group: opts.group ?? null,
@@ -509,6 +579,7 @@ function nodeFor(ctx: Ctx, inst: Instance, m: Placement, depth: number, inherite
     return null;
   }
   ctx.summary.placements++;
+  spend(ctx, 1, 0, 0);
   const p = compose(m, placement(inst));
   const material = inst.materialId ?? inherited;
   const tag = layerTag(inst.layer);
@@ -579,6 +650,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     placed: countPlacements(model),
     defs: [],
     defIndex: new Map(),
+    spent: { nodes: 0, points: 0, faces: 0 },
     summary: {
       version: model.version,
       definitions: Math.max(0, model.definitions.size),
@@ -596,11 +668,19 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     },
   };
   // Texture images: PNG and JPEG come in, one per material, under a path the kernel takes.
+  // Lane 16: one the kernel would refuse (over 16 MB, over 4096 x 4096 pixels, past the
+  // 512th) is left out with a note, so the rest of the model still comes in.
   const takenPaths = new Set<string>();
+  let tooBig = 0;
   for (const m of model.materials) {
     const data = m.texture?.data;
     const mime = data ? sniff(data) : null;
     if (!data || !mime) continue;
+    const px = imageSize(data);
+    if (data.length > SKP_LIMITS.textureBytes || !px || px.width * px.height > SKP_LIMITS.texturePixels || ctx.textures.size >= SKP_LIMITS.textures) {
+      tooBig++;
+      continue;
+    }
     const slug =
       `skp-${m.name}`
         .toLowerCase()
@@ -612,6 +692,10 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     takenPaths.add(path);
     ctx.textures.set(m.name, { path, mime, bytes: data });
   }
+  if (tooBig)
+    ctx.notes.add(
+      `${tooBig} texture image${tooBig === 1 ? "" : "s"} left out (over ${SKP_LIMITS.textureBytes / 1024 / 1024} MB, over 4096 x 4096 pixels, or past ${SKP_LIMITS.textures}): their materials show their colours`,
+    );
   // Loose geometry drawn at the top level of the model.
   const root = itemOf(ctx, model.root, IDENTITY, stem, {});
   if (root) ctx.items.push(root);
@@ -689,7 +773,12 @@ export function importOutcomeOf(applied: OpOutcome): OpOutcome {
 }
 
 export function skpToOp(bytes: ArrayBuffer | Uint8Array, fileName: string): SkpImport {
-  const buf = bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  // Lane 16: the archive's declared sizes, before openskp inflates anything.
+  checkSkpArchive(view);
+  // The bytes are this worker's own (transferred, lane 16): no copy unless they are a view
+  // of a larger buffer.
+  const buf = view.byteOffset === 0 && view.byteLength === view.buffer.byteLength ? view.buffer : view.slice().buffer;
   let model: SkpModel;
   try {
     model = parseSkp(buf as ArrayBuffer);

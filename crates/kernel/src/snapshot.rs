@@ -24,7 +24,7 @@ use glam::DVec3;
 use crate::brep::{Brep, PolyFace, Polys};
 use crate::error::{DocumentError, KernelError};
 use crate::ids::{DefId, NodeId, to_public};
-use crate::meshbuild::LooseMesh;
+use crate::meshbuild::{LooseMesh, LooseMeshData};
 use crate::model::{MaterialDef, Model, SceneDef};
 use crate::nodes::{Definition, Member, MemberKind, Membership, Node, NodeKind};
 use crate::object::Object;
@@ -433,6 +433,239 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
+/// Longest name a document holds (every op and import already keeps names to this).
+const MAX_NAME_CHARS: usize = 64;
+/// Longest mesh note, and longest texture reference of a material.
+const MAX_NOTE_CHARS: usize = 1000;
+const MAX_TEXTURE_REF_CHARS: usize = 1024;
+/// How far a saved camera may be from the origin (metres).
+const MAX_CAMERA: f64 = 1.0e6;
+
+fn far(p: &[f64; 3]) -> bool {
+    p.iter()
+        .any(|v| !v.is_finite() || v.abs() > crate::tolerance::MAX_COORD)
+}
+
+/// What a definition derives into one instance: (solids and meshes, faces, points, nodes).
+type DefSize = (usize, usize, usize, usize);
+
+fn def_size(
+    s: &Snapshot,
+    d: usize,
+    memo: &mut Vec<Option<Option<DefSize>>>,
+    depth: usize,
+) -> Result<DefSize, KernelError> {
+    if depth > 64 {
+        return Err(bad("components nest deeper than 64 levels"));
+    }
+    match memo.get(d) {
+        None => return Err(bad(format!("no definition {d}"))),
+        Some(Some(Some(x))) => return Ok(*x),
+        Some(Some(None)) => return Err(bad(format!("definition {d} contains itself"))),
+        Some(None) => {}
+    }
+    memo[d] = Some(None);
+    let mut n: DefSize = (0, 0, 0, 0);
+    let add = |a: DefSize, b: DefSize| -> DefSize {
+        (
+            a.0.saturating_add(b.0),
+            a.1.saturating_add(b.1),
+            a.2.saturating_add(b.2),
+            a.3.saturating_add(b.3),
+        )
+    };
+    for mem in &s.definitions[d].members {
+        n = add(
+            n,
+            match &mem.kind {
+                SnapMemberKind::Solid { brep, .. } => (1, brep.faces.len(), brep.points.len(), 0),
+                SnapMemberKind::Mesh {
+                    faces, positions, ..
+                } => (1, faces.len(), positions.len(), 0),
+                SnapMemberKind::Group { .. } => (0, 0, 0, 1),
+                SnapMemberKind::Instance { definition, .. } => {
+                    add((0, 0, 0, 1), def_size(s, *definition, memo, depth + 1)?)
+                }
+            },
+        );
+    }
+    memo[d] = Some(Some(n));
+    Ok(n)
+}
+
+/// Lane 16: refuse a snapshot over the model limits, with an over-long name, a coordinate
+/// past the model's bounds, or components that would derive more than the limits allow
+/// (a chain of definitions each holding two copies of the next doubles at every step:
+/// thirty of them are a billion solids from a few kilobytes), before anything is built.
+fn check_snapshot(s: &Snapshot) -> Result<(), KernelError> {
+    use crate::limits::{self as l, LimitError};
+    if s.objects.len() + s.meshes.len() > l::MAX_OBJECTS {
+        return Err(LimitError::Objects(s.objects.len() + s.meshes.len()).into());
+    }
+    if s.nodes.len() > l::MAX_NODES {
+        return Err(LimitError::Nodes(s.nodes.len()).into());
+    }
+    if s.definitions.len() > l::MAX_DEFINITIONS {
+        return Err(LimitError::Definitions(s.definitions.len()).into());
+    }
+    let long = |n: &str, max: usize| n.chars().count() > max;
+    let name_ok = |what: &str, n: Option<&str>| -> Result<(), KernelError> {
+        match n {
+            Some(n) if long(n, MAX_NAME_CHARS) => Err(bad(format!(
+                "{what}: a name longer than {MAX_NAME_CHARS} characters"
+            ))),
+            _ => Ok(()),
+        }
+    };
+    for o in &s.objects {
+        name_ok("an object", o.name.as_deref())?;
+        name_ok("an object's tag", o.tag.as_deref())?;
+        name_ok("an object's material", o.material.as_deref())?;
+    }
+    for x in &s.meshes {
+        name_ok("a mesh", Some(&x.name))?;
+        name_ok("a mesh's tag", x.tag.as_deref())?;
+        if long(&x.note, MAX_NOTE_CHARS) {
+            return Err(bad("a mesh's note is too long"));
+        }
+        if x.positions.iter().any(far) {
+            return Err(bad(format!(
+                "mesh {}: a point is not a number or is more than 10 km from the origin",
+                x.id
+            )));
+        }
+    }
+    for n in &s.nodes {
+        name_ok("a group or instance", n.name.as_deref())?;
+        name_ok("a group or instance's tag", n.tag.as_deref())?;
+    }
+    for d in &s.definitions {
+        name_ok("a component", Some(&d.name))?;
+        for mem in &d.members {
+            name_ok("a component member", mem.name.as_deref())?;
+            name_ok("a component member's tag", mem.tag.as_deref())?;
+            if let SnapMemberKind::Mesh {
+                positions, note, ..
+            } = &mem.kind
+            {
+                if long(note, MAX_NOTE_CHARS) {
+                    return Err(bad("a mesh's note is too long"));
+                }
+                if positions.iter().any(far) {
+                    return Err(bad(format!(
+                        "component {:?}: a mesh point is not a number or is more than 10 km from the origin",
+                        d.name
+                    )));
+                }
+            }
+        }
+    }
+    for t in s.tags.keys().chain(s.tag_colors.keys()) {
+        name_ok("a tag", Some(t))?;
+    }
+    for m in &s.materials {
+        name_ok("a material", Some(&m.name))?;
+        if m.texture
+            .as_deref()
+            .is_some_and(|t| long(t, MAX_TEXTURE_REF_CHARS))
+        {
+            return Err(bad(format!(
+                "material {:?}: its texture reference is too long",
+                m.name
+            )));
+        }
+    }
+    for sc in &s.scenes {
+        name_ok("a scene", Some(&sc.name))?;
+        let cam = |p: &[f64; 3]| p.iter().all(|v| v.is_finite() && v.abs() <= MAX_CAMERA);
+        if !(cam(&sc.eye) && cam(&sc.target) && cam(&sc.up) && sc.fov.is_finite()) {
+            return Err(bad(format!(
+                "scene {:?}: its camera is not a usable camera",
+                sc.name
+            )));
+        }
+    }
+    if s.guides.iter().any(|g| {
+        far(&g.point)
+            || g.dir
+                .as_ref()
+                .is_some_and(|d| d.iter().any(|v| !v.is_finite()))
+    }) {
+        return Err(bad(
+            "a guide is not a number or is more than 10 km from the origin",
+        ));
+    }
+    if s.dimensions
+        .iter()
+        .any(|d| far(&d.a) || far(&d.b) || far(&d.offset))
+    {
+        return Err(bad(
+            "a dimension is not a number or is more than 10 km from the origin",
+        ));
+    }
+    // What the whole model will hold once its components are derived.
+    let mut memo: Vec<Option<Option<DefSize>>> = vec![None; s.definitions.len()];
+    let mut total: DefSize = (0, 0, 0, 0);
+    for o in &s.objects {
+        if let Some(b) = &o.brep {
+            total.0 += 1;
+            total.1 = total.1.saturating_add(b.faces.len());
+            total.2 = total.2.saturating_add(b.points.len());
+        }
+    }
+    for x in &s.meshes {
+        total.0 += 1;
+        total.1 = total.1.saturating_add(x.faces.len());
+        total.2 = total.2.saturating_add(x.positions.len());
+    }
+    let instance_ids: std::collections::BTreeMap<u64, &SnapNode> = s
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind, SnapNodeKind::Instance))
+        .map(|n| (n.id, n))
+        .collect();
+    let parents: std::collections::BTreeMap<u64, Option<u64>> =
+        s.nodes.iter().map(|n| (n.id, n.parent)).collect();
+    for n in instance_ids.values() {
+        // Outermost instances only: nested ones are counted inside their definitions.
+        let mut at = n.parent;
+        let mut nested = false;
+        for _ in 0..=s.nodes.len().min(4096) {
+            let Some(p) = at else { break };
+            if instance_ids.contains_key(&p) {
+                nested = true;
+                break;
+            }
+            at = parents.get(&p).copied().flatten();
+        }
+        if nested {
+            continue;
+        }
+        if let Some(d) = n.definition {
+            let x = def_size(s, d, &mut memo, 0)?;
+            total = (
+                total.0.saturating_add(x.0),
+                total.1.saturating_add(x.1),
+                total.2.saturating_add(x.2),
+                total.3.saturating_add(x.3),
+            );
+        }
+    }
+    if total.0 > l::MAX_OBJECTS {
+        return Err(LimitError::Objects(total.0).into());
+    }
+    if total.1 > l::MAX_FACES {
+        return Err(LimitError::Faces(total.1).into());
+    }
+    if total.2 > l::MAX_POINTS {
+        return Err(LimitError::Points(total.2).into());
+    }
+    if total.3.saturating_add(s.nodes.len()) > l::MAX_NODES.saturating_mul(2) {
+        return Err(LimitError::Nodes(total.3).into());
+    }
+    Ok(())
+}
+
 fn bad(m: impl Into<String>) -> KernelError {
     DocumentError::BadSnapshot(m.into()).into()
 }
@@ -828,6 +1061,9 @@ impl Model {
     /// Rebuild a model from a snapshot and validate it like any edit. Objects without a
     /// `brep` are skipped here (the `.shz` reader rebuilds those from `geometry.glb`).
     pub fn from_snapshot(s: &Snapshot) -> Result<Model, KernelError> {
+        // Lane 16: the limits, names, coordinates and what the components expand to, all
+        // checked before anything is built.
+        check_snapshot(s)?;
         let mut m = Model::new();
         let mut sketch_ids = Vec::with_capacity(s.sketches.len());
         for (i, sk) in s.sketches.iter().enumerate() {
@@ -888,7 +1124,7 @@ impl Model {
                         faces,
                         lines,
                         edge_flags,
-                    } => MemberKind::Mesh(Box::new(LooseMesh {
+                    } => MemberKind::Mesh(Box::new(LooseMesh::from(LooseMeshData {
                         name: mem.name.clone().unwrap_or_default(),
                         positions: positions.iter().map(|p| DVec3::from_array(*p)).collect(),
                         faces: faces.clone(),
@@ -898,7 +1134,7 @@ impl Model {
                         note: note.clone(),
                         member: Membership::default(),
                         edge_flags: mesh_flags("a definition mesh", edge_flags, positions.len())?,
-                    })),
+                    }))),
                     SnapMemberKind::Group { xform, .. } => {
                         MemberKind::Group(xform.unwrap_or(Xform::IDENTITY))
                     }
@@ -1092,7 +1328,7 @@ impl Model {
         }
         for mesh in &s.meshes {
             let what = format!("mesh {}", mesh.id);
-            let id = m.meshes.insert(LooseMesh {
+            let id = m.meshes.insert(LooseMesh::from(LooseMeshData {
                 name: mesh.name.clone(),
                 positions: mesh
                     .positions
@@ -1111,7 +1347,7 @@ impl Model {
                     hidden: mesh.hidden,
                     locked: mesh.locked,
                 },
-            });
+            }));
             m.mesh_order.push(id);
         }
         // Lane-2 files: flat groups of solids (a solid in two groups stays in the first).
@@ -1225,9 +1461,9 @@ impl Model {
             )
         };
         let listed = keys(&m);
-        for i in outer {
-            m.rederive(i).map_err(|e| bad(e.to_string()))?;
-        }
+        // Every outer instance from one map of the tree (lane 16: one per instance was
+        // quadratic in the instances).
+        m.rederive_all(&outer).map_err(|e| bad(e.to_string()))?;
         // Deriving must only fill in geometry: a file whose instances list other members
         // than their definitions have is refused, not repaired.
         if keys(&m) != listed {

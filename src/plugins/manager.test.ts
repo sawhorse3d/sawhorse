@@ -375,17 +375,17 @@ describe("storage", () => {
     expect(await req(c, "storage.get", { scope: "app", key: "units" }, 2)).toMatchObject({ ok: true, value: "mm" });
     expect(await req(c, "storage.set", { scope: "app", key: "big", value: "x".repeat(300 * 1024) }, 3)).toMatchObject({ ok: false, code: "invalid" });
     expect(await req(c, "storage.set", { scope: "document", key: "last", value: { id: 4 } }, 4)).toMatchObject({ ok: true });
-    const { zipSync, strToU8, unzipSync, strFromU8 } = await import("fflate");
-    const shz = zipSync({ "scene.json": strToU8("{}") });
-    const saved = m.doc.attach(shz);
-    expect(JSON.parse(strFromU8(unzipSync(saved)["plugin-data.json"]))).toEqual({ version: 1, plugins: { "org.example.test": { last: { id: 4 } } } });
+    // Lane 16: the text the kernel writes as plugin-data.json, and reads back on open.
+    const saved = m.doc.json()!;
+    expect(JSON.parse(saved)).toEqual({ version: 1, plugins: { "org.example.test": { last: { id: 4 } } } });
     m.doc.clear();
     expect(await req(c, "storage.get", { scope: "document", key: "last" }, 5)).toMatchObject({ ok: true, value: null });
-    m.doc.extract(saved);
+    m.doc.loadJson(saved);
     expect(await req(c, "storage.get", { scope: "document", key: "last" }, 6)).toMatchObject({ ok: true, value: { id: 4 } });
-    expect(m.doc.attach(shz)).not.toBe(shz);
+    m.doc.loadJson("not json");
+    expect(await req(c, "storage.get", { scope: "document", key: "last" }, 7)).toMatchObject({ ok: true, value: null });
     m.doc.clear();
-    expect(m.doc.attach(shz)).toBe(shz);
+    expect(m.doc.json()).toBeNull();
   });
 
   it("saves files only through the app's dialog, with a plain name", async () => {

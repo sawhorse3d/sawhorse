@@ -139,10 +139,11 @@ export function usePlugins({ bridge, toolHost, scene, selection, toolId, units, 
   useEffect(() => manager.emit("toolChanged", { tool: toolId }), [manager, toolId]);
   useEffect(() => manager.emit("unitsChanged", { units }), [manager, units]);
 
-  /** New or opened: document-scoped stores reset (or come from the file), plugins hear it. */
+  /** New or opened: document-scoped stores reset (or come from the file's plugin-data.json,
+   * which the kernel read, lane 16), plugins hear it. */
   const documentOpened = useCallback(
-    (name: string | null, shz?: Uint8Array) => {
-      if (shz) manager.doc.extract(shz);
+    (name: string | null, pluginData?: string | null) => {
+      if (typeof pluginData === "string") manager.doc.loadJson(pluginData);
       else manager.doc.clear();
       manager.emit("documentOpened", { name });
     },

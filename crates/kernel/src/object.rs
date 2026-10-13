@@ -366,7 +366,17 @@ impl Object {
 
     /// Validate topology plus the object rules: watertight, and the stored flag agrees.
     pub fn validate(&self) -> Result<TopologyReport, TopologyError> {
-        let report = validate(&self.brep)?;
+        // The B-rep's own checks are worked out once per B-rep (lane 16): an edit validates
+        // the solids it changed; the others share theirs from before.
+        let c = self.brep.checks(|_| crate::brep::BrepChecks {
+            topology: validate(&self.brep),
+            hit: crate::intersect::self_intersection(&self.brep),
+            volume: self
+                .tri_solid()
+                .map(|t| t.volume())
+                .map_err(|e| e.to_string()),
+        });
+        let report = c.topology.clone()?;
         let mut v = Vec::new();
         let mut ids = std::collections::BTreeSet::new();
         for (_, f) in self.brep.faces() {
@@ -383,19 +393,19 @@ impl Object {
         if report.shells.iter().any(|s| !s.closed) {
             v.push(Violation::DanglingKey("object has an open shell"));
         }
-        if let Some(hit) = crate::intersect::self_intersection(&self.brep) {
+        if let Some(hit) = c.hit {
             v.push(Violation::SelfIntersectingSolid(hit));
         }
         // Every face can be locally consistent while the whole solid is inside out (a face
         // pushed backwards through itself): the enclosed volume must be positive.
-        match self.tri_solid() {
-            Ok(t) => {
-                let volume = t.volume();
+        match &c.volume {
+            Ok(volume) => {
+                let volume = *volume;
                 if volume.is_nan() || volume <= 0.0 {
                     v.push(Violation::NonPositiveVolume(volume));
                 }
             }
-            Err(e) => v.push(Violation::Untessellatable(e.to_string())),
+            Err(e) => v.push(Violation::Untessellatable(e.clone())),
         }
         if v.is_empty() {
             Ok(report)

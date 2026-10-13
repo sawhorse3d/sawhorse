@@ -31,6 +31,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The render-credit device key in the OS secure store (ADR-0004).
 sawhorse-device-key = { path = "device-key" }
+# Saving a file atomically (lane 16): never a half-written .shz.
+sawhorse-safe-save = { path = "safe-save" }
 
 [profile.release]
 codegen-units = 1

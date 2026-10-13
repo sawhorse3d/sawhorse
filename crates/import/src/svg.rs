@@ -205,8 +205,16 @@ fn arc(
         .collect()
 }
 
-/// Sub-paths of a path `d` (user units), each with its closed flag.
-fn path(d: &str, upm: f64) -> Vec<(Vec<DVec2>, bool)> {
+/// Sub-paths of a path `d` (user units), each with its closed flag. Lane 16: refused past
+/// the points one import may bring in (a curve becomes up to 64 points, so a short path
+/// can stand for many).
+fn path(d: &str, upm: f64) -> Result<Vec<(Vec<DVec2>, bool)>, ImportError> {
+    let max = sawhorse_kernel::limits::MAX_IMPORT_STROKE_POINTS;
+    let too_many = || {
+        err(format!(
+            "a path stands for more than {max} points (one import takes at most {max}; simplify or split the file)"
+        ))
+    };
     let mut out: Vec<(Vec<DVec2>, bool)> = Vec::new();
     let mut cur: Vec<DVec2> = Vec::new();
     let mut pen = DVec2::ZERO;
@@ -230,6 +238,10 @@ fn path(d: &str, upm: f64) -> Vec<(Vec<DVec2>, bool)> {
     if let Some(c) = cmd {
         cmds.push((c, numbers(&buf)));
     }
+    if cmds.len() > max {
+        return Err(too_many());
+    }
+    let (mut counted, mut flushed) = (0usize, 0usize);
     let flush = |cur: &mut Vec<DVec2>, out: &mut Vec<(Vec<DVec2>, bool)>, closed: bool| {
         if cur.len() >= 2 {
             out.push((std::mem::take(cur), closed));
@@ -238,6 +250,13 @@ fn path(d: &str, upm: f64) -> Vec<(Vec<DVec2>, bool)> {
         }
     };
     for (c, n) in cmds {
+        while counted < out.len() {
+            flushed += out[counted].0.len();
+            counted += 1;
+        }
+        if flushed + cur.len() > max {
+            return Err(too_many());
+        }
         let rel = c.is_ascii_lowercase();
         let base = |pen: DVec2| if rel { pen } else { DVec2::ZERO };
         match c.to_ascii_uppercase() {
@@ -342,7 +361,7 @@ fn path(d: &str, upm: f64) -> Vec<(Vec<DVec2>, bool)> {
         }
     }
     flush(&mut cur, &mut out, false);
-    out
+    Ok(out)
 }
 
 fn ellipse_pts(c: DVec2, rx: f64, ry: f64, upm: f64) -> Vec<DVec2> {
@@ -378,7 +397,14 @@ pub fn read(bytes: &[u8], _opts: &ImportOptions) -> Result<Parsed, ImportError> 
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut notes = Vec::new();
     let mut buf = Vec::new();
+    // Lane 16: the strokes found so far are held to the import limits as they come.
+    let mut budget = crate::Budget::default();
+    let mut checked = 0usize;
     loop {
+        while checked < shapes.len() {
+            budget.stroke("SVG", shapes[checked].0.len())?;
+            checked += 1;
+        }
         let ev = reader
             .read_event_into(&mut buf)
             .map_err(|e| err(e.to_string()))?;
@@ -477,7 +503,7 @@ pub fn read(bytes: &[u8], _opts: &ImportOptions) -> Result<Parsed, ImportError> 
         };
         match name.as_str() {
             "path" => {
-                for (pts, closed) in path(a.get("d").map(String::as_str).unwrap_or(""), upm) {
+                for (pts, closed) in path(a.get("d").map(String::as_str).unwrap_or(""), upm)? {
                     add(pts, closed);
                 }
             }
@@ -527,7 +553,7 @@ pub fn read(bytes: &[u8], _opts: &ImportOptions) -> Result<Parsed, ImportError> 
                             x + rx,
                             y
                         );
-                        for (pts, closed) in path(&d, upm) {
+                        for (pts, closed) in path(&d, upm)? {
                             add(pts, closed);
                         }
                     } else {

@@ -9,8 +9,16 @@
 //!
 //! Collections are slotmaps; iteration order is insertion order, so everything derived
 //! from a B-rep (hashes, meshes, exports) is deterministic.
+//!
+//! Lane 16: a [`Brep`] is a shared handle to its data ([`BrepData`], copy on write). Copying
+//! a model (every edit works on a copy; the undo ring keeps copies) no longer copies every
+//! solid's B-rep: unchanged solids share theirs. The expensive checks of a B-rep (topology,
+//! the global self-intersection test, the enclosed volume) are worked out once per B-rep
+//! and kept with it ([`Brep::checks`]); any mutable access drops them, so a changed B-rep
+//! is always checked again.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 use glam::DVec3;
 use slotmap::{Key, SlotMap};
@@ -177,16 +185,79 @@ impl Polys {
     }
 }
 
+/// What the validator found for one B-rep, kept with it until it changes.
+#[derive(Debug, Clone)]
+pub struct BrepChecks {
+    pub topology: Result<crate::validate::TopologyReport, crate::validate::TopologyError>,
+    pub hit: Option<crate::intersect::SelfHit>,
+    pub volume: Result<f64, String>,
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct Brep {
+pub struct BrepData {
     pub(crate) vertices: SlotMap<VertexId, Vertex>,
     pub(crate) half_edges: SlotMap<HalfEdgeId, HalfEdge>,
     pub(crate) edges: SlotMap<EdgeId, Edge>,
     pub(crate) loops: SlotMap<LoopId, Loop>,
     pub(crate) faces: SlotMap<FaceId, Face>,
+    /// The checks, once worked out (dropped on any mutable access, see `DerefMut`).
+    checks: OnceLock<BrepChecks>,
+}
+
+/// A B-rep: a shared, copy-on-write handle to its [`BrepData`] (reads go through `Deref`,
+/// writes through `DerefMut`, which unshares the data and forgets its checks).
+#[derive(Debug, Clone, Default)]
+pub struct Brep {
+    inner: Arc<BrepData>,
+}
+
+impl std::ops::Deref for Brep {
+    type Target = BrepData;
+    fn deref(&self) -> &BrepData {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for Brep {
+    fn deref_mut(&mut self) -> &mut BrepData {
+        let d = Arc::make_mut(&mut self.inner);
+        d.checks = OnceLock::new();
+        d
+    }
+}
+
+impl From<BrepData> for Brep {
+    fn from(mut d: BrepData) -> Brep {
+        d.checks = OnceLock::new();
+        Brep { inner: Arc::new(d) }
+    }
 }
 
 impl Brep {
+    /// The checks of this B-rep, worked out by `run` the first time and kept until it
+    /// changes. `run` must depend on the B-rep alone.
+    pub(crate) fn checks(&self, run: impl FnOnce(&Brep) -> BrepChecks) -> &BrepChecks {
+        self.inner.checks.get_or_init(|| run(self))
+    }
+
+    /// Whether two handles share one B-rep's data.
+    pub fn shares_with(&self, other: &Brep) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    /// Bytes the B-rep's data takes (estimated): what the undo history is charged for it.
+    pub fn approx_bytes(&self) -> usize {
+        self.vertices.len() * 64
+            + self.half_edges.len() * 64
+            + self.edges.len() * 40
+            + self.loops.len() * 32
+            + self
+                .faces
+                .iter()
+                .map(|(_, f)| 160 + f.holes.len() * 8)
+                .sum::<usize>()
+    }
+
     /// Build a B-rep from indexed polygons. Twins are paired by matching directed edges
     /// (a->b with b->a); a directed edge used twice is a typed error. Face planes are fitted
     /// from the outer loop.
@@ -205,7 +276,7 @@ impl Brep {
     /// `points`, face order follows `faces`.
     pub fn build(polys: &Polys) -> Result<Brep, BuildError> {
         let (points, faces) = (&polys.points, &polys.faces);
-        let mut b = Brep::default();
+        let mut b = BrepData::default();
         let vids: Vec<VertexId> = points
             .iter()
             .map(|&pos| {
@@ -308,7 +379,7 @@ impl Brep {
                 b.vertices[v].out = he;
             }
         }
-        Ok(b)
+        Ok(Brep::from(b))
     }
 
     /// Plain-data copy: points in vertex order, faces in face order with their stored

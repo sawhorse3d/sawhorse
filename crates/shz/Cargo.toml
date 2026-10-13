@@ -18,5 +18,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 zip.workspace = true
 
+[dev-dependencies]
+# Lane 16 tests: zip bombs built in milliseconds, and raw zips with any declared sizes.
+flate2.workspace = true
+crc32fast.workspace = true
+
 [lints]
 workspace = true

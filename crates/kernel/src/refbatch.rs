@@ -16,7 +16,13 @@
 //! applied as one batch to a second copy and its outcomes compared with the scratch ones
 //! (a batch tidies once at the end, single ops after each; if that ever made an id come out
 //! differently, the batch is refused rather than applied with a wrong id). Only then is it
-//! applied to the document.
+//! applied to the document: the checked copy itself becomes the model (lane 16: it used to
+//! be applied a third time).
+//!
+//! Lane 16: a batch has a work budget as well as an op count. Each op costs about the size
+//! of the model it is applied to (the copy, the checks), so a batch of [`MAX_OPS`] ops is
+//! fine on a small model and refused on a huge one before it starts: ops times things in
+//! the model must stay under [`WORK_BUDGET`].
 
 use serde_json::Value;
 
@@ -25,7 +31,10 @@ use crate::error::KernelError;
 use crate::model::{Model, Op, OpOutcome};
 
 /// Most ops one batch may hold.
-pub const MAX_OPS: usize = 10_000;
+pub const MAX_OPS: usize = 2_000;
+/// Ops times things in the model (solids, meshes, groups and instances, sketches) one
+/// batch may cost (lane 16).
+pub const WORK_BUDGET: usize = 20_000_000;
 /// Longest batch name (it names the undo step).
 pub const MAX_NAME: usize = 80;
 /// Deepest placeholder path.
@@ -47,6 +56,10 @@ pub enum RefBatchError {
     Empty,
     #[error("a batch holds at most {MAX_OPS} ops")]
     TooMany,
+    #[error(
+        "a batch of {ops} ops on a model of {things} things is more work than one batch may do (split it into smaller batches)"
+    )]
+    TooMuchWork { ops: usize, things: usize },
     #[error("op {index}: {message}")]
     BadOp { index: usize, message: String },
     #[error("op {index}: placeholder {message}")]
@@ -175,6 +188,14 @@ pub fn resolve(
     if batch.ops.len() > MAX_OPS {
         return Err(RefBatchError::TooMany);
     }
+    let things =
+        1 + model.objects.len() + model.meshes.len() + model.nodes.len() + model.sketches.len();
+    if batch.ops.len().saturating_mul(things) > WORK_BUDGET {
+        return Err(RefBatchError::TooMuchWork {
+            ops: batch.ops.len(),
+            things,
+        });
+    }
     let mut scratch = model.clone();
     let mut outcome_json: Vec<Value> = Vec::with_capacity(batch.ops.len());
     let mut ops = Vec::with_capacity(batch.ops.len());
@@ -216,11 +237,11 @@ pub fn apply(doc: &mut Document, batch: &NamedBatch) -> Result<(OpOutcome, Op), 
     let (ops, outcomes) = resolve(doc.model(), batch)?;
     let op = Op::Batch { ops };
     // The resolved batch must do exactly what the ops did one by one.
-    let mut check = doc.model().clone();
-    match check
-        .apply(&op)
-        .map_err(|e| RefBatchError::Kernel(Box::new(e)))?
-    {
+    let (next, out) = doc
+        .model()
+        .applied(&op)
+        .map_err(|e| RefBatchError::Kernel(Box::new(e)))?;
+    match &out {
         OpOutcome::Batch { outcomes: got } => {
             if let Some(index) = (0..outcomes.len()).find(|&i| got.get(i) != Some(&outcomes[i])) {
                 return Err(RefBatchError::Diverged { index });
@@ -228,9 +249,9 @@ pub fn apply(doc: &mut Document, batch: &NamedBatch) -> Result<(OpOutcome, Op), 
         }
         _ => return Err(RefBatchError::Diverged { index: 0 }),
     }
-    let out = doc
-        .apply(&op)
-        .map_err(|e| RefBatchError::Kernel(Box::new(e)))?;
+    // The checked copy is the new model: committed with the op logged, as Document::apply
+    // would (it is the same validated result).
+    doc.commit_applied(op.clone(), next);
     Ok((out, op))
 }
 

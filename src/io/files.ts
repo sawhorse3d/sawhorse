@@ -6,6 +6,9 @@
 // - Everything else, or `?io=basic` on the URL: a file input to open, a download to save.
 //
 // Every function returns null when the user cancels.
+//
+// Lane 16: a file is measured before it is read: one over its limit (MAX_READ_BYTES) is
+// refused with FileTooLarge and never read into memory.
 
 export interface FileType {
   description: string;
@@ -21,6 +24,37 @@ export interface PickedFile {
   name: string;
   bytes: Uint8Array;
   handle?: FileHandle;
+}
+
+/** Largest file read whole (lane 16): a .shz (the kernel reads at most 1 GB from inside
+ * one), an import (the kernel's readers take 256 MB), a plugin package (.zip). */
+export const MAX_READ_BYTES = { shz: 512 * 1024 * 1024, import: 256 * 1024 * 1024, zip: 64 * 1024 * 1024 };
+
+/** A file over the size Sawhorse reads. */
+export class FileTooLarge extends Error {
+  constructor(name: string, size: number, limit: number) {
+    super(`${name} is ${Math.round(size / 1024 / 1024)} MB; Sawhorse reads ${extensionOf(name) === ".shz" ? "documents" : extensionOf(name) === ".zip" ? "plugin packages" : "imports"} of at most ${Math.round(limit / 1024 / 1024)} MB`);
+    this.name = "FileTooLarge";
+  }
+}
+
+/** The most bytes Sawhorse reads for a file of this name. */
+export function readLimit(name: string): number {
+  const ext = extensionOf(name);
+  return ext === ".shz" ? MAX_READ_BYTES.shz : ext === ".zip" ? MAX_READ_BYTES.zip : MAX_READ_BYTES.import;
+}
+
+/** Throw FileTooLarge when `size` is over the limit for `name`. */
+export function checkSize(name: string, size: number): void {
+  const limit = readLimit(name);
+  if (size > limit) throw new FileTooLarge(baseName(name), size, limit);
+}
+
+/** Desktop: a file's size (stat), checked before it is read, then its bytes. */
+async function readTauriFile(path: string): Promise<Uint8Array> {
+  const { readFile, stat } = await import("@tauri-apps/plugin-fs");
+  checkSize(path, (await stat(path)).size);
+  return readFile(path);
 }
 
 export const SHZ: FileType = { description: "Sawhorse document", mime: "application/vnd.sawhorse.shz", extensions: [".shz"] };
@@ -99,17 +133,18 @@ export async function pickFile(types: FileType[]): Promise<PickedFile | null> {
       filters: [{ name: "Supported files", extensions: types.flatMap((t) => t.extensions.map((e) => e.slice(1))) }],
     });
     if (typeof path !== "string") return null;
-    const { readFile } = await import("@tauri-apps/plugin-fs");
-    return { name: baseName(path), bytes: await readFile(path), handle: { kind: "tauri", path } };
+    return { name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } };
   }
   const api = fsa();
   if (api) {
     try {
       const [h] = await api.showOpenFilePicker({ multiple: false, types: [{ description: "Supported files", accept: { "application/octet-stream": types.flatMap((t) => t.extensions) } }] });
       const f = await h.getFile();
+      checkSize(f.name, f.size);
       return { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()), handle: { kind: "fsa", handle: h } };
     } catch (e) {
       if (isAbort(e)) return null;
+      if (e instanceof FileTooLarge) throw e;
       // A picker that will not open here (an iframe, a policy) falls back to the input.
     }
   }
@@ -117,7 +152,7 @@ export async function pickFile(types: FileType[]): Promise<PickedFile | null> {
 }
 
 function pickWithInput(types: FileType[]): Promise<PickedFile | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = types.flatMap((t) => t.extensions).join(",");
@@ -131,7 +166,13 @@ function pickWithInput(types: FileType[]): Promise<PickedFile | null> {
     };
     input.addEventListener("change", async () => {
       const f = input.files?.[0];
-      done(f ? await readBrowserFile(f) : null);
+      try {
+        done(f ? await readBrowserFile(f) : null);
+      } catch (e) {
+        settled = true;
+        input.remove();
+        reject(e);
+      }
     });
     input.addEventListener("cancel", () => done(null));
     document.body.appendChild(input);
@@ -139,7 +180,9 @@ function pickWithInput(types: FileType[]): Promise<PickedFile | null> {
   });
 }
 
+/** A browser File's bytes, refused before reading when it is over its limit. */
 export async function readBrowserFile(f: File): Promise<PickedFile> {
+  checkSize(f.name, f.size);
   return { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) };
 }
 
@@ -157,8 +200,10 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
       path = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
       if (!path) return null;
     }
-    const { writeFile } = await import("@tauri-apps/plugin-fs");
-    await writeFile(path, bytes);
+    // Lane 16: written beside, synced, read back, then renamed over the file (the previous
+    // one kept as .bak), never truncated in place (src-tauri/safe-save).
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_file_atomic", bytes, { headers: { "x-path": encodeURIComponent(path) } });
     return { name: baseName(path), handle: { kind: "tauri", path } };
   }
   const api = fsa();
@@ -198,16 +243,19 @@ export function download(name: string, bytes: Uint8Array, mime: string): void {
  * paths in the fs scope and emits `sawhorse://dropped`; read them here. Browser builds
  * use HTML drag-and-drop instead (the app root handles `drop`).
  */
-export async function onTauriDrop(cb: (files: PickedFile[]) => void): Promise<() => void> {
+export async function onTauriDrop(cb: (files: PickedFile[]) => Promise<void> | void, refused?: (message: string) => void): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  const { readFile } = await import("@tauri-apps/plugin-fs");
   return listen<string[]>("sawhorse://dropped", async (e) => {
-    const files: PickedFile[] = [];
+    // One at a time (lane 16): each file is measured, read and taken in before the next is
+    // read, so dropping several large files never holds them all at once.
     for (const path of e.payload) {
       if (!ALL_EXTENSIONS.includes(extensionOf(path))) continue;
-      files.push({ name: baseName(path), bytes: await readFile(path), handle: { kind: "tauri", path } });
+      try {
+        await cb([{ name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } }]);
+      } catch (err) {
+        refused?.(err instanceof Error ? err.message : String(err));
+      }
     }
-    if (files.length) cb(files);
   });
 }

@@ -177,6 +177,14 @@ impl TextureImage {
         if width == 0 || height == 0 || width > 16384 || height > 16384 {
             return Err(LooksError::BadTexture("image size out of range".into()).into());
         }
+        // Lane 16: the pixels, not just the sides: a small file can say 16384 x 16384, and
+        // the browser decodes it to 4 bytes a pixel (with mipmaps).
+        if u64::from(width) * u64::from(height) > crate::limits::MAX_TEXTURE_PIXELS {
+            return Err(LooksError::BadTexture(format!(
+                "{width} x {height} pixels; at most 4096 x 4096 (16.7 million pixels)"
+            ))
+            .into());
+        }
         let mut h = StableHasher::default();
         h.bytes(&data);
         Ok(TextureImage {

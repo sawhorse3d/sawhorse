@@ -9,6 +9,10 @@
 //! - Everything else (`TEXT`, `MTEXT`, `DIMENSION`, `HATCH`, `SPLINE`, `INSERT`, ...) is
 //!   counted and listed in the notes. So are entities in a tilted object coordinate system
 //!   (extrusion direction other than +Z), which are skipped.
+//!
+//! Lane 16: group codes are read as slices of the file's text, never copied (the reader
+//! used to hold about ten times the file); at most [`MAX_ENTITIES`] entities are read, and
+//! the strokes and faces they make are held to the import limits as they are made.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,7 +20,10 @@ use glam::{DVec2, DVec3};
 use sawhorse_kernel::model::ImportStroke;
 
 use crate::util::{plural, soup};
-use crate::{ImportError, ImportOptions, Parsed, Unit, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, Unit, malformed};
+
+/// Most entities one DXF may hold.
+pub const MAX_ENTITIES: usize = 500_000;
 
 /// Segments per full circle when arcs become strokes.
 pub const ARC_SEGMENTS: usize = 48;
@@ -24,14 +31,14 @@ pub const ARC_SEGMENTS: usize = 48;
 /// Vertices and polygon faces of one layer.
 type Soup = (Vec<[f64; 3]>, Vec<Vec<Vec<u32>>>);
 
-/// One entity: its type and group codes in order.
+/// One entity: its type and group codes in order (slices of the file's text).
 #[derive(Debug, Clone, Default)]
-struct Entity {
-    kind: String,
-    codes: Vec<(i32, String)>,
+struct Entity<'a> {
+    kind: &'a str,
+    codes: Vec<(i32, &'a str)>,
 }
 
-impl Entity {
+impl Entity<'_> {
     fn f(&self, code: i32) -> Option<f64> {
         self.codes
             .iter()
@@ -42,10 +49,7 @@ impl Entity {
         self.f(code).map(|x| x as i64).unwrap_or(0)
     }
     fn s(&self, code: i32) -> Option<&str> {
-        self.codes
-            .iter()
-            .find(|(c, _)| *c == code)
-            .map(|(_, v)| v.as_str())
+        self.codes.iter().find(|(c, _)| *c == code).map(|(_, v)| *v)
     }
     fn layer(&self) -> String {
         self.s(8)
@@ -71,28 +75,28 @@ impl Entity {
     }
 }
 
-fn pairs(text: &str) -> Result<Vec<(i32, String)>, ImportError> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = Vec::with_capacity(lines.len() / 2);
-    let mut k = 0;
-    while k + 1 < lines.len() {
-        let code = lines[k].trim();
-        if code.is_empty() && k + 2 >= lines.len() {
-            break;
+/// The file's (group code, value) pairs, read lazily as slices of `text`.
+fn pairs(text: &str) -> impl Iterator<Item = Result<(i32, &str), ImportError>> + '_ {
+    let mut lines = text.lines().enumerate().peekable();
+    std::iter::from_fn(move || {
+        let (k, code) = lines.next()?;
+        let (_, value) = lines.next()?;
+        let code = code.trim();
+        if code.is_empty() && lines.peek().is_none() {
+            return None;
         }
-        let c: i32 = code.parse().map_err(|_| {
-            malformed(
+        Some(match code.parse::<i32>() {
+            Ok(c) => Ok((c, value.trim_end_matches('\r'))),
+            Err(_) => Err(malformed(
                 "DXF",
                 format!(
-                    "line {}: expected a group code, found {code:?} (binary DXF is not supported)",
-                    k + 1
+                    "line {}: expected a group code, found {:?} (binary DXF is not supported)",
+                    k + 1,
+                    code.chars().take(40).collect::<String>()
                 ),
-            )
-        })?;
-        out.push((c, lines[k + 1].trim_end_matches('\r').to_string()));
-        k += 2;
-    }
-    Ok(out)
+            )),
+        })
+    })
 }
 
 /// Points of an arc from angle `a0` to `a1` (degrees, counter-clockwise), centre `c`.
@@ -143,43 +147,50 @@ fn bulge_points(a: DVec3, b: DVec3, bulge: f64) -> Vec<DVec3> {
 
 pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
     let text = String::from_utf8_lossy(bytes);
-    let pairs = pairs(&text)?;
     let mut out = Parsed::default();
+    let mut budget = Budget::default();
 
     // Sections: units from the header, entities from ENTITIES.
     let mut insunits: Option<i64> = None;
     let mut section = String::new();
     let mut entities: Vec<Entity> = Vec::new();
-    let mut k = 0;
-    while k < pairs.len() {
-        let (c, v) = (&pairs[k].0, pairs[k].1.trim());
-        if *c == 0 && v == "SECTION" {
-            section = pairs
-                .get(k + 1)
-                .map(|p| p.1.trim().to_string())
-                .unwrap_or_default();
-            k += 2;
+    let mut it = pairs(&text).peekable();
+    while let Some(p) = it.next() {
+        let (c, raw) = p?;
+        let v = raw.trim();
+        if c == 0 && v == "SECTION" {
+            section = match it.next() {
+                Some(p) => p?.1.trim().to_string(),
+                None => String::new(),
+            };
             continue;
         }
-        if *c == 0 && v == "ENDSEC" {
+        if c == 0 && v == "ENDSEC" {
             section.clear();
-            k += 1;
             continue;
         }
-        if section == "HEADER" && *c == 9 && v == "$INSUNITS" {
-            insunits = pairs.get(k + 1).and_then(|p| p.1.trim().parse().ok());
+        if section == "HEADER" && c == 9 && v == "$INSUNITS" {
+            insunits = match it.peek() {
+                Some(Ok((_, x))) => x.trim().parse().ok(),
+                _ => None,
+            };
         }
-        if section == "ENTITIES" && *c == 0 {
+        if section == "ENTITIES" && c == 0 {
+            if entities.len() >= MAX_ENTITIES {
+                return Err(malformed(
+                    "DXF",
+                    format!("the file holds more than {MAX_ENTITIES} entities; split the file"),
+                ));
+            }
             entities.push(Entity {
-                kind: v.to_string(),
+                kind: v,
                 codes: Vec::new(),
             });
         } else if section == "ENTITIES"
             && let Some(e) = entities.last_mut()
         {
-            e.codes.push((*c, pairs[k].1.clone()));
+            e.codes.push((c, raw));
         }
-        k += 1;
     }
     if entities.is_empty() && !text.contains("ENTITIES") {
         return Err(malformed("DXF", "no ENTITIES section"));
@@ -241,7 +252,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
     let mut i = 0;
     while i < entities.len() {
         let e = &entities[i];
-        match e.kind.as_str() {
+        match e.kind {
             "3DFACE" => {
                 let mut pts = vec![e.pt(10), e.pt(11), e.pt(12), e.pt(13)];
                 if pts[3].distance(pts[2]) < 1e-12 {
@@ -274,7 +285,9 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                         }
                     }
                     let closed = e.i(70) & 1 == 1;
-                    strokes.push(polyline(&verts, closed));
+                    let pl = polyline(&verts, closed);
+                    budget.stroke("DXF", pl.0.len())?;
+                    strokes.push(pl);
                 }
             }
             "POLYLINE" => {
@@ -329,7 +342,9 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                             (p, if three_d { 0.0 } else { v.f(42).unwrap_or(0.0) })
                         })
                         .collect();
-                    strokes.push(polyline(&pts, flags & 1 == 1));
+                    let pl = polyline(&pts, flags & 1 == 1);
+                    budget.stroke("DXF", pl.0.len())?;
+                    strokes.push(pl);
                 }
                 i = j;
                 continue;
@@ -344,12 +359,13 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                         if e.kind == "CIRCLE" {
                             let mut pts = arc_points(c, r, 0.0, 360.0);
                             pts.pop();
+                            budget.stroke("DXF", pts.len())?;
                             strokes.push((pts, true));
                         } else {
-                            strokes.push((
-                                arc_points(c, r, e.f(50).unwrap_or(0.0), e.f(51).unwrap_or(360.0)),
-                                false,
-                            ));
+                            let pts =
+                                arc_points(c, r, e.f(50).unwrap_or(0.0), e.f(51).unwrap_or(360.0));
+                            budget.stroke("DXF", pts.len())?;
+                            strokes.push((pts, false));
                         }
                     }
                 }
@@ -365,8 +381,13 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
         if face_edges.contains(&edge_key(a, b)) {
             on_faces += 1;
         } else {
+            budget.stroke("DXF", 2)?;
             strokes.push((vec![a, b], false));
         }
+    }
+    for (positions, faces) in layers.values() {
+        budget.faces("DXF", faces.len())?;
+        budget.points("DXF", positions.len())?;
     }
     for (layer, (positions, faces)) in layers {
         let mut item = soup(&layer, positions, faces);

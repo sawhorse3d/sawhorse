@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
 import { FAMILIES, corpus, rng } from "./corpus/models";
-import { apply, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, unitsOf } from "./skp";
+import { apply, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, SkpTooLarge, unitsOf } from "./skp";
 import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
@@ -394,5 +394,28 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     expect(shows.filter((m) => m === "Oak")).toHaveLength(5);
     expect(st.textures.map((t: { path: string }) => t.path)).toEqual(["assets/skp-oak.png"]);
     d.free();
+  });
+
+  it("lane 16: groups placed inside groups placed many times are counted, not expanded forever", () => {
+    // 40 "Group#i" definitions, each placing the next twice: 2^40 group copies.
+    const empty = { guid: "", vertices: [], edges: [], faces: [], sectionPlanes: [], texts: [], dimensions: [], constructionLines: [], constructionPoints: [], isImage: false, alwaysFacesCamera: false, shadowsFaceSun: false };
+    const at = (i: number) => ({ refIdx: i, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], name: "", layer: "Layer0", hidden: false });
+    const defs = new Map<number, unknown>();
+    for (let i = 1; i <= 40; i++) defs.set(i, { ...empty, id: i, name: `Group#${i}`, instances: i < 40 ? [at(i + 1), at(i + 1)] : [] });
+    const model = {
+      version: "{25.0.0}",
+      definitions: defs,
+      root: { ...empty, id: 0, name: "", instances: [at(1)] },
+      layers: [],
+      pages: [],
+      dimensions: [],
+      materials: [],
+      materialsById: new Map(),
+      styles: [],
+      units: null,
+    } as unknown as SkpModel;
+    const t0 = performance.now();
+    expect(() => modelToOp(model, "Bomb.skp")).toThrow(SkpTooLarge);
+    expect(performance.now() - t0).toBeLessThan(2000);
   });
 });

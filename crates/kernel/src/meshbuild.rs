@@ -78,8 +78,55 @@ pub struct ImportItem {
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
 /// never pushed or pulled. `note` says why it is not a solid.
+///
+/// Lane 16: a shared, copy-on-write handle to its [`LooseMeshData`], so copies of the
+/// model (each edit, the undo ring) share a mesh's points until the mesh changes.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct LooseMesh {
+pub struct LooseMesh(std::sync::Arc<LooseMeshData>);
+
+impl std::ops::Deref for LooseMesh {
+    type Target = LooseMeshData;
+    fn deref(&self) -> &LooseMeshData {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for LooseMesh {
+    fn deref_mut(&mut self) -> &mut LooseMeshData {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
+impl From<LooseMeshData> for LooseMesh {
+    fn from(d: LooseMeshData) -> LooseMesh {
+        LooseMesh(std::sync::Arc::new(d))
+    }
+}
+
+impl LooseMesh {
+    /// Whether two handles share one mesh's data.
+    pub fn shares_with(&self, other: &LooseMesh) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Bytes its data takes (estimated): what the undo history is charged for it.
+    pub fn approx_bytes(&self) -> usize {
+        256 + self.name.len()
+            + self.note.len()
+            + self.positions.len() * 24
+            + self
+                .faces
+                .iter()
+                .map(|f| 24 + f.iter().map(|r| 24 + r.len() * 4).sum::<usize>())
+                .sum::<usize>()
+            + self.lines.len() * 8
+            + self.edge_flags.len() * 48
+    }
+}
+
+/// What a [`LooseMesh`] holds.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LooseMeshData {
     pub name: String,
     pub positions: Vec<DVec3>,
     pub faces: Vec<Vec<Vec<u32>>>,
@@ -931,9 +978,40 @@ fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
         }
     }
     let mut shells: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut root_of: Vec<usize> = Vec::with_capacity(faces.len());
     for fi in 0..faces.len() {
         let r = find(&mut parent, fi);
+        root_of.push(r);
         shells.entry(r).or_default().push(fi);
+    }
+    // Each shell's open, over-shared and mis-oriented edges, in one pass over the edges
+    // (lane 16: every shell used to scan every edge, quadratic in the shells: 20,000
+    // disjoint triangles were a billion steps).
+    let mut tally: BTreeMap<usize, (usize, usize, usize)> = BTreeMap::new();
+    for list in uses.values() {
+        // (shell, uses, first direction, second direction) for the few shells on this edge.
+        let mut on: Vec<(usize, usize, bool, bool)> = Vec::with_capacity(2);
+        for &(f, dir) in list {
+            let r = root_of[f];
+            match on.iter_mut().find(|x| x.0 == r) {
+                Some(x) => {
+                    if x.1 == 1 {
+                        x.3 = dir;
+                    }
+                    x.1 += 1;
+                }
+                None => on.push((r, 1, dir, dir)),
+            }
+        }
+        for (r, n, d0, d1) in on {
+            let t = tally.entry(r).or_default();
+            match n {
+                1 => t.0 += 1,
+                2 if d0 == d1 => t.2 += 1,
+                2 => {}
+                _ => t.1 += 1,
+            }
+        }
     }
 
     let mut solids = Vec::new();
@@ -949,22 +1027,24 @@ fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
         *reasons.entry(why).or_default() += 1;
     };
     let (mut flipped, mut merged_from, mut rebuilt, mut turned) = (0usize, 0usize, 0usize, 0usize);
-    for members in shells.values() {
-        let in_shell: BTreeSet<usize> = members.iter().copied().collect();
-        let (mut open, mut over, mut orient) = (0usize, 0usize, 0usize);
-        for list in uses.values() {
-            let mine: Vec<&(usize, bool)> =
-                list.iter().filter(|(f, _)| in_shell.contains(f)).collect();
-            match mine.len() {
-                0 => {}
-                1 => open += 1,
-                2 if mine[0].1 == mine[1].1 => orient += 1,
-                2 => {}
-                _ => over += 1,
-            }
-        }
+    for (root, members) in &shells {
+        let (open, over, mut orient) = tally.get(root).copied().unwrap_or_default();
         let mut shell_faces: Vec<Vec<Vec<u32>>> =
             members.iter().map(|&fi| faces[fi].clone()).collect();
+        // Lane 16: a solid is checked whole whenever it changes (self-intersection); a
+        // shell with more faces than that check is built for stays a mesh.
+        if members.len() > crate::limits::MAX_SOLID_FACES {
+            fail(
+                &mut reasons,
+                format!(
+                    "{} faces in one piece, more than the {} a solid may have",
+                    members.len(),
+                    crate::limits::MAX_SOLID_FACES
+                ),
+            );
+            loose_faces.extend(shell_faces);
+            continue;
+        }
         let shell_labels: Vec<u32> = members.iter().map(|&fi| face_label[fi]).collect();
         // A closed manifold shell whose faces disagree about which way they face (common in
         // SketchUp models with reversed faces) has exactly one consistent orientation up to
@@ -1169,7 +1249,7 @@ fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
                 order.push(v);
             }
         }
-        Some(LooseMesh {
+        Some(LooseMesh::from(LooseMeshData {
             name: name.to_string(),
             positions: order.iter().map(|&g| pts[g as usize]).collect(),
             faces: loose_faces
@@ -1186,7 +1266,7 @@ fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
             note,
             member: Default::default(),
             edge_flags: Default::default(),
-        })
+        }))
     };
     Ok(Built {
         solids,
@@ -1310,7 +1390,7 @@ mod tests {
         a.faces.push(vec![vec![base, base + 1, base + 2]]);
         let fin = build_item(&a).unwrap();
         assert_eq!(fin.solids.len(), 1, "the second box is untouched");
-        let note = fin.loose.unwrap().note;
+        let note = fin.loose.unwrap().note.clone();
         assert!(note.contains("more than two faces"), "{note}");
     }
 

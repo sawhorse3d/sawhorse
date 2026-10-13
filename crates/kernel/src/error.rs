@@ -355,6 +355,9 @@ pub enum KernelError {
     Section(#[from] SectionError),
     #[error(transparent)]
     Sheet(#[from] SheetError),
+    /// Lane 16: over a resource limit (crate::limits); a refusal, not a bug.
+    #[error(transparent)]
+    Limit(#[from] crate::limits::LimitError),
     /// The validator rejected the result of an operation. Always a kernel bug: the
     /// transaction was rolled back, and the op sequence belongs in tests/repro/.
     #[error("kernel bug, operation rolled back: {0}")]

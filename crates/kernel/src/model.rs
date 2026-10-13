@@ -1139,6 +1139,86 @@ pub struct Group {
     pub objects: Vec<u64>,
 }
 
+/// What an import brings in, component copies included: (faces, points, items, nodes),
+/// saturating.
+type ImportSize = (usize, usize, usize, usize);
+
+fn add_size(a: ImportSize, b: ImportSize) -> ImportSize {
+    (
+        a.0.saturating_add(b.0),
+        a.1.saturating_add(b.1),
+        a.2.saturating_add(b.2),
+        a.3.saturating_add(b.3),
+    )
+}
+
+fn items_size(items: &[ImportItem]) -> ImportSize {
+    items.iter().fold((0, 0, 0, 0), |s, it| {
+        add_size(
+            s,
+            (it.faces.len() + it.lines.len(), it.positions.len(), 1, 0),
+        )
+    })
+}
+
+fn nodes_size(nodes: &[ImportNode], defs: &[ImportSize]) -> ImportSize {
+    let mut s = (0, 0, 0, 0);
+    for n in nodes {
+        s = add_size(s, (0, 0, 0, 1));
+        s = add_size(
+            s,
+            match &n.kind {
+                ImportNodeKind::Group { items, children } => {
+                    add_size(items_size(items), nodes_size(children, defs))
+                }
+                // A definition not defined yet is refused when the import is built.
+                ImportNodeKind::Instance { definition, .. } => {
+                    defs.get(*definition).copied().unwrap_or_default()
+                }
+            },
+        );
+    }
+    s
+}
+
+/// Lane 16: refuse an import over the import limits before building any of it. A
+/// definition is sized once (it can only use definitions listed before it), so a chain of
+/// definitions each holding two copies of the next is counted, not built.
+fn import_budget(
+    items: &[ImportItem],
+    strokes: &[ImportStroke],
+    definitions: &[ImportDefinition],
+    nodes: &[ImportNode],
+) -> Result<(), crate::limits::LimitError> {
+    use crate::limits as l;
+    let mut defs: Vec<ImportSize> = Vec::with_capacity(definitions.len());
+    for d in definitions {
+        let s = add_size(items_size(&d.items), nodes_size(&d.children, &defs));
+        defs.push(s);
+    }
+    let (faces, points, objects, made_nodes) =
+        add_size(items_size(items), nodes_size(nodes, &defs));
+    l::import("faces", faces, l::MAX_IMPORT_FACES)?;
+    l::import("points", points, l::MAX_IMPORT_POINTS)?;
+    l::import("solids and meshes", objects, l::MAX_IMPORT_ITEMS)?;
+    l::import("groups and component copies", made_nodes, l::MAX_NODES)?;
+    l::import(
+        "component definitions",
+        definitions.len(),
+        l::MAX_DEFINITIONS,
+    )?;
+    l::import("lines and curves", strokes.len(), l::MAX_IMPORT_STROKES)?;
+    let stroke_points = strokes
+        .iter()
+        .fold(0usize, |n, s| n.saturating_add(s.points.len()));
+    l::import(
+        "points of lines and curves",
+        stroke_points,
+        l::MAX_IMPORT_STROKE_POINTS,
+    )?;
+    Ok(())
+}
+
 /// A usable name from a file: trimmed, at most 64 characters, `fallback` when empty.
 fn clip_name(n: &str, fallback: &str) -> String {
     let t: String = n.trim().chars().take(64).collect();
@@ -1359,13 +1439,69 @@ impl Model {
 
     /// Apply an op transactionally.
     pub fn apply(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
+        let (next, outcome) = self.applied(op)?;
+        *self = next;
+        Ok(outcome)
+    }
+
+    /// The model `op` makes of this one, validated, and the op's outcome; this model is
+    /// left as it is (what [`crate::Document`] keeps as the undo snapshot). Lane 16: the
+    /// result is also held to the model-wide limits ([`crate::limits`]).
+    pub fn applied(&self, op: &Op) -> Result<(Model, OpOutcome), KernelError> {
         let mut next = self.clone();
         next.dirty = Dirty::default();
         let outcome = next.apply_in_place(op)?;
         next.tidy()?;
+        crate::limits::check_model(&next)?;
         next.validate()?;
-        *self = next;
-        Ok(outcome)
+        Ok((next, outcome))
+    }
+
+    /// Bytes this model holds that `after` does not share (estimated): what an undo
+    /// snapshot of it costs while `after` follows it (lane 16, [`crate::document::UNDO_BYTES`]).
+    pub(crate) fn history_cost(&self, after: &Model) -> usize {
+        let mut n = 16 * 1024;
+        for (k, o) in &self.objects {
+            n += 512 + o.paint.len() * 96 + o.edge_flags.len() * 48;
+            if !after
+                .objects
+                .get(k)
+                .is_some_and(|a| a.brep.shares_with(&o.brep))
+            {
+                n += o.brep.approx_bytes();
+            }
+        }
+        for (k, m) in &self.meshes {
+            n += 256;
+            if !after.meshes.get(k).is_some_and(|a| a.shares_with(m)) {
+                n += m.approx_bytes();
+            }
+        }
+        for (_, s) in &self.sketches {
+            n += s.approx_bytes();
+        }
+        for (k, d) in &self.defs {
+            let other = after.defs.get(k);
+            for (slot, mem) in &d.members {
+                n += 256;
+                let theirs = other.and_then(|o| o.members.get(slot)).map(|m| &m.kind);
+                n += match (&mem.kind, theirs) {
+                    (
+                        crate::nodes::MemberKind::Solid(a),
+                        Some(crate::nodes::MemberKind::Solid(b)),
+                    ) if a.brep.shares_with(&b.brep) => 0,
+                    (crate::nodes::MemberKind::Solid(a), _) => a.brep.approx_bytes(),
+                    (
+                        crate::nodes::MemberKind::Mesh(a),
+                        Some(crate::nodes::MemberKind::Mesh(b)),
+                    ) if a.shares_with(b) => 0,
+                    (crate::nodes::MemberKind::Mesh(a), _) => a.approx_bytes(),
+                    _ => 0,
+                };
+            }
+        }
+        n += (self.nodes.len() + self.guides.len() + self.dimensions.len()) * 256;
+        n
     }
 
     /// Replay a sequence from an empty model, stopping at the first error.
@@ -2270,22 +2406,25 @@ impl Model {
         if objects.is_empty() && nodes.is_empty() {
             return Err(TransformError::NothingSelected.into());
         }
-        let mut keys: Vec<ObjectId> = Vec::with_capacity(objects.len());
+        // Duplicates dropped through a set (lane 16: a list search per id was quadratic).
+        let mut keys: Vec<ObjectId> = Vec::with_capacity(objects.len().min(self.objects.len()));
+        let mut seen = std::collections::BTreeSet::new();
         for &o in objects {
             let k = from_public::<ObjectId>(o);
             if !self.objects.contains_key(k) {
                 return Err(TransformError::NoSuchObject(o).into());
             }
             self.editable_object(k)?;
-            if !keys.contains(&k) {
+            if seen.insert(k) {
                 keys.push(k);
             }
         }
-        let mut nkeys: Vec<NodeId> = Vec::with_capacity(nodes.len());
+        let mut nkeys: Vec<NodeId> = Vec::with_capacity(nodes.len().min(self.nodes.len()));
+        let mut nseen = std::collections::BTreeSet::new();
         for &n in nodes {
             let k = self.node_key(n)?;
             self.editable_node(k)?;
-            if !nkeys.contains(&k) {
+            if nseen.insert(k) {
                 nkeys.push(k);
             }
         }
@@ -2302,8 +2441,40 @@ impl Model {
         count: u32,
     ) -> Result<(Vec<u64>, Vec<u64>), KernelError> {
         xform.check()?;
-        let mut made = Vec::with_capacity(keys.len() * count as usize);
-        let mut made_nodes = Vec::with_capacity(nkeys.len() * count as usize);
+        // Lane 16: what the copies add, counted (component copies by what they derive)
+        // with checked arithmetic before anything is allocated or copied.
+        let kids = (!nkeys.is_empty()).then(|| self.kids());
+        // Per copy: the solids named, and for each group or instance named, itself and
+        // everything in it (solids and meshes; groups and instances).
+        let (mut things, mut nodes_per) = (keys.len(), 0usize);
+        for &n in nkeys {
+            nodes_per = nodes_per.saturating_add(1);
+            for t in kids
+                .as_ref()
+                .map(|k| self.subtree_things(k, n))
+                .unwrap_or_default()
+            {
+                match t {
+                    Thing::Node(_) => nodes_per = nodes_per.saturating_add(1),
+                    _ => things = things.saturating_add(1),
+                }
+            }
+        }
+        let count_us = count as usize;
+        let objects = (self.objects.len() + self.meshes.len())
+            .saturating_add(things.saturating_mul(count_us));
+        if objects > crate::limits::MAX_OBJECTS {
+            return Err(crate::limits::LimitError::Objects(objects).into());
+        }
+        let nodes_after = self
+            .nodes
+            .len()
+            .saturating_add(nodes_per.saturating_mul(count_us));
+        if nodes_after > crate::limits::MAX_NODES {
+            return Err(crate::limits::LimitError::Nodes(nodes_after).into());
+        }
+        let mut made = Vec::with_capacity(keys.len().saturating_mul(count as usize));
+        let mut made_nodes = Vec::with_capacity(nkeys.len().saturating_mul(count as usize));
         for k in 1..=count {
             let x = xform.power(k);
             for &key in keys {
@@ -2362,6 +2533,9 @@ impl Model {
         definitions: &[ImportDefinition],
         nodes: &[ImportNode],
     ) -> Result<OpOutcome, KernelError> {
+        // Lane 16: what the import expands to (component copies included), counted before
+        // anything is built, whoever made the op (a reader, openskp, a plugin).
+        import_budget(items, strokes, definitions, nodes)?;
         let mut notes = Vec::new();
         for m in materials {
             let mut mat = m.material();
@@ -2380,6 +2554,8 @@ impl Model {
         }
         let (mut objects, mut meshes) = (Vec::new(), Vec::new());
         let mut groups: Vec<(String, Vec<Thing>)> = Vec::new();
+        // Group name -> index in `groups` (lane 16: a search per item was quadratic).
+        let mut group_index: BTreeMap<String, usize> = BTreeMap::new();
         let ctx = self.context;
         for item in items {
             let built = build_item(item)?;
@@ -2428,9 +2604,12 @@ impl Model {
                 && !made.is_empty()
             {
                 let g = clip_name(g, "Group");
-                match groups.iter_mut().find(|(name, _)| *name == g) {
-                    Some((_, list)) => list.extend(&made),
-                    None => groups.push((g, made.clone())),
+                match group_index.get(&g) {
+                    Some(&i) => groups[i].1.extend(&made),
+                    None => {
+                        group_index.insert(g.clone(), groups.len());
+                        groups.push((g, made.clone()));
+                    }
                 }
             }
         }

@@ -9,7 +9,7 @@
 //   session only.
 import { isTauri } from "../io/files";
 import { browserPackages } from "./store";
-import { filesFromEntries } from "./zip";
+import { BAD_SEGMENT, filesFromEntries, PACKAGE_LIMITS, PackageError } from "./zip";
 
 export interface InstalledFolder {
   files: Record<string, string>;
@@ -49,16 +49,25 @@ async function readTree(dir: string): Promise<Record<string, string>> {
   const { join } = await import("@tauri-apps/api/path");
   const entries: Record<string, Uint8Array> = {};
   let count = 0;
-  const walk = async (d: string, prefix: string) => {
+  let total = 0;
+  const walk = async (d: string, prefix: string, depth: number) => {
+    if (depth > 32) throw new PackageError("the plugin folder nests more than 32 folders deep");
     for (const e of await fs.readDir(d)) {
       if (e.name.startsWith(".") || e.name === "node_modules") continue;
-      if (++count > 2000) throw new Error("the plugin folder holds more than 2,000 files");
+      if (++count > PACKAGE_LIMITS.files) throw new PackageError(`the plugin folder holds more than ${PACKAGE_LIMITS.files} files`);
       const full = await join(d, e.name);
-      if (e.isDirectory) await walk(full, `${prefix}${e.name}/`);
-      else if (e.isFile && TEXT.test(e.name)) entries[`${prefix}${e.name}`] = await fs.readFile(full);
+      if (e.isDirectory) await walk(full, `${prefix}${e.name}/`, depth + 1);
+      else if (e.isFile && TEXT.test(e.name)) {
+        // Measured before it is read (lane 16).
+        const size = (await fs.stat(full)).size;
+        total += size;
+        if (size > PACKAGE_LIMITS.fileBytes) throw new PackageError(`${prefix}${e.name} is larger than ${PACKAGE_LIMITS.fileBytes / 1024 / 1024} MB`);
+        if (total > PACKAGE_LIMITS.bytes) throw new PackageError(`the plugin folder is larger than ${PACKAGE_LIMITS.bytes / 1024 / 1024} MB`);
+        entries[`${prefix}${e.name}`] = await fs.readFile(full);
+      }
     }
   };
-  await walk(dir, "");
+  await walk(dir, "", 0);
   return filesFromEntries(entries).files;
 }
 
@@ -84,16 +93,39 @@ function desktop(): PluginPlatform {
     },
     async install(id, files) {
       const fs = await tauriFs();
-      const { join, dirname } = await import("@tauri-apps/api/path");
-      const dir = await join(await pluginsRoot(), id);
-      if (await fs.exists(dir)) await fs.remove(dir, { recursive: true });
-      await fs.mkdir(dir, { recursive: true });
-      for (const [rel, text] of Object.entries(files)) {
-        const target = await join(dir, ...rel.split("/"));
-        await fs.mkdir(await dirname(target), { recursive: true });
-        await fs.writeTextFile(target, text);
+      const { join, dirname, sep } = await import("@tauri-apps/api/path");
+      const root = await pluginsRoot();
+      const dir = await join(root, id);
+      // Lane 16: written into a staging folder first, then swapped in, so a failure halfway
+      // leaves the installed version as it was; every target is checked to be inside it.
+      const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      const staging = await join(root, `.staging-${id}-${stamp}`);
+      const s = sep();
+      const inside = (base: string, p: string) => p.startsWith(base.endsWith(s) ? base : `${base}${s}`);
+      try {
+        await fs.mkdir(staging, { recursive: true });
+        for (const [rel, text] of Object.entries(files)) {
+          const segs = rel.split("/");
+          if (segs.some((x) => !x || x === "." || x === ".." || BAD_SEGMENT.test(x))) throw new PackageError(`not a plain file name: ${rel.slice(0, 120)}`);
+          const target = await join(staging, ...segs);
+          if (!inside(staging, target)) throw new PackageError(`${rel.slice(0, 120)} would be written outside the plugin's folder`);
+          await fs.mkdir(await dirname(target), { recursive: true });
+          await fs.writeTextFile(target, text);
+        }
+        const old = (await fs.exists(dir)) ? await join(root, `.old-${id}-${stamp}`) : null;
+        if (old) await fs.rename(dir, old);
+        try {
+          await fs.rename(staging, dir);
+        } catch (e) {
+          if (old) await fs.rename(old, dir);
+          throw e;
+        }
+        if (old) await fs.remove(old, { recursive: true }).catch(() => undefined);
+        return dir;
+      } catch (e) {
+        await fs.remove(staging, { recursive: true }).catch(() => undefined);
+        throw e;
       }
-      return dir;
     },
     async uninstall(id, location) {
       const fs = await tauriFs();

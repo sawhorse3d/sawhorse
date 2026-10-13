@@ -326,7 +326,9 @@ pub fn resolve_face_ids(p: &mut Polys, sources: &[(u64, FaceSignature)]) {
 ///
 /// Triangles are grouped by inherited face id; triangles of different source faces are
 /// grouped too when the faces are coplanar and their shared edge does not lie on a
-/// user-drawn source edge (`preserved`). Each edge-connected group becomes a face: its
+/// user-drawn source edge (`preserved`).
+///
+/// (Lane 16: [`SegIndex`] finds the preserved edges near a point without trying them all.) Each edge-connected group becomes a face: its
 /// boundary edges are chained into loops, the one counter-clockwise loop is the outer, the
 /// rest are holes. The face keeps its source
 /// plane (`planes[face id]`) when every vertex is on it, else a fitted one. Vertices left
@@ -366,8 +368,12 @@ pub fn repolygonise(
             }
         }
     }
+    // Lane 16: the preserved edges near a point come from a grid of their boxes (it used to
+    // be every preserved edge for every output edge: quadratic on labelled imports).
+    let near = SegIndex::new(preserved);
     let on_preserved = |u: usize, v: usize| {
-        preserved.iter().any(|&(a, b)| {
+        near.candidates(pos[u]).any(|i| {
+            let (a, b) = preserved[i];
             segment_distance(pos[u], a, b) <= PLANARITY
                 && segment_distance(pos[v], a, b) <= PLANARITY
         })
@@ -706,5 +712,81 @@ mod tests {
             ManifoldEngine.run(&a, &b, BoolOp::Union),
             Err(BooleanError::NotManifold(0, _))
         ));
+    }
+}
+
+/// Segments binned by their boxes (grown by `PLANARITY`) in a uniform grid: the segments
+/// whose box may hold a point (lane 16). Few segments are simply all tried.
+struct SegIndex {
+    cell: f64,
+    origin: DVec3,
+    bins: std::collections::HashMap<(i64, i64, i64), Vec<u32>>,
+    big: Vec<u32>,
+    all: usize,
+}
+
+impl SegIndex {
+    fn new(segs: &[(DVec3, DVec3)]) -> SegIndex {
+        let mut ix = SegIndex {
+            cell: 1.0,
+            origin: DVec3::ZERO,
+            bins: std::collections::HashMap::new(),
+            big: Vec::new(),
+            all: segs.len(),
+        };
+        if segs.len() < 32 {
+            return ix;
+        }
+        let lo = segs
+            .iter()
+            .fold(DVec3::splat(f64::INFINITY), |m, s| m.min(s.0).min(s.1));
+        let mut lens: Vec<f64> = segs
+            .iter()
+            .map(|s| (s.1 - s.0).abs().max_element())
+            .collect();
+        if !lo.is_finite() || lens.iter().any(|l| !l.is_finite()) {
+            return ix;
+        }
+        let mid = lens.len() / 2;
+        lens.select_nth_unstable_by(mid, f64::total_cmp);
+        ix.cell = (lens[mid] * 2.0).max(PLANARITY * 1e3);
+        ix.origin = lo - DVec3::splat(ix.cell);
+        for (i, s) in segs.iter().enumerate() {
+            let (a, z) = (
+                ix.at(s.0.min(s.1) - DVec3::splat(PLANARITY)),
+                ix.at(s.0.max(s.1) + DVec3::splat(PLANARITY)),
+            );
+            if (z.0 - a.0 + 1) * (z.1 - a.1 + 1) * (z.2 - a.2 + 1) > 64 {
+                ix.big.push(i as u32);
+                continue;
+            }
+            for x in a.0..=z.0 {
+                for y in a.1..=z.1 {
+                    for w in a.2..=z.2 {
+                        ix.bins.entry((x, y, w)).or_default().push(i as u32);
+                    }
+                }
+            }
+        }
+        ix.all = 0;
+        ix
+    }
+
+    fn at(&self, p: DVec3) -> (i64, i64, i64) {
+        let q = (p - self.origin) / self.cell;
+        (q.x.floor() as i64, q.y.floor() as i64, q.z.floor() as i64)
+    }
+
+    /// Every segment whose grown box may hold `p` (all of them when the index is off).
+    fn candidates(&self, p: DVec3) -> Box<dyn Iterator<Item = usize> + '_> {
+        if self.all > 0 {
+            return Box::new(0..self.all);
+        }
+        let cell = self
+            .bins
+            .get(&self.at(p))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        Box::new(self.big.iter().chain(cell.iter()).map(|&i| i as usize))
     }
 }

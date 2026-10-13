@@ -1,17 +1,33 @@
 //! 3MF: every build item becomes one item (components resolved recursively with their
 //! transforms), in the model's own `unit`, Z up as the spec says. An object's
-//! `pid`/`pindex` pointing at a base-material group gives it a colour. Read through the
-//! `threemf` crate (core spec mesh, components and build).
+//! `pid`/`pindex` pointing at a base-material group gives it a colour. Parsed with the
+//! `threemf` crate's model (core spec mesh, components and build).
+//!
+//! Lane 16: the archive is opened through [`crate::archive::Archive`] (entry count, names
+//! listed twice, entries sharing bytes, declared sizes and ratios checked before anything is
+//! inflated); the model parts are the ones the package relationships name (falling back to
+//! every `.model` entry), each inflated once through a cap and parsed from those bytes; and
+//! what the build expands to through components is counted (each object once) before any
+//! of it is built.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
 
 use glam::{DMat4, DVec3};
 use sawhorse_kernel::meshbuild::ImportItem;
 use sawhorse_kernel::model::MaterialDef;
 use threemf::model::{Model, Object, Unit as TUnit};
 
-use crate::{ImportError, ImportOptions, Parsed, malformed};
+use crate::archive::Archive;
+use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
+
+/// Entries a 3MF package may hold.
+const MAX_ENTRIES: usize = 4096;
+/// One model part, inflated.
+const MAX_MODEL_BYTES: u64 = 256 * 1024 * 1024;
+/// Everything read from one package.
+const MAX_TOTAL: u64 = 512 * 1024 * 1024;
+/// A relationships part.
+const MAX_RELS_BYTES: u64 = 1024 * 1024;
 
 fn err(m: impl Into<String>) -> ImportError {
     malformed("3MF", m)
@@ -53,21 +69,74 @@ fn hex_color(s: &str) -> Option<[u8; 4]> {
 /// (group id, index) -> (name, colour).
 type BaseMaterials = BTreeMap<(usize, usize), (String, [u8; 4])>;
 
+/// The model parts of a package: what its relationships (`_rels/.rels`) name as the 3D
+/// model, else every `.model` entry, each inflated once through its cap.
+fn model_parts(bytes: &[u8]) -> Result<Vec<Vec<u8>>, ImportError> {
+    let mut zip = Archive::open(bytes, MAX_ENTRIES, MAX_TOTAL).map_err(|e| err(e.to_string()))?;
+    let mut names: Vec<String> = Vec::new();
+    if let Some(rels) = zip
+        .entry("_rels/.rels", MAX_RELS_BYTES)
+        .map_err(|e| err(e.to_string()))?
+    {
+        use quick_xml::events::Event;
+        let mut r = quick_xml::Reader::from_reader(rels.as_slice());
+        let mut buf = Vec::new();
+        loop {
+            match r
+                .read_event_into(&mut buf)
+                .map_err(|e| err(e.to_string()))?
+            {
+                Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == b"Relationship" => {
+                    let attr = |k: &str| {
+                        e.attributes()
+                            .flatten()
+                            .find(|a| a.key.local_name().as_ref() == k.as_bytes())
+                            .and_then(|a| a.unescape_value().ok().map(|v| v.to_string()))
+                    };
+                    if attr("Type").is_some_and(|t| t.ends_with("/3dmodel"))
+                        && let Some(t) = attr("Target")
+                    {
+                        let t = t.trim_start_matches('/').to_string();
+                        if !names.contains(&t) {
+                            names.push(t);
+                        }
+                    }
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+    if names.is_empty() {
+        names = zip
+            .listing()
+            .map_err(|e| err(e.to_string()))?
+            .into_iter()
+            .map(|(n, _)| n)
+            .filter(|n| n.ends_with(".model"))
+            .collect();
+    }
+    let mut out = Vec::new();
+    for n in names {
+        match zip
+            .entry(&n, MAX_MODEL_BYTES)
+            .map_err(|e| err(e.to_string()))?
+        {
+            Some(b) => out.push(b),
+            None => return Err(err(format!("the package names {n}, which is not in it"))),
+        }
+    }
+    Ok(out)
+}
+
 /// Base-material groups of every model part: (group id, index) -> (name, colour). Read
 /// with a plain XML scan because `threemf`'s serde model does not see the prefixed
 /// `m:basematerials` element.
-fn base_materials(bytes: &[u8]) -> Result<BaseMaterials, ImportError> {
+fn base_materials(parts: &[Vec<u8>]) -> Result<BaseMaterials, ImportError> {
     use quick_xml::events::Event;
-    use std::io::Read;
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| err(e.to_string()))?;
     let mut out = BTreeMap::new();
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| err(e.to_string()))?;
-        if !f.name().ends_with(".model") {
-            continue;
-        }
-        let mut xml = Vec::new();
-        f.read_to_end(&mut xml).map_err(|e| err(e.to_string()))?;
+    for xml in parts {
         let mut r = quick_xml::Reader::from_reader(xml.as_slice());
         let mut buf = Vec::new();
         let mut group: Option<(usize, usize)> = None;
@@ -108,6 +177,42 @@ fn base_materials(bytes: &[u8]) -> Result<BaseMaterials, ImportError> {
         }
     }
     Ok(out)
+}
+
+/// Triangles and vertices object `id` expands to through its components, each object worked
+/// out once (saturating; a cycle is refused).
+fn expanded(
+    objects: &BTreeMap<usize, &Object>,
+    id: usize,
+    memo: &mut BTreeMap<usize, Option<(u64, u64)>>,
+    depth: usize,
+) -> Result<(u64, u64), ImportError> {
+    if depth > 32 {
+        return Err(err("components nest deeper than 32 levels (a cycle?)"));
+    }
+    match memo.get(&id) {
+        Some(Some(n)) => return Ok(*n),
+        Some(None) => return Err(err(format!("object {id} contains itself"))),
+        None => {}
+    }
+    memo.insert(id, None);
+    let o = objects
+        .get(&id)
+        .ok_or_else(|| err(format!("no object {id}")))?;
+    let mut n = o.mesh.as_ref().map_or((0, 0), |m| {
+        (
+            m.triangles.triangle.len() as u64,
+            m.vertices.vertex.len() as u64,
+        )
+    });
+    if let Some(cs) = &o.components {
+        for c in &cs.component {
+            let (t, v) = expanded(objects, c.objectid, memo, depth + 1)?;
+            n = (n.0.saturating_add(t), n.1.saturating_add(v));
+        }
+    }
+    memo.insert(id, Some(n));
+    Ok(n)
 }
 
 fn collect(
@@ -162,13 +267,29 @@ fn collect(
 }
 
 pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
-    let models: Vec<Model> = threemf::read(Cursor::new(bytes)).map_err(|e| err(e.to_string()))?;
-    let groups = base_materials(bytes)?;
+    use serde::Deserialize;
+    let parts = model_parts(bytes)?;
+    let mut models: Vec<Model> = Vec::with_capacity(parts.len());
+    for xml in &parts {
+        let mut de = quick_xml::de::Deserializer::from_reader(xml.as_slice());
+        models.push(Model::deserialize(&mut de).map_err(|e| err(e.to_string()))?);
+    }
+    let groups = base_materials(&parts)?;
+    drop(parts);
     let mut out = Parsed::default();
+    let mut budget = Budget::default();
     for model in &models {
         let scale = unit_metres(&model.unit);
         let objects: BTreeMap<usize, &Object> =
             model.resources.object.iter().map(|o| (o.id, o)).collect();
+        // What the build expands to, counted before any of it is built.
+        let mut memo = BTreeMap::new();
+        for it in &model.build.item {
+            let (t, v) = expanded(&objects, it.objectid, &mut memo, 0)?;
+            budget.faces("3MF", usize::try_from(t).unwrap_or(usize::MAX))?;
+            budget.points("3MF", usize::try_from(v).unwrap_or(usize::MAX))?;
+            budget.items("3MF", 1)?;
+        }
         // Base materials: (group id, index) -> material name.
         let mut mats: BTreeMap<(usize, usize), String> = BTreeMap::new();
         for ((gid, k), (name, color)) in &groups {

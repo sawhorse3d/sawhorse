@@ -2,7 +2,7 @@
 // reachable from the entry checked (packages/plugin-api: the same rules plugin:check
 // applies), and only those modules kept for the sandbox.
 import { parseManifest, type Manifest } from "../../packages/plugin-api/src/manifest.ts";
-import { checkPackage } from "../../packages/plugin-api/src/source.ts";
+import { checkPackage, type PackageCheck } from "../../packages/plugin-api/src/source.ts";
 
 /** Where a plugin came from. */
 export type PluginSource =
@@ -28,8 +28,9 @@ export interface PluginPackage {
 
 export type LoadResult = { ok: true; pkg: PluginPackage } | { ok: false; id: string | null; name: string; errors: string[] };
 
-/** Check a plugin's files and make a package of them. */
-export function loadPackage(files: Record<string, string>, source: PluginSource, location?: string): LoadResult {
+/** Check a plugin's files and make a package of them. `check`: the modules already checked
+ * (in a worker, checker.ts) for this manifest's entry. */
+export function loadPackage(files: Record<string, string>, source: PluginSource, location?: string, check?: PackageCheck): LoadResult {
   const raw = files["plugin.json"];
   if (raw === undefined) return { ok: false, id: null, name: location ?? "plugin", errors: ["there is no plugin.json at the top of the plugin folder"] };
   const r = parseManifest(raw);
@@ -45,9 +46,9 @@ export function loadPackage(files: Record<string, string>, source: PluginSource,
     }
     return { ok: false, id, name, errors: r.errors };
   }
-  const check = checkPackage(files, r.manifest.entry);
-  if (check.problems.length) return { ok: false, id: r.manifest.id, name: r.manifest.name, errors: check.problems };
-  const pkg: PluginPackage = { manifest: r.manifest, files, modules: check.order, source };
+  const c = check ?? checkPackage(files, r.manifest.entry);
+  if (c.problems.length) return { ok: false, id: r.manifest.id, name: r.manifest.name, errors: c.problems };
+  const pkg: PluginPackage = { manifest: r.manifest, files, modules: c.order, source };
   if (location) pkg.location = location;
   return { ok: true, pkg };
 }

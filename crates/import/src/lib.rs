@@ -17,7 +17,16 @@
 //!
 //! `.skp` is read in the webview by the npm `openskp` package (`src/io/skp.ts`), which
 //! produces the same op.
+//!
+//! Lane 16: every reader works within a budget. A file over [`MAX_FILE_BYTES`] is refused
+//! unread; counts a file declares (a binary STL's triangles, a glTF accessor's elements) are
+//! checked against what the file can hold and against the import limits
+//! (`sawhorse_kernel::limits`) before anything is allocated for them; counts a reader finds
+//! as it goes (vertices, faces, items, strokes, entities) are refused as soon as they pass
+//! the limits; component and node trees are walked once each, with what they expand to
+//! counted before it is built. The kernel checks the resulting op again.
 
+pub mod archive;
 pub mod dxf;
 pub mod gltf;
 pub mod obj;
@@ -26,8 +35,109 @@ pub mod svg;
 pub mod three_mf;
 mod util;
 
+use sawhorse_kernel::limits;
 use sawhorse_kernel::meshbuild::ImportItem;
 use sawhorse_kernel::model::{ImportStroke, MaterialDef, Op, SceneDef};
+
+/// Largest file the readers take (lane 16): 256 MB of STL is five million triangles, more
+/// than one import may bring in anyway.
+pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
+
+/// What a reader has found so far, held to the import limits as it grows.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Budget {
+    pub faces: usize,
+    pub points: usize,
+    pub items: usize,
+    pub strokes: usize,
+    pub stroke_points: usize,
+}
+
+impl Budget {
+    fn over(format: &'static str, what: &str, n: usize, max: usize) -> ImportError {
+        malformed(
+            format,
+            format!(
+                "the file holds {n} or more {what}; one import takes at most {max} (split the file)"
+            ),
+        )
+    }
+    /// Count `n` more faces.
+    pub fn faces(&mut self, format: &'static str, n: usize) -> Result<(), ImportError> {
+        self.faces = self.faces.saturating_add(n);
+        if self.faces > limits::MAX_IMPORT_FACES {
+            return Err(Self::over(
+                format,
+                "faces",
+                self.faces,
+                limits::MAX_IMPORT_FACES,
+            ));
+        }
+        Ok(())
+    }
+    /// Count `n` more points.
+    pub fn points(&mut self, format: &'static str, n: usize) -> Result<(), ImportError> {
+        self.points = self.points.saturating_add(n);
+        if self.points > limits::MAX_IMPORT_POINTS {
+            return Err(Self::over(
+                format,
+                "points",
+                self.points,
+                limits::MAX_IMPORT_POINTS,
+            ));
+        }
+        Ok(())
+    }
+    /// Count `n` more items.
+    pub fn items(&mut self, format: &'static str, n: usize) -> Result<(), ImportError> {
+        self.items = self.items.saturating_add(n);
+        if self.items > limits::MAX_IMPORT_ITEMS {
+            return Err(Self::over(
+                format,
+                "objects",
+                self.items,
+                limits::MAX_IMPORT_ITEMS,
+            ));
+        }
+        Ok(())
+    }
+    /// Refuse when anything counted so far is over its limit (for counts gathered where an
+    /// error is not fatal on its own, like one glTF primitive).
+    pub fn check(&self, format: &'static str) -> Result<(), ImportError> {
+        let over =
+            |what: &str, n: usize, max: usize| (n > max).then(|| Self::over(format, what, n, max));
+        if let Some(e) = over("faces", self.faces, limits::MAX_IMPORT_FACES)
+            .or_else(|| over("points", self.points, limits::MAX_IMPORT_POINTS))
+            .or_else(|| over("objects", self.items, limits::MAX_IMPORT_ITEMS))
+        {
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Count one more stroke of `n` points.
+    pub fn stroke(&mut self, format: &'static str, n: usize) -> Result<(), ImportError> {
+        self.strokes += 1;
+        self.stroke_points = self.stroke_points.saturating_add(n);
+        if self.strokes > limits::MAX_IMPORT_STROKES {
+            return Err(Self::over(
+                format,
+                "lines and curves",
+                self.strokes,
+                limits::MAX_IMPORT_STROKES,
+            ));
+        }
+        if self.stroke_points > limits::MAX_IMPORT_STROKE_POINTS {
+            return Err(Self::over(
+                format,
+                "points of lines and curves",
+                self.stroke_points,
+                limits::MAX_IMPORT_STROKE_POINTS,
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// A file format we read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -152,6 +262,23 @@ pub struct Parsed {
 }
 
 impl Parsed {
+    /// [`Parsed::op`] without copying anything (lane 16: the soup is moved into the op), and
+    /// the notes.
+    pub fn into_op(self) -> (Op, Vec<String>) {
+        (
+            Op::Import {
+                items: self.items,
+                strokes: self.strokes,
+                materials: self.materials,
+                scenes: self.scenes,
+                hidden_tags: self.hidden_tags,
+                definitions: vec![],
+                nodes: vec![],
+            },
+            self.notes,
+        )
+    }
+
     /// The kernel op that brings all of it in as one undoable step.
     pub fn op(&self) -> Op {
         Op::Import {
@@ -181,6 +308,8 @@ pub enum ImportError {
     },
     #[error("{0}: the file holds nothing Sawhorse can import")]
     Empty(&'static str),
+    #[error("the file is {0} MB; Sawhorse imports files of at most 256 MB")]
+    TooLarge(usize),
 }
 
 pub(crate) fn malformed(format: &'static str, message: impl Into<String>) -> ImportError {
@@ -196,6 +325,9 @@ pub fn read(
     bytes: &[u8],
     opts: &ImportOptions,
 ) -> Result<Parsed, ImportError> {
+    if bytes.len() > MAX_FILE_BYTES {
+        return Err(ImportError::TooLarge(bytes.len() / 1024 / 1024));
+    }
     let format = format
         .or_else(|| Format::detect(&opts.name, bytes))
         .ok_or(ImportError::UnknownFormat)?;

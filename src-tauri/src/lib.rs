@@ -83,6 +83,30 @@ fn open_plugin_folder(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Save a file without ever leaving it half written (lane 16, `sawhorse-safe-save`): the
+/// bytes are the request's raw body, the path a percent-encoded `x-path` header. Only a path
+/// in the fs scope (one the person picked in a Save dialog, or opened) is written.
+#[tauri::command]
+fn save_file_atomic(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("save_file_atomic takes the file's bytes as its body".into());
+    };
+    let path = request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .and_then(sawhorse_safe_save::percent_decode)
+        .ok_or("save_file_atomic needs the path in its x-path header")?;
+    let path = std::path::PathBuf::from(path);
+    if !app.fs_scope().is_allowed(&path) {
+        return Err(format!(
+            "{} was not chosen in a Save dialog",
+            path.display()
+        ));
+    }
+    sawhorse_safe_save::write_atomic(&path, bytes).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -106,7 +130,8 @@ pub fn run() {
             device_public_key,
             device_sign,
             open_external,
-            open_plugin_folder
+            open_plugin_folder,
+            save_file_atomic
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");

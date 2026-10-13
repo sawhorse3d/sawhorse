@@ -12,6 +12,7 @@ import { scopeEntity } from "../lib/scope";
 import type { UnitSystem } from "../lib/units";
 import { bundledPlugins } from "./bundled";
 import { DEFAULT_HOST_OPTIONS, PluginHost, PluginRefusal, workerChannel, type Channel, type HostOptions, type HostStatus, type LogLine } from "./host";
+import { preparePackage, type Prepared } from "./checker";
 import { loadPackage, type PluginPackage, type PluginSource } from "./loader";
 import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selectionOf, solidOf, solidsOf, statsOf, treeOf } from "./model";
 import { checkBody, patchFields, valuesOf, type FieldValue, type PanelField } from "./panel";
@@ -22,7 +23,8 @@ import { readPluginZip } from "./zip";
 
 /** Ops a plugin batch may not hold: history, nesting batches, navigation, whole-document replacement. */
 export const FORBIDDEN_OPS = new Set(["undo", "redo", "batch", "set_context", "leave_context", "restore"]);
-export const MAX_BATCH_OPS = 10_000;
+/** Most ops one batch may hold (crates/kernel/src/refbatch.rs MAX_OPS; lane 16: was 10,000). */
+export const MAX_BATCH_OPS = 2_000;
 
 export type DialogRequest = { kind: "prompt"; plugin: string; title: string; label: string; value: string; ok: string } | { kind: "confirm"; plugin: string; title: string; text: string; ok: string };
 
@@ -247,7 +249,7 @@ export class PluginManager {
     for (const files of Object.values(bundledPlugins())) this.add(files, "bundled");
     if (this.platform) {
       try {
-        for (const f of await this.platform.list()) this.add(f.files, "installed", f.location);
+        for (const f of await this.platform.list()) this.addPrepared(await preparePackage(f.files, "installed", f.location), "installed", f.location);
       } catch (e) {
         this.bridge.status(`Plugins: could not read the installed plugins: ${e instanceof Error ? e.message : String(e)}`, "warning");
       }
@@ -256,15 +258,24 @@ export class PluginManager {
     await Promise.all(this.list().filter((e) => e.enabled).map((e) => this.start(e.id)));
   }
 
-  /** Add (or replace) a plugin from its files. Returns the entry. */
+  /** Add (or replace) a plugin from its files, checked here (the bundled samples: small).
+   * Returns the entry. */
   add(files: Record<string, string>, source: PluginSource, location?: string): PluginEntry {
-    const r = loadPackage(files, source, location);
+    const result = loadPackage(files, source, location);
+    return this.addPrepared({ result, digest: result.ok ? packageDigest(result.pkg.files) : "" }, source, location);
+  }
+
+  /** Add (or replace) a plugin already checked (lane 16: large packages are checked in a
+   * worker, checker.ts). */
+  private addPrepared(p: Prepared, source: PluginSource, location?: string): PluginEntry {
+    const r = p.result;
+    if (r.ok && location) r.pkg.location = location;
     const id = r.ok ? r.pkg.manifest.id : (r.id ?? `invalid:${location ?? r.name}`);
     const prev = this.entries.get(id);
     // A bundled sample never replaces what the person installed.
     if (prev && source === "bundled" && prev.source !== "bundled") return prev;
     const grant = this.grants[id];
-    const digest = r.ok ? packageDigest(r.pkg.files) : "";
+    const digest = r.ok ? p.digest : "";
     // A plugin taking a bundled sample's place says so (the enable dialog and the pane).
     const replaces = source !== "bundled" ? (prev?.source === "bundled" ? prev.name : prev?.replaces) : undefined;
     const covers = r.ok && grantCovers(grant, r.pkg.manifest.permissions);
@@ -286,7 +297,9 @@ export class PluginManager {
   /** Install (or load for this session) a plugin from a .zip. */
   async installZip(bytes: Uint8Array, opts: { session: boolean }): Promise<PluginEntry> {
     const { files } = readPluginZip(bytes);
-    const r = loadPackage(files, opts.session ? "session" : "installed");
+    const source = opts.session ? "session" : "installed";
+    const p = await preparePackage(files, source);
+    const r = p.result;
     if (!r.ok) throw new Error(`${r.name}: ${r.errors.join("; ")}`);
     const id = r.pkg.manifest.id;
     const was = this.entries.get(id);
@@ -296,7 +309,7 @@ export class PluginManager {
       if (!this.platform) throw new Error("plugins cannot be installed here");
       location = await this.platform.install(id, files);
     }
-    const entry = this.add(files, opts.session ? "session" : "installed", location);
+    const entry = this.addPrepared(p, source, location);
     this.changed();
     if (entry.enabled) await this.start(id);
     return entry;
@@ -307,9 +320,10 @@ export class PluginManager {
     if (!this.platform?.pickFolder) throw new Error("folders can be loaded in the desktop app");
     const f = await this.platform.pickFolder();
     if (!f) return null;
-    const r = loadPackage(f.files, "unpacked", f.location);
+    const p = await preparePackage(f.files, "unpacked", f.location);
+    const r = p.result;
     if (r.ok && this.hosts.has(r.pkg.manifest.id)) this.stop(r.pkg.manifest.id, null);
-    const entry = this.add(f.files, "unpacked", f.location);
+    const entry = this.addPrepared(p, "unpacked", f.location);
     this.changed();
     if (entry.enabled) await this.start(entry.id);
     return entry;
@@ -317,9 +331,10 @@ export class PluginManager {
 
   /** Load a plugin from files for this session (tests, developer hooks). */
   async loadSession(files: Record<string, string>): Promise<PluginEntry> {
-    const r = loadPackage(files, "session");
+    const p = await preparePackage(files, "session");
+    const r = p.result;
     if (r.ok && this.hosts.has(r.pkg.manifest.id)) this.stop(r.pkg.manifest.id, null);
-    const entry = this.add(files, "session");
+    const entry = this.addPrepared(p, "session");
     this.changed();
     if (entry.enabled) await this.start(entry.id);
     return entry;
@@ -357,7 +372,7 @@ export class PluginManager {
     this.stop(id, null);
     if (e.source === "unpacked" && e.location && this.platform?.readFolder) {
       try {
-        this.add(await this.platform.readFolder(e.location), "unpacked", e.location);
+        this.addPrepared(await preparePackage(await this.platform.readFolder(e.location), "unpacked", e.location), "unpacked", e.location);
       } catch (err) {
         e.lastError = `could not read ${e.location}: ${err instanceof Error ? err.message : String(err)}`;
       }

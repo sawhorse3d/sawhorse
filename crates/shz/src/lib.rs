@@ -12,8 +12,17 @@
 //!
 //! Reading validates everything like an edit: a file that does not validate is refused
 //! with a plain message, never patched up.
+//!
+//! Lane 16: reading is bounded before anything is inflated. The archive may hold at most
+//! [`MAX_ENTRIES`] entries, none named twice, none sharing compressed bytes with another;
+//! every entry read is checked against its own cap by its declared size (and its declared
+//! ratio), read through that cap, and must be exactly the size it declares; all entries read
+//! together stay under [`MAX_TOTAL`]. `scene.json` is parsed straight into the model's
+//! types (never into a generic JSON tree). Texture rows are counted and checked for repeats
+//! before a single image is read. `plugin-data.json` is read here too (capped), so the app
+//! never unzips a user's file itself.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 
 use sawhorse_kernel::document::Document;
 use sawhorse_kernel::meshbuild::ImportItem;
@@ -86,6 +95,24 @@ pub enum ShzError {
     Write(String),
 }
 
+/// Most entries a `.shz` may hold (lane 16): 512 textures and a handful of others fit with
+/// room to spare.
+pub const MAX_ENTRIES: usize = 2048;
+/// Largest `scene.json` read (declared and real size).
+pub const MAX_SCENE_JSON: u64 = 256 * 1024 * 1024;
+/// Largest `geometry.glb` read.
+pub const MAX_GEOMETRY: u64 = 512 * 1024 * 1024;
+/// Largest `plugin-data.json` read or written: the plugins' document stores (1 MiB of
+/// characters in the app; up to 4 MiB as UTF-8).
+pub const MAX_PLUGIN_DATA: u64 = 4 * 1024 * 1024;
+/// Everything read from one file together.
+pub const MAX_TOTAL: u64 = 1024 * 1024 * 1024;
+/// The most an entry over 1 MiB may claim to inflate per compressed byte (see
+/// `sawhorse_import::archive`).
+pub const MAX_RATIO: u64 = sawhorse_import::archive::MAX_RATIO;
+/// The entry the app's plugins keep their document stores in (ADR-0009).
+pub const PLUGIN_DATA: &str = "plugin-data.json";
+
 /// What to put in a saved file beyond the model.
 #[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 pub struct SaveOptions {
@@ -100,6 +127,11 @@ pub struct SaveOptions {
     /// e.g. `Sawhorse 0.1.0-alpha.2`.
     #[serde(default)]
     pub generator: Option<String>,
+    /// The plugins' document stores, written as `plugin-data.json` (lane 16: the app hands
+    /// it to the kernel instead of unzipping and rezipping the saved file). At most
+    /// [`MAX_PLUGIN_DATA`] bytes.
+    #[serde(skip)]
+    pub plugin_data: Option<String>,
 }
 
 /// Largest thumbnail written into a `.shz` (lane 15): 100 KB.
@@ -126,6 +158,16 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
         .as_deref()
         .filter(|b| b.len() <= MAX_THUMBNAIL_BYTES)
         .and_then(|b| thumbnail_entry(b).map(|name| (name, b)));
+    if opts
+        .plugin_data
+        .as_ref()
+        .is_some_and(|d| d.len() as u64 > MAX_PLUGIN_DATA)
+    {
+        return Err(ShzError::Write(format!(
+            "the plugins' document data is larger than {} MB",
+            MAX_PLUGIN_DATA / 1024 / 1024
+        )));
+    }
     let w = |e: zip::result::ZipError| ShzError::Write(e.to_string());
     let io = |e: std::io::Error| ShzError::Write(e.to_string());
     let scene = Scene {
@@ -177,6 +219,10 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
         zw.start_file(name, stored).map_err(w)?;
         zw.write_all(bytes).map_err(io)?;
     }
+    if let Some(data) = &opts.plugin_data {
+        zw.start_file(PLUGIN_DATA, deflated).map_err(w)?;
+        zw.write_all(data.as_bytes()).map_err(io)?;
+    }
     zw.add_directory("assets/", stored).map_err(w)?;
     // Already compressed images are stored as they are.
     for (path, data) in &images {
@@ -202,43 +248,69 @@ pub struct Opened {
     pub thumbnail: Option<Vec<u8>>,
     /// What the reader had to do (rebuilding objects from `geometry.glb`, ...).
     pub notes: Vec<String>,
+    /// `plugin-data.json` as it is in the file (lane 16), when present and readable text.
+    pub plugin_data: Option<String>,
 }
 
-fn entry(
-    zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    name: &str,
-) -> Result<Option<Vec<u8>>, ShzError> {
-    match zip.by_name(name) {
-        Ok(mut f) => {
-            let mut v = Vec::new();
-            f.read_to_end(&mut v)
-                .map_err(|e| ShzError::Damaged(format!("{name}: {e}")))?;
-            Ok(Some(v))
+/// The archive, read through `sawhorse_import::archive` (lane 16).
+struct Archive<'a>(sawhorse_import::archive::Archive<'a>);
+
+fn shz_error(e: sawhorse_import::archive::ArchiveError) -> ShzError {
+    match e {
+        sawhorse_import::archive::ArchiveError::NotZip(m) => {
+            ShzError::NotShz(format!("not a zip ({m})"))
         }
-        Err(zip::result::ZipError::FileNotFound) => Ok(None),
-        Err(e) => Err(ShzError::Damaged(format!("{name}: {e}"))),
+        sawhorse_import::archive::ArchiveError::Damaged(m) => ShzError::Damaged(m),
     }
+}
+
+impl<'a> Archive<'a> {
+    fn open(bytes: &'a [u8]) -> Result<Archive<'a>, ShzError> {
+        sawhorse_import::archive::Archive::open(bytes, MAX_ENTRIES, MAX_TOTAL)
+            .map(Archive)
+            .map_err(shz_error)
+    }
+
+    fn entry(&mut self, name: &str, cap: u64) -> Result<Option<Vec<u8>>, ShzError> {
+        self.0.entry(name, cap).map_err(shz_error)
+    }
+}
+
+/// The two fields a reader checks before parsing the rest.
+#[derive(serde::Deserialize)]
+struct Head {
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    version: Option<serde_json::Number>,
 }
 
 /// Read a `.shz` into a fresh document (its log is the `restore` op, nothing to undo).
 pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|e| ShzError::NotShz(format!("not a zip ({e})")))?;
-    let json = entry(&mut zip, "scene.json")?
+    let mut zip = Archive::open(bytes)?;
+    let json = zip
+        .entry("scene.json", MAX_SCENE_JSON)?
         .ok_or_else(|| ShzError::NotShz("there is no scene.json inside".into()))?;
-    let head: serde_json::Value =
+    // The format and version first (a pass that skips the rest without building it), then
+    // the scene straight into its types: no generic JSON tree of a large file.
+    let head: Head =
         serde_json::from_slice(&json).map_err(|e| ShzError::Damaged(format!("scene.json: {e}")))?;
-    if head["format"].as_str() != Some(FORMAT) {
+    if head.format.as_deref() != Some(FORMAT) {
         return Err(ShzError::NotShz(
             "scene.json does not say format \"sawhorse-shz\"".into(),
         ));
     }
-    let version = head["version"].as_u64().unwrap_or(0) as u32;
+    let version = head
+        .version
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32;
     if version > SNAPSHOT_VERSION {
         return Err(ShzError::TooNew(version));
     }
     let scene: Scene =
-        serde_json::from_value(head).map_err(|e| ShzError::Damaged(format!("scene.json: {e}")))?;
+        serde_json::from_slice(&json).map_err(|e| ShzError::Damaged(format!("scene.json: {e}")))?;
+    drop(json);
     if scene.units.length != "metre" || scene.units.up != "Z" {
         return Err(ShzError::Damaged(format!(
             "scene.json units must be metre, Z up (found {}, {} up)",
@@ -247,12 +319,32 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
     }
     let mut notes = Vec::new();
     let mut scene = scene;
+    // Texture rows are counted and checked for repeats before any image is read (lane 16:
+    // 5,000 rows naming one image used to inflate it 5,000 times).
+    if scene.model.textures.len() > sawhorse_kernel::looks::MAX_TEXTURES {
+        return Err(ShzError::Damaged(format!(
+            "scene.json lists {} textures (at most {})",
+            scene.model.textures.len(),
+            sawhorse_kernel::looks::MAX_TEXTURES
+        )));
+    }
+    {
+        let mut seen = std::collections::BTreeSet::new();
+        for t in &scene.model.textures {
+            if !seen.insert(t.path.as_str()) {
+                return Err(ShzError::Damaged(format!(
+                    "texture {} is listed twice",
+                    t.path
+                )));
+            }
+        }
+    }
     // Texture images come from their entries; a missing one leaves its materials showing
     // their colour (the path stays as a file-name reference).
     let mut kept = Vec::new();
     for mut t in std::mem::take(&mut scene.model.textures) {
         if t.data.is_empty() {
-            match entry(&mut zip, &t.path)? {
+            match zip.entry(&t.path, sawhorse_kernel::looks::MAX_TEXTURE_BYTES as u64)? {
                 Some(d) if !d.is_empty() => t.data = d,
                 _ => {
                     notes.push(format!(
@@ -280,7 +372,8 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
     let mut leftovers: Vec<ImportItem> = Vec::new();
     let mut rebuilt = 0usize;
     if !missing.is_empty() {
-        let glb = entry(&mut zip, &scene.geometry)?
+        let glb = zip
+            .entry(&scene.geometry, MAX_GEOMETRY)?
             .ok_or_else(|| ShzError::Damaged(format!("{} is missing", scene.geometry)))?;
         let by_id = sawhorse_import::gltf::items_by_object(&glb)
             .map_err(|e| ShzError::Damaged(e.to_string()))?;
@@ -315,10 +408,14 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
                 }
             }
         }
-        // What did not rebuild in place is imported below (or was left out).
-        for i in drop.into_iter().rev() {
-            model.objects.remove(i);
-        }
+        // What did not rebuild in place is imported below (or was left out). One pass
+        // (lane 16: removing one at a time was quadratic in the objects left out).
+        let drop: std::collections::BTreeSet<usize> = drop.into_iter().collect();
+        let mut k = 0;
+        model.objects.retain(|_| {
+            k += 1;
+            !drop.contains(&(k - 1))
+        });
     }
     let mut document = Document::open(model).map_err(|e| ShzError::Model(e.to_string()))?;
     if !leftovers.is_empty() {
@@ -354,7 +451,19 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
         );
     }
     let thumbnail = match &scene.thumbnail {
-        Some(t) => entry(&mut zip, t)?,
+        Some(t) => zip.entry(t, MAX_THUMBNAIL_BYTES as u64)?,
+        None => None,
+    };
+    let plugin_data = match zip.entry(PLUGIN_DATA, MAX_PLUGIN_DATA)? {
+        Some(b) => match String::from_utf8(b) {
+            Ok(t) => Some(t),
+            Err(_) => {
+                notes.push(format!(
+                    "{PLUGIN_DATA} is not text; the plugins' data in it was left out"
+                ));
+                None
+            }
+        },
         None => None,
     };
     // The opened scene describes the file: texture bytes stay in the model, not here.
@@ -366,6 +475,7 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
         scene,
         thumbnail,
         notes,
+        plugin_data,
     })
 }
 
@@ -373,6 +483,23 @@ pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
 mod tests {
     use super::*;
     use sawhorse_kernel::Op;
+    use std::io::Read;
+
+    /// An entry, read whole (tests only).
+    fn entry(
+        zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, ShzError> {
+        match zip.by_name(name) {
+            Ok(mut f) => {
+                let mut v = Vec::new();
+                f.read_to_end(&mut v)
+                    .map_err(|e| ShzError::Damaged(e.to_string()))?;
+                Ok(Some(v))
+            }
+            Err(_) => Ok(None),
+        }
+    }
 
     fn sample() -> Document {
         let mut d = Document::with_ground_sketch();
@@ -406,6 +533,7 @@ mod tests {
                     display_units: None,
                     thumbnail_png: Some(t),
                     generator: None,
+                    plugin_data: None,
                 },
             )
             .unwrap()
@@ -441,6 +569,7 @@ mod tests {
                 display_units: Some("mm".into()),
                 thumbnail_png: Some(b"\x89PNG fake".to_vec()),
                 generator: None,
+                plugin_data: None,
             },
         )
         .unwrap();
@@ -722,5 +851,320 @@ mod tests {
         let d = Document::with_ground_sketch();
         let o = read(&write(d.model(), &SaveOptions::default()).unwrap()).unwrap();
         assert_eq!(o.document.hash(), d.hash());
+    }
+
+    // ---- lane 16: what a reader refuses before inflating ------------------------------------
+
+    /// A raw Deflate stream inflating to `n` zero bytes (`n` a multiple of 64 MiB, or small),
+    /// built in milliseconds: one fully-flushed block run repeated, then a final empty block.
+    fn deflate_zeros(n: u64) -> Vec<u8> {
+        use flate2::{Compress, Compression, FlushCompress};
+        let chunk = n.min(64 << 20) as usize;
+        let mut c = Compress::new(Compression::best(), false);
+        let zeros = vec![0u8; chunk];
+        let mut block = Vec::with_capacity(chunk / 500 + 1024);
+        let mut fed = 0;
+        while fed < chunk {
+            let before = c.total_in() as usize;
+            c.compress_vec(&zeros[fed..], &mut block, FlushCompress::Full)
+                .unwrap();
+            fed += c.total_in() as usize - before;
+            if block.len() == block.capacity() {
+                block.reserve(block.capacity());
+            }
+        }
+        // Make sure the full flush finished (output fits).
+        loop {
+            let cap = block.capacity();
+            c.compress_vec(&[], &mut block, FlushCompress::Full)
+                .unwrap();
+            if block.len() < cap {
+                break;
+            }
+            block.reserve(cap);
+        }
+        let mut out = Vec::new();
+        for _ in 0..(n / chunk as u64) {
+            out.extend_from_slice(&block);
+        }
+        out.extend_from_slice(&[0x03, 0x00]);
+        out
+    }
+
+    /// A zip of raw entries: (name, method, stored data, declared size, crc), with a correct
+    /// directory but whatever sizes it is told.
+    fn raw_zip(entries: &[(&str, u16, Vec<u8>, u64, u32)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut cd = Vec::new();
+        for (name, method, data, size, crc) in entries {
+            let off = out.len() as u32;
+            let mut h = Vec::new();
+            h.extend_from_slice(&0x04034b50u32.to_le_bytes());
+            h.extend_from_slice(&20u16.to_le_bytes());
+            h.extend_from_slice(&0u16.to_le_bytes());
+            h.extend_from_slice(&method.to_le_bytes());
+            h.extend_from_slice(&[0, 0, 0, 0]);
+            h.extend_from_slice(&crc.to_le_bytes());
+            h.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            h.extend_from_slice(&(*size as u32).to_le_bytes());
+            h.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            h.extend_from_slice(&0u16.to_le_bytes());
+            h.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&h);
+            out.extend_from_slice(data);
+            cd.extend_from_slice(&0x02014b50u32.to_le_bytes());
+            cd.extend_from_slice(&20u16.to_le_bytes());
+            cd.extend_from_slice(&20u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&method.to_le_bytes());
+            cd.extend_from_slice(&[0, 0, 0, 0]);
+            cd.extend_from_slice(&crc.to_le_bytes());
+            cd.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            cd.extend_from_slice(&(*size as u32).to_le_bytes());
+            cd.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            cd.extend_from_slice(&[0; 12]);
+            cd.extend_from_slice(&off.to_le_bytes());
+            cd.extend_from_slice(name.as_bytes());
+        }
+        let cd_off = out.len() as u32;
+        out.extend_from_slice(&cd);
+        out.extend_from_slice(&0x06054b50u32.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(cd.len() as u32).to_le_bytes());
+        out.extend_from_slice(&cd_off.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn scene_json_of(d: &Document) -> serde_json::Value {
+        let bytes = write(d.model(), &SaveOptions::default()).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        serde_json::from_slice(&entry(&mut zip, "scene.json").unwrap().unwrap()).unwrap()
+    }
+
+    fn rezip(v: &serde_json::Value) -> Vec<u8> {
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file("scene.json", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(&serde_json::to_vec(v).unwrap()).unwrap();
+        zw.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn a_zip_bomb_is_refused_by_its_declared_size_before_anything_is_inflated() {
+        // About 2 MB of Deflate that inflates to 2 GiB of zeros, honestly declared.
+        let bomb = deflate_zeros(2 << 30);
+        assert!(bomb.len() < 4 << 20, "{} bytes", bomb.len());
+        let file = raw_zip(&[("scene.json", 8, bomb.clone(), 2 << 30, 0)]);
+        let t = std::time::Instant::now();
+        let e = read(&file).unwrap_err();
+        assert!(t.elapsed().as_millis() < 100, "{:?}", t.elapsed());
+        assert!(e.to_string().contains("more than the"), "{e}");
+        // A texture entry that is the bomb: refused by the texture cap the same way.
+        let d = sample();
+        let mut v = scene_json_of(&d);
+        v["textures"] = serde_json::json!([{ "path": "assets/a.png", "mime": "image/png" }]);
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file("scene.json", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(&serde_json::to_vec(&v).unwrap()).unwrap();
+        let head = zw.finish().unwrap().into_inner();
+        let json = {
+            let mut z = zip::ZipArchive::new(Cursor::new(head.as_slice())).unwrap();
+            entry(&mut z, "scene.json").unwrap().unwrap()
+        };
+        let file = raw_zip(&[
+            (
+                "scene.json",
+                0,
+                json.clone(),
+                json.len() as u64,
+                crc32fast::hash(&json),
+            ),
+            ("assets/a.png", 8, bomb, 2 << 30, 0),
+        ]);
+        let t = std::time::Instant::now();
+        let e = read(&file).unwrap_err();
+        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
+        assert!(e.to_string().contains("assets/a.png"), "{e}");
+    }
+
+    #[test]
+    fn an_entry_that_lies_about_its_size_is_refused_one_byte_past_the_lie() {
+        // 64 MiB of zeros declared as 1,000 bytes: inflating stops at 1,001.
+        let file = raw_zip(&[("scene.json", 8, deflate_zeros(64 << 20), 1000, 0)]);
+        let t = std::time::Instant::now();
+        let e = read(&file).unwrap_err();
+        assert!(t.elapsed().as_millis() < 100, "{:?}", t.elapsed());
+        assert!(
+            e.to_string().contains("not the 1000 its header says"),
+            "{e}"
+        );
+        // And one that claims more than Deflate can do (a 200 MB claim from a few bytes).
+        let small = deflate_zeros(1000);
+        let file = raw_zip(&[("scene.json", 8, small, 200 << 20, 0)]);
+        assert!(
+            read(&file)
+                .unwrap_err()
+                .to_string()
+                .contains("more than Deflate can")
+        );
+    }
+
+    #[test]
+    fn duplicate_names_and_too_many_entries_are_refused() {
+        let json = b"{}".to_vec();
+        let c = crc32fast::hash(&json);
+        let file = raw_zip(&[
+            ("scene.json", 0, json.clone(), 2, c),
+            ("scene.json", 0, json.clone(), 2, c),
+        ]);
+        assert!(
+            read(&file)
+                .unwrap_err()
+                .to_string()
+                .contains("listed twice")
+        );
+        let names: Vec<String> = (0..MAX_ENTRIES + 1).map(|i| format!("x{i}")).collect();
+        let many: Vec<(&str, u16, Vec<u8>, u64, u32)> = names
+            .iter()
+            .map(|n| (n.as_str(), 0, Vec::new(), 0, 0))
+            .collect();
+        assert!(
+            read(&raw_zip(&many))
+                .unwrap_err()
+                .to_string()
+                .contains("entries")
+        );
+    }
+
+    #[test]
+    fn ten_thousand_texture_rows_are_refused_before_any_image_is_read() {
+        let d = sample();
+        let mut v = scene_json_of(&d);
+        v["textures"] = serde_json::Value::Array(
+            (0..10_000)
+                .map(|_| serde_json::json!({ "path": "assets/a.png", "mime": "image/png" }))
+                .collect(),
+        );
+        let t = std::time::Instant::now();
+        let e = read(&rezip(&v)).unwrap_err();
+        assert!(t.elapsed().as_millis() < 2000, "{:?}", t.elapsed());
+        assert!(e.to_string().contains("lists 10000 textures"), "{e}");
+        v["textures"] = serde_json::json!([
+            { "path": "assets/a.png", "mime": "image/png" },
+            { "path": "assets/a.png", "mime": "image/png" }
+        ]);
+        assert!(
+            read(&rezip(&v))
+                .unwrap_err()
+                .to_string()
+                .contains("listed twice")
+        );
+    }
+
+    #[test]
+    fn plugin_data_is_written_and_read_by_the_kernel_capped() {
+        let d = sample();
+        let data = r#"{"version":1,"plugins":{"org.example.a":{"k":1}}}"#.to_string();
+        let opts = SaveOptions {
+            plugin_data: Some(data.clone()),
+            ..SaveOptions::default()
+        };
+        let o = read(&write(d.model(), &opts).unwrap()).unwrap();
+        assert_eq!(o.plugin_data.as_deref(), Some(data.as_str()));
+        assert_eq!(o.document.hash(), d.hash(), "not part of the model");
+        let big = SaveOptions {
+            plugin_data: Some("x".repeat(MAX_PLUGIN_DATA as usize + 1)),
+            ..SaveOptions::default()
+        };
+        assert!(matches!(write(d.model(), &big), Err(ShzError::Write(_))));
+        assert!(
+            read(&write(d.model(), &SaveOptions::default()).unwrap())
+                .unwrap()
+                .plugin_data
+                .is_none()
+        );
+    }
+
+    /// A scene.json with `defs` definitions, each holding `copies` instances of the next (the
+    /// last a box), and one instance of the first at the top.
+    fn chain(defs: usize, copies: usize) -> serde_json::Value {
+        let d = structured();
+        let mut v = scene_json_of(&d);
+        let side = v["definitions"][0]["members"][0].clone();
+        let mut out = Vec::new();
+        for i in 0..defs {
+            let members: Vec<serde_json::Value> = if i + 1 == defs {
+                let mut m = side.clone();
+                m["slot"] = serde_json::json!(1);
+                vec![m]
+            } else {
+                (0..copies)
+                    .map(|k| serde_json::json!({ "slot": k + 1, "kind": "instance", "definition": i + 1 }))
+                    .collect()
+            };
+            out.push(serde_json::json!({ "name": format!("D{i}"), "next_slot": copies + 2, "members": members }));
+        }
+        v["definitions"] = serde_json::Value::Array(out);
+        v["nodes"] = serde_json::json!([{ "id": 1, "kind": "instance", "definition": 0 }]);
+        v["objects"] = serde_json::json!([]);
+        v["groups"] = serde_json::json!([]);
+        v["scenes"] = serde_json::json!([]);
+        v["context"] = serde_json::Value::Null;
+        v
+    }
+
+    #[test]
+    fn components_that_would_derive_too_much_are_refused_before_deriving() {
+        // 30 definitions each holding two copies of the next: a billion solids from a few KB.
+        let t = std::time::Instant::now();
+        let e = read(&rezip(&chain(30, 2))).unwrap_err();
+        assert!(t.elapsed().as_millis() < 1000, "{:?}", t.elapsed());
+        assert!(e.to_string().contains("solids and meshes"), "{e}");
+        // Nested deeper than 64.
+        let e = read(&rezip(&chain(70, 1))).unwrap_err();
+        assert!(e.to_string().contains("deeper than 64"), "{e}");
+        // A definition that contains itself.
+        let mut v = chain(2, 1);
+        v["definitions"][1]["members"] =
+            serde_json::json!([{ "slot": 1, "kind": "instance", "definition": 1 }]);
+        let e = read(&rezip(&v)).unwrap_err();
+        assert!(e.to_string().contains("contains itself"), "{e}");
+    }
+
+    #[test]
+    fn coordinates_names_and_transforms_a_reader_refuses() {
+        let d = sample();
+        let mut v = scene_json_of(&d);
+        // A mesh point that is a number but 1e300 metres away (infinite bounds downstream).
+        v["meshes"][0]["positions"][0] = serde_json::json!([1e300, 0.0, 0.0]);
+        assert!(
+            read(&rezip(&v))
+                .unwrap_err()
+                .to_string()
+                .contains("more than 10 km")
+        );
+        let mut v = scene_json_of(&d);
+        v["objects"][0]["name"] = serde_json::json!("n".repeat(65));
+        assert!(
+            read(&rezip(&v))
+                .unwrap_err()
+                .to_string()
+                .contains("longer than 64")
+        );
+        let mut v = scene_json_of(&d);
+        v["scenes"][0]["eye"] = serde_json::json!([1e12, 0.0, 0.0]);
+        assert!(read(&rezip(&v)).unwrap_err().to_string().contains("camera"));
+        let mut v = scene_json_of(&d);
+        v["guides"][0]["point"] = serde_json::json!([0.0, 1e9, 0.0]);
+        assert!(read(&rezip(&v)).is_err());
+        // A degenerate placement (a flat matrix) is refused, never derived.
+        let d = structured();
+        let mut v = scene_json_of(&d);
+        v["nodes"][0]["xform"] = serde_json::json!({ "linear": [[0, 0, 0], [0, 0, 0], [0, 0, 0]], "translation": [0, 0, 0] });
+        assert!(read(&rezip(&v)).is_err());
     }
 }

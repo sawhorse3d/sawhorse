@@ -1,7 +1,14 @@
 // Plugin packages as files: a .zip of the plugin folder (Install from .zip, Load from .zip)
 // or a folder read from disk (desktop). fflate (MIT, pure JS, already in the build for
 // 3MF and .shz checks) does the zip work.
+//
+// Lane 16: a path segment Windows would read as something else (a drive "C:", a device
+// "con.js", an alternate stream "plugin.json:x", a trailing dot or space) is refused, so are
+// two paths that differ only in case (one would overwrite the other on a case-insensitive
+// disk), and an entry whose bytes are not what the zip's directory says (its size or CRC;
+// fflate cuts an entry that is longer than it declares, silently) is refused too.
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { crc32, zipDirectory } from "../lib/zipdir";
 
 /** Most files and bytes a plugin package may hold (a zip bomb stops at the limit). */
 export const PACKAGE_LIMITS = { files: 2000, bytes: 50 * 1024 * 1024, fileBytes: 8 * 1024 * 1024 };
@@ -15,6 +22,9 @@ export class PackageError extends Error {
     this.name = "PackageError";
   }
 }
+
+/** A path segment that is not a plain file or folder name on every system (lane 16). */
+export const BAD_SEGMENT = /[:<>"|?*\x00-\x1f]|^(con|prn|aux|nul|com\d|lpt\d|conin\$|conout\$)(\.|$)|[. ]$/i;
 
 /** Skip folders, dotfiles and OS clutter. */
 function skipped(path: string): boolean {
@@ -31,7 +41,15 @@ export function filesFromEntries(entries: Record<string, Uint8Array>): { files: 
     .map((n) => n.replace(/\\/g, "/"))
     .filter((n) => !skipped(n));
   if (names.length > PACKAGE_LIMITS.files) throw new PackageError(`the package holds more than ${PACKAGE_LIMITS.files} files`);
-  for (const n of names) if (n.startsWith("/") || n.split("/").includes("..")) throw new PackageError(`the package has a file outside its folder (${n})`);
+  const lower = new Set<string>();
+  for (const n of names) {
+    if (n.startsWith("/") || n.split("/").includes("..")) throw new PackageError(`the package has a file outside its folder (${n.slice(0, 120)})`);
+    const bad = n.split("/").find((seg) => BAD_SEGMENT.test(seg));
+    if (bad !== undefined) throw new PackageError(`the package has a file name that is not a plain name on every system: ${JSON.stringify(bad.slice(0, 60))} in ${n.slice(0, 120)}`);
+    const l = n.toLowerCase();
+    if (lower.has(l)) throw new PackageError(`the package has two files whose names differ only in case (${n.slice(0, 120)})`);
+    lower.add(l);
+  }
   // One folder around everything (and no plugin.json at the top): look inside it.
   let prefix = "";
   if (!names.includes("plugin.json")) {
@@ -63,6 +81,13 @@ export function readPluginZip(bytes: Uint8Array): { files: Record<string, string
   let count = 0;
   let total = 0;
   let entries: Record<string, Uint8Array>;
+  // The directory first, nothing inflated: what each entry says it is.
+  let dir: Map<string, { size: number; crc: number }>;
+  try {
+    dir = new Map(zipDirectory(bytes, PACKAGE_LIMITS.files * 2 + 64).map((e) => [e.name, { size: e.size, crc: e.crc }]));
+  } catch (e) {
+    throw new PackageError(`not a readable .zip (${e instanceof Error ? e.message : String(e)})`);
+  }
   try {
     entries = unzipSync(bytes, {
       filter: (f) => {
@@ -77,6 +102,11 @@ export function readPluginZip(bytes: Uint8Array): { files: Record<string, string
   } catch (e) {
     if (e instanceof PackageError) throw e;
     throw new PackageError(`not a readable .zip (${e instanceof Error ? e.message : String(e)})`);
+  }
+  // Each entry is exactly what the directory said: its size and its CRC (lane 16).
+  for (const [name, data] of Object.entries(entries)) {
+    const d = dir.get(name);
+    if (!d || data.length !== d.size || crc32(data) !== d.crc) throw new PackageError(`${name.slice(0, 120)} is not what the zip says it is (its size or checksum differs): the zip is damaged or forged`);
   }
   return filesFromEntries(entries);
 }

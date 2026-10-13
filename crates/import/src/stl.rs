@@ -3,7 +3,7 @@
 //! assume). Each ASCII `solid` block is its own item; a binary file is one item.
 
 use crate::util::{plural, soup};
-use crate::{ImportError, ImportOptions, Parsed, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
 
 /// An ASCII `solid` block being read: name, vertices, faces.
 type Block = (String, Vec<[f64; 3]>, Vec<Vec<Vec<u32>>>);
@@ -22,7 +22,12 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
     let mut out = Parsed::default();
     let ascii = bytes.trim_ascii_start().starts_with(b"solid") && binary_len_ok(bytes).is_none();
     let name = opts.stem();
+    let mut budget = Budget::default();
     if let Some(n) = binary_len_ok(bytes).filter(|_| !ascii) {
+        // The count is checked against the file's length (binary_len_ok) and the import
+        // limits before anything is allocated for it.
+        budget.faces("STL", n)?;
+        budget.points("STL", n * 3)?;
         let mut positions = Vec::with_capacity(n * 3);
         let mut faces = Vec::with_capacity(n);
         let mut nonfinite = 0;
@@ -74,6 +79,12 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                     cur = Some((n, Vec::new(), Vec::new()));
                 }
                 Some("outer") => loop_pts.clear(),
+                Some("vertex") if loop_pts.len() >= 1024 => {
+                    return Err(malformed(
+                        "STL",
+                        format!("line {}: a facet with more than 1,024 vertices", ln + 1),
+                    ));
+                }
                 Some("vertex") => {
                     let v: Vec<f64> = w.filter_map(|x| x.parse().ok()).collect();
                     if v.len() != 3 || v.iter().any(|x| !x.is_finite()) {
@@ -87,6 +98,8 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                 Some("endloop") => {
                     let c = cur.get_or_insert_with(|| (name.clone(), Vec::new(), Vec::new()));
                     if loop_pts.len() >= 3 {
+                        budget.faces("STL", 1)?;
+                        budget.points("STL", loop_pts.len())?;
                         let base = c.1.len() as u32;
                         let k = loop_pts.len() as u32;
                         c.1.append(&mut loop_pts);

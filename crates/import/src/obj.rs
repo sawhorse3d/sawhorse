@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use crate::util::{plural, soup};
-use crate::{ImportError, ImportOptions, Parsed, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
 
 struct Piece {
     name: String,
@@ -32,6 +32,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
     };
     let mut mtls: BTreeSet<String> = BTreeSet::new();
     let mut skipped = 0usize;
+    let mut budget = Budget::default();
     let resolve = |tok: &str, n: usize| -> Option<u32> {
         let i: i64 = tok.split('/').next()?.parse().ok()?;
         let k = if i < 0 { n as i64 + i } else { i - 1 };
@@ -52,12 +53,16 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                         format!("line {}: a vertex needs three numbers", ln + 1),
                     ));
                 }
+                budget.points("OBJ", 1)?;
                 verts.push([c[0] * s, c[1] * s, c[2] * s]);
             }
             "f" | "fo" => {
                 let idx: Option<Vec<u32>> = w.map(|t| resolve(t, verts.len())).collect();
                 match idx {
-                    Some(f) if f.len() >= 3 => current.faces.push(f),
+                    Some(f) if f.len() >= 3 => {
+                        budget.faces("OBJ", 1)?;
+                        current.faces.push(f)
+                    }
                     _ => skipped += 1,
                 }
             }
@@ -65,6 +70,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                 let idx: Option<Vec<u32>> = w.map(|t| resolve(t, verts.len())).collect();
                 match idx {
                     Some(l) if l.len() >= 2 => {
+                        budget.faces("OBJ", l.len() - 1)?;
                         current.lines.extend(l.windows(2).map(|p| [p[0], p[1]]));
                     }
                     _ => skipped += 1,
@@ -86,6 +92,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                     },
                 );
                 if !done.faces.is_empty() || !done.lines.is_empty() {
+                    budget.items("OBJ", 1)?;
                     pieces.push(done);
                 }
             }

@@ -12,6 +12,12 @@
 //! Every op still goes through [`Model::apply`] (clone, mutate, validate, commit), so a
 //! refused op changes nothing: not the model, not the log, not the undo ring.
 //!
+//! Lane 16: the undo ring is also bounded in bytes ([`UNDO_BYTES`]): each snapshot is
+//! charged for what it holds that the state after it does not share (B-reps and meshes are
+//! shared between copies until they change), and the oldest steps fall off first. The log
+//! hash is kept as each op is logged (a digest per op), never by serializing the whole log
+//! again, and an op can be logged without a copy ([`Document::apply_owned`]).
+//!
 //! Opening and closing a group or component for editing ([`Op::SetContext`],
 //! [`Op::LeaveContext`]) is navigation, not an edit: it is logged (so the log replays) but
 //! is not an undo step, and it keeps the redo stack. Undo restores the model as it was
@@ -27,12 +33,38 @@ use crate::model::{Model, Op, OpOutcome};
 /// How many steps can be undone.
 pub const UNDO_DEPTH: usize = 200;
 
+/// Lane 16: most bytes the undo and redo history may hold (estimated, see
+/// [`Model::history_cost`]); past it the oldest steps fall off, but the last step can
+/// always be undone.
+pub const UNDO_BYTES: usize = 512 * 1024 * 1024;
+
+/// Lane 16: most bytes of JSON the op log may hold (every op is kept, an import's whole
+/// soup included). Past it the log is compacted to one `restore` of the current model: the
+/// model and its undo steps in memory are unchanged, but a rebuild from the log (a restarted
+/// kernel, an autosave) starts from that point, without the steps before it.
+pub const LOG_BYTES: usize = 256 * 1024 * 1024;
+
 #[derive(Debug, Clone, Default)]
 pub struct Document {
     model: Model,
     log: Vec<Op>,
+    /// A digest of each logged op's JSON, worked out once when it is logged (lane 16).
+    digests: Vec<u64>,
+    /// Bytes of the logged ops' JSON (lane 16, [`LOG_BYTES`]).
+    log_bytes: usize,
     undo: VecDeque<Model>,
+    /// What each undo snapshot costs (bytes, estimated), in step with `undo`.
+    undo_cost: VecDeque<usize>,
     redo: Vec<Model>,
+    redo_cost: Vec<usize>,
+}
+
+/// The digest of one op's canonical JSON (what the log hash is made of), and its length.
+fn op_digest(op: &Op) -> (u64, usize) {
+    let json = serde_json::to_string(op).unwrap_or_default();
+    let mut h = StableHasher::default();
+    h.tag(&json);
+    (h.finish(), json.len())
 }
 
 impl Document {
@@ -50,25 +82,68 @@ impl Document {
             normal: [0.0, 0.0, 1.0],
         })
         .expect("ground sketch");
-        d.undo.clear();
+        d.clear_undo();
         d
+    }
+
+    fn clear_undo(&mut self) {
+        self.undo.clear();
+        self.undo_cost.clear();
+    }
+
+    fn push_log(&mut self, op: Op) {
+        let (digest, len) = op_digest(&op);
+        self.digests.push(digest);
+        self.log_bytes += len;
+        self.log.push(op);
+        if self.log_bytes > LOG_BYTES && self.log.len() > 1 {
+            self.compact_log();
+        }
+    }
+
+    /// Replace the log with one `restore` of the current model (see [`LOG_BYTES`]). The model
+    /// and the undo and redo steps are unchanged; replaying the log gives the current model.
+    pub fn compact_log(&mut self) {
+        let op = Op::Restore {
+            snapshot: Box::new(self.model.snapshot()),
+        };
+        let (digest, len) = op_digest(&op);
+        self.log = vec![op];
+        self.digests = vec![digest];
+        self.log_bytes = len;
+    }
+
+    /// Bytes of JSON the log holds.
+    pub fn log_bytes(&self) -> usize {
+        self.log_bytes
+    }
+
+    /// Keep the history within [`UNDO_DEPTH`] steps and [`UNDO_BYTES`].
+    fn trim_history(&mut self) {
+        let total =
+            |d: &Document| d.undo_cost.iter().sum::<usize>() + d.redo_cost.iter().sum::<usize>();
+        while self.undo.len() > UNDO_DEPTH || (self.undo.len() > 1 && total(self) > UNDO_BYTES) {
+            self.undo.pop_front();
+            self.undo_cost.pop_front();
+        }
     }
 
     /// A document holding a saved model: its log is the one `Restore` op (so it replays),
     /// with nothing to undo, as a freshly opened file should be.
     pub fn open(snapshot: crate::snapshot::Snapshot) -> Result<Document, KernelError> {
         let mut d = Document::new();
-        d.apply(&Op::Restore {
+        d.apply_owned(Op::Restore {
             snapshot: Box::new(snapshot),
         })?;
-        d.undo.clear();
+        d.clear_undo();
         Ok(d)
     }
 
     /// Forget undo and redo (the log stays): a file just opened has nothing to undo.
     pub fn clear_history(&mut self) {
-        self.undo.clear();
+        self.clear_undo();
         self.redo.clear();
+        self.redo_cost.clear();
     }
 
     pub fn model(&self) -> &Model {
@@ -95,23 +170,40 @@ impl Document {
 
     /// Apply a command (any [`Op`], including `Undo` / `Redo`). Transactional.
     pub fn apply(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
+        let out = self.run(op)?;
+        if !matches!(op, Op::Undo | Op::Redo) {
+            self.push_log(op.clone());
+        }
+        Ok(out)
+    }
+
+    /// [`Document::apply`], logging the op itself instead of a copy (an import's soup is
+    /// the largest thing in the log; lane 16).
+    pub fn apply_owned(&mut self, op: Op) -> Result<OpOutcome, KernelError> {
+        let out = self.run(&op)?;
+        if !matches!(op, Op::Undo | Op::Redo) {
+            self.push_log(op);
+        }
+        Ok(out)
+    }
+
+    /// Everything but logging the op (undo and redo log themselves).
+    fn run(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
         match op {
             Op::Undo => self.undo(),
             Op::Redo => self.redo(),
-            _ if op.is_navigation() => {
-                let out = self.model.apply(op)?;
-                self.log.push(op.clone());
-                Ok(out)
-            }
+            _ if op.is_navigation() => self.model.apply(op),
             _ => {
-                let before = self.model.clone();
-                let out = self.model.apply(op)?;
+                // One copy of the model per edit: the edit works on it and, when it
+                // validates, it becomes the model and the old one the undo snapshot.
+                let (next, out) = self.model.applied(op)?;
+                let before = std::mem::replace(&mut self.model, next);
+                let cost = before.history_cost(&self.model);
                 self.undo.push_back(before);
-                if self.undo.len() > UNDO_DEPTH {
-                    self.undo.pop_front();
-                }
+                self.undo_cost.push_back(cost);
                 self.redo.clear();
-                self.log.push(op.clone());
+                self.redo_cost.clear();
+                self.trim_history();
                 Ok(out)
             }
         }
@@ -119,21 +211,44 @@ impl Document {
 
     pub fn undo(&mut self) -> Result<OpOutcome, KernelError> {
         let prev = self.undo.pop_back().ok_or(DocumentError::NothingToUndo)?;
+        self.undo_cost.pop_back();
         let current = std::mem::replace(&mut self.model, prev);
+        let cost = current.history_cost(&self.model);
         self.redo.push(current);
-        self.log.push(Op::Undo);
+        self.redo_cost.push(cost);
+        self.push_log(Op::Undo);
         Ok(OpOutcome::Undone)
     }
 
     pub fn redo(&mut self) -> Result<OpOutcome, KernelError> {
         let next = self.redo.pop().ok_or(DocumentError::NothingToRedo)?;
+        self.redo_cost.pop();
         let current = std::mem::replace(&mut self.model, next);
+        let cost = current.history_cost(&self.model);
         self.undo.push_back(current);
-        if self.undo.len() > UNDO_DEPTH {
-            self.undo.pop_front();
-        }
-        self.log.push(Op::Redo);
+        self.undo_cost.push_back(cost);
+        self.trim_history();
+        self.push_log(Op::Redo);
         Ok(OpOutcome::Redone)
+    }
+
+    /// Commit a model already made from the current one by `op` with [`Model::applied`] (so
+    /// validated): the undo snapshot, the log and the history limits as [`Document::apply`]
+    /// would (lane 16: a plugin batch is checked on a copy, which then becomes the model).
+    pub(crate) fn commit_applied(&mut self, op: Op, next: Model) {
+        let before = std::mem::replace(&mut self.model, next);
+        let cost = before.history_cost(&self.model);
+        self.undo.push_back(before);
+        self.undo_cost.push_back(cost);
+        self.redo.clear();
+        self.redo_cost.clear();
+        self.trim_history();
+        self.push_log(op);
+    }
+
+    /// Bytes the history holds (estimated), undo and redo together.
+    pub fn history_bytes(&self) -> usize {
+        self.undo_cost.iter().sum::<usize>() + self.redo_cost.iter().sum::<usize>()
     }
 
     /// Replay a log from an empty document, stopping at the first refused command.
@@ -154,14 +269,15 @@ impl Document {
         self.model.hash_hex()
     }
 
-    /// Deterministic hash of the op log: FNV-1a over each op's canonical JSON (serde_json
-    /// prints f64 identically natively and in WASM).
+    /// Deterministic hash of the op log: FNV-1a over the digest of each op's canonical JSON
+    /// (serde_json prints f64 identically natively and in WASM). The digests are worked out
+    /// once, as each op is logged (lane 16: v1 serialized the whole log on every call).
     pub fn log_hash(&self) -> u64 {
         let mut h = StableHasher::default();
-        h.tag("sawhorse-op-log-v1");
+        h.tag("sawhorse-op-log-v2");
         h.usize(self.log.len());
-        for op in &self.log {
-            h.tag(&serde_json::to_string(op).unwrap_or_default());
+        for &d in &self.digests {
+            h.u64(d);
         }
         h.finish()
     }
@@ -212,6 +328,33 @@ mod tests {
         d.undo().unwrap();
         d.apply(&rect(3.0)).unwrap();
         assert!(!d.can_redo());
+    }
+
+    #[test]
+    fn lane_16_a_compacted_log_replays_to_the_same_model() {
+        let mut d = Document::with_ground_sketch();
+        d.apply(&rect(0.0)).unwrap();
+        d.apply(&Op::Extrude {
+            sketch: 1,
+            region: 1,
+            distance: 0.5,
+        })
+        .unwrap();
+        let (h, depth) = (d.hash(), d.depth());
+        assert!(d.log_bytes() > 0);
+        d.compact_log();
+        assert_eq!(d.log().len(), 1);
+        assert_eq!(
+            (d.hash(), d.depth()),
+            (h, depth),
+            "the model and its undo are kept"
+        );
+        let r = Document::replay(d.log()).unwrap();
+        assert_eq!(r.hash(), h);
+        assert_eq!(r.log_hash(), d.log_hash());
+        // Undo still works on the live document.
+        d.undo().unwrap();
+        assert_ne!(d.hash(), h);
     }
 
     #[test]

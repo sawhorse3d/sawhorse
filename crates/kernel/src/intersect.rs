@@ -25,6 +25,11 @@
 //! (an f64 point is rarely exactly on a tilted line); working on B-rep features with the
 //! merge distance for contact makes the test exact where it matters (penetration) and
 //! tolerant where the kernel already is (coincidence).
+//!
+//! Lane 16: checks 1, 2 and 4 find the faces near each edge, vertex or face through a grid
+//! of face boxes ([`FaceGrid`]) instead of trying every face, once a solid has more than a
+//! few dozen faces; candidates are tried in face order, so the first contact found (and
+//! reported) is the same as trying every face. Check 3 was already a sweep.
 
 use std::collections::BTreeSet;
 
@@ -199,8 +204,107 @@ fn overlap(alo: DVec3, ahi: DVec3, blo: DVec3, bhi: DVec3, pad: f64) -> bool {
         && blo.z <= ahi.z + pad
 }
 
+/// Face boxes binned in a uniform grid: the faces whose boxes may meet a query box, in face
+/// order. Faces spanning many cells are kept in a list every query tries.
+struct FaceGrid {
+    cell: f64,
+    origin: DVec3,
+    bins: std::collections::HashMap<(i64, i64, i64), Vec<u32>>,
+    big: Vec<u32>,
+    n: usize,
+}
+
+/// Below this many faces every face is tried (the grid costs more than it saves).
+const GRID_MIN_FACES: usize = 64;
+/// A face covering more cells than this goes in the always-tried list.
+const GRID_MAX_CELLS: i64 = 64;
+
+impl FaceGrid {
+    fn new(boxes: &[(DVec3, DVec3)]) -> Option<FaceGrid> {
+        if boxes.len() < GRID_MIN_FACES {
+            return None;
+        }
+        let lo = boxes
+            .iter()
+            .fold(DVec3::splat(f64::INFINITY), |m, b| m.min(b.0));
+        // A cell about the size of a typical face: the median of their largest sides.
+        let mut sides: Vec<f64> = boxes
+            .iter()
+            .map(|b| (b.1 - b.0).max_element())
+            .filter(|x| x.is_finite())
+            .collect();
+        if sides.len() != boxes.len() || !lo.is_finite() {
+            return None;
+        }
+        let mid = sides.len() / 2;
+        sides.select_nth_unstable_by(mid, f64::total_cmp);
+        let cell = (sides[mid] * 2.0).max(POINT_MERGE * 1e3);
+        let mut g = FaceGrid {
+            cell,
+            origin: lo - DVec3::splat(cell),
+            bins: std::collections::HashMap::new(),
+            big: Vec::new(),
+            n: boxes.len(),
+        };
+        for (i, b) in boxes.iter().enumerate() {
+            let (a, z) = (g.at(b.0), g.at(b.1));
+            let cells = (z.0 - a.0 + 1) * (z.1 - a.1 + 1) * (z.2 - a.2 + 1);
+            if cells > GRID_MAX_CELLS {
+                g.big.push(i as u32);
+                continue;
+            }
+            for x in a.0..=z.0 {
+                for y in a.1..=z.1 {
+                    for w in a.2..=z.2 {
+                        g.bins.entry((x, y, w)).or_default().push(i as u32);
+                    }
+                }
+            }
+        }
+        Some(g)
+    }
+
+    fn at(&self, p: DVec3) -> (i64, i64, i64) {
+        let q = (p - self.origin) / self.cell;
+        (q.x.floor() as i64, q.y.floor() as i64, q.z.floor() as i64)
+    }
+
+    /// Faces whose cells meet the box `lo..hi` (grown by `pad`), ascending, each once.
+    fn near(&self, lo: DVec3, hi: DVec3, pad: f64) -> Vec<usize> {
+        let (a, z) = (
+            self.at(lo - DVec3::splat(pad)),
+            self.at(hi + DVec3::splat(pad)),
+        );
+        let cells = (z.0 - a.0 + 1)
+            .saturating_mul(z.1 - a.1 + 1)
+            .saturating_mul(z.2 - a.2 + 1);
+        // A query box bigger than the grid is worth: every face.
+        if cells > 4096 {
+            return (0..self.n).collect();
+        }
+        let mut out: Vec<u32> = self.big.clone();
+        for x in a.0..=z.0 {
+            for y in a.1..=z.1 {
+                for w in a.2..=z.2 {
+                    if let Some(v) = self.bins.get(&(x, y, w)) {
+                        out.extend_from_slice(v);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out.into_iter().map(|i| i as usize).collect()
+    }
+}
+
 /// The first self-contact of the solid's boundary, or `None`.
 pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
+    detail(b, true)
+}
+
+/// [`self_intersection_detail`], with the face grid or (`grid` false, tests) every face.
+fn detail(b: &Brep, grid: bool) -> Option<SelfHit> {
     let vindex: std::collections::BTreeMap<_, usize> =
         b.vertices().enumerate().map(|(i, (k, _))| (k, i)).collect();
     let pos: Vec<DVec3> = b.vertices().map(|(_, v)| v.pos).collect();
@@ -259,11 +363,22 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
         })
         .collect();
 
+    let boxes: Vec<(DVec3, DVec3)> = faces.iter().map(|f| (f.lo, f.hi)).collect();
+    let grid = if grid { FaceGrid::new(&boxes) } else { None };
+    let all: Vec<usize> = (0..faces.len()).collect();
+    let near = |lo: DVec3, hi: DVec3, pad: f64| -> std::borrow::Cow<'_, [usize]> {
+        match &grid {
+            Some(g) => std::borrow::Cow::Owned(g.near(lo, hi, pad)),
+            None => std::borrow::Cow::Borrowed(&all),
+        }
+    };
+
     // 1. Edges through faces they do not belong to.
     for &(i, j) in &edges {
         let (p, q) = (pos[i], pos[j]);
         let (lo, hi) = (p.min(q), p.max(q));
-        for (fi, f) in faces.iter().enumerate() {
+        for &fi in near(lo, hi, POINT_MERGE).iter() {
+            let f = &faces[fi];
             if !overlap(lo, hi, f.lo, f.hi, 0.0) {
                 continue;
             }
@@ -301,7 +416,8 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
 
     // 2. Vertices touching faces they do not belong to.
     for (vi, &v) in pos.iter().enumerate() {
-        for (fi, f) in faces.iter().enumerate() {
+        for &fi in near(v, v, POINT_MERGE * 2.0).iter() {
+            let f = &faces[fi];
             if f.verts.contains(&vi) || !overlap(v, v, f.lo, f.hi, POINT_MERGE) {
                 continue;
             }
@@ -335,7 +451,10 @@ pub fn self_intersection_detail(b: &Brep) -> Option<SelfHit> {
     // 4. Faces in one plane must not overlap (their own vertices and edges can all be
     //    shared, so checks 1 to 3 cannot see a zero-thickness fin).
     for a in 0..faces.len() {
-        for b in a + 1..faces.len() {
+        for &b in near(faces[a].lo, faces[a].hi, POINT_MERGE * 2.0).iter() {
+            if b <= a {
+                continue;
+            }
             let (fa, fb) = (&faces[a], &faces[b]);
             if !overlap(fa.lo, fa.hi, fb.lo, fb.hi, POINT_MERGE)
                 || fa.plane.normal.dot(fb.plane.normal).abs() < 1.0 - 1e-9
@@ -444,6 +563,58 @@ mod tests {
             p.faces.push(f);
         }
         Brep::build(&p).unwrap()
+    }
+
+    /// Many cubes in one B-rep (each its own shell).
+    fn cubes(at: &[(DVec3, f64)]) -> Brep {
+        let mut p = cube_polys(at[0].0, at[0].1);
+        for &(o, s) in &at[1..] {
+            let b = cube_polys(o, s);
+            let n = p.points.len();
+            p.points.extend(b.points);
+            for mut f in b.faces {
+                f.outer.iter_mut().for_each(|i| *i += n);
+                p.faces.push(f);
+            }
+        }
+        Brep::build(&p).unwrap()
+    }
+
+    #[test]
+    fn lane_16_the_face_grid_finds_what_trying_every_face_finds() {
+        // Twenty cubes in a row (120 faces: the grid is used): apart, then one pair overlapping,
+        // then one pair touching; and random scatters. The grid and the full scan must report
+        // the same first contact every time.
+        let row: Vec<(DVec3, f64)> = (0..20)
+            .map(|i| (v(i as f64 * 2.0, 0.0, 0.0), 1.0))
+            .collect();
+        let b = cubes(&row);
+        assert_eq!(detail(&b, true), None);
+        assert_eq!(detail(&b, false), None);
+        let mut overlap = row.clone();
+        overlap[13].0 = v(24.5, 0.3, 0.2);
+        let b = cubes(&overlap);
+        assert!(detail(&b, false).is_some());
+        assert_eq!(detail(&b, true), detail(&b, false));
+        let mut touch = row.clone();
+        touch[7].0 = v(13.0, 0.0, 0.0);
+        let b = cubes(&touch);
+        assert!(detail(&b, false).is_some());
+        assert_eq!(detail(&b, true), detail(&b, false));
+        let mut seed = 0x2026_1013_u64;
+        let mut rnd = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as f64 / (1u64 << 31) as f64
+        };
+        for _ in 0..40 {
+            let at: Vec<(DVec3, f64)> = (0..16)
+                .map(|_| (v(rnd() * 12.0, rnd() * 12.0, rnd() * 3.0), 0.5 + rnd()))
+                .collect();
+            let b = cubes(&at);
+            assert_eq!(detail(&b, true), detail(&b, false), "{at:?}");
+        }
     }
 
     #[test]
