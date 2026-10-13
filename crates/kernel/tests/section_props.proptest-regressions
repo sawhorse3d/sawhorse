@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc de054b695f234e81bd553f1f43ec037e846ffedfecd73f8081b7c9b91cae27ae # shrinks to size = [0.8119884658232359, 0.5, 0.625], fold = Fold { corners: [false, false, false, true, false, false, true, false], axis: [0.0, 0.0, 0.0], angle: 0.19156418033823278, shift: [0.0, -0.125, 0.0] }, at = Vertex(26), normal = [0.0, 1.0, 0.0]
+cc cde809101fb594dcf83a816f2e52ce2f1624ba59c8f9fde4e0f0e2ce8318bcc1 # shrinks to size = [0.25, 0.25, 0.25], fold = Fold { corners: [false, false, true, false, false, false, false, true], axis: [0.0, 0.0, 0.0], angle: 0.0, shift: [-0.125, 0.0, 0.3197830648835472] }, at = Vertex(28), normal = [0.0, 0.0, 1.0]

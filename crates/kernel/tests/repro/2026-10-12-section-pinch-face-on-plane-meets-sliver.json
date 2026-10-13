@@ -1,0 +1,187 @@
+{
+  "name": "2026-10-12-section-pinch-face-on-plane-meets-sliver",
+  "error": "(fixed 2026-10-12, lane 12c: directed cap chain, leftmost turn, rings split at pinches; each half checked closed) lane-12 re-verifier long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261907: op 10 PushPull { object: 1, face: 3, distance: 0.25 }: section 1: the halves kept -0.010470921101549346 + 0.3480060688527364 do not make the whole 0.3480063195297917 -- Cause: as 20261904 on a bottom face facing down, its corner shared with a sliver of a fold 2 mm below the plane: no cap, the kept half came out negative.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.75,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.0
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "transform",
+      "objects": [
+        1,
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.5,
+          0.0,
+          0.5
+        ]
+      }
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 2,
+      "path": [
+        [
+          1.28125,
+          0.0,
+          1.5
+        ],
+        [
+          1.3613368303739584,
+          0.125,
+          1.5
+        ],
+        [
+          1.4375,
+          0.25,
+          1.5
+        ]
+      ]
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          1.25,
+          0.0,
+          1.5
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            0.09183673469387757,
+            -0.9611832601315644,
+            -0.2601783130924319
+          ],
+          [
+            0.6550608111519727,
+            0.2551020408163265,
+            -0.7112090286717855
+          ],
+          [
+            0.7499742314597787,
+            -0.1051175019404591,
+            0.6530612244897959
+          ]
+        ],
+        "translation": [
+          0.22704444897959183,
+          -0.16376782303123777,
+          -0.18749655776187052
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.75,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 3,
+      "distance": 0.25
+    }
+  ]
+}

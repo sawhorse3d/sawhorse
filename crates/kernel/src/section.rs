@@ -218,6 +218,46 @@ impl SectionCut {
     }
 }
 
+/// What a section keeps of the solids it reaches ([`Model::kept_part`]): the kept part of
+/// every face and the cap, summed as a surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct KeptPart {
+    /// Enclosed volume, cubic metres (the divergence theorem about the world origin).
+    pub volume: f64,
+    /// The surface's vector area, square metres: every clipped face ring's own (Newell's
+    /// sum over its 3D corners and crossings) plus the cap's (its area along -normal).
+    /// Every edge of a closed surface is walked once each way, so the sum cancels to
+    /// rounding whatever the faces' planarity: a cap missing, folded or facing the wrong
+    /// way leaves its area here. It measures how far the cut is from watertight.
+    pub vector_area: DVec3,
+    /// The surface's total (unsigned) area, square metres: the scale to compare against.
+    pub area: f64,
+}
+
+impl KeptPart {
+    fn add(&mut self, normal: DVec3, origin: DVec3, area: f64) {
+        self.volume += normal.dot(origin) * area / 3.0;
+        self.area += area.abs();
+    }
+
+    /// Add a 3D ring's vector area (Newell).
+    fn newell(&mut self, ring: &[DVec3]) {
+        let n = ring.len();
+        for i in 0..n {
+            self.vector_area += ring[i].cross(ring[(i + 1) % n]) * 0.5;
+        }
+    }
+
+    /// How open the surface is: its vector area over its area (0 when watertight).
+    pub fn gap(&self) -> f64 {
+        if self.area > 0.0 {
+            self.vector_area.length() / self.area
+        } else {
+            0.0
+        }
+    }
+}
+
 /// A crossing of the plane on a B-rep edge, named by the edge's two vertices (low first).
 type Node = (VertexId, VertexId);
 
@@ -328,12 +368,22 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
             pieces.push(Piece { a: a.1, b: b.1 });
         }
     }
-    // Chain the pieces: every crossing is the end of exactly two pieces (one per face at
-    // the edge), so the pieces form closed rings.
-    let mut at: BTreeMap<Node, Vec<usize>> = BTreeMap::new();
+    // Chain the pieces head to tail. At every node as many pieces start as end: one per
+    // face at an edge crossing, and around a vertex on the plane as many going in as coming
+    // out (the faces around it alternate). A vertex where the cut passes more than once
+    // (two lobes of the section touching there, or a hole touching its outer ring: a
+    // folded solid, 2026-10-12 fuzz with plane snapping off) has several ways on. Before
+    // 2026-10-12 the chain took any unused piece at a node, in either direction, so there
+    // it could run a piece backwards: the ring folded over itself, its area came out
+    // wrong or nearly zero, the cap was dropped, and the kept halves no longer made the
+    // whole. Now a ring only ever follows a piece forwards, takes the leftmost way on (it
+    // traces one patch of material at a time), and is split where it comes back to a node
+    // it already passed, so every ring is simple and keeps the material on its left.
+    pieces.retain(|p| p.a != p.b); // a face touching the plane at one vertex: nothing to cut
+    let at2d = |k: &Node| plane.to_local(points[k]);
+    let mut starts: BTreeMap<Node, Vec<usize>> = BTreeMap::new();
     for (i, p) in pieces.iter().enumerate() {
-        at.entry(p.a).or_default().push(i);
-        at.entry(p.b).or_default().push(i);
+        starts.entry(p.a).or_default().push(i);
     }
     let mut used = vec![false; pieces.len()];
     let mut rings = Vec::new();
@@ -344,7 +394,7 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
         used[start] = true;
         let first = pieces[start].a;
         let mut ring = vec![first];
-        let mut cur = pieces[start].b;
+        let (mut prev, mut cur) = (first, pieces[start].b);
         let mut closed = false;
         for _ in 0..=pieces.len() {
             if cur == first {
@@ -352,29 +402,53 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
                 break;
             }
             ring.push(cur);
-            let next = at[&cur].iter().copied().find(|&k| !used[k]);
+            let din = at2d(&cur) - at2d(&prev);
+            let turn = |k: usize| {
+                let dout = at2d(&pieces[k].b) - at2d(&cur);
+                din.perp_dot(dout).atan2(din.dot(dout))
+            };
+            let next = starts
+                .get(&cur)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&k| !used[k])
+                .max_by(|&x, &y| turn(x).total_cmp(&turn(y)).then(y.cmp(&x)));
             let Some(k) = next else {
                 break;
             };
             used[k] = true;
-            cur = if pieces[k].a == cur {
-                pieces[k].b
-            } else {
-                pieces[k].a
-            };
+            (prev, cur) = (cur, pieces[k].b);
         }
         if !closed {
             continue;
         }
-        let pts: Vec<DVec2> = ring.iter().map(|k| plane.to_local(points[k])).collect();
-        let pts = tidy_ring(pts);
-        if pts.len() >= 3
-            && sawhorse_tessellate::signed_area(&pts).abs() > crate::tolerance::AREA_EPS * 1e-6
-        {
-            rings.push(pts);
+        for loop_nodes in split_pinches(ring) {
+            let pts: Vec<DVec2> = loop_nodes.iter().map(at2d).collect();
+            let pts = tidy_ring(pts);
+            if pts.len() >= 3
+                && sawhorse_tessellate::signed_area(&pts).abs() > crate::tolerance::AREA_EPS * 1e-6
+            {
+                rings.push(pts);
+            }
         }
     }
     rings
+}
+
+/// A closed ring of nodes that passes a node more than once, as the simple rings it is
+/// made of (each from one visit of the node to the next).
+fn split_pinches(ring: Vec<Node>) -> Vec<Vec<Node>> {
+    let mut out = Vec::new();
+    let mut stack: Vec<Node> = Vec::with_capacity(ring.len());
+    for k in ring {
+        if let Some(i) = stack.iter().position(|x| *x == k) {
+            out.push(stack.split_off(i));
+        }
+        stack.push(k);
+    }
+    out.push(stack);
+    out
 }
 
 /// Drop repeated points and points on one line with their neighbours: between them, or
@@ -680,10 +754,16 @@ impl Model {
     /// other sections): the divergence theorem over every face clipped to the kept side
     /// plus the cap. Tests and the fuzzer check it against the whole volume.
     pub fn kept_volume(&self, id: u64) -> Result<f64, KernelError> {
+        Ok(self.kept_part(id)?.volume)
+    }
+
+    /// What section `id` keeps of the solids it reaches, as a closed surface: every face
+    /// clipped to the kept side, plus the cap facing `-normal` (see [`KeptPart`]).
+    pub fn kept_part(&self, id: u64) -> Result<KeptPart, KernelError> {
         let k = self.section_key(id)?;
         let s = &self.sections[k];
         let frame = s.plane();
-        let mut v = 0.0;
+        let mut part = KeptPart::default();
         for o in self.section_solids(s) {
             let obj = &self.objects[o];
             let b = obj.brep();
@@ -697,23 +777,25 @@ impl Model {
                 let mut area = 0.0;
                 for l in f.loops() {
                     let vs = b.loop_vertices(l);
-                    let mut ring: Vec<DVec2> = Vec::with_capacity(vs.len() + 2);
+                    let mut ring: Vec<DVec3> = Vec::with_capacity(vs.len() + 2);
                     for i in 0..vs.len() {
                         let (p, q) = (vs[i], vs[(i + 1) % vs.len()]);
                         let (kp, kq) = (dist[&p] >= 0.0, dist[&q] >= 0.0);
                         if kp {
-                            ring.push(fp.to_local(b.vertices[p].pos));
+                            ring.push(b.vertices[p].pos);
                         }
                         if kp != kq && dist[&p] != 0.0 && dist[&q] != 0.0 {
                             let (lo, hi) = if p < q { (p, q) } else { (q, p) };
                             let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
                             let (dl, dh) = (dist[&lo], dist[&hi]);
-                            ring.push(fp.to_local(pl + (ph - pl) * (dl / (dl - dh))));
+                            ring.push(pl + (ph - pl) * (dl / (dl - dh)));
                         }
                     }
-                    area += sawhorse_tessellate::signed_area(&ring);
+                    let flat: Vec<DVec2> = ring.iter().map(|p| fp.to_local(*p)).collect();
+                    area += sawhorse_tessellate::signed_area(&flat);
+                    part.newell(&ring);
                 }
-                v += fp.normal.dot(fp.origin) * area / 3.0;
+                part.add(fp.normal, fp.origin, area);
             }
             let cap: f64 = assemble(solid_rings(obj, &frame))
                 .iter()
@@ -726,9 +808,10 @@ impl Model {
                 })
                 .sum();
             // The cap is a face of the kept part whose outward normal is -normal.
-            v += -s.normal.dot(frame.origin) * cap / 3.0;
+            part.add(-s.normal, frame.origin, cap);
+            part.vector_area -= s.normal * cap;
         }
-        Ok(v)
+        Ok(part)
     }
 
     /// The rectangle a section plane is drawn as: the bounds of what it reaches, seen in

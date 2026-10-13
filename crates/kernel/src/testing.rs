@@ -74,10 +74,11 @@ pub fn check_model(m: &Model) -> Result<(), String> {
 }
 
 /// Every section plane's cut (lane 12) of any committed model: it never fails, it is
-/// deterministic, its caps are closed rings with the material on the left (outers
-/// counter-clockwise, holes clockwise, holes inside their outer), its area is the caps'
-/// sum, its outline has an edge per ring edge (less those lying on another plane's cut),
-/// and the halves a plane and its flip keep add up to the solids it reaches.
+/// deterministic, its caps are closed simple rings with the material on the left (outers
+/// counter-clockwise, holes clockwise, holes inside their outer, no point twice), its area
+/// is the caps' sum, its outline has an edge per ring edge (less those lying on another
+/// plane's cut), each half a plane and its flip keep is a closed surface (lane 12c: its
+/// vector area cancels), and the two halves add up to the solids it reaches.
 pub fn check_sections(m: &Model) -> Result<(), String> {
     use glam::DVec2;
     for (id, s) in m.sections() {
@@ -90,6 +91,17 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         }
         let mut area = 0.0;
         for c in &cut.caps {
+            // Simple rings (lane 12c): a ring through one point twice is two rings chained
+            // through a pinch, which the cap must have split.
+            for r in std::iter::once(&c.outer).chain(&c.holes) {
+                let mut seen = std::collections::BTreeSet::new();
+                if !r
+                    .iter()
+                    .all(|p| seen.insert((p[0].to_bits(), p[1].to_bits())))
+                {
+                    return Err(format!("section {id}: a cap ring passes a point twice"));
+                }
+            }
             let outer: Vec<DVec2> = c.outer.iter().map(|p| DVec2::from_array(*p)).collect();
             if outer.len() < 3 || !outer.iter().all(|p| p.is_finite()) {
                 return Err(format!("section {id}: a cap's outer ring is degenerate"));
@@ -132,10 +144,23 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         let mut flipped = m.clone();
         let k = crate::ids::from_public::<crate::ids::SectionId>(id);
         flipped.sections[k].normal = -s.normal;
-        let (a, b) = (
-            m.kept_volume(id).map_err(|e| e.to_string())?,
-            flipped.kept_volume(id).map_err(|e| e.to_string())?,
+        let (pa, pb) = (
+            m.kept_part(id).map_err(|e| e.to_string())?,
+            flipped.kept_part(id).map_err(|e| e.to_string())?,
         );
+        let (a, b) = (pa.volume, pb.volume);
+        // Watertight: each kept half (its faces clipped to the kept side, and its cap) is
+        // a closed surface, so its vector area cancels to rounding (see KeptPart). A cap
+        // that is missing, folded or turned the wrong way leaves its whole area here.
+        for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
+            let open = p.vector_area.length();
+            if open > 1e-9 * (1.0 + p.area) {
+                return Err(format!(
+                    "section {id}: the {half} half is not closed (vector area {open} of {} m2)",
+                    p.area
+                ));
+            }
+        }
         let reached_objects: Vec<_> = m
             .objects()
             .into_iter()
@@ -914,7 +939,35 @@ pub fn check_sequence(ops: &[Op]) -> Result<RunSummary, String> {
 pub struct Repro {
     pub name: String,
     pub error: String,
+    /// Boolean plane snapping as the run that found it had it (`Some(false)`: a
+    /// `FUZZ_PLANE_SNAP=0` run). Absent means on, the default; the replay test sets it
+    /// for the file and puts it back afterwards, so a find made with snapping off fails
+    /// the same way when it is replayed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_snap: Option<bool>,
     pub ops: Vec<Op>,
+}
+
+impl Repro {
+    /// Replay through [`check_sequence`] with the repro's plane snapping, restoring the
+    /// thread's setting afterwards whatever happens.
+    pub fn check(&self) -> Result<RunSummary, String> {
+        let was = crate::snap::plane_snapping();
+        crate::snap::set_plane_snapping(self.plane_snap.unwrap_or(true));
+        let r = catch_unwind(AssertUnwindSafe(|| check_sequence(&self.ops)));
+        crate::snap::set_plane_snapping(was);
+        r.unwrap_or_else(|p| Err(format!("panicked: {}", panic_message(p))))
+    }
+}
+
+/// Where the fuzzer writes a failing sequence before anyone has looked at it: a
+/// subdirectory of the repro directory that git ignores (`tests/repro/pending/`). The
+/// replay test reads only the repro directory itself, so a pending find never breaks
+/// `replay_all_repros` for everyone else; promoting it (rename, fix, move up a level,
+/// commit) is the step that makes it a regression case (`tests/repro/README.md`).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn pending_dir(repro_dir: &std::path::Path) -> std::path::PathBuf {
+    repro_dir.join("pending")
 }
 
 /// Write a failing sequence to `dir/<name>.json` (overwriting: when proptest shrinks, the
@@ -931,6 +984,7 @@ pub fn write_repro(
     let repro = Repro {
         name: name.to_string(),
         error: error.to_string(),
+        plane_snap: (!crate::snap::plane_snapping()).then_some(false),
         ops: ops.to_vec(),
     };
     let json = serde_json::to_string_pretty(&repro).map_err(std::io::Error::other)?;
