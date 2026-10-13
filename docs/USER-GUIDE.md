@@ -190,7 +190,7 @@ Tags control what you see, nothing else: geometry stays where it is and in its g
 
 ## Scenes
 
-A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane). The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane), and which section planes are active and hidden. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
 
 ## Materials and paint
 
@@ -218,9 +218,31 @@ The Styles pane (right panel, **Styles**) changes how the model is drawn, never 
 - **Faces**: shaded with textures, shaded, monochrome, hidden line (faces in the background colour: only the edges you could see), wireframe (every edge, no faces), X-ray (see-through faces, every edge).
 - **Edges**: on or off; **Profiles** draws outlines heavier; **Extensions** runs edges a little past their ends, like pencil lines; **Endpoints** draws the ends of edges heavier. SVG view drawings (File > Export) follow the edge style.
 - **Background**, **Sky** and **Ground** colours. The horizon follows the camera as you tilt it.
+- **Sections**: section cuts, section planes and section fill on or off, and the cut's colours and line width (see Section planes below).
 - **Shadows**: tick **Show shadows**, then pick the date, the time (local sun time) and the latitude; **Light** and **Dark** set how bright the sun and the shade are; **On the ground** and **On faces** choose where shadows fall. North is along green.
 
 Sliders show their effect as you drag and are one undo step when you let go. Styles and shadows are saved with the model, and a scene saved after changing them brings them back when you go to it.
+
+## Section planes
+
+A section plane cuts the model open so you can see inside it: the shelves and dados of a cabinet, the joint in a frame. It never changes the model; it only hides what is on one side of it, and fills the cut where it passes through solid wood.
+
+**Placing one.** Pick **Section** in the tool rail (or Tools > Section Plane; it has no key). Hover a face: the plane's outline lies on it, with arrows pointing into the model, at what stays. Click (or press Enter) to place it. A plane laid on a face cuts nothing until you move it in, so the usual move is: place it on the end of the cabinet, then Move (M) it along the cabinet to where you want the cut, typing the distance. Before you click:
+
+- The arrow keys lock the plane square to an axis: Right for red, Left for green, Up for blue; Down unlocks. Away from any face the plane stands square to the view's main axis.
+- A tap of Alt reverses it (the arrows point the other way); Alt+click places it reversed.
+
+The new plane is **active** (it cuts) and selected. It is placed in the group or component you have open, and then it cuts only what that group holds (a plane in one copy of a component belongs to that copy). Each context has at most one active plane; activating another switches the first off.
+
+**Working with planes.** Planes are listed in the Outliner ("Section 1 · section · active"). Right-click a plane in the Outliner for **Activate Cut** / **Deactivate Cut**, **Reverse** (keep the other side), **Create Group from Slice** (the cut's outline as faces in a new group on the plane, ready to push into a template or a profile), **Export Slice (SVG / DXF)**, Hide, Rename and Delete; with a plane selected, the Edit menu has the first three too. Move, Rotate, Scale and copies move planes like anything else; select a plane and solids together and they move as one undo step. File > Export > Section slice saves the selected (or active) plane's cut: SVG filled, DXF as closed polylines, both 1:1 in millimetres.
+
+**How the cut looks** is part of the style (Styles pane, **Sections**, or View > Section Planes / Section Cuts / Section Fill):
+
+- **Section cuts**: active planes cut. Off, the whole model shows and the planes stay.
+- **Section planes**: the planes are drawn (a light frame with arrows). Off, they are hidden but still cut.
+- **Section fill**: the cut faces are filled, exactly, holes and all. **Fill colour**, **Cut line colour** and **Cut line width** set how the cut is drawn; untick a colour to use the theme's.
+
+**Scenes** remember which planes are active and which are hidden. Save a scene with the cut on (say the Right view, Shop drawing style, the plane through the middle) and going to it brings the cut back; a scene saved with no plane active shows the model whole. That is how a sheet shows a section next to whole elevations.
 
 ## Cut list
 
@@ -293,6 +315,35 @@ Parts of different materials never share a sheet or a board.
 **Files.** **SVG** saves one drawing per sheet or board, 1:1 in millimetres (it prints or projects to scale): every part outlined and labelled with its tag, name and size, the overall dimensions, every cut numbered where it starts, and the cut sequence written underneath. Each diagram's own **SVG** link saves just that one. **DXF** saves every sheet and board in one file for a CNC router or a laser, in millimetres: a closed polyline per part on a layer per sheet or board (SHEET-01, BOARD-02, ...), the stock outlines on layer STOCK and the tags as text on layer LABELS, so the CAM program can cut one layer and ignore the rest. **DXF R12** is the same with old-style polylines, for programs that read only R12. **PDF** saves a booklet: a first page with what to buy (each stock and material, how many, the yield, board feet), the settings, any parts on no stock and an index; then a page per sheet or board with its diagram to scale, its parts and its cut sequence.
 
 **The bookshelf.** Build the bookshelf above and name its back panel 1/4 birch ply, then open Nesting: the carcass, top, shelves and toe kick (3/4 in, no material) come from **five 4/4 x 12 x 96 boards** (each side takes a board, with 24 5/8 in left that nothing fits; the top and the toe kick share one; the four shelves go two to a board) and the back from **one 4 x 8 sheet of 1/4 in**: 6,105 sq in of parts from 10,368 sq in of stock, **58.9% yield**. Name the carcass "3/4 birch ply" too and it becomes three sheets: two of 3/4 in (four 11 1/4 in strips fit across a sheet, but nothing 34 1/2 in long fits beside a 71 1/4 in side) and the back's.
+
+## Drawing sheets
+
+Sheets turn the model into shop drawings on paper: elevations and plans at a real scale, a section, dimensions that read the model, notes, the cut list and a title block, printed or saved as PDF, SVG, DXF or PNG. What you see on the sheet is exactly what prints.
+
+**The Model / Sheets switch** at the start of the tab row above the view changes the window between the model and its sheets. In Sheets mode the tabs are your sheets (**+** adds one, a click shows it, double-click renames, right-click to rename, move left or right, or delete), the rail on the left holds the sheet tools, and the right panel is the **Sheet** pane. A new sheet is Letter landscape in inches (A4 when you work in metric) with half-inch margins and a title block.
+
+**Moving around.** The wheel zooms about the pointer; drag with the middle button, or hold Space and drag, to pan; **Fit** shows the whole sheet. **Grid snap** snaps what you place and move to the sheet's grid (1/8 in to start).
+
+**The tools.**
+- **Select**: click an item (Shift adds), drag a box round several, drag to move, drag a corner to resize. **Alt+drag inside a viewport slides its drawing** without moving the frame (to bring the bottom shelves into a detail). The arrow keys nudge the selection by the grid (Shift: ten times), Delete removes it, Ctrl+A selects everything, Esc clears the selection.
+- **View**: drag a rectangle to place a viewport. The pane's **Shows** picks what it shows first: a scene (its camera, hidden tags, style and section planes), a standard view (Front, Back, Left, Right, Top (plan), Bottom, Isometric) or the 3D view's camera. A new viewport takes the largest standard scale its drawing fits at, and a caption ("FRONT ELEVATION 1:12").
+- **Dim**: pick the kind in the pane (Horizontal, Vertical, Aligned, Angle, Radius, Diameter), click two points of a viewport's drawing (the dot shows the corner, end or middle it snaps to; three for an angle, the corner first, or for an arc), then click where the dimension line goes. The number is the model's true length, written as the sheet says (fractions to 1/16 in to start), whatever the viewport's scale.
+- **Label**: click what it points at (a point of a drawing, or the paper), click where the text goes, type, Enter. A leader on a drawing follows it when the viewport changes.
+- **Table**: drag a rectangle: the cut list, live. The pane picks its title, its columns, **Decimal sizes** and **Only what is shown** (hidden parts left out).
+- **Image**: a PNG or JPEG (a logo, a photo of the piece) in a frame.
+- **Line** (Shift: square to the page) and **Rect**: plain marks on the paper.
+
+**The Sheet pane** shows the selected item's properties, then the paper, then the title block, then printing and exporting.
+- A **viewport**: what it shows, its **Scale** (1:1, 1:2, 1:4, 1:8, 1:12, 1:16, 1:24, 1:48, and the architect scales 3", 1 1/2", 1", 3/4", 1/2" and 1/4" = 1'-0"), its caption, hidden lines dashed, its frame, **Fit scale** (the largest scale that fits), **Recentre**, **Use 3D view**, its position and size, and its order. An isometric or perspective view is never to scale: it fits its frame and is marked NTS. A caption Sawhorse wrote follows the view and the scale; one you typed stays.
+- **Paper**: the name, the size (Letter, Legal, Tabloid, A4, A3, A2 or a custom size), portrait or landscape, the units (inches or millimetres), the margins, the grid, and how dimensions write lengths (fractions to 1/8, 1/16 or 1/32 in, decimal inches, feet and inches, millimetres).
+- **Title block** (bottom right): title, project, sheet ("1 of 3" by itself when left empty), scale (left empty, it is the viewports' scale when they share one, "As noted" when they differ), date (**Today's date** fills it), drawn by (left blank), revision. Untick **Show the title block** to leave it off.
+- **Print and export**: **Print...** (the system print dialog at 100%, the page at the paper's size; it can also save a PDF), **PDF** (vector, the real paper size), **PDF, all sheets** (a page each), **SVG** (paper inches or millimetres), **DXF** (paper size, in the sheet's units: lines, outlines and text on a layer per kind; dimension values are text), **PNG 150 dpi** and **PNG 300 dpi**. File > Print Sheets... prints every sheet.
+
+Every change on a sheet is one undo step, and sheets are saved in the `.shz`.
+
+**Scales on paper.** At 1:8 a 30 in cabinet is 3 3/4 in wide on the paper; at 1/4" = 1'-0" it is 5/8 in. A dimension on it still says 30".
+
+**The bookshelf on a sheet.** With the bookshelf above: put a section plane down its middle (with Section, hover a shelf 18 in from the end, press Right to stand the plane square to red, click), Reverse it if the wrong half is kept, go to the Right view, pick the Shop drawing style, add a scene and call it "Section A", then deactivate the cut. Switch to Sheets and add a sheet. With View, drag a tall frame on the left for the Front view (it comes in at 1:12, since 72 in at 1:8 would not fit on Letter), a wide one at the top right for Top (plan), set to 1:8, and a short one under it showing Section A, set to 1:4 and slid down to the toe kick with Alt+drag. Dimension the width (36") under the elevation, the height (72") beside it and a shelf spacing (17 1/4"); label a fixed shelf; drag a cut-list table under the section; fill in the title block. Save it as PDF: the dimensions are text in the file, at their true values.
 
 ## Plugins
 

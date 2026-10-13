@@ -87,6 +87,8 @@ The Render pane talks to the render service (`../render-service`, its own reposi
 | `e2e/plugins-model.spec.ts` | lane 11: model reads in the API's shapes, the selection both ways, a batch with placeholders as one step named "Plugin box" in the Edit menu, undone and redone |
 | `e2e/plugins-ui.spec.ts` | lane 11: Install from .zip through the picker, the permission dialog, every panel field, Enter and a ticked box giving tool keys back to the model, prompt and confirm, the Plugins menu and a shortcut, a plugin tool and the VCB, the console, Reload, installs surviving a reload, Disable, Uninstall, a broken zip, a session load |
 | `e2e/plugins-samples.spec.ts` | lane 11: the samples off with their permissions; the cabinet generator (30 x 72 x 12 in, 3 shelves: the Outliner's names, the Cut list's sizes, one undo; Update in place); shelf pin holes (a column of exact volume, one undo); the model report (counts against the model, Markdown and CSV); a plugin claiming the enabled Model report's id stays off, with the dialog naming the sample it replaces |
+| `e2e/sections.spec.ts` | lane 12: the bookshelf opened as a `.shz`, cut down the middle with the Section Plane tool (locked square to red): the left half gone, the cut filled and outlined; reversed from the Outliner; the Styles pane's Section cuts / planes / fill switches; a scene bringing the active plane back; Create Group from Slice; the slice exported as SVG; the plane deleted |
+| `e2e/sheets.spec.ts` | lane 12: the sheet golden laid out on the canvas exactly as the kernel draws it; a sheet of the bookshelf built with every tool (viewport, dimension, label, table, line, rectangle), moved, resized, deleted and undone, the paper and title block changed, saved as SVG; the golden out as PDF (its dimension strings are text in it), DXF, PNG and print |
 | `e2e/groups.spec.ts` | lane 5: Ctrl+G, a click selecting the group, Push/Pull refusing a closed group's face, double-click to open, Esc to close, undo returning inside, Ctrl+Shift+G; Make Component (dialog), a Ctrl+Move copy as an instance, an edit inside one reaching both, Make Unique from the Outliner; tags (New tag, assign, hide), scene tabs (add, switch, rename), the Outliner's eye and lock |
 
 **Private fixtures.** `e2e/private-fixtures.spec.ts` reads real `.skp` files from the directory named by the environment variable `SAWHORSE_PRIVATE_FIXTURES` (for example `SAWHORSE_PRIVATE_FIXTURES=<your private dir> PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test e2e/private-fixtures.spec.ts`). The files are authored in SketchUp itself, are not redistributable and must never be copied into this repository or committed; the spec reads them in place. With the variable unset, or naming a directory that does not exist, every test in it skips, so CI never depends on them. Besides three files it expects at the top of the directory (`box-slot-defective-current.skp`, `round-slab-leg-current.skp`, `blank-26-purged.skp`; each test skips if its file is absent), it imports every `.skp` found anywhere below the directory and prints one `[private-fixtures:sweep] {...}` row per file (what the file holds, what the model holds after import, whether an amber mesh appeared, the import time). `SAWHORSE_PRIVATE_CAPTURES` (a directory; default `test-results/private-fixtures/`) receives a screenshot per model, named `<SAWHORSE_PRIVATE_CAPTURE_PREFIX>private-fixture-<name>.png`, and the sweep's table as `private-fixtures-sweep.md`.
@@ -124,6 +126,36 @@ Lane 7's walk-through, `scripts/capture-lane07.mjs`, builds the same bookshelf f
 ```bash
 npm run dev -- --port 5197 --strictPort   # in another terminal
 node scripts/capture-lane07.mjs --url http://localhost:5197 --out ../_captures
+```
+
+### Section planes and drawing sheets (lane 12)
+
+| What | Where |
+|---|---|
+| Planes, the exact cut (caps with holes, outline), slices, scenes' section state, the hash | `crates/kernel/src/section.rs` (design: `docs/adr/0010-sections-and-sheets.md`); ops in `crates/kernel/src/model.rs`; `testing::check_sections` |
+| Scales, what a dimension measures, lengths on paper | `crates/kernel/src/paper.rs` |
+| Sheets and items as ops, validation, `.shz`, the hash | `crates/kernel/src/sheets.rs`, `snapshot.rs` (`docs/format.md`) |
+| Hidden-line drawings, the sheet layout, tables, DXF, slice exports | `crates/export/src/drawing.rs`, `sheet.rs`, `table.rs`, `sheet_dxf.rs`, `section.rs` |
+| Snapping on a drawing | `crates/inference/src/flat.rs` |
+| The worker queries | `crates/wasm-api/src/drawings.rs` (`Doc.section_view`, `sheet_render`, `sheet_dxf`, the slice exports; `replay_sections`, `replay_sheet_renders` for the goldens), `KernelClient` |
+| The tool, clipping and the filled cut in the view | `src/tools/section.ts`, `src/lib/sections.ts`, `src/viewport/engine.ts` |
+| Sheets mode, canvas, pane, tabs, exports | `src/sheets/` (`SheetsWorkspace`, `SheetCanvas`, `SheetsPane`, `SheetTabs`, `SheetRail`, `paper.ts`, `render.ts`, `exports.ts`, `runExport.ts`) |
+| `.skp` section planes | `src/io/skp.ts` (`sectionOf`) |
+
+```bash
+bash scripts/cargo.sh test -p sawhorse-kernel --test sections --test sheets   # cuts, slices, scenes, sheets, items, refusals, hashes
+bash scripts/cargo.sh test -p sawhorse-export --test drawings                  # hidden lines, scales, dimensions, tables, every export
+npx vitest run src/sheets src/lib/sections.test.ts src/tools/section.test.ts
+PW_PORT=4221 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test e2e/sections.spec.ts e2e/sheets.spec.ts
+```
+
+The goldens `section.json` and `sheet.json` pin the cut and the laid-out sheet (`npm run golden:wasm` checks WASM against native). For tests, `window.__sawhorse.sections()` returns the planes and the cut being drawn, and `window.__sawhorse.sheet` (in Sheets mode) gives `render()` (the kernel's layout of the shown sheet) and `toClient(p)` (paper metres to page pixels).
+
+Lane 12's walk-through, `scripts/capture-lane12.mjs`, opens the component bookshelf (written by the WASM kernel from the `cutlist.json` golden), cuts it with the Section Plane tool, reverses the plane, saves the Right view in the Shop drawing style with the cut as the scene "Section A", then builds a Letter landscape sheet through the canvas: the front elevation at 1:12, the plan at 1:8, the section at 1:4 slid down to the toe kick, three dimensions (36", 72", 17 1/4"), a label, the cut list and the title block. It exports PDF (checking the dimension strings, the captions and the paper size in it), SVG, DXF and a 300 dpi PNG beside the screenshots, and reopens the saved document in the dark theme. It exits non-zero when a stage does not produce what it should.
+
+```bash
+npx vite --port 5221 --strictPort        # in another terminal
+node scripts/capture-lane12.mjs --url http://localhost:5221 --out ../_captures
 ```
 
 ### Plugins (lane 11)

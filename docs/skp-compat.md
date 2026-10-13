@@ -4,7 +4,7 @@ Sawhorse reads `.skp` files with the npm package [`openskp`](https://www.npmjs.c
 
 Import only. There is no `.skp` export in this lane (ADR-0002: export waits for the attorney read and for our own blank template).
 
-Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
+Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day); section planes in lane 12 (2026-10-12). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
 
 ## File versions
 
@@ -31,6 +31,7 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 | Texture positions | Per face, as a scale, a rotation and an offset (lane 10) | A face's mapping (SketchUp's pins, or its default projection from the face's own axes) is turned into the affine map it gives in world metres and fitted to Sawhorse's per-face scale, rotation and offset, so the texture lies where SketchUp drew it. Skewed (four-pin) and projected textures lose the skew or the projection (noted). |
 | Layers / tags | Tags, by name | `Layer0` / `Untagged` means untagged. A placement's own layer becomes the tag of its group or instance (hiding the tag hides everything inside). Layers hidden in the file come in hidden. |
 | Hidden groups and components | Hidden (the Outliner's eye is closed) | Nothing is dropped; open the eye to see them. (Before lane 5 they went on a hidden tag, `Hidden in SketchUp`.) |
+| Section planes | Section planes, inactive (lane 12) | openskp gives each plane as `a, b, c, d` (a x + b y + c z + d = 0, inches) with its name and whether it is hidden. It comes in where SketchUp drew it: in the group it was drawn in, in every copy of a component it was drawn in (a plane in Sawhorse belongs to a copy), or at the top. The side kept is taken to be the one opposite `(a, b, c)`; if a file's cut comes in the wrong way round, right-click the plane, Reverse. **Which plane was active is not read** (openskp does not expose it), so every plane comes in switched off, with a note: activate one from the Outliner. Scenes do not bring section state across either. A plane without a usable position (zero or non-finite) is counted in the notes and left out. |
 | Scenes (pages) | Saved scenes: camera (eye, target, up, field of view, parallel or perspective) and hidden tags | Scenes without a stored camera are left out (noted). |
 | Reversed faces | Turned to match their neighbours | Only on closed shells, where there is exactly one consistent way round; the note says how many faces were turned. |
 | Units | Inches to metres | SketchUp stores inches whatever the model's display unit; the display unit is noted when the file states it. |
@@ -39,7 +40,8 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 
 Each of these is counted in the import notes when present, never silently dropped:
 
-- Text and leader text, linear and radial dimensions, section planes, guide lines and guide points (the kernel has guides and dimensions; mapping SketchUp's onto them is a later lane).
+- Text and leader text, linear and radial dimensions, guide lines and guide points (the kernel has guides and dimensions; mapping SketchUp's onto them is a later lane).
+- Which section plane was active, and the section state saved in scenes (planes come in inactive; see above). Section fill and section line styles.
 - Image entities (`Image` objects placed in the model).
 - Back-face materials (Sawhorse draws back faces in the default back-face colour), skewed and projected texture positions (see above), textures other than PNG and JPEG.
 - Per-face layers inside a definition (faces and edges on their own layers): only placements carry tags.

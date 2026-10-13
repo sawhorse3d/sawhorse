@@ -82,6 +82,14 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Algorithms** (templates captured and re-derived by slot, affine maps of B-reps, a tidy pass, the definition-reachability purge) were written from general knowledge.
 - **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
 
+### 2026-10-12 — lane 12 (section planes and drawing sheets): what was read
+- **Who:** the lane-12 builders (Claude, Opus), sections and sheets lane (one session built steps 1 to 7, a second resumed it for the verification, the docs and the merge).
+- **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane.
+- **npm `openskp@1.3.0` (MIT, a dependency per ADR-0002):** read the `SectionPlane` declaration (`plane: [a, b, c, d]`, `name`, `label`, `hidden`) and the `sectionPlanes` fields of its definitions in the packaged `dist/index.d.ts`. `src/io/skp.ts` maps them with our own code; nothing was copied.
+- **SketchUp and LayOut** (the Section Plane tool, active cuts, section fill, Create Group from Slice; LayOut's viewports, scales, dimensions, labels, title blocks and its PDF export) were described from memory, as a user knows them. No SketchUp or LayOut source, documentation, template, title block, icon or UI string was read or used; the tool, the pane, the sheet layout, the title block and every word are our own.
+- **Algorithms** from general knowledge: plane and polygon clipping with a consistent tie rule, ring assembly and nesting by containment, hidden-line removal by interval subtraction against triangles in view space (a 2D BVH), the projective map for perspective views, drawing scales and architect scales, shop-fraction formatting, PDF 1.4 (the lane-7 writer), SVG 1.1, DXF R12-style entities (the subset `crates/export/src/dxf.rs` writes), the PNG `pHYs` chunk.
+- **Check:** `git grep -i -E 'hew3d|\bhew\b'` matches only this log, `docs/DECISIONS.md` and ADR-0002.
+
 ### 2026-10-12 — lane 11 (the plugin API): what was read
 - **Who:** the lane-11 builder (Claude), plugins lane.
 - **Read:** nothing from hew3d/hew or hew3d/openskp: no source, docs, issues or design write-ups were cloned, fetched or opened, and no URL from either is cited. No published web page of any kind was opened for this lane. The SketchUp Ruby API's source and documentation were not opened, and no code from any SketchUp extension was read.

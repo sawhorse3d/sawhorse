@@ -1,6 +1,6 @@
 # The `.shz` file format, version 1
 
-Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, the stock library and nesting settings in lane 9, materials, face paint, textures, styles and shadows in lane 10, all as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
+Status: open specification, 2026-10-11 (lane 6; groups, components, tags and scenes added in lane 5, cut-list part attributes in lane 7, the stock library and nesting settings in lane 9, materials, face paint, textures, styles and shadows in lane 10, section planes and drawing sheets in lane 12, all as optional fields). License: this document is CC0; the format is free to implement by anyone, for anything.
 
 A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or Stored entries) with these entries:
 
@@ -41,7 +41,7 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
 }
 ```
 
-(`nodes`, `definitions`, `context`, `tag_colors` and `stock` are optional and left out when empty, or for `stock` when the model uses the built-in library; so are lane 10's `textures`, `style` and `shadows`.)
+(`nodes`, `definitions`, `context`, `tag_colors` and `stock` are optional and left out when empty, or for `stock` when the model uses the built-in library; so are lane 10's `textures`, `style` and `shadows`, and lane 12's `sections` and `sheets`.)
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -171,9 +171,9 @@ Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`
 | `tag_colors` | `{ name: "#rrggbb" }`, optional | Each tag's colour in the Tags pane. |
 | `materials[]` | `{ "name", "color": [r, g, b, a], "texture"?, "size"?, "rotation"?, "offset"?, "stock"? }` | sRGB colour with alpha, 0 to 255; `texture` names an image (a path in `textures`, or the original file name when the image was not kept, in which case the colour shows); `size` the image's real-world width and height in metres (absent: 0.3048 m across at the image's aspect); `rotation` degrees; `offset` metres; `stock` `{ "kind": "lumber" or "sheet", "species"? }`: what the cut list calls a part showing this material (the species, else the material's name) and whether it is sheet goods, unless the part says otherwise. |
 | `textures[]` | `{ "path", "mime" }`, optional | The images the model holds: `path` is `assets/<name>.png` or `.jpg` (letters, digits, `.`, `_`, `-`) and the archive entry holding the bytes; `mime` is `image/png` or `image/jpeg` and must match the bytes. At most 16 MB each and 512 in all. A reader that finds an entry missing opens the file with a note; materials naming it show their colour. (An op log or an in-memory snapshot carries the bytes inline as base64 `data`; a `.shz` never does.) |
-| `style` | style, optional | The drawing style (absent: the default). `{ "preset"?, "face"?: "textured" / "shaded" / "monochrome" / "hidden_line" / "wireframe" / "x_ray", "edges"?: { "edges"?, "profiles"?, "extensions"?, "endpoints"? }, "background"?: [r, g, b], "sky"?: [r, g, b], "ground"?: [r, g, b], "section_cuts"? }`. Absent fields take the defaults: textured, edges on, the rest off, the theme's background, no sky or ground, section cuts on. |
+| `style` | style, optional | The drawing style (absent: the default). `{ "preset"?, "face"?: "textured" / "shaded" / "monochrome" / "hidden_line" / "wireframe" / "x_ray", "edges"?: { "edges"?, "profiles"?, "extensions"?, "endpoints"? }, "background"?: [r, g, b], "sky"?: [r, g, b], "ground"?: [r, g, b], "section_cuts"?, "section_planes"?, "section_fill"?, "section_fill_color"?: [r, g, b], "section_line_color"?: [r, g, b], "section_line_width"? }`. Absent fields take the defaults: textured, edges on, the rest off, the theme's background, no sky or ground, section cuts, planes and fill on (lane 12: `section_cuts` makes active planes cut, `section_planes` draws the planes, `section_fill` fills the cut faces), the theme's section fill, the edge colour for cut lines, cut lines 3 px (1 to 12). |
 | `shadows` | shadows, optional | The sun: `{ "on", "month" (1-12), "day", "minutes" (after midnight, local solar time), "latitude" (degrees, -90..90), "light", "dark" (0..100), "ground", "faces" }`. North is +Y. |
-| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"?, "style"?, "shadows"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), the node open for editing in it, and the style and shadows it brings back when activated (absent: it leaves them as they are). Names are unique. |
+| `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"?, "style"?, "shadows"?, "sections"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), the node open for editing in it, and the style and shadows it brings back when activated (absent: it leaves them as they are). `sections` (lane 12) is `{ "active"?: [section id, ...], "hidden"?: [section id, ...] }`: activating the scene makes exactly those planes active and hidden and every other plane inactive and shown (`{}`: no plane cuts); absent, the scene leaves the planes as they are. Names are unique. |
 | `guides[]` | `{ "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). |
 | `dimensions[]` | `{ "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. |
 | `last_number` | integer, optional | The last display number handed out, so a deleted solid's number is not reused after a reopen. |
@@ -209,6 +209,81 @@ What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-
 
 A reader refuses a library that breaks any rule above (as it refuses any invalid model). The nesting itself is not stored: it is worked out from the model and this library, and is the same everywhere.
 
+### Section planes (lane 12)
+
+```json
+"sections": [
+  { "id": 1, "name": "Section 1", "origin": [0.3048, 0.127, 0.762], "normal": [1, 0, 0], "active": true },
+  { "id": 2, "name": "Plan at 30 in", "origin": [0, 0, 0.762], "normal": [0, 0, -1], "parent": 7, "hidden": true }
+]
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | integer | The plane's id in this file; scenes refer to it. Unique. A reader may renumber planes (Sawhorse does), mapping the scenes' ids along. |
+| `name` | string | 1 to 64 characters. |
+| `origin` | [x, y, z] | A point on the plane, metres, model coordinates. |
+| `normal` | [x, y, z] | The direction of the side the plane **keeps**. A reader normalises it and refuses a zero or non-finite one. Everything on the other side is cut away while the plane is active. |
+| `parent` | integer, optional | The node (`nodes[].id`) the plane is in: a group or a component instance (the plane belongs to that copy, not to the definition). Absent: the model's top level. |
+| `active` | boolean, optional | The plane cuts. At most one active plane per `parent` (the top level counts as one). Absent: false. |
+| `hidden` | boolean, optional | The plane is not drawn (an active hidden plane still cuts). Absent: false. |
+
+The cut itself is not stored: it is computed from the planes and the solids, the same everywhere. A plane cuts every solid inside its context, at any depth; a solid is cut by every active plane of the contexts around it.
+
+### Drawing sheets (lane 12)
+
+`sheets[]` lists the document's sheets in order. Paper coordinates are **metres from the paper's top-left corner, y down**, whatever units the sheet shows; a rectangle is `[x, y, width, height]`. Model points are metres, Z up, as everywhere else.
+
+```json
+"sheets": [
+  {
+    "name": "Bookshelf",
+    "paper": { "kind": "letter" },
+    "landscape": true,
+    "margins": [0.0127, 0.0127, 0.0127, 0.0127],
+    "units": "inches",
+    "grid": 0.003175,
+    "format": { "kind": "fraction", "den": 16 },
+    "title": { "title": "Bookshelf", "project": "Shop drawings", "date": "2026-10-12", "revision": "A" },
+    "items": [
+      { "id": 1, "kind": "viewport", "rect": [0.01524, 0.01524, 0.09144, 0.17272], "source": { "from": "scene", "name": "Front" }, "scale": { "kind": "ratio", "paper": 1, "model": 12 }, "caption": "FRONT ELEVATION 1:12" },
+      { "id": 4, "kind": "dimension", "viewport": 1, "dim": "horizontal", "points": [[0, 0, 0], [0.9144, 0, 0]], "offset": -0.00762, "style": "arrows" },
+      { "id": 7, "kind": "label", "at": [0.127, 0.187], "text": "Fixed shelf", "size": 0.003175, "leader": { "on": "model", "viewport": 1, "point": [0.6096, 0, 0.5461] } },
+      { "id": 8, "kind": "table", "rect": [0.127, 0.1238, 0.1397, 0.0413], "columns": ["part", "qty", "thickness", "width", "length", "material", "amount", "notes"], "title": "CUT LIST" }
+    ],
+    "next_item": 9
+  }
+]
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | 1 to 64 characters. |
+| `paper` | `{ "kind": "letter" / "legal" / "tabloid" / "a4" / "a3" / "a2" }` or `{ "kind": "custom", "width", "height" }` | The paper, given portrait (Letter 8.5 x 11 in, Legal 8.5 x 14, Tabloid 11 x 17, A4 210 x 297 mm, A3 297 x 420, A2 420 x 594; custom in metres, 50 mm to 2 m each side). |
+| `landscape` | boolean, optional | Turned on its side. Absent: portrait. |
+| `margins` | [top, right, bottom, left] | Metres; left and right together, and top and bottom together, stay under 80% of the paper. Default 1/2 in each. |
+| `units` | `"inches"` or `"millimetres"` | What the sheet's rulers, grid and fields show. Default inches. |
+| `grid` | number | The snap grid, metres, 0 (none) to 50 mm. Default 1/8 in. |
+| `format` | `{ "kind": "fraction", "den" }`, `{ "kind": "decimal", "places" }`, `{ "kind": "feet_inches", "den" }` or `{ "kind": "millimetres", "places" }` | How dimensions write lengths. Default fractions to 1/16 in. |
+| `title` | `{ "show"?, "title"?, "project"?, "sheet"?, "date"?, "scale"?, "drawn_by"?, "revision"? }` | The title block in the bottom-right corner. `show` defaults to true; empty or absent fields print nothing, except `sheet` ("n of N" from the order) and `scale` (the viewports' scale, or "As noted"). At most 500 characters each. |
+| `items[]` | item | Drawn in list order (later on top). At most 2,000 per sheet; at most 200 sheets. |
+| `items[].id` | integer | The item's id on its sheet, from 1, never reused. Dimensions and leaders refer to viewports by it. |
+| `next_item` | integer | The id the next item gets. |
+
+Items, by `kind`:
+
+| `kind` | Fields | Meaning |
+|---|---|---|
+| `viewport` | `rect`, `source`, `scale`, `centre`?, `hidden_lines`?, `caption`?, `border`? | A hidden-line drawing of the model. `source`: `{ "from": "scene", "name" }` (the scene's camera, hidden tags, style and section planes), `{ "from": "standard", "view": "front" / "back" / "left" / "right" / "top" / "bottom" / "iso" }` (the model as it is; front looks along +Y, top looks down) or `{ "from": "camera", "camera": { "eye", "target", "up", "parallel", "fov" } }`. `scale`: `{ "kind": "ratio", "paper", "model" }` (1:8 is paper 1, model 8), `{ "kind": "architect", "inches_per_foot" }` (1/4" = 1'-0" is 0.25) or `{ "kind": "nts" }` (not to scale: the drawing fits the rectangle; isometric and perspective views are always NTS). `centre`: the drawing point (metres along the view's right and up) at the rectangle's centre; absent, the drawing is centred. `hidden_lines`: hidden edges drawn dashed. `caption`: the text under it. `border`: its frame drawn. |
+| `dimension` | `viewport`, `dim`, `points`, `offset`, `style`?, `text`? | Measures the **model**: `points` are model points seen in the viewport (two; three for `angular`, the vertex first, and for `radius` and `diameter`, three points on the arc). `dim`: `horizontal` or `vertical` (along the view's right or up), `aligned`, `angular`, `radius`, `diameter`. `offset`: how far the dimension line stands off its points, paper metres, signed. `style`: `arrows` (default), `ticks`, `dots`. `text`: written instead of the measured value. The value is never stored: it is read from the points each time, in the sheet's `format`. The viewport must be on the same sheet. |
+| `label` | `at`, `text`, `size`, `leader`? | Text at `at` (paper), `size` its height in paper metres. `leader`: `{ "on": "paper", "at" }` or `{ "on": "model", "viewport", "point" }` (a model point seen in a viewport of the same sheet: the leader follows it). |
+| `table` | `rect`, `columns`, `decimal`?, `visible_only`?, `title`? | The model's cut list as a table, worked out when the sheet is drawn. `columns` from `part`, `qty`, `thickness`, `width`, `length`, `size` (T x W x L in one cell), `material`, `grain`, `amount` (board feet or area), `notes`. `decimal`: sizes as decimals instead of fractions. `visible_only`: hidden parts left out. |
+| `image` | `rect`, `path` | An image the model holds (`textures[].path`). |
+| `line` | `a`, `b`, `width`, `dashed`? | A line on the paper; `width` is the pen, paper metres. |
+| `rect` | `rect`, `width`, `fill`? | A rectangle; `fill` an sRGB colour `[r, g, b]`. |
+
+Renaming a scene renames it in the viewports that show it; deleting one leaves those viewports on its camera. A file whose sheets break a rule above is refused, as any invalid model is. Drawings, dimension values and tables are not stored: they are laid out from the model, the same everywhere.
+
 ## `geometry.glb`
 
 glTF 2.0 binary. One node per object and per imported mesh, named after it, flat-shaded, with:
@@ -226,4 +301,4 @@ glTF 2.0 binary. One node per object and per imported mesh, named after it, flat
 
 ## Reference implementation
 
-`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/kernel/src/stock.rs` (the stock library and its rules), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).
+`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/kernel/src/stock.rs` (the stock library and its rules), `crates/kernel/src/section.rs` and `sheets.rs` (section planes and sheets, lane 12), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).
