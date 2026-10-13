@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostMessage } from "../../packages/plugin-api/src/rpc.ts";
 import type { DocState, SceneData } from "../kernel/types";
+import { NeedsUserActivation, pickFile, saveFile } from "../io/files";
 import { fakeChannel, type FakeChannel } from "./fakeChannel";
 import { PluginManager, type AppBridge } from "./manager";
 import { grantMatches, packageDigest } from "./store";
@@ -40,7 +41,7 @@ const state = {
   scenes: [],
 } as unknown as DocState;
 
-function setup() {
+function setup(hostOptions: Record<string, number> = {}) {
   const channels: FakeChannel[] = [];
   const statuses: { text: string; kind: string; actions?: { label: string }[] }[] = [];
   const bridge = {
@@ -66,7 +67,7 @@ function setup() {
       channels.push(c);
       return c;
     },
-    hostOptions: { pingMs: 100, budgetMs: 1000, killMs: 3000, callBudgetMs: 500 },
+    hostOptions: { pingMs: 100, budgetMs: 1000, killMs: 3000, callBudgetMs: 500, ...hostOptions },
   });
   /** Send a request as the plugin; resolves to the host's answer. */
   const req = async (c: FakeChannel, method: string, params: unknown = null, id = Math.floor(Math.random() * 1e6)) => {
@@ -81,8 +82,8 @@ function setup() {
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.useRealTimers());
 
-async function running(over: Record<string, unknown> = {}) {
-  const t = setup();
+async function running(over: Record<string, unknown> = {}, hostOptions: Record<string, number> = {}) {
+  const t = setup(hostOptions);
   const e = await t.m.loadSession(files(over));
   await t.m.enable(e.id);
   await flush();
@@ -464,5 +465,119 @@ describe("tool events carry the model only with model.read (lane 17, F1)", () =>
     void m.toolCall(KEY, "tool.value", "3/4");
     await flush();
     expect(c.posted.filter((p) => p.t === "call").pop()).toMatchObject({ fn: "tool.value", args: ["t", "3/4"] });
+  });
+});
+
+describe("files a plugin saves and opens (lane 17, F2)", () => {
+  it("refuses names that would run when opened, whatever comes before the last dot", async () => {
+    const { c, req, bridge } = await running({ permissions: ["file"] });
+    for (const name of ["setup.exe", "SETUP.EXE", "report.txt.exe", "fix.bat", "fix.cmd", "a.ps1", "a.vbs", "a.js", "a.hta", "a.lnk", "a.scr", "a.msi", "a.jar", "run.sh", "a.command", "a.app", "page.html", "page.htm", "evil.exe.", "evil.exe . "]) {
+      const r = await req(c, "file.save", { name, data: "x" });
+      expect(r, name).toMatchObject({ ok: false, code: "invalid" });
+    }
+    expect(bridge.saveFile).not.toHaveBeenCalled();
+    for (const name of ["report.md", "cut list.csv", "panel.svg", "plan.dxf", "sheet.pdf", "data.json", "notes"]) expect(await req(c, "file.save", { name, data: "x" }), name).toMatchObject({ ok: true });
+  });
+
+  it("asks the person, naming the plugin, the file and its size, before a browser download; no means nothing is saved", async () => {
+    const { c, req, bridge } = await running({ permissions: ["file"] });
+    // The bridge's browser fallback: ask, then download.
+    const downloaded: string[] = [];
+    bridge.saveFile.mockImplementation((async (name: string, _b: Uint8Array, _t: unknown, opts?: { confirmDownload?: () => Promise<boolean> }) => {
+      if (opts?.confirmDownload && !(await opts.confirmDownload())) return null;
+      downloaded.push(name);
+      return { name };
+    }) as never);
+    bridge.dialog.mockResolvedValueOnce(false as never);
+    expect(await req(c, "file.save", { name: "report.md", data: "fourteen bytes" })).toMatchObject({ ok: true, value: null });
+    expect(bridge.dialog).toHaveBeenLastCalledWith({ kind: "download", plugin: "Test", name: "report.md", bytes: 14 }, expect.any(AbortSignal));
+    expect(downloaded).toEqual([]);
+    bridge.dialog.mockResolvedValueOnce(true as never);
+    expect(await req(c, "file.save", { name: "report.md", data: "fourteen bytes" })).toMatchObject({ ok: true, value: { name: "report.md" } });
+    expect(downloaded).toEqual(["report.md"]);
+  });
+
+  it("file.open without the person's click is refused with a typed error, not left waiting", async () => {
+    const { c, req, bridge } = await running({ permissions: ["file"] });
+    bridge.pickFile.mockRejectedValueOnce(new NeedsUserActivation() as never);
+    const r = await req(c, "file.open", { extensions: [".csv"] });
+    expect(r).toMatchObject({ ok: false, code: "user_activation" });
+    expect(r.ok === false && r.error).toContain("right after the person clicks");
+    // The slot is free: the next one is asked, not refused as busy.
+    expect(await req(c, "file.open", { extensions: [".csv"] })).toMatchObject({ ok: true, value: null });
+  });
+
+  it("a request waiting on the person is given up after waitMs: answered timeout, its work aborted, its slot free", async () => {
+    vi.useFakeTimers();
+    const { c, req, bridge } = await running({ permissions: ["file", "ui"] }, { waitMs: 2000 });
+    let seen: AbortSignal | undefined;
+    bridge.pickFile.mockImplementationOnce(((_t: unknown, opts?: { signal?: AbortSignal }) => {
+      seen = opts?.signal;
+      return new Promise(() => undefined); // a file input that never settles
+    }) as never);
+    c.fromPlugin({ t: "req", id: 41, method: "file.open", params: { extensions: [".csv"] } });
+    await flush();
+    expect(c.answer(41)).toBeUndefined();
+    expect(await req(c, "file.open", {}, 42)).toMatchObject({ ok: false, code: "busy" });
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(c.answer(41)).toMatchObject({ ok: false, code: "timeout" });
+    expect(seen?.aborted).toBe(true);
+    expect(await req(c, "file.open", {}, 43)).toMatchObject({ ok: true, value: null });
+    // A dialog the same way (it closes: its signal aborts).
+    let dialogSignal: AbortSignal | undefined;
+    bridge.dialog.mockImplementationOnce(((_r: unknown, s?: AbortSignal) => {
+      dialogSignal = s;
+      return new Promise(() => undefined);
+    }) as never);
+    c.fromPlugin({ t: "req", id: 44, method: "ui.confirm", params: { title: "Sure?", text: "?" } });
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(c.answer(44)).toMatchObject({ ok: false, code: "timeout" });
+    expect(dialogSignal?.aborted).toBe(true);
+  });
+});
+
+describe("the browser's file paths (lane 17, F2)", () => {
+  const type = { description: "Markdown", mime: "text/markdown", extensions: [".md"] };
+  it("the download fallback asks first and downloads nothing on no", async () => {
+    const created: unknown[] = [];
+    const url = URL as unknown as { createObjectURL?: (b: unknown) => string; revokeObjectURL?: (u: string) => void };
+    const was = { create: url.createObjectURL, revoke: url.revokeObjectURL };
+    url.createObjectURL = (b) => (created.push(b), "blob:x");
+    url.revokeObjectURL = () => undefined;
+    // jsdom cannot follow a download link.
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    try {
+      const ask = vi.fn(async () => false);
+      expect(await saveFile("a.md", new Uint8Array(3), type, undefined, { confirmDownload: ask })).toBeNull();
+      expect(ask).toHaveBeenCalledOnce();
+      expect(created).toEqual([]);
+      expect(await saveFile("a.md", new Uint8Array(3), type, undefined, { confirmDownload: async () => true })).toEqual({ name: "a.md" });
+      expect(created.length).toBe(1);
+      // The app's own saves (no confirmDownload) download as before.
+      expect(await saveFile("b.md", new Uint8Array(3), type)).toEqual({ name: "b.md" });
+      expect(created.length).toBe(2);
+      expect(click).toHaveBeenCalledTimes(2);
+    } finally {
+      click.mockRestore();
+      url.createObjectURL = was.create;
+      url.revokeObjectURL = was.revoke;
+    }
+  });
+
+  it("a picker asked for without a click is refused at once instead of a file input that never answers", async () => {
+    const nav = navigator as Navigator & { userActivation?: { isActive: boolean } };
+    Object.defineProperty(nav, "userActivation", { value: { isActive: false }, configurable: true });
+    try {
+      await expect(pickFile([type], { requireActivation: true })).rejects.toBeInstanceOf(NeedsUserActivation);
+      const ctl = new AbortController();
+      Object.defineProperty(nav, "userActivation", { value: { isActive: true }, configurable: true });
+      const p = pickFile([type], { requireActivation: true, signal: ctl.signal });
+      expect(document.querySelectorAll('input[type="file"]').length).toBe(1);
+      ctl.abort();
+      expect(await p).toBeNull();
+      expect(document.querySelectorAll('input[type="file"]').length).toBe(0);
+    } finally {
+      delete (nav as { userActivation?: unknown }).userActivation;
+    }
   });
 });

@@ -541,7 +541,8 @@ declare module "sawhorse" {
    * the app cannot use), "too_large" (the call or its answer is over the message budget,
    * lane 16: 4 MB a message, more for files and the network), "not_found", "busy" (too many
    * calls at once or too fast), "stopped" (the plugin stopped while the call waited),
-   * "unknown" (no such call), "send_failed" (the message could not be sent), "refused"
+   * "timeout" (a save, open or dialog nobody answered for 5 minutes), "user_activation"
+   * (file.open without the person's click, in the browser), "unknown" (no such call), "send_failed" (the message could not be sent), "refused"
    * (anything else the app said no to). */
   export class PluginApiError extends Error {
     readonly code: string;
@@ -559,9 +560,9 @@ declare module "sawhorse" {
   export const storage: { app: Store; document: Store };
 
   export const file: {
-    /** file. Save through the app's save dialog (the user picks the place); null when cancelled. */
+    /** file. Save through the app's save dialog (the user picks the place); null when cancelled. A browser without one asks the person first (the app's dialog names the plugin, the file and its size). Names that would run when opened (.exe, .bat, .js, .html ...) are refused ("invalid"). */
     save(spec: { name: string; data: string | Uint8Array; mime?: string; description?: string }): Promise<{ name: string } | null>;
-    /** file. Open through the app's open dialog; null when cancelled. */
+    /** file. Open through the app's open dialog; null when cancelled. In the browser it needs the person's click (call it from a command, a button or a tool click): later it rejects with code "user_activation". */
     open(spec?: { extensions?: string[]; description?: string }): Promise<{ name: string; bytes: Uint8Array } | null>;
   };
 

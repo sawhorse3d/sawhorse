@@ -179,6 +179,17 @@ test("model report: live counts that match the model, and an export as Markdown 
   const downloads: string[] = [];
   page.on("download", async (d) => downloads.push(readFileSync((await d.path())!, "utf8")));
   await report.locator('[data-action="export"]').click();
+  // Lane 17: no save dialog in this browser, so the app asks before each download, naming
+  // the plugin, the file and its size; nothing is downloaded before the person says yes.
+  for (const name of ["Untitled report.md", "Untitled report.csv"]) {
+    const ask = page.getByRole("dialog", { name: `Save ${name}?` });
+    await expect(ask).toContainText(`Model report wants to save ${name} (`);
+    await expect(ask).toContainText(/\d[\d,]* bytes\)/);
+    expect(downloads.length).toBe(name.endsWith(".md") ? 0 : 1);
+    await ask.getByRole("button", { name: "Save" }).click();
+    await expect(ask).toHaveCount(0);
+    if (name.endsWith(".md")) await expect.poll(() => downloads.length).toBe(1);
+  }
   await expect(page.locator("#hint")).toContainText("Saved Untitled report.md and Untitled report.csv");
   await expect.poll(() => downloads.length).toBe(2);
   const md = downloads.find((d) => d.startsWith("# Model report"))!;

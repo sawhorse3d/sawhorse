@@ -19,7 +19,7 @@ export const PERMISSION_TEXT: Record<Permission, { title: string; detail: string
   "model.write": { title: "Change the model", detail: "every change is one named undo step, checked by the kernel like your own edits" },
   ui: { title: "Add to the window", detail: "panels in the side panel, commands in the Plugins menu, tools on the rail (they follow the pointer, but see nothing of the model without \"Read the model\"), messages and questions" },
   storage: { title: "Keep settings", detail: "a small store of its own, for this app and inside the documents you save" },
-  file: { title: "Save and open files", detail: "only through the save and open dialogs, where you pick the file" },
+  file: { title: "Save and open files", detail: "only through the save and open dialogs, where you pick the file (a browser without a save dialog asks you before each download); never programs or scripts" },
   net: { title: "Use the network", detail: "only the sites listed here" },
 };
 

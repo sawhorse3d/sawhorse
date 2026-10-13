@@ -123,8 +123,34 @@ const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortEr
 
 // ---- open -----------------------------------------------------------------------------
 
+/** A browser picker asked for without the person's click (lane 17): the browser would not
+ * open it, and the file input's promise would never settle. */
+export class NeedsUserActivation extends Error {
+  constructor() {
+    super("the browser opens a file picker only right after the person clicks or presses a key: ask from a command, a panel button or a tool click");
+    this.name = "NeedsUserActivation";
+  }
+}
+
+/** Whether the page may open a picker now (no API to ask: assume so). */
+export function hasUserActivation(): boolean {
+  if (typeof navigator === "undefined") return true;
+  const ua = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+  return !ua || ua.isActive;
+}
+
+export interface PickOptions {
+  /** Refuse (NeedsUserActivation) in the browser when the page has no transient activation. */
+  requireActivation?: boolean;
+  /** Aborted: the picker's answer is dropped (null), the file input taken away. */
+  signal?: AbortSignal;
+}
+
 /** Ask for one file of `types`. */
-export async function pickFile(types: FileType[]): Promise<PickedFile | null> {
+export async function pickFile(types: FileType[], opts: PickOptions = {}): Promise<PickedFile | null> {
+  const { signal } = opts;
+  if (signal?.aborted) return null;
+  if (!isTauri() && opts.requireActivation && !hasUserActivation()) throw new NeedsUserActivation();
   if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const path = await open({
@@ -132,13 +158,14 @@ export async function pickFile(types: FileType[]): Promise<PickedFile | null> {
       directory: false,
       filters: [{ name: "Supported files", extensions: types.flatMap((t) => t.extensions.map((e) => e.slice(1))) }],
     });
-    if (typeof path !== "string") return null;
+    if (typeof path !== "string" || signal?.aborted) return null;
     return { name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } };
   }
   const api = fsa();
   if (api) {
     try {
       const [h] = await api.showOpenFilePicker({ multiple: false, types: [{ description: "Supported files", accept: { "application/octet-stream": types.flatMap((t) => t.extensions) } }] });
+      if (signal?.aborted) return null;
       const f = await h.getFile();
       checkSize(f.name, f.size);
       return { name: f.name, bytes: new Uint8Array(await f.arrayBuffer()), handle: { kind: "fsa", handle: h } };
@@ -148,10 +175,10 @@ export async function pickFile(types: FileType[]): Promise<PickedFile | null> {
       // A picker that will not open here (an iframe, a policy) falls back to the input.
     }
   }
-  return pickWithInput(types);
+  return pickWithInput(types, signal);
 }
 
-function pickWithInput(types: FileType[]): Promise<PickedFile | null> {
+function pickWithInput(types: FileType[], signal?: AbortSignal): Promise<PickedFile | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -162,12 +189,16 @@ function pickWithInput(types: FileType[]): Promise<PickedFile | null> {
       if (settled) return;
       settled = true;
       input.remove();
+      signal?.removeEventListener("abort", gone);
       resolve(v);
     };
+    // Given up (the plugin stopped, its request timed out): the input goes, the answer is null.
+    const gone = () => done(null);
+    signal?.addEventListener("abort", gone, { once: true });
     input.addEventListener("change", async () => {
       const f = input.files?.[0];
       try {
-        done(f ? await readBrowserFile(f) : null);
+        done(f && !signal?.aborted ? await readBrowserFile(f) : null);
       } catch (e) {
         settled = true;
         input.remove();
@@ -188,17 +219,30 @@ export async function readBrowserFile(f: File): Promise<PickedFile> {
 
 // ---- save -----------------------------------------------------------------------------
 
+export interface SaveOptions {
+  /**
+   * Lane 17: asked before the browser fallback hands the file to the browser's downloads
+   * (no save dialog of the system's here, so nobody would see the file go otherwise);
+   * false cancels the save. Plugins' saves always pass one.
+   */
+  confirmDownload?: () => Promise<boolean>;
+  /** Aborted before the file is written: nothing is written (null). */
+  signal?: AbortSignal;
+}
+
 /**
  * Save `bytes` as `name`. With `handle` (Save, not Save As) writes back to that file
  * without asking. Returns where it went, or null when cancelled.
  */
-export async function saveFile(name: string, bytes: Uint8Array, type: FileType, handle?: FileHandle): Promise<{ name: string; handle?: FileHandle } | null> {
+export async function saveFile(name: string, bytes: Uint8Array, type: FileType, handle?: FileHandle, opts: SaveOptions = {}): Promise<{ name: string; handle?: FileHandle } | null> {
+  const { signal } = opts;
+  if (signal?.aborted) return null;
   if (isTauri()) {
     let path = handle?.kind === "tauri" ? handle.path : null;
     if (!path) {
       const { save } = await import("@tauri-apps/plugin-dialog");
       path = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
-      if (!path) return null;
+      if (!path || signal?.aborted) return null;
     }
     // Lane 16: written beside, synced, read back, then renamed over the file (the previous
     // one kept as .bak), never truncated in place (src-tauri/safe-save).
@@ -210,6 +254,7 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
   if (api) {
     try {
       const h = handle?.kind === "fsa" ? handle.handle : await api.showSaveFilePicker({ suggestedName: name, types: fsaTypes([type]) });
+      if (signal?.aborted) return null;
       const w = await h.createWritable();
       await w.write(bytes as BufferSource);
       await w.close();
@@ -219,6 +264,8 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
       // Not allowed here: fall back to a download.
     }
   }
+  if (opts.confirmDownload && !(await opts.confirmDownload())) return null;
+  if (signal?.aborted) return null;
   download(name, bytes, type.mime);
   return { name };
 }

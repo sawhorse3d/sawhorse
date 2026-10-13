@@ -1196,8 +1196,9 @@ export function App() {
         return r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];
       },
       status: (text, kind, actions) => setMessage({ text, error: kind === "error", actions }),
-      saveFile: (name, bytes, type) => saveFile(name, bytes, type),
-      pickFile: (types) => pickAnyFile(types),
+      // Lane 17: a plugin's save asks before a browser download; its open needs the person's click.
+      saveFile: (name, bytes, type, opts) => saveFile(name, bytes, type, undefined, opts),
+      pickFile: (types, opts) => pickAnyFile(types, { requireActivation: true, signal: opts?.signal }),
       activateTool: (id) => selectToolRef.current(id as ToolId),
       activeTool: () => toolIdRef.current,
       fetch: (url, init) => window.fetch(url, init),

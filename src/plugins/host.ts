@@ -73,7 +73,7 @@ export const EVENTS: Record<string, Permission | null> = {
 };
 
 /** Why a request was refused, for the plugin (`error.code`). */
-export type RefusalCode = "permission" | "unknown" | "invalid" | "refused" | "busy" | "stopped" | "too_large";
+export type RefusalCode = "permission" | "unknown" | "invalid" | "refused" | "busy" | "stopped" | "too_large" | "timeout" | "user_activation";
 
 export class PluginRefusal extends Error {
   readonly code: RefusalCode;
@@ -134,8 +134,10 @@ export interface LogLine {
 }
 
 export interface HostDelegate {
-  /** Run a request the permission check let through. Throw a PluginRefusal to refuse it. */
-  handle(host: PluginHost, method: string, params: Data): Promise<Data>;
+  /** Run a request the permission check let through. Throw a PluginRefusal to refuse it.
+   * `signal` is aborted when the plugin stops or the request is given up (WAIT_LIMITED):
+   * work not yet done for it is dropped (a dialog closes, a picker's answer is not used). */
+  handle(host: PluginHost, method: string, params: Data, signal: AbortSignal): Promise<Data>;
   /** Status, last error or the log changed. */
   changed(host: PluginHost): void;
   /** Something worth telling the person (unresponsive, crashed, slow). */
@@ -165,9 +167,12 @@ export interface HostOptions {
   cpuMsPerSec: number;
   /** ... and how many such seconds in a row stop it. */
   cpuStrikes: number;
+  /** Lane 17: longest a request waiting on the person (a picker, a dialog) holds its slot;
+   * then it is answered "timeout" and the slot is free again. */
+  waitMs: number;
 }
 
-export const DEFAULT_HOST_OPTIONS: HostOptions = { pingMs: 1000, budgetMs: 5000, killMs: 15000, callBudgetMs: 10000, maxPending: 64, maxLog: 500, ratePerSec: 300, burst: 100, batchesPerSec: 10, cpuMsPerSec: 250, cpuStrikes: 5 };
+export const DEFAULT_HOST_OPTIONS: HostOptions = { pingMs: 1000, budgetMs: 5000, killMs: 15000, callBudgetMs: 10000, maxPending: 64, maxLog: 500, ratePerSec: 300, burst: 100, batchesPerSec: 10, cpuMsPerSec: 250, cpuStrikes: 5, waitMs: 300_000 };
 
 /** Requests of one method a plugin may have waiting at once (the rest: maxPending). */
 export const IN_FLIGHT: Record<string, number> = {
@@ -178,6 +183,15 @@ export const IN_FLIGHT: Record<string, number> = {
   // One dialog at a time per plugin (prompt and confirm share it).
   dialog: 1,
 };
+
+/**
+ * Lane 17: the slots whose requests wait on the person (or on a browser picker that may
+ * never answer: a file input opened without a click never settles). Each is given up after
+ * `waitMs`: answered with code "timeout", its work aborted, the slot free again. Batches and
+ * fetches are not: a batch may already be applying (giving it up would tell the plugin it
+ * failed when it did not), and a fetch has its own 30 s.
+ */
+export const WAIT_LIMITED = new Set(["file.save", "file.open", "dialog"]);
 
 /** Longest line kept in a plugin's console, and longest error the Plugins pane shows. */
 export const LOG_TEXT_MAX = 2000;
@@ -501,17 +515,38 @@ export class PluginHost {
     }
     this.inFlight++;
     if (cap !== undefined) this.flying.set(slot, (this.flying.get(slot) ?? 0) + 1);
+    // The request's own signal: aborted when the plugin stops, or when a request waiting on
+    // the person is given up (WAIT_LIMITED).
+    const ctl = new AbortController();
+    const stopped = () => ctl.abort();
+    this.abort.signal.addEventListener("abort", stopped, { once: true });
+    let timer: ReturnType<typeof setTimeout> | null = null;
     try {
       let value: Data;
       if (method === "events.subscribe") {
         this.subscriptions.add((params as { name: string }).name);
         value = null;
-      } else value = await this.delegate.handle(this, method, params);
+      } else {
+        const work = this.delegate.handle(this, method, params, ctl.signal);
+        if (WAIT_LIMITED.has(slot)) {
+          const limit = this.opts.waitMs;
+          const given = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              ctl.abort();
+              reject(new PluginRefusal(`${method}: no answer after ${Math.round(limit / 1000)} s, so the request was given up (nothing was saved or read)`, "timeout"));
+            }, limit);
+          });
+          work.catch(() => undefined);
+          value = await Promise.race([work, given]);
+        } else value = await work;
+      }
       if (this.alive) this.post({ t: "res", id, ok: true, value, method });
     } catch (e) {
       const code: RefusalCode = e instanceof PluginRefusal ? e.code : "refused";
       if (this.alive) refuse(e instanceof Error ? e.message : String(e), code);
     } finally {
+      if (timer !== null) clearTimeout(timer);
+      this.abort.signal.removeEventListener("abort", stopped);
       this.inFlight--;
       if (cap !== undefined) this.flying.set(slot, (this.flying.get(slot) ?? 1) - 1);
     }

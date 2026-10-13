@@ -19,6 +19,14 @@ export type PluginDialogState =
     }
   | { kind: "plugin"; req: DialogRequest; resolve: (v: string | boolean | null) => void };
 
+/** "12,345 bytes" under a kilobyte's worth, else "1.2 MB (1,234,567 bytes)": the exact count always. */
+export function formatBytes(n: number): string {
+  const exact = `${n.toLocaleString("en-US")} ${n === 1 ? "byte" : "bytes"}`;
+  if (n < 1024) return exact;
+  const [v, u] = n < 1024 * 1024 ? [n / 1024, "KB"] : [n / 1024 / 1024, "MB"];
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u}, ${exact}`;
+}
+
 export function PluginDialog({ state, onClose }: { state: PluginDialogState; onClose: () => void }) {
   const [text, setText] = useState(state.kind === "plugin" && state.req.kind === "prompt" ? state.req.value : "");
   const finish = (v: string | boolean | null) => {
@@ -74,6 +82,28 @@ export function PluginDialog({ state, onClose }: { state: PluginDialogState; onC
   }
 
   const r = state.req;
+  if (r.kind === "download") {
+    // Lane 17: the app's own question (not the plugin's words) before a browser without a
+    // save dialog puts a plugin's file in the downloads.
+    return (
+      <section className="name-dialog plugin-dialog" role="dialog" aria-label={`Save ${r.name}?`} data-download="" onKeyDown={keys}>
+        <header>
+          <b>Save a file from {r.plugin}?</b>
+        </header>
+        <p className="plugin-desc">
+          <b>{r.plugin}</b> wants to save <b data-file="">{r.name}</b> ({formatBytes(r.bytes)}) to your downloads folder. This browser has no save dialog, so Sawhorse asks first.
+        </p>
+        <div className="btnrow">
+          <button type="button" className="btn primary" autoFocus onClick={() => finish(true)}>
+            Save
+          </button>
+          <button type="button" className="btn" onClick={() => finish(false)}>
+            Cancel
+          </button>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="name-dialog plugin-dialog" role="dialog" aria-label={`${r.plugin}: ${r.title}`} onKeyDown={keys}>
       <header>

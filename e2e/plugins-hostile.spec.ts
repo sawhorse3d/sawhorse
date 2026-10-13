@@ -230,3 +230,43 @@ test("a ui-only plugin's tool never sees a solid id: pointer events over a solid
   expect(ownPoints).toBeGreaterThan(0);
   expect(events.some((r) => r.includes('"type":"click"'))).toBe(true);
 });
+
+// Lane 17 (F2b): a plugin asks for a file long after the person last clicked. The browser
+// would not open the picker (and a file input opened then never answered, holding the
+// plugin's file.open slot for good): the call is refused at once with "user_activation".
+test("file.open without the person's click is refused with a typed error instead of hanging", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/?autosave=0&io=basic");
+  const vp = page.locator("main.vp");
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  const id = "org.example.sneaky-open";
+  const files = {
+    "plugin.json": JSON.stringify({ id, name: "Sneaky open", version: "1.0.0", api: 1, description: "Opens a picker on its own.", author: "Sawhorse", license: "MIT", permissions: ["file"] }),
+    // The browser's transient activation lasts about five seconds after a click.
+    "main.js": `import { file } from "sawhorse";
+setTimeout(async () => {
+  for (const n of [1, 2]) {
+    const t0 = Date.now();
+    try { await file.open({ extensions: [".csv"] }); console.log("open" + n + "=opened"); }
+    catch (e) { console.log("open" + n + "=" + JSON.stringify({ code: e.code, ms: Date.now() - t0 })); }
+  }
+}, 7000);
+console.log("waiting");`,
+  };
+  let chooser = false;
+  page.on("filechooser", () => (chooser = true));
+  await page.evaluate((f) => (window as unknown as { __sawhorse: { plugins: { loadSession(f: Record<string, string>): Promise<string> } } }).__sawhorse.plugins.loadSession(f), files);
+  await page.getByRole("tab", { name: "Plugins" }).click();
+  await page.locator(`.plugin-row[data-plugin="${id}"] [data-do="enable"]`).click();
+  await page.getByRole("dialog", { name: "Enable Sneaky open" }).getByRole("button", { name: "Enable" }).click();
+  const logs = async () => (await page.evaluate((x) => (window as unknown as { __sawhorse: Hook }).__sawhorse.plugins.list().find((e) => e.id === x)?.logs ?? [], id)) as string[];
+  await expect.poll(async () => (await logs()).filter((l) => /open\d=/.test(l)).length, { timeout: 20_000 }).toBe(2);
+  for (const n of [1, 2]) {
+    const line = (await logs()).find((l) => l.includes(`open${n}=`))!;
+    const r = JSON.parse(line.slice(line.indexOf("=") + 1)) as { code: string; ms: number };
+    // Refused at once, and the second is refused the same way (not "busy": no slot was held).
+    expect(r.code).toBe("user_activation");
+    expect(r.ms).toBeLessThan(2000);
+  }
+  expect(chooser).toBe(false);
+});

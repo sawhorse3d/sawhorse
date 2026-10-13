@@ -7,7 +7,7 @@ import { hostAllowed, PERMISSION_TEXT, type Manifest, type Permission, type Tool
 import type { Data } from "../../packages/plugin-api/src/rpc.ts";
 import type { KernelClient } from "../kernel/client";
 import type { CutList, Entity, OpOutcome, Rounding, SceneData } from "../kernel/types";
-import type { FileType, PickedFile } from "../io/files";
+import { NeedsUserActivation, type FileType, type PickedFile } from "../io/files";
 import { scopeEntity } from "../lib/scope";
 import type { UnitSystem } from "../lib/units";
 import { bundledPlugins } from "./bundled";
@@ -27,7 +27,26 @@ export const FORBIDDEN_OPS = new Set(["undo", "redo", "batch", "set_context", "l
 /** Most ops one batch may hold (crates/kernel/src/refbatch.rs MAX_OPS; lane 16: was 10,000). */
 export const MAX_BATCH_OPS = 2_000;
 
-export type DialogRequest = { kind: "prompt"; plugin: string; title: string; label: string; value: string; ok: string } | { kind: "confirm"; plugin: string; title: string; text: string; ok: string };
+export type DialogRequest =
+  | { kind: "prompt"; plugin: string; title: string; label: string; value: string; ok: string }
+  | { kind: "confirm"; plugin: string; title: string; text: string; ok: string }
+  /** Lane 17: the app's own question before a plugin's file goes to the browser's downloads. */
+  | { kind: "download"; plugin: string; name: string; bytes: number };
+
+/**
+ * Lane 17: file names a plugin may not save, by their last extension: programs, scripts,
+ * shortcuts and pages a double-click would run (Windows, macOS, Linux and the browser).
+ * A plugin's report is .md, .csv, .txt, .json, .svg, .dxf, .pdf ...; nothing it needs ends
+ * in one of these.
+ */
+export const BLOCKED_SAVE_EXTENSIONS = new Set([
+  // Windows programs, installers, scripts and shortcuts
+  ".exe", ".com", ".scr", ".pif", ".cpl", ".msi", ".msp", ".msc", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".ps1xml", ".vbs", ".vbe", ".js", ".jse", ".mjs", ".cjs", ".wsf", ".wsh", ".wsc", ".hta", ".lnk", ".url", ".scf", ".reg", ".inf", ".dll", ".sys", ".appx", ".appxbundle", ".msix", ".msixbundle", ".appref-ms", ".application", ".gadget", ".chm", ".settingcontent-ms",
+  // macOS and Linux programs, packages and launchers
+  ".app", ".command", ".pkg", ".dmg", ".sh", ".bash", ".zsh", ".csh", ".ksh", ".fish", ".run", ".desktop", ".deb", ".rpm", ".appimage", ".so", ".dylib", ".workflow", ".terminal",
+  // Cross-platform runtimes and pages that run script when opened
+  ".jar", ".jnlp", ".py", ".pyw", ".pl", ".rb", ".php", ".apk", ".html", ".htm", ".xhtml", ".shtml", ".mht", ".mhtml", ".xht",
+]);
 
 /** Lane 16: the network answer a plugin may receive, and how much it may download a minute. */
 export const NET_LIMITS = { answer: 10 * 1024 * 1024, perMinute: 50 * 1024 * 1024, seconds: 30 };
@@ -90,8 +109,11 @@ export interface AppBridge {
   status(text: string, kind: "info" | "warning" | "error", actions?: { label: string; run: () => void }[]): void;
   /** `signal` aborts when the plugin stops: its dialog closes (or never opens) and answers null. */
   dialog(req: DialogRequest, signal?: AbortSignal): Promise<string | boolean | null>;
-  saveFile(name: string, bytes: Uint8Array, type: FileType): Promise<{ name: string } | null>;
-  pickFile(types: FileType[]): Promise<PickedFile | null>;
+  /** Save through the app's dialog. Lane 17: `confirmDownload` is asked before a browser
+   * without a save dialog downloads the file; `signal` aborted: nothing is written. */
+  saveFile(name: string, bytes: Uint8Array, type: FileType, opts?: { confirmDownload?: () => Promise<boolean>; signal?: AbortSignal }): Promise<{ name: string } | null>;
+  /** Lane 17: in the browser, refused (NeedsUserActivation) without the person's click. */
+  pickFile(types: FileType[], opts?: { signal?: AbortSignal }): Promise<PickedFile | null>;
   /** Make a tool active ("select", "plugin:<id>/<tool>"). */
   activateTool(id: string): void;
   activeTool(): string;
@@ -515,10 +537,10 @@ export class PluginManager {
     changed: (host: PluginHost) => this.sync(host),
     report: (host: PluginHost, text: string, kind: "warning" | "error", action?: "stop" | "reload") =>
       this.bridge.status(text, kind, action === "stop" ? [{ label: "Stop", run: () => this.stopNow(host.id) }] : action === "reload" ? [{ label: "Reload", run: () => void this.reload(host.id) }] : undefined),
-    handle: (host: PluginHost, method: string, params: Data) => this.handle(host, method, params),
+    handle: (host: PluginHost, method: string, params: Data, signal: AbortSignal) => this.handle(host, method, params, signal),
   };
 
-  private async handle(host: PluginHost, method: string, params: Data): Promise<Data> {
+  private async handle(host: PluginHost, method: string, params: Data, signal: AbortSignal = host.signal): Promise<Data> {
     const p = (isObj(params) ? params : {}) as Record<string, unknown>;
     const m = host.pkg.manifest;
     const b = this.bridge;
@@ -705,12 +727,12 @@ export class PluginManager {
       }
       case "ui.prompt": {
         const req: DialogRequest = { kind: "prompt", plugin: m.name, title: text(p.title, "prompt title", DIALOG_LIMITS.title, m.name), label: text(p.label, "prompt label", DIALOG_LIMITS.label, ""), value: text(p.value, "prompt value", DIALOG_LIMITS.value, ""), ok: text(p.ok, "prompt ok", DIALOG_LIMITS.ok, "OK") };
-        const r = await b.dialog(req, host.signal);
+        const r = await b.dialog(req, signal);
         return typeof r === "string" ? r : null;
       }
       case "ui.confirm": {
         const req: DialogRequest = { kind: "confirm", plugin: m.name, title: text(p.title, "confirm title", DIALOG_LIMITS.title, m.name), text: text(p.text, "confirm text", DIALOG_LIMITS.text, ""), ok: text(p.ok, "confirm ok", DIALOG_LIMITS.ok, "OK") };
-        const r = await b.dialog(req, host.signal);
+        const r = await b.dialog(req, signal);
         return r === true;
       }
 
@@ -742,18 +764,34 @@ export class PluginManager {
       case "file.save": {
         const name = typeof p.name === "string" ? p.name.trim() : "";
         if (!name || name.length > 200 || /[\\/:*?"<>|\x00-\x1f]/.test(name)) throw new PluginRefusal("file.save needs a plain file name (no folders), like \"report.md\"", "invalid");
+        // Lane 17: Windows drops trailing dots and spaces ("setup.exe." is setup.exe), and a
+        // name that would run when opened is refused, whatever comes before its last dot.
+        if (/[. ]$/.test(name)) throw new PluginRefusal(`file.save: "${name}" ends with a dot or a space`, "invalid");
+        const last = /(\.[^.]+)$/.exec(name)?.[1]?.toLowerCase();
+        if (last && BLOCKED_SAVE_EXTENSIONS.has(last)) throw new PluginRefusal(`file.save: plugins may not save ${last} files (programs, scripts and pages that run when opened)`, "invalid");
         const bytes = typeof p.data === "string" ? new TextEncoder().encode(p.data) : p.data instanceof Uint8Array ? p.data : null;
         if (!bytes) throw new PluginRefusal("file.save needs data: text or a Uint8Array", "invalid");
         const ext = /(\.[A-Za-z0-9]{1,10})$/.exec(name)?.[1]?.toLowerCase() ?? ".txt";
         const mime = typeof p.mime === "string" && /^[a-z]+\/[a-z0-9.+-]+$/i.test(p.mime) ? p.mime : "application/octet-stream";
-        const r = await b.saveFile(name, bytes, { description: typeof p.description === "string" ? p.description.slice(0, 60) : `${ext.slice(1).toUpperCase()} file`, mime, extensions: [ext] });
+        // Lane 17: a browser without a save dialog would put the file in the downloads at
+        // once; the app asks first, naming the plugin, the file and its size.
+        const confirmDownload = async () => (await b.dialog({ kind: "download", plugin: m.name, name, bytes: bytes.byteLength }, signal)) === true;
+        const r = await b.saveFile(name, bytes, { description: typeof p.description === "string" ? p.description.slice(0, 60) : `${ext.slice(1).toUpperCase()} file`, mime, extensions: [ext] }, { confirmDownload, signal });
         host.log("info", r ? `saved ${r.name}` : "save cancelled");
         return r ? { name: r.name } : null;
       }
       case "file.open": {
         const exts = Array.isArray(p.extensions) ? p.extensions.filter((x): x is string => typeof x === "string" && /^\.[A-Za-z0-9]{1,10}$/.test(x)).slice(0, 20) : [];
-        const f = await b.pickFile([{ description: typeof p.description === "string" ? p.description.slice(0, 60) : "Files", mime: "application/octet-stream", extensions: exts.length ? exts : [".txt"] }]);
-        return f ? { name: f.name, bytes: f.bytes } : null;
+        let f: PickedFile | null;
+        try {
+          f = await b.pickFile([{ description: typeof p.description === "string" ? p.description.slice(0, 60) : "Files", mime: "application/octet-stream", extensions: exts.length ? exts : [".txt"] }], { signal });
+        } catch (e) {
+          // Lane 17: without the person's click the browser never opens the picker (and a
+          // file input's promise never settled, holding the plugin's file.open slot).
+          if (e instanceof NeedsUserActivation) throw new PluginRefusal(`file.open: ${e.message}`, "user_activation");
+          throw e;
+        }
+        return f && !signal.aborted ? { name: f.name, bytes: f.bytes } : null;
       }
 
       // -- the network, only the manifest's hosts
