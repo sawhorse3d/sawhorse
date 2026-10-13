@@ -331,3 +331,10 @@ export function boxSelect(mesh: MeshData | null, toScreen: (p: V3) => P2, box: B
   }
   return out;
 }
+
+/** Lane 15: an edge's soft (1), smooth (2) and hidden (4) flags in words ("soft and smooth"),
+ * "" for a plain edge. */
+export function edgeFlagWords(flags: number | undefined): string {
+  const w = [flags && flags & 1 ? "soft" : "", flags && flags & 2 ? "smooth" : "", flags && flags & 4 ? "hidden" : ""].filter(Boolean);
+  return w.length <= 1 ? (w[0] ?? "") : `${w.slice(0, -1).join(", ")} and ${w[w.length - 1]}`;
+}

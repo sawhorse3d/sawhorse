@@ -202,6 +202,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                 face_labels: Vec::new(),
                 face_materials: vec![],
                 face_uvs: vec![],
+                edge_flags: vec![],
             };
             collect(
                 &objects,

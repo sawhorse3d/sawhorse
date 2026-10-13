@@ -54,6 +54,7 @@ fn box_item(name: &str, at: [f64; 3], size: [f64; 3], skip: &[usize]) -> ImportI
         face_labels: vec![],
         face_materials: vec![],
         face_uvs: vec![],
+        edge_flags: vec![],
     }
 }
 
@@ -62,6 +63,7 @@ fn group(name: &str, items: Vec<ImportItem>) -> ImportNode {
         name: Some(name.into()),
         tag: None,
         hidden: false,
+        sections: vec![],
         kind: ImportNodeKind::Group {
             items,
             children: vec![],

@@ -240,3 +240,67 @@ export class TextureCache {
     this.byDigest.clear();
   }
 }
+
+/** Soft (1), smooth (2) and hidden (4) edge flags (crates/kernel/src/edges.rs). */
+export const EDGE_SOFT = 1;
+export const EDGE_SMOOTH = 2;
+export const EDGE_HIDDEN = 4;
+
+/** The model's edges sorted by how they are drawn (lane 15): `hard` ones as lines; `soft`
+ * ones (soft, not hidden) only as profiles where they turn into a silhouette, or dashed with
+ * the style's "soft and hidden edges" switch; `hidden` ones only dashed with that switch.
+ * Normals follow their edges (six per segment). Without flags, `hard` is the input itself. */
+export interface EdgeSets {
+  hard: Float32Array;
+  hardNormals: Float32Array | undefined;
+  soft: Float32Array;
+  softNormals: Float32Array;
+  hidden: Float32Array;
+}
+
+export function edgeSets(edges: Float32Array, normals: Float32Array | undefined, flags: Uint8Array | undefined): EdgeSets {
+  const none = new Float32Array(0);
+  const n = edges.length / 6;
+  if (!flags || flags.length !== n || !flags.some((f) => (f & (EDGE_SOFT | EDGE_HIDDEN)) !== 0)) {
+    return { hard: edges, hardNormals: normals, soft: none, softNormals: none, hidden: none };
+  }
+  const hard: number[] = [];
+  const hardN: number[] = [];
+  const soft: number[] = [];
+  const softN: number[] = [];
+  const hidden: number[] = [];
+  const withN = !!normals && normals.length === edges.length;
+  for (let i = 0; i < n; i++) {
+    const seg = edges.subarray(6 * i, 6 * i + 6);
+    const nn = withN ? normals!.subarray(6 * i, 6 * i + 6) : null;
+    const f = flags[i];
+    if (f & EDGE_HIDDEN) hidden.push(...seg);
+    else if (f & EDGE_SOFT) {
+      soft.push(...seg);
+      if (nn) softN.push(...nn);
+    } else {
+      hard.push(...seg);
+      if (nn) hardN.push(...nn);
+    }
+  }
+  return {
+    hard: new Float32Array(hard),
+    hardNormals: withN ? new Float32Array(hardN) : undefined,
+    soft: new Float32Array(soft),
+    softNormals: new Float32Array(softN),
+    hidden: new Float32Array(hidden),
+  };
+}
+
+/** Shade weights (top, front, side) for a normal (lane 15): the theme's three face tones,
+ * blended smoothly so a smoothed surface turns from one to the next. A normal along an axis
+ * gives exactly the tone a flat face of that direction gets. */
+export function toneWeights(x: number, y: number, z: number): [number, number, number] {
+  const top = Math.max(0, z);
+  const bottom = Math.max(0, -z);
+  const h = Math.max(0, 1 - top - bottom);
+  const yy = y * y;
+  const xx = x * x;
+  const front = xx + yy > 1e-12 ? (h * yy) / (xx + yy) : 0;
+  return [top, front, h - front + bottom];
+}

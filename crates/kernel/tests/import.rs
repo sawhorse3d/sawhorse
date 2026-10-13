@@ -37,6 +37,7 @@ fn quad_box(name: &str, min: [f64; 3], s: [f64; 3]) -> ImportItem {
         face_labels: vec![],
         face_materials: vec![],
         face_uvs: vec![],
+        edge_flags: vec![],
     }
 }
 

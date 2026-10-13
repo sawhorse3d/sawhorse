@@ -319,6 +319,10 @@ pub struct EdgeStyle {
     /// The last bit of each edge drawn heavier.
     #[serde(default, skip_serializing_if = "is_false")]
     pub endpoints: bool,
+    /// Lane 15: soft and hidden edges drawn too, dashed (SketchUp's "hidden geometry"), so
+    /// they can be seen and picked; off, they are left out.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub soft: bool,
 }
 
 impl Default for EdgeStyle {
@@ -328,6 +332,7 @@ impl Default for EdgeStyle {
             profiles: false,
             extensions: false,
             endpoints: false,
+            soft: false,
         }
     }
 }
@@ -423,7 +428,9 @@ impl Style {
                 | u64::from(self.section_cuts) << 4
                 // Lane 12's switches count when they are off, so older styles keep their hash.
                 | u64::from(!self.section_planes) << 5
-                | u64::from(!self.section_fill) << 6,
+                | u64::from(!self.section_fill) << 6
+                // Lane 15 (0 when off, so older styles keep their hash).
+                | u64::from(e.soft) << 7,
         );
         for c in [self.background, self.sky, self.ground] {
             match c {

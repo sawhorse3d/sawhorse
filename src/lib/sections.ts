@@ -225,14 +225,17 @@ export function clipSegment(a: V3, b: V3, planes: [number, number, number, numbe
 
 /** The view mesh's edges with what the active planes cut away taken off: positions, the
  * matching edge normals and owners (edges cut away entirely are dropped). */
-export function clippedEdges(mesh: MeshData, view: SectionView | null | undefined): { edges: Float32Array; normals: Float32Array | undefined; owner: Uint32Array } {
-  if (!view?.clips.length) return { edges: mesh.edges, normals: mesh.edgeNormals, owner: mesh.edgeOwner };
+export function clippedEdges(mesh: MeshData, view: SectionView | null | undefined): { edges: Float32Array; normals: Float32Array | undefined; owner: Uint32Array; flags: Uint8Array | undefined } {
+  if (!view?.clips.length) return { edges: mesh.edges, normals: mesh.edgeNormals, owner: mesh.edgeOwner, flags: mesh.edgeFlags };
   const planes = edgeClipPlanes(mesh, view);
   const e = mesh.edges;
   const n = mesh.edgeNormals;
   const edges: number[] = [];
   const normals: number[] = [];
   const owner: number[] = [];
+  // Lane 15: each kept segment keeps its soft / smooth / hidden flags.
+  const f = mesh.edgeFlags && mesh.edgeFlags.length === mesh.edgeOwner.length ? mesh.edgeFlags : undefined;
+  const flags: number[] = [];
   for (let i = 0; i < mesh.edgeOwner.length; i++) {
     const a: V3 = [e[6 * i], e[6 * i + 1], e[6 * i + 2]];
     const b: V3 = [e[6 * i + 3], e[6 * i + 4], e[6 * i + 5]];
@@ -242,6 +245,7 @@ export function clippedEdges(mesh: MeshData, view: SectionView | null | undefine
     edges.push(...seg[0], ...seg[1]);
     if (n) for (let k = 0; k < 6; k++) normals.push(n[6 * i + k]);
     owner.push(mesh.edgeOwner[i]);
+    if (f) flags.push(f[i]);
   }
-  return { edges: new Float32Array(edges), normals: n ? new Float32Array(normals) : undefined, owner: new Uint32Array(owner) };
+  return { edges: new Float32Array(edges), normals: n ? new Float32Array(normals) : undefined, owner: new Uint32Array(owner), flags: f ? new Uint8Array(flags) : undefined };
 }

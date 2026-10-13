@@ -66,6 +66,7 @@ pub fn check_model(m: &Model) -> Result<(), String> {
     if mesh.indices.len() % 3 != 0 || mesh.face_ids.len() * 3 != mesh.indices.len() {
         return Err("render mesh index/face-id mismatch".into());
     }
+    check_edge_flags(m, &mesh)?;
     check_looks(m, &mesh)?;
     check_cut_list(m)?;
     check_nesting(m)?;
@@ -175,6 +176,63 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             return Err(format!(
                 "section {id}: the halves kept {a} + {b} do not make the whole {reached}"
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Soft, smooth and hidden edges (lane 15) of any committed model: every flag is 1 to 7
+/// and sits on an edge that is there (a pair of faces that meet, a mesh's vertex pair); the
+/// view carries one flag per edge segment and, only when an edge is smooth, a unit normal
+/// per render vertex.
+pub fn check_edge_flags(m: &Model, mesh: &crate::mesh::ViewMesh) -> Result<(), String> {
+    use crate::edges::{ALL, SMOOTH};
+    for (i, o) in m.objects() {
+        let live: std::collections::BTreeSet<(u64, u64)> = o
+            .brep()
+            .edges()
+            .filter_map(|(e, _)| o.edge_key(e))
+            .collect();
+        for (k, &f) in o.edge_flags() {
+            if f == 0 || f & !ALL != 0 {
+                return Err(format!("object {i}: edge flags {f} on {k:?}"));
+            }
+            if !live.contains(k) {
+                return Err(format!(
+                    "object {i}: a flag on faces {k:?} that do not meet"
+                ));
+            }
+        }
+    }
+    for (i, lm) in m.meshes() {
+        let mut live: std::collections::BTreeSet<(u32, u32)> =
+            lm.edge_faces().into_keys().collect();
+        live.extend(lm.lines.iter().map(|l| crate::edges::pair(l[0], l[1])));
+        for (k, &f) in &lm.edge_flags {
+            if f == 0 || f & !ALL != 0 || !live.contains(k) {
+                return Err(format!("mesh {i}: edge flags {f} on {k:?}"));
+            }
+        }
+    }
+    if mesh.edge_flags.len() != mesh.edge_owner.len() {
+        return Err("view mesh: not one edge flag per edge segment".into());
+    }
+    let smooth = mesh.edge_flags.iter().any(|f| f & SMOOTH != 0);
+    if mesh.normals.is_empty() == smooth {
+        return Err(format!(
+            "view mesh: normals {} but smooth edges {smooth}",
+            mesh.normals.len()
+        ));
+    }
+    if !mesh.normals.is_empty() {
+        if mesh.normals.len() != mesh.positions.len() {
+            return Err("view mesh: not one normal per render vertex".into());
+        }
+        for n in mesh.normals.chunks(3) {
+            let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if !(0.999..=1.001).contains(&l) {
+                return Err(format!("view mesh: a normal of length {l}"));
+            }
         }
     }
     Ok(())

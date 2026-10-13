@@ -7,8 +7,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
 import { FAMILIES, corpus, rng } from "./corpus/models";
-import { apply, compose, isComponent, modelToOp, placementXform, skpToOp } from "./skp";
-import type { ImportNode, WasmDoc } from "../kernel/types";
+import { apply, compose, faceOfStyle, isComponent, modelToOp, placementXform, skpToOp, unitsOf } from "./skp";
+import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
 const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
@@ -32,32 +32,34 @@ describe("skp mapping", () => {
     expect(apply(both, [0, 0, 0])).toEqual([5, 0, 0]);
   });
 
-  it("a table: the top a group, the legs instances of one component, tags, materials, inches to metres", () => {
+  it("a table: the top and the legs components (named in the file; the legs placed four times), tags, materials, inches to metres", () => {
     const r = skpToOp(bytesOf("table"), "Table.skp");
-    if (r.op.op !== "import") throw new Error("not an import op");
+    if (r.op?.op !== "import") throw new Error("not an import op");
     expect(r.op.items ?? []).toEqual([]); // nothing loose at the top level
     const nodes = r.op.nodes ?? [];
-    expect(nodes.map((n) => n.kind)).toEqual(["group", "instance", "instance", "instance", "instance"]);
+    // Lane 15: the Top is placed once but its definition has a name someone gave it, so it
+    // is a component too (a SketchUp group's definition is "Group#N").
+    expect(nodes.map((n) => n.kind)).toEqual(["instance", "instance", "instance", "instance", "instance"]);
     const defs = r.op.definitions ?? [];
-    expect(defs.map((d) => d.name)).toEqual(["Leg"]);
-    expect(nodes.slice(1).every((n) => n.kind === "instance" && n.definition === 0)).toBe(true);
+    expect(defs.map((d) => d.name)).toEqual(["Top", "Leg"]);
+    expect(nodes.slice(1).every((n) => n.kind === "instance" && n.definition === 1)).toBe(true);
     expect(nodes[1].tag).toBe("Legs");
     const top = nodes[0];
-    if (top.kind !== "group") throw new Error();
-    expect(top.name).toBe("Top");
-    expect(top.items[0].merge_coplanar).toBe(false);
-    // Inches -> metres: the top (world coordinates) is 0.6 to 0.85 m up; a leg is in its
+    if (top.kind !== "instance") throw new Error();
+    expect(top.definition).toBe(0);
+    expect(defs[0].items[0].merge_coplanar).toBe(false);
+    // Inches -> metres: the top is 0.6 to 0.85 m up once placed; a leg is in its
     // definition's own frame, placed by its instance.
-    const z = top.items[0].positions.map((p) => p[2]);
+    const z = defs[0].items[0].positions.map((p) => p[2] + top.xform.translation[2]);
     expect(Math.max(...z)).toBeGreaterThan(0.6);
     expect(Math.max(...z)).toBeLessThan(0.85);
-    const leg = defs[0].items[0].positions;
+    const leg = defs[1].items[0].positions;
     expect(Math.min(...leg.map((p) => p[0]))).toBe(0);
     const legs = nodes.slice(1).map((n) => (n.kind === "instance" ? n.xform.translation : null));
     expect(new Set(legs.map((t) => JSON.stringify(t))).size).toBe(4);
     expect((r.op.materials ?? []).length).toBeGreaterThan(0);
-    expect(r.summary).toMatchObject({ placements: 5, components: 1, groups: 1 });
-    expect(r.notes.some((n) => n.includes("1 component placed more than once came in as components"))).toBe(true);
+    expect(r.summary).toMatchObject({ placements: 5, components: 2, groups: 0 });
+    expect(r.notes.some((n) => n.includes("2 components came in as components (placed more than once, or named in SketchUp)"))).toBe(true);
   });
 
   it("placements become kernel transforms (3x3 unitless, translation in metres); groups vs components", () => {
@@ -71,23 +73,31 @@ describe("skp mapping", () => {
     });
     const def = { name: "Leg" } as never;
     expect(isComponent(def, 4)).toBe(true);
-    expect(isComponent(def, 1)).toBe(false);
+    // Lane 15: placed once, a named definition is still a component; SketchUp's own names
+    // (and no name) make a group.
+    expect(isComponent(def, 1)).toBe(true);
     expect(isComponent({ name: "Group#7" } as never, 3)).toBe(false);
+    expect(isComponent({ name: "Group#7" } as never, 1)).toBe(false);
+    expect(isComponent({ name: "Component#12" } as never, 1)).toBe(false);
+    expect(isComponent({ name: "Component#12" } as never, 2)).toBe(true);
+    expect(isComponent({ name: "  " } as never, 1)).toBe(false);
+    expect(isComponent({ name: "Component #2 (copy)" } as never, 1)).toBe(true);
+    expect(isComponent(def, 0)).toBe(false);
   });
 
   it("nested and mirrored components, loose geometry", () => {
     const n = skpToOp(bytesOf("nested"), "Chest.skp");
-    if (n.op.op !== "import") throw new Error();
+    if (n.op?.op !== "import") throw new Error();
     // Drawer is a component placed several times (one mirrored); its knob, placed once in
-    // the drawer's definition, is a group inside that definition.
+    // the drawer's definition, is a component too (lane 15: it has a name), nested in it.
     const defs = n.op.definitions ?? [];
-    expect(defs.map((d) => d.name)).toEqual(["Drawer"]);
-    expect(defs[0].children?.map((c) => [c.kind, c.name])).toEqual([["group", "Knob"]]);
+    expect(defs.map((d) => d.name)).toEqual(["Knob", "Drawer"]);
+    expect(defs[1].children?.map((c) => [c.kind, c.kind === "instance" ? c.definition : null])).toEqual([["instance", 0]]);
     const drawers = (n.op.nodes ?? []).filter((x) => x.kind === "instance");
     expect(drawers.length).toBeGreaterThan(1);
     expect(drawers.some((x) => x.kind === "instance" && x.xform.linear[0][0] === -1)).toBe(true);
     const l = skpToOp(bytesOf("loose"), "Yard.skp");
-    if (l.op.op !== "import") throw new Error();
+    if (l.op?.op !== "import") throw new Error();
     const root = (l.op.items ?? []).find((i) => i.name === "Yard")!;
     expect(root.faces.length).toBe(1);
     expect(root.lines!.length).toBeGreaterThan(2);
@@ -113,7 +123,7 @@ describe("skp mapping", () => {
       units: "Millimeter",
     } as unknown as SkpModel;
     const r = modelToOp(model, "Room.skp");
-    if (r.op.op !== "import") throw new Error();
+    if (r.op?.op !== "import") throw new Error();
     expect(r.op.scenes).toEqual([{ name: "Front", eye: [0, -2.54, 1.27], target: [0, 0, 0.508], up: [0, 0, 1], fov: 35, parallel: false, hidden_tags: ["Furniture"] }]);
     expect(r.op.hidden_tags).toEqual(["Furniture"]);
     expect(r.notes).toEqual(expect.arrayContaining([expect.stringContaining("1 scene(s) without a camera"), "not imported: 1 texts", expect.stringContaining("Millimeter")]));
@@ -134,7 +144,7 @@ describe("skp mapping", () => {
       units: null,
     } as unknown as SkpModel;
     const r = modelToOp(model, "Cut.skp");
-    if (r.op.op !== "batch") throw new Error(`a batch, not ${r.op.op}`);
+    if (r.op?.op !== "batch") throw new Error(`a batch, not ${r.op?.op}`);
     const [imp, plane] = r.op.ops;
     expect(plane).toEqual({ op: "add_section", origin: [12 * 0.0254, 0, 0], normal: [-1, 0, 0], name: "Side cut", active: false });
     if (imp.op !== "import") throw new Error();
@@ -143,6 +153,66 @@ describe("skp mapping", () => {
     expect(g.sections).toEqual([{ origin: [100 * 0.0254, 0, 10 * 0.0254], normal: [0, 0, -1], name: "B", hidden: true }]);
     expect(r.summary.sections).toBe(2);
     expect(r.notes).toEqual(expect.arrayContaining([expect.stringContaining("2 section planes came in switched off")]));
+  });
+
+  it("an empty file is not an import: it says so, with its units and style (lane 15)", () => {
+    const blank = (units: string | null, styles: { name: string }[]) =>
+      ({
+        version: "{26.2.0}",
+        definitions: new Map(),
+        root: { id: 0, guid: "", name: "", vertices: [], edges: [], faces: [], instances: [], sectionPlanes: [], texts: [], dimensions: [], constructionLines: [], constructionPoints: [], isImage: false, alwaysFacesCamera: false, shadowsFaceSun: false },
+        layers: [{ name: "Layer0", color: { r: 0, g: 0, b: 0 }, hidden: false }],
+        pages: [],
+        dimensions: [],
+        materials: [],
+        materialsById: new Map(),
+        styles: styles.map((s) => ({ ...s, frontColor: null, backColor: null })),
+        units,
+      }) as unknown as SkpModel;
+    const r = modelToOp(blank("Millimeter", [{ name: "Architectural Design Style" }]), "blank.skp");
+    expect(r.op).toBeNull();
+    expect(r.empty).toEqual({ units: "mm", unitsWord: "Millimeter", style: { name: "Architectural Design Style", face: null } });
+    expect(r.notes[0]).toBe("blank has nothing drawn in it: opened as an empty model");
+    expect(r.notes).toEqual(expect.arrayContaining(["units: Millimeter", "style: Architectural Design Style (Sawhorse's own look kept)"]));
+    const legacy = modelToOp(blank(null, [{ name: "Hidden Line" }]), "old.skp");
+    expect(legacy.empty).toEqual({ units: null, unitsWord: null, style: { name: "Hidden Line", face: "hidden_line" } });
+    expect(unitsOf("Inches")).toBe("frac-in");
+    expect(unitsOf("Feet")).toBe("ft-in");
+    expect(unitsOf("Centimeter")).toBe("cm");
+    expect(unitsOf("Meter")).toBe("m");
+    expect(unitsOf("Furlongs")).toBeNull();
+    expect(faceOfStyle("Wireframe")).toBe("wireframe");
+    expect(faceOfStyle("X-Ray")).toBe("x_ray");
+    expect(faceOfStyle("Shaded with textures")).toBeNull();
+    expect(faceOfStyle("Shaded")).toBe("shaded");
+  });
+
+  it("soft, smooth and hidden edges come across per edge (lane 15)", async () => {
+    const { create } = await import("openskp");
+    const { circle, prism } = await import("./corpus/models");
+    const b = create();
+    b.addGroup((g) => prism(g, circle(0, 0, 4, 24), 0, 2, {}), { name: "Dowel" });
+    const bytes = b.toBytes();
+    const parsed = (await import("openskp")).parseSkp(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const def = [...parsed.definitions.values()][0];
+    // Soften the side edges as SketchUp would (the writer here does not set them).
+    const ring = new Set(def.faces.filter((f) => Math.abs(f.normal[2]) > 0.9).flatMap((f) => f.loops.flat().map((c) => c.edgeId)));
+    let sides = 0;
+    for (const e of def.edges) {
+      if (ring.has(e.id)) continue;
+      e.soft = true;
+      e.smooth = true;
+      sides++;
+    }
+    expect(sides).toBe(24);
+    def.edges.find((e) => ring.has(e.id))!.hidden = true;
+    const r = modelToOp(parsed, "dowel.skp");
+    if (r.op?.op !== "import") throw new Error();
+    const item = (r.op.definitions ?? [])[0]?.items[0] ?? (r.op.nodes ?? []).flatMap((n) => (n.kind === "group" ? n.items : []))[0];
+    expect(item.edge_flags?.filter((f) => f[2] === 3)).toHaveLength(24);
+    expect(item.edge_flags?.filter((f) => f[2] === 4)).toHaveLength(1);
+    expect(r.summary.softEdges).toBe(25);
+    expect(r.notes).toContain("25 soft, smooth or hidden edges came in as they were");
   });
 
   it("refuses a file that is not a .skp with a plain message", () => {
@@ -185,13 +255,16 @@ describe.skipIf(!built)("skp files through the kernel", () => {
 
   it("the window hole makes the front wall a genus-1 solid", async () => {
     const mod = await kernel();
-    // The first house whose front wall has a window (a face with a hole loop).
-    const isWall = (n: ImportNode) => n.kind === "group" && n.name === "Front wall" && n.items.some((i) => i.faces.some((f) => f.length > 1));
+    // The first house whose front wall has a window (a face with a hole loop). The wall is a
+    // component placed once (lane 15: its definition is named).
+    const holed = (d: ImportDefinition) => d.name === "Front wall" && d.items.some((i) => i.faces.some((f) => f.length > 1));
     const r = corpus(200)
       .filter((s) => s.family === "house")
       .map((s) => skpToOp(s.build(), `${s.name}.skp`))
-      .find((x) => x.op.op === "import" && (x.op.nodes ?? []).some(isWall))!;
-    if (r.op.op !== "import") throw new Error();
+      .find((x) => x.op?.op === "import" && (x.op.definitions ?? []).some(holed))!;
+    if (r.op?.op !== "import") throw new Error();
+    const defs = r.op.definitions ?? [];
+    const isWall = (n: ImportNode) => n.kind === "instance" && holed(defs[n.definition]);
     const wall = { ...r.op, items: [], nodes: (r.op.nodes ?? []).filter(isWall) };
     const d = mod.document_new();
     d.apply_op(JSON.stringify(wall));
@@ -199,7 +272,7 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     expect(st.stats.objects).toBe(1);
     expect(st.stats.genus).toBe(1);
     // The wall's layer is its group's tag.
-    expect(st.graph.nodes[0]).toMatchObject({ kind: "group", label: "Front wall", tag: "Walls" });
+    expect(st.graph.nodes[0]).toMatchObject({ kind: "instance", label: "Front wall", tag: "Walls" });
     d.free();
   });
 
@@ -211,7 +284,7 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     b.addInstance(leg, { translation: [0, 0, 0] });
     b.addInstance(leg, { translation: [10, 0, 0], hidden: true });
     const r = skpToOp(b.toBytes(), "legs.skp");
-    if (r.op.op !== "import") throw new Error();
+    if (r.op?.op !== "import") throw new Error();
     expect(r.op.hidden_tags).toEqual([]);
     expect((r.op.nodes ?? []).map((n) => n.hidden)).toEqual([false, true]);
     const mod = await kernel();
@@ -282,7 +355,7 @@ describe.skipIf(!built)("skp files through the kernel", () => {
       g.addFace([P(0, 4, 0), P(0, 0, 0), P(0, 0, 2), P(0, 4, 2)], { material: oak });
     }, { name: "Board" });
     const r = skpToOp(b.toBytes(), "board.skp");
-    if (r.op.op !== "batch") throw new Error(`expected the image batched first, got ${r.op.op}`);
+    if (r.op?.op !== "batch") throw new Error(`expected the image batched first, got ${r.op?.op}`);
     const [tex, imp] = r.op.ops;
     expect(tex).toMatchObject({ op: "add_texture", path: "assets/skp-oak.png", mime: "image/png" });
     if (imp.op !== "import") throw new Error();

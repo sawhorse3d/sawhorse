@@ -254,9 +254,14 @@ fn template_mesh(m: &LooseMesh, inv: &Xform) -> Result<LooseMesh, TransformError
 fn same_member(a: &Member, b: &Member) -> bool {
     let kind = match (&a.kind, &b.kind) {
         (MemberKind::Solid(x), MemberKind::Solid(y)) => {
-            x.material == y.material && x.part == y.part && x.paint == y.paint
+            x.material == y.material
+                && x.part == y.part
+                && x.paint == y.paint
+                && x.edge_flags == y.edge_flags
         }
-        (MemberKind::Mesh(x), MemberKind::Mesh(y)) => x.material == y.material && x.name == y.name,
+        (MemberKind::Mesh(x), MemberKind::Mesh(y)) => {
+            x.material == y.material && x.name == y.name && x.edge_flags == y.edge_flags
+        }
         (MemberKind::Group(x), MemberKind::Group(y)) => x == y,
         (MemberKind::Instance(d, x), MemberKind::Instance(e, y)) => d == e && x == y,
         _ => false,
@@ -1010,6 +1015,14 @@ impl Model {
                     .iter()
                     .map(|l| [index(l[0], &mut positions), index(l[1], &mut positions)])
                     .collect();
+                // Soft and smooth edges (lane 15) go with their piece.
+                let flags: BTreeMap<(u32, u32), u8> = mesh
+                    .edge_flags
+                    .iter()
+                    .filter_map(|(&(a, b), &f)| {
+                        Some((crate::edges::pair(*local.get(&a)?, *local.get(&b)?), f))
+                    })
+                    .collect();
                 let name = if pieces.len() == 1 {
                     mesh.name.clone()
                 } else {
@@ -1042,6 +1055,7 @@ impl Model {
                         locked: false,
                         slot: None,
                     },
+                    edge_flags: flags,
                 };
                 made.push(self.meshes.insert(piece));
                 groups.push(to_public(g));
@@ -1063,6 +1077,13 @@ impl Model {
                     .collect();
                 lm.positions = positions;
                 lm.faces.clear();
+                lm.edge_flags = mesh
+                    .edge_flags
+                    .iter()
+                    .filter_map(|(&(a, b), &f)| {
+                        Some((crate::edges::pair(*local.get(&a)?, *local.get(&b)?), f))
+                    })
+                    .collect();
                 lm.member.slot = None;
                 made.push(self.meshes.insert(lm));
             }
@@ -1809,6 +1830,7 @@ impl Model {
                             g.material = o.material.clone();
                             g.part = o.part.clone();
                             g.paint = o.paint.clone();
+                            g.edge_flags = o.edge_flags.clone();
                             g
                         }
                         _ => {
@@ -1834,6 +1856,7 @@ impl Model {
                             let mut g = (**g).clone();
                             g.material = mesh.material.clone();
                             g.name = mesh.name.clone();
+                            g.edge_flags = mesh.edge_flags.clone();
                             g
                         }
                         _ => {
@@ -2347,6 +2370,7 @@ impl Model {
                             || o.next_face_id != want.next_face_id
                             || o.material != g.material
                             || o.paint != g.paint
+                            || o.edge_flags != g.edge_flags
                             || o.part != g.part
                             || o.name != member.name
                             || o.tag != member.tag
@@ -2357,7 +2381,10 @@ impl Model {
                     (Thing::Mesh(k), MemberKind::Mesh(g)) => {
                         let mesh = &self.meshes[k];
                         let want = map_mesh(g, &n.xform).map_err(|e| e.to_string())?;
-                        if mesh.positions != want.positions || mesh.faces != want.faces {
+                        if mesh.positions != want.positions
+                            || mesh.faces != want.faces
+                            || mesh.edge_flags != want.edge_flags
+                        {
                             return Err("an instance's mesh is not its definition's".into());
                         }
                     }

@@ -19,6 +19,7 @@ pub mod brep;
 pub mod cutlist;
 pub mod document;
 pub mod draw;
+pub mod edges;
 pub mod error;
 pub mod faceops;
 pub mod hash;

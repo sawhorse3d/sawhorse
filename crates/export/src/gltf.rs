@@ -333,7 +333,10 @@ pub fn document_with(
         // One primitive per material the faces show, in order of first face.
         let mut by_material: Vec<(Option<String>, Prim)> = Vec::new();
         let br = o.brep();
-        for (_, f) in br.faces() {
+        // Lane 15: across smooth edges the faces share normals (a softened cylinder reads
+        // round in a viewer, as in the app).
+        let smooth = o.smooth_normals();
+        for (fid, f) in br.faces() {
             let rings: Vec<Vec<DVec3>> = f.loops().map(|l| br.loop_points(l)).collect();
             let plane = f.plane;
             let mat = model.face_material(*id, f.id).map(str::to_string);
@@ -350,6 +353,7 @@ pub fn document_with(
                 None
             };
             let uv = tex.as_ref().map(|t| move |p: DVec3| t.uv(p));
+            let start = by_material[k].1.normals.len();
             by_material[k].1.face(
                 &rings,
                 plane.normal,
@@ -357,6 +361,14 @@ pub fn document_with(
                 f.id,
                 uv.as_ref().map(|f| f as &dyn Fn(DVec3) -> [f64; 2]),
             )?;
+            if let Some(map) = &smooth {
+                let verts = f.loops().flat_map(|l| br.loop_vertices(l));
+                for (slot, v) in by_material[k].1.normals[start..].iter_mut().zip(verts) {
+                    if let Some(n) = map.get(&(fid, v)) {
+                        *slot = to_y_up(*n);
+                    }
+                }
+            }
         }
         let extras = json!({
             "object": id, "solid": true, "tag": o.tag(), "groups": groups_of(*id)
@@ -372,6 +384,7 @@ pub fn document_with(
     }
     for (id, m) in &loose {
         let mut prim = Prim::default();
+        let smooth = m.smooth_normals();
         for (fi, f) in m.faces.iter().enumerate() {
             let Some(plane) = m.plane(fi) else {
                 continue;
@@ -381,7 +394,18 @@ pub fn document_with(
                 .map(|r| r.iter().map(|&i| m.positions[i as usize]).collect())
                 .collect();
             // A face that will not triangulate is left out of the picture, as in the view.
-            let _ = prim.face(&rings, plane.normal, |p| plane.to_local(p), fi as u64, None);
+            let start = prim.normals.len();
+            if prim
+                .face(&rings, plane.normal, |p| plane.to_local(p), fi as u64, None)
+                .is_ok()
+                && let Some(map) = &smooth
+            {
+                for (slot, &v) in prim.normals[start..].iter_mut().zip(f.iter().flatten()) {
+                    if let Some(n) = map.get(&(fi, v)) {
+                        *slot = to_y_up(*n);
+                    }
+                }
+            }
         }
         let extras = json!({ "mesh": id, "solid": false, "note": m.note, "tag": m.tag });
         let mi = material_for(&mut b, m.material.as_deref());

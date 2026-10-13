@@ -81,6 +81,10 @@ pub struct InferQuery {
     pub point_px: f64,
     #[serde(default = "line_px")]
     pub line_px: f64,
+    /// Lane 15: the pick under the cursor may be a soft or hidden edge (the Eraser with
+    /// Ctrl+Shift, to unsoften).
+    #[serde(default)]
+    pub soft: bool,
 }
 
 /// A line the UI draws for an inference (the axis from the start, the dotted alignment
@@ -267,6 +271,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
             px,
             point_px: 8.0,
             edge_px: 5.0,
+            soft: q.soft,
         },
     );
     let plane = q
@@ -286,7 +291,9 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
     };
     let start = q.start.map(DVec3::from_array);
     let reach = q.point_px.max(q.line_px);
-    let near = near_segments(scene, &ray, &px, reach, hit.as_ref());
+    let mut near = near_segments(scene, &ray, &px, reach, hit.as_ref());
+    // Lane 15: hidden edges are not inferred on.
+    near.retain(|&(i, ..)| scene.segs[i].flags & sawhorse_kernel::edges::HIDDEN == 0);
 
     // ---- points ------------------------------------------------------------------------
     let mut points: Vec<Cand> = Vec::new();
@@ -300,6 +307,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
                 a: s.a.to_array(),
                 b: s.b.to_array(),
                 drawn: s.drawn,
+                flags: s.flags,
             }
         }
     };

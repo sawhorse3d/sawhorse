@@ -7,11 +7,19 @@
 // with a note. What is and is not carried over is listed in docs/skp-compat.md; keep the
 // two in step.
 //
-// Structure (lane 5): a SketchUp definition placed more than once becomes a component
-// definition, its placements instances of it (an edit inside one changes them all); a
-// definition placed once, or named like SketchUp's own group definitions ("Group#3"),
-// becomes a group. Nested placements nest the same way. Hidden placements come in hidden;
-// a placement's layer becomes its tag.
+// Structure (lane 5, lane 15): a SketchUp definition placed more than once becomes a
+// component definition, its placements instances of it (an edit inside one changes them
+// all). A definition placed once is a component too when someone gave it a name (a "Leg"),
+// and a group when its name is SketchUp's own ("Group#3", "Component#7") or empty. Nested
+// placements nest the same way. Hidden placements come in hidden; a placement's layer
+// becomes its tag.
+//
+// Edges (lane 15): SketchUp's soft, smooth and hidden flags come across per edge (the
+// item's `edge_flags`), so a circle pulled into a cylinder is round, not 24 lines.
+//
+// An empty file (nothing drawn, nothing placed: a blank template) is not an import: the
+// result says `empty`, with the file's units and style, and the app opens it as an empty
+// model in those units.
 //
 // Units: SketchUp stores inches, Z up. The kernel is metres, Z up. Nothing else changes.
 //
@@ -22,7 +30,8 @@
 // mapping it gives in world metres, which the kernel fits to a scale, a rotation and an
 // offset (skew and projected textures are dropped, with a note).
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
-import type { ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
+import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
+import type { UnitSystem } from "../lib/units";
 
 export const M_PER_IN = 0.0254;
 
@@ -88,6 +97,8 @@ export interface SkpSummary {
   groups: number;
   faces: number;
   looseEdges: number;
+  /** Lane 15: edges that came in soft, smooth or hidden. */
+  softEdges: number;
   materials: number;
   textures: number;
   layers: number;
@@ -97,10 +108,47 @@ export interface SkpSummary {
 }
 
 export interface SkpImport {
-  op: KernelOp;
+  /** `null` for an empty file (see `empty`). */
+  op: KernelOp | null;
   /** What was assumed, flattened or left out, in plain words. */
   notes: string[];
   summary: SkpSummary;
+  /** Lane 15: the file has nothing in it (a blank template): open it as an empty model
+   * with its units and style instead of importing nothing. */
+  empty?: SkpEmpty;
+}
+
+/** What an empty file still says (lane 15). */
+export interface SkpEmpty {
+  /** The file's unit system as Sawhorse names it, when the file states one. */
+  units: UnitSystem | null;
+  /** SketchUp's word for it ("Millimeter"), as the file states it. */
+  unitsWord: string | null;
+  /** The first style the file holds, by name, and the face mode it maps to (null: ours). */
+  style: { name: string; face: FaceStyle | null } | null;
+}
+
+/** SketchUp's unit word (VFF `meta.dat`) as a Sawhorse unit system. */
+export function unitsOf(word: string | null | undefined): UnitSystem | null {
+  const w = (word ?? "").trim().toLowerCase();
+  if (!w) return null;
+  if (w.startsWith("milli")) return "mm";
+  if (w.startsWith("centi")) return "cm";
+  if (w.startsWith("met")) return "m";
+  if (w.startsWith("feet") || w.startsWith("foot")) return "ft-in";
+  if (w.startsWith("inch")) return "frac-in";
+  return null;
+}
+
+/** A SketchUp style name as one of Sawhorse's face modes (null: no close match; ours stays). */
+export function faceOfStyle(name: string): FaceStyle | null {
+  const n = name.toLowerCase();
+  if (/x-?ray/.test(n)) return "x_ray";
+  if (/wire ?frame/.test(n)) return "wireframe";
+  if (/hidden ?line/.test(n)) return "hidden_line";
+  if (/mono ?chrome/.test(n)) return "monochrome";
+  if (/shaded/.test(n) && !/texture/.test(n)) return "shaded";
+  return null;
 }
 
 interface Ctx {
@@ -204,6 +252,15 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   }
   ctx.summary.looseEdges += lines.length;
   if (!faces.length && !lines.length) return null;
+  // Lane 15: soft (1), smooth (2) and hidden (4) edges, on points already in the item.
+  const edgeFlags: [number, number, number][] = [];
+  for (const e of def.edges) {
+    const f = (e.soft ? 1 : 0) | (e.smooth ? 2 : 0) | (e.hidden ? 4 : 0);
+    const a = index.get(e.v1Id);
+    const b = index.get(e.v2Id);
+    if (f && a !== undefined && b !== undefined && a !== b) edgeFlags.push([a, b, f]);
+  }
+  ctx.summary.softEdges += edgeFlags.length;
   let material: string | null = null;
   if (paint.size) {
     // The solid's own material is the one on most faces; the others are face paint.
@@ -222,6 +279,7 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
     lines,
     merge_coplanar: false,
     ...(perFace ? { face_materials: faceMaterials, face_uvs: faceUvs } : {}),
+    ...(edgeFlags.length ? { edge_flags: edgeFlags } : {}),
   };
 }
 
@@ -333,11 +391,22 @@ export function placementXform(m: Placement): Xform {
 
 /** SketchUp names its groups' hidden definitions "Group#1", "Group#2"... */
 const GROUP_DEF = /^Group#\d+$/;
+/** ...and a component nobody named "Component#1", "Component#2"... */
+const DEFAULT_DEF = /^(Group|Component)#\d+$/;
+
+/** A name someone gave the definition (not empty, not SketchUp's own numbering). */
+export function userNamed(name: string): boolean {
+  const n = name.trim();
+  return n !== "" && !DEFAULT_DEF.test(n);
+}
 
 /** A definition comes in as a component when it is placed more than once (and is not one of
- * SketchUp's group definitions); otherwise its placement is a group. */
+ * SketchUp's group definitions), or placed once with a name someone gave it (lane 15: a
+ * "Leg" drawn once is still the Leg component); otherwise its placement is a group. */
 export function isComponent(def: Definition, placed: number): boolean {
-  return placed > 1 && !GROUP_DEF.test(def.name.trim());
+  const name = def.name.trim();
+  if (placed > 1) return !GROUP_DEF.test(name);
+  return placed === 1 && userNamed(name);
 }
 
 /** True when some face of the definition takes its material from the placement. */
@@ -518,6 +587,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       groups: 0,
       faces: 0,
       looseEdges: 0,
+      softEdges: 0,
       materials: model.materials.length,
       textures: model.materials.filter((m) => m.texture).length,
       layers: model.layers.length,
@@ -579,12 +649,23 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   const kept = ctx.summary.textures - images.length;
   if (kept > 0) ctx.notes.add(`${kept} textured material(s) whose image is not PNG or JPEG (or is unused): colours imported, the texture kept as a file-name reference`);
   if (ctx.summary.components)
-    ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} placed more than once came in as components: editing one copy changes them all`);
+    ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} came in as components (placed more than once, or named in SketchUp): editing one copy changes them all`);
+  if (ctx.summary.softEdges) ctx.notes.add(`${ctx.summary.softEdges} soft, smooth or hidden edge${ctx.summary.softEdges === 1 ? "" : "s"} came in as they were`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   if (ctx.summary.sections)
     ctx.notes.add(`${ctx.summary.sections} section plane${ctx.summary.sections === 1 ? "" : "s"} came in switched off (the file does not say which one was active): activate one from the Outliner`);
   const hidden_tags = [...ctx.hiddenTags];
+  // Lane 15: a file with nothing in it opens as an empty model in its own units and style.
+  if (!ctx.items.length && !nodes.length && !scenes.length && !rootSections.length) {
+    const styleName = model.styles[0]?.name.trim().replace(/^\[(.*)\]$/, "$1") ?? "";
+    const style = styleName ? { name: styleName, face: faceOfStyle(styleName) } : null;
+    const empty: SkpEmpty = { units: unitsOf(model.units), unitsWord: model.units ?? null, style };
+    const notes = [`${stem} has nothing drawn in it: opened as an empty model`];
+    if (empty.units) notes.push(`units: ${model.units}`);
+    if (style) notes.push(`style: ${style.name}${style.face ? "" : " (Sawhorse's own look kept)"}`);
+    return { op: null, notes: [...notes, ...[...ctx.notes].filter((n) => !n.startsWith("model units"))], summary: ctx.summary, empty };
+  }
   const importOp: KernelOp = { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes };
   const planes: KernelOp[] = rootSections.map((s) => ({ op: "add_section", origin: s.origin, normal: s.normal, name: s.name ?? null, active: false, ...(s.hidden ? { hidden: true } : {}) }));
   // The images go in first, the top-level section planes after, all in the same undo step.

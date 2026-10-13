@@ -221,6 +221,9 @@ pub enum DocumentError {
     NoSuchMaterial(String),
     #[error("the file cannot be opened: {0}")]
     BadSnapshot(String),
+    /// Lane 15: soft, smooth and hidden edges.
+    #[error("{0}")]
+    EdgeFlags(String),
 }
 
 /// Errors from groups, components, the editing context, tags and scenes (lane 5). Nothing

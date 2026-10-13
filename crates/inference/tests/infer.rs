@@ -57,6 +57,7 @@ fn down(x: f64, y: f64, mpp: f64) -> InferQuery {
         grid_step: Some([IN, 12.0 * IN]),
         point_px: 10.0,
         line_px: 7.0,
+        soft: false,
     }
 }
 
@@ -541,6 +542,7 @@ fn guides_snap_and_cross_edges() {
             px: side(0.0, 0.0).px,
             point_px: 8.0,
             edge_px: 5.0,
+            soft: false,
         },
     )
     .unwrap();

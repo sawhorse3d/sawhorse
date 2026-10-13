@@ -55,6 +55,9 @@ pub struct Object {
     /// a texture sits on them. Only faces with something said are listed. Pieces of a
     /// split face take their parent's paint; faces that disappear take theirs with them.
     pub(crate) paint: BTreeMap<u64, crate::looks::FacePaint>,
+    /// Soft, smooth and hidden edges (lane 15), by the pair of persistent face ids each lies
+    /// between (see [`crate::edges`]). Only flagged edges are listed.
+    pub(crate) edge_flags: BTreeMap<(u64, u64), u8>,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
@@ -193,6 +196,7 @@ impl Object {
             member: Default::default(),
             part: Default::default(),
             paint: Default::default(),
+            edge_flags: Default::default(),
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -253,6 +257,10 @@ impl Object {
         let own = std::mem::take(&mut self.paint);
         self.paint = from.paint.clone();
         self.paint.extend(own);
+        // Edge flags (lane 15) the same way: the original's, then any this one already has.
+        let own = std::mem::take(&mut self.edge_flags);
+        self.edge_flags = from.edge_flags.clone();
+        self.edge_flags.extend(own);
         self.settle_paint(&[]);
     }
 
@@ -264,6 +272,8 @@ impl Object {
     /// After an edit: new faces that came from a painted face take its paint (`lineage`:
     /// (new id, the id it came from)), and the paint of faces that are gone goes too.
     pub(crate) fn settle_paint(&mut self, lineage: &[(u64, u64)]) {
+        // Edge flags (lane 15) stay only where their two faces still meet.
+        self.settle_edges();
         if self.paint.is_empty() {
             return;
         }
@@ -461,6 +471,7 @@ impl Object {
             member: Default::default(),
             part: Default::default(),
             paint: Default::default(),
+            edge_flags: Default::default(),
         }
     }
 

@@ -115,6 +115,9 @@ pub struct Seg {
     pub drawn: bool,
     /// The surfaces on either side (indices into [`Scene::surfaces`]; object edges only).
     pub faces: [Option<usize>; 2],
+    /// Soft (1), smooth (2) and hidden (4) flags (lane 15): a soft or hidden edge is not
+    /// picked unless the query asks for it; a hidden one is not inferred on either.
+    pub flags: u8,
 }
 
 /// A run of equal segments turning by equal angles (an arc, a circle, a regular polygon):
@@ -220,6 +223,7 @@ impl Scene {
                     owner,
                     drawn: edge.user,
                     faces: [side(Some(edge.he)), side(edge.twin)],
+                    flags: o.flags_of(e),
                 });
             }
         }
@@ -269,6 +273,7 @@ impl Scene {
                         owner,
                         drawn: true,
                         faces: [None, None],
+                        flags: 0,
                     });
                 }
             }
@@ -370,6 +375,7 @@ impl Scene {
                                 },
                                 drawn: false,
                                 faces: [Some(surface), None],
+                                flags: 0,
                             });
                         }
                     }

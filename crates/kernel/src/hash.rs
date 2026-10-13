@@ -184,6 +184,17 @@ fn hash_solid(h: &mut StableHasher, o: &crate::object::Object) {
         h.usize(y);
     }
     h.u64(u64::from(o.is_watertight()));
+    // Soft, smooth and hidden edges (lane 15): only when there are any, so every older
+    // document keeps its hash.
+    if !o.edge_flags.is_empty() {
+        h.tag("edge_flags");
+        h.usize(o.edge_flags.len());
+        for (&(a, b), &f) in &o.edge_flags {
+            h.u64(a);
+            h.u64(b);
+            h.u64(u64::from(f));
+        }
+    }
 }
 
 fn xform(h: &mut StableHasher, x: &crate::transform::Xform) {
@@ -217,6 +228,16 @@ fn hash_mesh_geometry(h: &mut StableHasher, mesh: &crate::meshbuild::LooseMesh) 
         for r in f {
             h.usize(r.len());
             r.iter().for_each(|&i| h.u64(u64::from(i)));
+        }
+    }
+    // Lane 15: soft, smooth and hidden edges, only when there are any.
+    if !mesh.edge_flags.is_empty() {
+        h.tag("edge_flags");
+        h.usize(mesh.edge_flags.len());
+        for (&(a, b), &f) in &mesh.edge_flags {
+            h.u64(u64::from(a));
+            h.u64(u64::from(b));
+            h.u64(u64::from(f));
         }
     }
 }

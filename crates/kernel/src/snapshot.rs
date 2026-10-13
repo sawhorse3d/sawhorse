@@ -128,6 +128,10 @@ pub struct SnapBrep {
     pub faces: Vec<SnapFace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_edges: Vec<[u32; 2]>,
+    /// Lane 15: soft, smooth and hidden edges as [face id, face id, flags] (the two
+    /// persistent face ids the edge lies between; flags 1 soft, 2 smooth, 4 hidden).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_flags: Vec<[u64; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -270,6 +274,9 @@ pub enum SnapMemberKind {
         faces: Vec<Vec<Vec<u32>>>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         lines: Vec<[u32; 2]>,
+        /// Lane 15: soft, smooth and hidden edges as [vertex, vertex, flags].
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        edge_flags: Vec<[u32; 3]>,
     },
     Group {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -305,6 +312,10 @@ pub struct SnapMesh {
     pub faces: Vec<Vec<Vec<u32>>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lines: Vec<[u32; 2]>,
+    /// Lane 15: soft, smooth and hidden edges as [vertex, vertex, flags]. Empty for a mesh
+    /// of a component instance (its definition's).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_flags: Vec<[u32; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -456,6 +467,11 @@ pub fn snap_brep(o: &Object) -> SnapBrep {
             .iter()
             .map(|&(a, b)| [a as u32, b as u32])
             .collect(),
+        edge_flags: o
+            .edge_flags
+            .iter()
+            .map(|(&(a, b), &f)| [a, b, u64::from(f)])
+            .collect(),
     }
 }
 
@@ -522,7 +538,49 @@ pub fn brep_object(what: &str, b: &SnapBrep, next_face_id: u64) -> Result<Object
             obj.paint.insert(f.id, paint);
         }
     }
+    for e in &b.edge_flags {
+        if e[2] == 0 || e[2] > u64::from(crate::edges::ALL) {
+            return Err(bad(format!("{what}: edge flags {} are not 1 to 7", e[2])));
+        }
+        obj.edge_flags
+            .insert(crate::edges::pair(e[0], e[1]), e[2] as u8);
+    }
+    // Flags on faces that do not meet are dropped (a hand-edited file), never kept.
+    let before = obj.edge_flags.len();
+    obj.settle_edges();
+    if obj.edge_flags.len() != before {
+        return Err(bad(format!(
+            "{what}: an edge flag between faces that do not meet"
+        )));
+    }
     Ok(obj)
+}
+
+/// A mesh's edge flags as saved: [vertex, vertex, flags].
+fn snap_mesh_flags(m: &LooseMesh) -> Vec<[u32; 3]> {
+    m.edge_flags
+        .iter()
+        .map(|(&(a, b), &f)| [a, b, u32::from(f)])
+        .collect()
+}
+
+/// A mesh's saved edge flags, checked against its vertices.
+fn mesh_flags(
+    what: &str,
+    flags: &[[u32; 3]],
+    vertices: usize,
+) -> Result<std::collections::BTreeMap<(u32, u32), u8>, KernelError> {
+    let mut out = std::collections::BTreeMap::new();
+    for e in flags {
+        if e[0] as usize >= vertices || e[1] as usize >= vertices || e[0] == e[1] {
+            return Err(bad(format!("{what}: an edge flag out of range")));
+        }
+        if e[2] == 0 || e[2] > u32::from(crate::edges::ALL) {
+            return Err(bad(format!("{what}: edge flags {} are not 1 to 7", e[2])));
+        }
+        out.insert(crate::edges::pair(e[0], e[1]), e[2] as u8);
+    }
+    Ok(out)
 }
 
 fn opt_xform(x: &Xform) -> Option<Xform> {
@@ -603,6 +661,11 @@ impl Model {
                         },
                         faces: if derived { Vec::new() } else { m.faces.clone() },
                         lines: if derived { Vec::new() } else { m.lines.clone() },
+                        edge_flags: if derived {
+                            Vec::new()
+                        } else {
+                            snap_mesh_flags(m)
+                        },
                         parent: m.member.parent.map(to_public),
                         slot: m.member.slot,
                         hidden: m.member.hidden,
@@ -744,6 +807,7 @@ impl Model {
                                 positions: x.positions.iter().map(|p| p.to_array()).collect(),
                                 faces: x.faces.clone(),
                                 lines: x.lines.clone(),
+                                edge_flags: snap_mesh_flags(x),
                             },
                             MemberKind::Group(x) => SnapMemberKind::Group {
                                 xform: opt_xform(x),
@@ -823,6 +887,7 @@ impl Model {
                         positions,
                         faces,
                         lines,
+                        edge_flags,
                     } => MemberKind::Mesh(Box::new(LooseMesh {
                         name: mem.name.clone().unwrap_or_default(),
                         positions: positions.iter().map(|p| DVec3::from_array(*p)).collect(),
@@ -832,6 +897,7 @@ impl Model {
                         material: material.clone(),
                         note: note.clone(),
                         member: Membership::default(),
+                        edge_flags: mesh_flags("a definition mesh", edge_flags, positions.len())?,
                     })),
                     SnapMemberKind::Group { xform, .. } => {
                         MemberKind::Group(xform.unwrap_or(Xform::IDENTITY))
@@ -1038,6 +1104,7 @@ impl Model {
                 tag: mesh.tag.clone(),
                 material: mesh.material.clone(),
                 note: mesh.note.clone(),
+                edge_flags: mesh_flags(&what, &mesh.edge_flags, mesh.positions.len())?,
                 member: Membership {
                     parent: node_of(mesh.parent, &what)?,
                     slot: mesh.slot,

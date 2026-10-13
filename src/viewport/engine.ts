@@ -20,7 +20,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { GraphSection, MaterialInfo, MeshData, SectionView, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
 import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorners } from "../lib/sections";
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
-import { TextureCache, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop } from "./looks";
+import { TextureCache, edgeSets, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
 import type { UnitSystem } from "../lib/units";
 import {
   AXIS_COLORS,
@@ -180,6 +180,8 @@ export class ViewportEngine {
   /** Profiles and endpoints (fat lines), rebuilt when the camera moves. */
   private styledEdges = new THREE.Group();
   private styledEdgesKey = "";
+  /** The mesh's edges by how they are drawn (lane 15: soft and hidden edges apart). */
+  private edgeSet: EdgeSets | null = null;
   private backdrop = makeBackdrop();
   private sunLight = new THREE.DirectionalLight(0xffffff, 2);
   private ambient = new THREE.AmbientLight(0xffffff, 1);
@@ -397,6 +399,13 @@ export class ViewportEngine {
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
     const n = new THREE.Vector3();
+    // Lane 15: across smooth edges each vertex has its own normal, so the theme's three tones
+    // blend across a smoothed surface instead of stepping face by face.
+    const vn = this.meshData?.normals;
+    const smooth = !!vn && vn.length === pos.count * 3 && vn.length > 0;
+    const blend = (w: [number, number, number]) =>
+      new THREE.Color(top.r * w[0] + front.r * w[1] + side.r * w[2], top.g * w[0] + front.g * w[1] + side.g * w[2], top.b * w[0] + front.b * w[1] + side.b * w[2]);
+    const reshade = (col: THREE.Color, flat: number, w: [number, number, number]) => col.clone().multiplyScalar((w[0] + 0.86 * w[1] + 0.72 * w[2]) / flat);
     for (let t = 0; t < index.count; t += 3) {
       const ia = index.getX(t);
       const ib = index.getX(t + 1);
@@ -430,7 +439,23 @@ export class ViewportEngine {
       else if (hovered.has(part)) col = tint(col, 0.2);
       // Outside the open group or component: faded towards the background.
       if (faded.has(part)) col = col.clone().lerp(paper, 0.6);
-      for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
+      if (!smooth || lit || mode.paper) {
+        for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
+        continue;
+      }
+      // Smoothed: each vertex its own tone (the same as flat on a face whose normals are its own).
+      const themed = !(part >= 0 && this.partTexture(part)) && !(mode.colours && (mat || info?.color));
+      for (const i of [ia, ib, ic]) {
+        const w = toneWeights(vn![3 * i], vn![3 * i + 1], vn![3 * i + 2]);
+        let v = themed ? blend(w) : reshade(col, shade, w);
+        if (themed) {
+          if (info?.kind === "mesh") v = v.lerp(warn, 0.3);
+          if (selected.has(part)) v = tint(v, 0.45);
+          else if (hovered.has(part)) v = tint(v, 0.2);
+          if (faded.has(part)) v = v.lerp(paper, 0.6);
+        }
+        v.toArray(colors, i * 3);
+      }
     }
     geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   }
@@ -544,7 +569,12 @@ export class ViewportEngine {
       g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
       g.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
       if (mesh.uvs && mesh.uvs.length === (mesh.positions.length / 3) * 2) g.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs.slice(), 2));
-      if (lit) g.computeVertexNormals();
+      // Lane 15: across smooth edges the kernel sends shared normals; otherwise flat.
+      const smooth = !!mesh.normals && mesh.normals.length === mesh.positions.length && mesh.normals.length > 0;
+      if (lit) {
+        if (smooth) g.setAttribute("normal", new THREE.BufferAttribute(mesh.normals!.slice(), 3));
+        else g.computeVertexNormals();
+      }
       this.colourFaces(g);
       g.computeBoundingSphere();
       g.computeBoundingBox();
@@ -610,10 +640,12 @@ export class ViewportEngine {
       }
     }
     this.buildOverlays();
-    const edgeData = this.edgeData();
-    if (mesh && edgeData && edgeData.edges.length > 0) {
+    // Lane 15: soft and hidden edges apart (of the edges the section cuts leave).
+    this.edgeSet = this.edgeSetNow();
+    const hard = this.edgeSet?.hard;
+    if (mesh && hard && hard.length > 0) {
       const eg = new THREE.BufferGeometry();
-      eg.setAttribute("position", new THREE.BufferAttribute(edgeData.edges, 3));
+      eg.setAttribute("position", new THREE.BufferAttribute(hard, 3));
       eg.computeBoundingBox();
       // Wireframe and X-ray show the edges behind faces too.
       this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge, depthTest: !mode.hiddenEdges, transparent: mode.hiddenEdges }));
@@ -731,7 +763,12 @@ export class ViewportEngine {
   private updateStyledEdges(): void {
     const e = this.style.edges;
     const mesh = this.edgeData();
-    const need = !!mesh && e.edges && (e.profiles || e.extensions || e.endpoints);
+    const sets = this.edgeSet;
+    const hard = sets?.hard ?? mesh?.edges;
+    const showSoft = !!e.soft && !!sets && (sets.soft.length > 0 || sets.hidden.length > 0);
+    // Soft edges turn into profiles where a smoothed surface turns away (lane 15).
+    const softProfiles = !!sets && sets.soft.length > 0;
+    const need = !!mesh && e.edges && (e.profiles || e.extensions || e.endpoints || showSoft || softProfiles);
     const cam = this.camera;
     const key = need ? `${cam.position.toArray().join()}|${(cam as THREE.OrthographicCamera).zoom}|${this.size.w}x${this.size.h}|${mesh?.edges.length}|${this.sectionKey}` : "";
     if (key === this.styledEdgesKey) return;
@@ -740,13 +777,13 @@ export class ViewportEngine {
     if (this.edges) {
       // Plain edges come back when the extensions are switched off.
       const pos = this.edges.geometry.getAttribute("position") as THREE.BufferAttribute;
-      if (!e.extensions && mesh && pos.array !== mesh.edges) this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+      if (!e.extensions && hard && pos.array !== hard) this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(hard, 3));
     }
     if (!need || !mesh) return;
     const mode = faceMode(this.style);
     const px = (p: THREE.Vector3) => this.metresPerPixelAt([p.x, p.y, p.z]);
-    if (e.extensions && this.edges) {
-      this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(extendedSegments(mesh.edges, (p) => 5 * px(p)), 3));
+    if (e.extensions && this.edges && hard) {
+      this.edges.geometry.setAttribute("position", new THREE.BufferAttribute(extendedSegments(hard, (p) => 5 * px(p)), 3));
     }
     const pairs = (flat: number[]): Vec3[][] => {
       const out: Vec3[][] = [];
@@ -754,15 +791,34 @@ export class ViewportEngine {
       return out;
     };
     if (e.profiles) {
-      const segs = profileSegments(mesh.edges, mesh.normals, this.camera);
+      const segs = profileSegments(hard ?? mesh.edges, sets ? sets.hardNormals : mesh.normals, this.camera);
       if (segs.length) {
         const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
         this.styledEdges.add(l);
       }
     }
-    if (e.endpoints) {
-      const segs = endpointSegments(mesh.edges, (p) => 7 * px(p));
+    // Lane 15: the silhouette of a smoothed surface, drawn as a plain line (heavier with
+    // profiles on), so a softened cylinder still has its outline.
+    if (softProfiles && sets) {
+      const segs = profileSegments(sets.soft, sets.softNormals, this.camera);
+      if (segs.length) {
+        const l = this.fatLines(pairs(segs), this.theme.edge, e.profiles ? 2.6 : 1.2, false, !mode.hiddenEdges);
+        l.renderOrder = 3.5;
+        this.styledEdges.add(l);
+      }
+    }
+    // Lane 15: "Soft and hidden edges" on: both drawn dashed and faint.
+    if (showSoft && sets) {
+      const flat = [...sets.soft, ...sets.hidden];
+      if (flat.length) {
+        const l = this.fatLines(pairs(flat), this.theme.edge, 1, true, !mode.hiddenEdges, 0.55);
+        l.renderOrder = 3.4;
+        this.styledEdges.add(l);
+      }
+    }
+    if (e.endpoints && hard) {
+      const segs = endpointSegments(hard, (p) => 7 * px(p));
       if (segs.length) {
         const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
@@ -866,11 +922,17 @@ export class ViewportEngine {
   }
 
   /** The edges as drawn: the view mesh's, less what active planes cut away. */
-  private edgeData(): { edges: Float32Array; normals: Float32Array | undefined } | null {
+  private edgeData(): { edges: Float32Array; normals: Float32Array | undefined; flags: Uint8Array | undefined } | null {
     const mesh = this.meshData;
     if (!mesh) return null;
-    const c = this.style.section_cuts ? clippedEdges(mesh, this.sectionView) : { edges: mesh.edges, normals: mesh.edgeNormals };
-    return { edges: c.edges, normals: c.normals };
+    const c = this.style.section_cuts ? clippedEdges(mesh, this.sectionView) : { edges: mesh.edges, normals: mesh.edgeNormals, flags: mesh.edgeFlags };
+    return { edges: c.edges, normals: c.normals, flags: c.flags };
+  }
+
+  /** The drawn edges by how they are drawn (lane 15), of those the section cuts leave. */
+  private edgeSetNow(): EdgeSets | null {
+    const d = this.edgeData();
+    return d ? edgeSets(d.edges, d.normals, d.flags) : null;
   }
 
   /** The planes (rectangles, the arrows at their corners and the reverse control at their
@@ -1391,6 +1453,19 @@ export class ViewportEngine {
     const along = v.clone().sub(this.raycaster.ray.origin).dot(this.raycaster.ray.direction);
     const eps = Math.max(1e-4, (this.faces.geometry.boundingSphere?.radius ?? 1) * 1e-3);
     return hit.distance < along - eps;
+  }
+
+  /** Edge segments by how they are drawn (lane 15), and whether the faces carry smooth
+   * normals: a test and capture hook. */
+  edgeCounts(): { hard: number; soft: number; hidden: number; smoothNormals: boolean } {
+    const m = this.meshData;
+    const s = this.edgeSet;
+    return {
+      hard: (s?.hard.length ?? m?.edges.length ?? 0) / 6,
+      soft: (s?.soft.length ?? 0) / 6,
+      hidden: (s?.hidden.length ?? 0) / 6,
+      smoothNormals: !!m?.normals && m.normals.length > 0,
+    };
   }
 
   /** Screen positions (canvas CSS px) of visible edge endpoints: a test and capture hook. */

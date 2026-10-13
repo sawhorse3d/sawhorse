@@ -19,8 +19,10 @@ import { IN, solids, type Solid } from "./helpers";
 //                                   at the front, a capped mouth and a floating sliver (see
 //                                   the test); one amber mesh, not a solid
 //   round-slab-leg-current.skp      a 24-segment circle pulled 1 in (soft edges) and one "Leg"
-//                                   component placed once, 2 x 2 x 28 in: a group today
-//   blank-26-purged.skp             an empty model: refused cleanly today
+//                                   component placed once, 2 x 2 x 28 in: a component instance
+//                                   since lane 15 (a named definition), its 24 side edges soft
+//   blank-26-purged.skp             an empty model: opens as an empty model in its own units
+//                                   (inches) since lane 15, no longer refused
 //
 // Part 2, every .skp anywhere under the directory (recursive): imported through the app with
 // a generic check (no dialog, no page error, the report says what came in, the kernel still
@@ -381,7 +383,7 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     expect.soft(errors, "no page errors or console errors").toEqual([]);
   });
 
-  test(`${SLAB}: a 24-sided slab and the Leg (a group today), 2 x 2 x 28 in the Cut list`, async ({ page }, info) => {
+  test(`${SLAB}: a 24-sided slab with soft sides and the Leg component, 2 x 2 x 28 in the Cut list`, async ({ page }, info) => {
     test.skip(!have(SLAB), `${SLAB} is not in the fixtures directory`);
     test.setTimeout(60_000);
     const errors = watchErrors(page);
@@ -458,19 +460,22 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     expect.soft(slabFaces.filter((p) => Math.abs(p.normal[2]) < 1e-6), "IMPORT: the circle's 24 side faces").toHaveLength(24);
     expect.soft(slabFaces.filter((p) => Math.abs(p.normal[2]) > 0.999), "IMPORT: top and bottom").toHaveLength(2);
 
-    // IMPORT: the Leg in the Outliner is a GROUP named "Leg" today: a definition placed once
-    // comes in as a group (docs/skp-compat.md, "Group or component?"), though SketchUp made
-    // it a component. Lane 15b will change the importer so a placed-once definition with a
-    // user-given name (not SketchUp's own `Group#N`) becomes a component instance; when it
-    // lands, flip these expectations to kind "instance", a hint matching /^component/, and a
-    // report title ending "1 component instance (1 component)." instead of "1 group.".
-    // The Cut list row below does not change: a group of solids is a part, quantity 1.
+    // IMPORT (lane 15): the Leg in the Outliner is a COMPONENT instance: a definition placed
+    // once with a name someone gave it (not SketchUp's own `Group#N` / `Component#N`) comes
+    // in as a component (docs/skp-compat.md, "Group or component?"), as SketchUp made it.
+    // The Cut list row below is the same either way: one part, quantity 1.
     const rows = await outline(page);
     const legRow = rows.find((x) => x.label === "Leg" && (x.kind === "instance" || x.kind === "group"));
     expect.soft(legRow, `IMPORT: a "Leg" node in the Outliner: ${JSON.stringify(rows)}`).toBeTruthy();
-    expect.soft(legRow?.kind, `IMPORT: the Leg is a group in the Outliner today (row: ${JSON.stringify(legRow)})`).toBe("group");
-    expect.soft(legRow?.hint ?? "", "IMPORT: the Outliner's hint for the Leg").toBe("group");
-    expect.soft(title, "IMPORT: the report's title counts one group").toBe("Imported round-slab-leg-current.skp: 2 solids, 1 group.");
+    expect.soft(legRow?.kind, `IMPORT: the Leg is a component instance in the Outliner (row: ${JSON.stringify(legRow)})`).toBe("instance");
+    expect.soft(legRow?.hint ?? "", "IMPORT: the Outliner's hint for the Leg").toMatch(/^component/);
+    expect.soft(title, "IMPORT: the report's title counts one component instance").toBe("Imported round-slab-leg-current.skp: 2 solids, 1 component instance (1 component).");
+    expect.soft(last?.notes ?? [], "IMPORT: the report says the soft edges came in").toContain("24 soft, smooth or hidden edges came in as they were");
+
+    // IMPORT (lane 15): the circle's 24 side edges arrive soft and smooth: not drawn as lines
+    // (48 hard rim edges and the Leg's 12 are), and the faces carry smooth normals.
+    const edgeCounts = await page.evaluate(() => (window as unknown as { __sawhorse: { edgeCounts(): { hard: number; soft: number; hidden: number; smoothNormals: boolean } } }).__sawhorse.edgeCounts());
+    expect.soft(edgeCounts, "IMPORT: 24 soft edges, the rims and the Leg hard, smooth shading").toEqual({ hard: 48 + 12, soft: 24, hidden: 0, smoothNormals: true });
 
     // IMPORT: the Cut list lists a part 2 x 2 x 28 in, quantity 1.
     await page.getByRole("tab", { name: "Cut list" }).click();
@@ -505,12 +510,9 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     expect.soft(errors, "no page errors or console errors").toEqual([]);
   });
 
-  // An empty model is REFUSED today, cleanly, in plain words, and the document stays as it
-  // was (the kernel's NothingImported, crates/kernel/tests/import.rs). Lane 15b will accept
-  // empty models and open an empty document with the file's units; when it lands, flip the
-  // expectations below to "Imported blank-26-purged.skp: 0 solids.", a report that is not an
-  // error, and the document's units taken from the file (inches).
-  test(`${BLANK}: an empty model is refused cleanly, the document untouched`, async ({ page }, info) => {
+  // An empty model (lane 15) opens as an empty model in the file's own units (inches here)
+  // and style, with a report that is not an error; nothing is refused and nothing is imported.
+  test(`${BLANK}: an empty model opens as an empty model in its own units`, async ({ page }, info) => {
     test.skip(!have(BLANK), `${BLANK} is not in the fixtures directory`);
     test.setTimeout(60_000);
     const errors = watchErrors(page);
@@ -520,14 +522,19 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     expect.soft(src.root.instances, "FIXTURE: placements").toHaveLength(0);
 
     const vp = await open(page);
+    // Start in millimetres, so the file's inches are seen to arrive.
+    for (let k = 0; k < 8 && (await page.locator(".units").first().textContent()) !== "mm"; k++) await page.locator(".units").first().click();
+    await expect(page.locator(".units").first()).toHaveText("mm");
     const { title, lines, refused, last } = await importFile(page, BLANK);
 
-    // IMPORT: refused with the plain message, as an error report, recording no import.
-    expect.soft(refused, "IMPORT: refused").toBe(true);
-    expect.soft(title, "IMPORT: the report's title").toBe("Could not import blank-26-purged.skp");
-    expect.soft(lines, "IMPORT: the report's reason").toEqual(["the file has nothing Sawhorse can import"]);
-    await expect.soft(page.getByTestId("import-report"), "IMPORT: the report is an error report").toHaveClass(/err/);
+    // IMPORT: opened, not refused; the report says what the file holds, as a plain report.
+    expect.soft(refused, "IMPORT: not refused").toBe(false);
+    expect.soft(title, "IMPORT: the report's title").toBe("Opened blank-26-purged.skp: an empty model");
+    expect.soft(lines, "IMPORT: the report's lines").toEqual(["blank-26-purged has nothing drawn in it: opened as an empty model", "units: Inches", "style: Architectural Design Style (Sawhorse's own look kept)"]);
+    await expect.soft(page.getByTestId("import-report"), "IMPORT: not an error report").not.toHaveClass(/err/);
     expect.soft(last, "IMPORT: no import recorded").toBeNull();
+    // The file's units: inches (fractional), in the status bar's unit button.
+    await expect.soft(page.locator(".units").first(), "IMPORT: the document's units are the file's (inches)").toHaveText("in");
     // The document is untouched and the app is still healthy.
     await expect(vp).toHaveAttribute("data-objects", "0");
     expect(await solids(page)).toHaveLength(0);
@@ -710,7 +717,10 @@ test.describe("private SketchUp fixtures: every .skp under the directory", () =>
       const ms = Date.now() - t0;
 
       // The report says what came in (or why nothing did).
-      expect.soft(title, "the import report names the file and what came in").toMatch(/^(Imported .+: \d+ solids?|Could not import .+)/);
+      // Lane 15: an empty file opens as an empty model instead of importing nothing.
+      const emptyModel = /^Opened .+: an empty model$/.test(title);
+      expect.soft(title, "the import report names the file and what came in").toMatch(/^(Imported .+: \d+ solids?|Could not import .+|Opened .+: an empty model)/);
+      if (emptyModel) expect.soft(hasGeometry, "only a file with nothing in it opens as an empty model").toBe(false);
       if (refused) {
         expect.soft(lines.length, "a refusal says why").toBeGreaterThan(0);
         if (hasGeometry) expect.soft(refused, `IMPORT: refused a file that has geometry (${title}: ${lines.join("; ")})`).toBe(false);
@@ -730,8 +740,8 @@ test.describe("private SketchUp fixtures: every .skp under the directory", () =>
       );
       expect.soft(answered, "the kernel answers a cut list request after the import").toBe("ok");
       const hash = await vp.getAttribute("data-hash");
-      let undoRedo = "n/a (refused)";
-      if (!refused) {
+      let undoRedo = refused ? "n/a (refused)" : "n/a (empty model)";
+      if (!refused && !emptyModel) {
         await page.keyboard.press("Control+z");
         await expect.soft(vp, "Ctrl+Z takes the import back").toHaveAttribute("data-can-redo", "true", { timeout: 15_000 });
         await expect.soft(vp, "and leaves no solids").toHaveAttribute("data-objects", "0");
@@ -754,7 +764,7 @@ test.describe("private SketchUp fixtures: every .skp under the directory", () =>
         file: rel,
         bytes: statSync(path.join(dir!, rel)).size,
         version: src?.version ?? "unreadable",
-        outcome: refused ? `refused: ${lines.join("; ")}` : "imported",
+        outcome: refused ? `refused: ${lines.join("; ")}` : emptyModel ? "opened as an empty model" : "imported",
         ms,
         file_counts: src ?? { error: parseError },
         after_import: {

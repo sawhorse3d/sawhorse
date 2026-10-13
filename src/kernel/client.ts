@@ -136,9 +136,11 @@ export class KernelClient {
     return { ...this.edit(r), notes: r.notes ?? [] };
   }
 
-  /** Import a SketchUp file (parsed by openskp in the worker) as one undoable step. */
-  async importSkp(name: string, bytes: Uint8Array): Promise<EditResult & { notes: string[] }> {
+  /** Import a SketchUp file (parsed by openskp in the worker) as one undoable step. An
+   * empty file (lane 15) changes nothing and comes back as `{ empty, notes }` instead. */
+  async importSkp(name: string, bytes: Uint8Array): Promise<(EditResult & { notes: string[]; empty?: undefined }) | { empty: EmptySkp; notes: string[] }> {
     const r = await this.call({ kind: "importSkp", name, bytes });
+    if (r.emptySkp) return { empty: r.emptySkp, notes: r.notes ?? [] };
     return { ...this.edit(r), notes: r.notes ?? [] };
   }
 
@@ -257,6 +259,9 @@ export class KernelClient {
     this.pending.clear();
   }
 }
+
+/** What an empty .skp still says (lane 15): its units and its style. */
+export type EmptySkp = NonNullable<Extract<WorkerResponse, { ok: true }>["emptySkp"]>;
 
 export function createKernel(): KernelClient | null {
   if (typeof Worker === "undefined") return null;

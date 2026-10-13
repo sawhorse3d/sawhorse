@@ -89,6 +89,8 @@ export interface SawhorseHooks {
   frameTime(n?: number): number;
   /** Triangles of the mesh the engine draws (what the render passes read). */
   engineTriangles(): number;
+  /** Lane 15: edge segments drawn as lines, soft, hidden; whether smooth normals came. */
+  edgeCounts(): ReturnType<ViewportEngine["edgeCounts"]>;
 }
 
 export function Viewport(props: ViewportProps) {
@@ -133,6 +135,7 @@ export function Viewport(props: ViewportProps) {
       pixel: (x, y) => engine.readPixel(x, y),
       frameTime: (n) => engine.benchmark(n),
       engineTriangles: () => (engine.captureSource().mesh?.indices.length ?? 0) / 3,
+      edgeCounts: () => engine.edgeCounts(),
     };
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), ...hooks };

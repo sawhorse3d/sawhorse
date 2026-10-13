@@ -167,6 +167,12 @@ enum Fuzz {
     ImportPart(u8, bool, [u8; 3], [u8; 3]),
     /// Lane 15: Group loose faces (all of them, or one mesh by pick).
     GroupLoose(Option<u8>),
+    /// Lane 15: soften by angle (object pick, angle pick, soft, smooth; a mesh too when the
+    /// pick is odd).
+    Soften(u8, u8, bool, bool),
+    /// Lane 15: the Eraser's flags on one edge of a solid (object pick, edge pick, set,
+    /// clear; any bits, so refusals are exercised too).
+    EdgeFlags(u8, u8, u8, u8),
     /// Move part of a solid: a face's vertices (which 0), an edge (1) or a vertex (2) of
     /// face `face`, by the pick, with or without autofold.
     MoveGeometry {
@@ -424,6 +430,8 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
         2 => (any::<u8>(), any::<bool>()).prop_map(|(k, b)| Fuzz::Include(k, b)),
         2 => (0u8..4, any::<bool>(), any::<[u8; 3]>(), any::<[u8; 3]>()).prop_map(|(s, g, a, z)| Fuzz::ImportPart(s, g, a, z)),
         1 => prop::option::of(any::<u8>()).prop_map(Fuzz::GroupLoose),
+        2 => (any::<u8>(), any::<u8>(), any::<bool>(), any::<bool>()).prop_map(|(o, a, s, m)| Fuzz::Soften(o, a, s, m)),
+        2 => (any::<u8>(), any::<u8>(), 0u8..9, 0u8..9).prop_map(|(o, e, s, c)| Fuzz::EdgeFlags(o, e, s, c)),
     ]
 }
 
@@ -1778,6 +1786,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 face_labels: vec![],
                 face_materials: vec![],
                 face_uvs: vec![],
+                edge_flags: vec![],
             };
             let (items, nodes) = if *grouped {
                 (
@@ -1786,6 +1795,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                         name: Some("Fuzz group".into()),
                         tag: None,
                         hidden: false,
+                        sections: vec![],
                         kind: sawhorse_kernel::model::ImportNodeKind::Group {
                             items: vec![item],
                             children: vec![],
@@ -1803,6 +1813,39 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 hidden_tags: vec![],
                 definitions: vec![],
                 nodes,
+            }
+        }
+        Fuzz::Soften(k, a, soft, smooth) => Op::SoftenEdges {
+            objects: vec![object(*k)],
+            meshes: if k % 2 == 1 {
+                m.meshes().iter().map(|(id, _)| *id).take(1).collect()
+            } else {
+                vec![]
+            },
+            angle: [0.0, 15.0, 20.0, 45.0, 89.0, 90.0, 180.0, 200.0][*a as usize % 8],
+            soft: *soft,
+            smooth: *smooth,
+        },
+        Fuzz::EdgeFlags(k, e, set, clear) => {
+            let id = object(*k);
+            let (a, b) = m
+                .object(id)
+                .and_then(|o| {
+                    let es: Vec<_> = o.brep().edges().map(|(x, _)| x).collect();
+                    let x = *es.get(*e as usize % es.len().max(1))?;
+                    Some(o.brep().edge_points(x))
+                })
+                .map(|(a, b)| (a.to_array(), b.to_array()))
+                .unwrap_or(([0.0; 3], [1.0, 0.0, 0.0]));
+            Op::SetEdgeFlags {
+                edges: vec![sawhorse_kernel::edges::EdgeAt {
+                    object: Some(id),
+                    mesh: None,
+                    a,
+                    b,
+                }],
+                set: *set,
+                clear: *clear,
             }
         }
         Fuzz::GroupLoose(k) => Op::GroupLoose {
@@ -1961,6 +2004,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                         profiles: k % 2 == 1,
                         extensions: k == 1,
                         endpoints: k == 2,
+                        soft: k == 3,
                     },
                     background: (k == 2).then_some([250, 248, 240]),
                     sky: None,

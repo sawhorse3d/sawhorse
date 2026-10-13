@@ -1126,6 +1126,15 @@ impl Mesh {
     pub fn edge_normals(&self) -> Vec<f32> {
         self.inner.edge_normals.clone()
     }
+    /// Soft (1), smooth (2) and hidden (4) flags, one per edge segment (lane 15).
+    pub fn edge_flags(&self) -> Vec<u8> {
+        self.inner.edge_flags.clone()
+    }
+    /// Shading normals, three per render vertex, when some edge in view is smooth; empty
+    /// otherwise (lane 15).
+    pub fn normals(&self) -> Vec<f32> {
+        self.inner.normals.clone()
+    }
     /// One per edge segment: index into `edge_owners_json`.
     pub fn edge_owner(&self) -> Vec<u32> {
         self.inner.edge_owner.clone()

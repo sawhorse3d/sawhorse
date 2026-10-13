@@ -716,6 +716,7 @@ fn workshop() -> Style {
             profiles: true,
             extensions: true,
             endpoints: false,
+            soft: false,
         },
         background: Some([250, 248, 240]),
         sky: Some([200, 220, 240]),

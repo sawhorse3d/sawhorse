@@ -465,6 +465,29 @@ pub enum Op {
         #[serde(default)]
         meshes: Vec<u64>,
     },
+    /// Lane 15: set and clear soft (1), smooth (2) and hidden (4) on edges of solids and
+    /// meshes in the open context, each named by its owner and end points (the Eraser:
+    /// Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens, smooths off and shows).
+    /// One undo step for all of them; geometry never changes.
+    SetEdgeFlags {
+        edges: Vec<crate::edges::EdgeAt>,
+        #[serde(default)]
+        set: u8,
+        #[serde(default)]
+        clear: u8,
+    },
+    /// Lane 15: soften by angle (the Styles pane): on every edge of these solids and meshes
+    /// whose two faces turn by at most `angle` degrees (0 to 180), set soft and / or smooth;
+    /// every other edge of them loses both. Hidden edges stay hidden. One undo step.
+    SoftenEdges {
+        #[serde(default)]
+        objects: Vec<u64>,
+        #[serde(default)]
+        meshes: Vec<u64>,
+        angle: f64,
+        soft: bool,
+        smooth: bool,
+    },
     /// Nesting (lane 9): add a stock to the document's library, or replace the stock named
     /// `replace` with it (a rename carries the per-material defaults along).
     DefineStock {
@@ -942,6 +965,10 @@ pub enum OpOutcome {
     /// Loose meshes went into groups, one per edge-connected piece (lane 15).
     LooseGrouped {
         groups: Vec<u64>,
+    },
+    /// Soft, smooth or hidden flags changed on `changed` edges (lane 15).
+    EdgesSet {
+        changed: usize,
     },
     /// The stock library or the nesting settings changed.
     StockSet,
@@ -1886,6 +1913,14 @@ impl Model {
                 self.set_part(*part, |a| a.include = v)
             }
             Op::GroupLoose { meshes } => self.group_loose(meshes),
+            Op::SetEdgeFlags { edges, set, clear } => self.set_edge_flags(edges, *set, *clear),
+            Op::SoftenEdges {
+                objects,
+                meshes,
+                angle,
+                soft,
+                smooth,
+            } => self.soften_edges(objects, meshes, *angle, *soft, *smooth),
             Op::DefineStock { stock, replace } => {
                 self.edit_stock(|l| l.define(stock, replace.as_deref()))
             }

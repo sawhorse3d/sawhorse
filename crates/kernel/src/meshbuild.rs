@@ -69,6 +69,11 @@ pub struct ImportItem {
     /// The kernel keeps the rotation and scale and drops any skew.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_uvs: Vec<Option<[[f64; 4]; 2]>>,
+    /// Lane 15: soft, smooth and hidden edges as (index, index, flags) with flags from
+    /// [`crate::edges`] (1 soft, 2 smooth, 4 hidden), for files that store them (`.skp`).
+    /// They land on the solids and meshes the item becomes, matched by end points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_flags: Vec<[u32; 3]>,
 }
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
@@ -84,6 +89,8 @@ pub struct LooseMesh {
     pub note: String,
     /// Its group or component instance, slot and hidden / locked flags.
     pub member: crate::nodes::Membership,
+    /// Soft, smooth and hidden edges (lane 15), by vertex pair (smaller index first).
+    pub edge_flags: std::collections::BTreeMap<(u32, u32), u8>,
 }
 
 impl LooseMesh {
@@ -693,6 +700,97 @@ fn as_solid(p: &Polys) -> Result<Object, String> {
 /// Build what an item becomes. Refuses (typed) only malformed data: out-of-range indices,
 /// non-finite or out-of-bounds coordinates, an item over [`MAX_IMPORT_ELEMENTS`].
 pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
+    let mut built = build_item_geometry(item)?;
+    if !item.edge_flags.is_empty() {
+        apply_edge_flags(item, &mut built)?;
+    }
+    Ok(built)
+}
+
+/// Lane 15: put the item's soft, smooth and hidden edges onto what it became, matching each
+/// flagged edge to an edge of a solid or of the mesh by its end points (welding moves a
+/// point by at most 0.01 mm, so they are compared within twice that).
+fn apply_edge_flags(item: &ImportItem, built: &mut Built) -> Result<(), DocumentError> {
+    use crate::edges::{ALL, pair};
+    let n = item.positions.len() as u32;
+    let p = |i: u32| DVec3::from_array(item.positions[i as usize]);
+    let mut want: Vec<(DVec3, DVec3, u8)> = Vec::new();
+    for e in &item.edge_flags {
+        if e[0] >= n || e[1] >= n {
+            return Err(bad("an edge flag names a point that is not there"));
+        }
+        if e[2] > u32::from(ALL) {
+            return Err(bad(
+                "an edge flag is not 1 (soft), 2 (smooth), 4 (hidden) or a sum of them",
+            ));
+        }
+        if e[2] != 0 && e[0] != e[1] {
+            want.push((p(e[0]), p(e[1]), e[2] as u8));
+        }
+    }
+    if want.is_empty() {
+        return Ok(());
+    }
+    const CELL: f64 = 1e-4;
+    let cell = |q: DVec3| {
+        [
+            (q.x / CELL).floor() as i64,
+            (q.y / CELL).floor() as i64,
+            (q.z / CELL).floor() as i64,
+        ]
+    };
+    let mut grid: BTreeMap<[i64; 3], Vec<usize>> = BTreeMap::new();
+    for (k, w) in want.iter().enumerate() {
+        grid.entry(cell(w.0)).or_default().push(k);
+        grid.entry(cell(w.1)).or_default().push(k);
+    }
+    let tol = 2.0 * POINT_MERGE;
+    let near = |a: DVec3, b: DVec3| a.distance(b) <= tol;
+    let lookup = |a: DVec3, b: DVec3| -> u8 {
+        let c = cell(a);
+        let mut flags = 0;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(ks) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
+                        for &k in ks {
+                            let w = want[k];
+                            if (near(w.0, a) && near(w.1, b)) || (near(w.0, b) && near(w.1, a)) {
+                                flags |= w.2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        flags
+    };
+    for o in &mut built.solids {
+        let edges: Vec<_> = o.brep.edges().map(|(e, _)| e).collect();
+        for e in edges {
+            let (a, b) = o.brep.edge_points(e);
+            let f = lookup(a, b);
+            if f != 0
+                && let Some(key) = o.edge_key(e)
+            {
+                o.set_edge_flags(key, f, 0);
+            }
+        }
+    }
+    if let Some(m) = &mut built.loose {
+        let mut keys: Vec<(u32, u32)> = m.edge_faces().into_keys().collect();
+        keys.extend(m.lines.iter().map(|l| pair(l[0], l[1])));
+        for (x, y) in keys {
+            let f = lookup(m.positions[x as usize], m.positions[y as usize]);
+            if f != 0 {
+                m.set_edge_flags((x, y), f, 0);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
     let name = item.name.trim();
     let name = if name.is_empty() { "Imported" } else { name };
     if item.positions.len() > MAX_IMPORT_ELEMENTS || item.faces.len() > MAX_IMPORT_ELEMENTS {
@@ -1087,6 +1185,7 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
             material: item.material.clone(),
             note,
             member: Default::default(),
+            edge_flags: Default::default(),
         })
     };
     Ok(Built {
@@ -1143,6 +1242,7 @@ mod tests {
             face_labels: vec![],
             face_materials: vec![],
             face_uvs: vec![],
+            edge_flags: vec![],
         }
     }
 
@@ -1265,6 +1365,7 @@ mod tests {
             face_labels: vec![],
             face_materials: vec![],
             face_uvs: vec![],
+            edge_flags: vec![],
         };
         let b = build_item(&item).unwrap();
         assert_eq!(b.solids.len(), 1, "{:?}", b.notes);

@@ -339,6 +339,7 @@ fn read_with_ids(
             face_labels: Vec::new(),
             face_materials: vec![],
             face_uvs: vec![],
+            edge_flags: vec![],
         };
         let mut all_labelled = true;
         let mut material_use: std::collections::BTreeMap<usize, usize> = Default::default();

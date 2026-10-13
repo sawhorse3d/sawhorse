@@ -67,6 +67,8 @@ function scene(d: WasmDoc): SceneData {
       parts: JSON.parse(m.parts_json()),
       uvs: m.uvs(),
       edgeNormals: m.edge_normals(),
+      edgeFlags: m.edge_flags(),
+      normals: m.normals(),
     };
     const state = JSON.parse(d.state_json()) as DocState;
     // Section cuts (lane 12): only for a model that has a section plane.
@@ -150,6 +152,11 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         // openskp (MIT) parses SketchUp files here, off the UI thread, loaded on first use.
         const { skpToOp } = await import("../io/skp");
         const r = skpToOp(req.bytes, req.name);
+        if (!r.op) {
+          // Lane 15: an empty file changes nothing here; the app opens it as an empty model.
+          res = { id: req.id, ok: true, notes: r.notes, emptySkp: r.empty ?? { units: null, unitsWord: null, style: null } };
+          break;
+        }
         const d = document(mod);
         const applied = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
         // Texture images go in first, batched with the import: report the import itself.
@@ -238,6 +245,8 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     transfer.push(m.positions.buffer, m.indices.buffer, m.faceIds.buffer, m.edges.buffer, m.edgeOwner.buffer);
     if (m.uvs) transfer.push(m.uvs.buffer);
     if (m.edgeNormals) transfer.push(m.edgeNormals.buffer);
+    if (m.edgeFlags) transfer.push(m.edgeFlags.buffer);
+    if (m.normals) transfer.push(m.normals.buffer);
     for (const t of res.scene.textures ?? []) transfer.push(t.bytes.buffer);
   }
   if (res.ok && res.file instanceof Uint8Array) transfer.push(res.file.buffer);

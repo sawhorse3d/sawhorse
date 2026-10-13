@@ -4,7 +4,7 @@ Sawhorse reads `.skp` files with the npm package [`openskp`](https://www.npmjs.c
 
 Import only. There is no `.skp` export in this lane (ADR-0002: export waits for the attorney read and for our own blank template).
 
-Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day); section planes in lane 12 (2026-10-12). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
+Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day); section planes in lane 12 (2026-10-12); named definitions placed once as components, soft / smooth / hidden edges and empty files opening as empty models in lane 15 (same day). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
 
 ## File versions
 
@@ -21,11 +21,12 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 | Faces (with holes) and edges | Faces of solids or of a non-solid mesh | Every face keeps its own outline: SketchUp's faces are not re-merged, so a line drawn across a face stays a drawn line (a "user edge" between two coplanar faces). Faces are wound around SketchUp's stored front normal. |
 | Groups | Groups, named after them, at any depth | A group's geometry becomes a solid where it is a closed manifold shell (several shells: several solids), otherwise a visible non-solid mesh with a note. Its contents keep their world positions. |
 | Components | A component definition with one instance per placement | A component placed four times comes in as one definition (`Leg`) and four instances of it, each with its placement (rotation, scale, mirroring, translation; inches to metres). Editing inside one instance changes all four; Make Unique separates one. The definition's geometry is in its own axes, as SketchUp stores it. |
-| Group or component? | By how often it is placed | openskp does not say whether a definition is a group's or a component's. A definition placed more than once anywhere in the file comes in as a component; one placed once comes in as a group, unless its name is SketchUp's own group naming (`Group#3`), which is always a group. So a component placed only once arrives as a group (Make Component turns it back into one). |
+| Group or component? | By its name and how often it is placed (lane 15) | openskp does not say whether a definition is a group's or a component's. A definition placed more than once anywhere in the file comes in as a component (unless its name is SketchUp's own group naming, `Group#3`). A definition placed once comes in as a **component** when someone gave it a name (a "Leg" drawn once is still the Leg component, as SketchUp made it), and as a **group** when its name is SketchUp's own (`Group#3`, `Component#7`) or empty. A group in SketchUp always has a `Group#N` definition, so groups still arrive as groups. |
 | Nested groups and components | Nested the same way | A group inside a component is part of the component's definition; a component inside a component is a nested instance in the outer definition. Mirrored placements (negative determinant) keep their faces outward. |
 | One component painted differently | One definition per paint | When a component's faces take their colour from the placement ("paint the component") and its placements are painted differently, each paint gets its own definition (`Leg`, `Leg (Walnut)`), noted. Sawhorse keeps materials in the definition. |
 | Loose geometry at the top level | Solids where closed, otherwise one mesh named after the file | |
-| Loose edges (edges on no face) | Lines on that piece's non-solid mesh | Hidden edges are left out. Soft and smooth edges are kept and drawn like any edge. |
+| Loose edges (edges on no face) | Lines on that piece's non-solid mesh | Hidden loose edges are left out. |
+| Soft, smooth and hidden edges | The same flags on the same edges (lane 15) | Each edge's soft, smooth and hidden flags come across, on solids and on non-solid meshes (ADR-0011): a circle pulled into a cylinder arrives round, its side edges not drawn and its shading smooth. The import notes count them ("24 soft, smooth or hidden edges came in as they were"). |
 | Materials | Colours (sRGB + opacity), by name; each face keeps its own (lane 10) | A piece's own material is the one on most of its faces; faces with another one keep theirs as face paint. A face with no material inherits its placement's material ("paint the component"), as SketchUp does. |
 | Textures | Texture images with their size (lane 10) | PNG and JPEG images come into the model (an `add_texture` step batched before the import, one undo step) with the tile size SketchUp stores, in inches. Other image types keep the file name as a reference, and the colour shows (noted). |
 | Texture positions | Per face, as a scale, a rotation and an offset (lane 10) | A face's mapping (SketchUp's pins, or its default projection from the face's own axes) is turned into the affine map it gives in world metres and fitted to Sawhorse's per-face scale, rotation and offset, so the texture lies where SketchUp drew it. Skewed (four-pin) and projected textures lose the skew or the projection (noted). |
@@ -47,15 +48,17 @@ Each of these is counted in the import notes when present, never silently droppe
 - Per-face layers inside a definition (faces and edges on their own layers): only placements carry tags.
 - An instance's own name when it equals its definition's (shown as the definition's name).
 - Component attributes and dynamic-component properties, glue-to and cut-opening behaviour, the component's insertion point and axes beyond its placement.
-- Which definitions were groups in SketchUp (see "Group or component?" above).
-- Styles, shadows, fog, geo-location, and the file's thumbnail (Sawhorse has its own styles and sun; the file's are not read).
+- Which definitions were groups in SketchUp, beyond their names (see "Group or component?" above): a component placed once that nobody named arrives as a group.
+- Styles beyond their face mode, shadows, fog, geo-location, and the file's thumbnail (Sawhorse has its own styles and sun). An empty file's first style is read by name: a hidden-line, wireframe, X-ray, monochrome or shaded style sets Sawhorse's face mode; any other keeps Sawhorse's own look (noted).
 - `.skp` export.
 
 ## Healing and refusals
 
 The kernel never repairs geometry silently. For each piece it may weld vertices closer than 0.01 mm, drop faces with no area or exact repeats, turn a closed shell that is inside out the right way round, turn reversed faces on a closed shell, and separate closed solids that touch along an edge or a face; every such change is listed in the import notes. A piece that is still not a valid solid (open edges, an edge shared by three or more faces, a self-intersection, no volume) comes in as a visible non-solid mesh, tinted amber in the viewport, with its reason in the notes and in the document state (`meshes[].note`). STL and 3MF export refuse such a mesh by name; GLB, OBJ and DXF export it, marked as not solid.
 
-A file openskp cannot parse is refused with its message and changes nothing ("could not read the SketchUp file: legacy .skp parse failed: ..." for openskp 1.3.0's refusals of a SketchUp 2018 save and of the pre-2013 files above). A model with nothing in it (no faces, no loose edges, no placements: a blank template) is refused too, with "the file has nothing Sawhorse can import", and the document is untouched.
+A file openskp cannot parse is refused with its message and changes nothing ("could not read the SketchUp file: legacy .skp parse failed: ..." for openskp 1.3.0's refusals of a SketchUp 2018 save and of the pre-2013 files above).
+
+A model with nothing in it (no faces, no loose edges, no placements, no saved scenes: a blank template) is **opened as an empty model** (lane 15), in place of the current one (after asking, when it has unsaved changes), in the file's own units ("Millimeter" opens in mm, "Inches" in fractional inches; a file from before 2021 states none and the units stay as they were) and with its style's face mode as above. The report says so: "Opened blank.skp: an empty model". Nothing is imported and there is nothing to undo.
 
 ## Corpus
 

@@ -36,7 +36,7 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 | Key | Tool | Gesture | VCB takes |
 |---|---|---|---|
 | Space | Select | Click; double-click selects the whole solid, or opens a group or component; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
-| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; drag across several (one undo step) | - |
+| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; drag across several (one undo step). Ctrl softens and smooths the edges instead, Shift hides them, Ctrl+Shift unsoftens them | - |
 | L | Line | Click, click, click; stops when it closes, when a face forms, or on Esc | a length along the direction shown |
 | R | Rectangle | Click two corners, or click one and type `w, d`; with nothing clicked, it starts at the origin | `w, d` (a negative value goes the other way) |
 | R again | Rotated Rectangle | Click both ends of one edge, then the width | the edge's length, then the width |
@@ -222,6 +222,15 @@ The Styles pane (right panel, **Styles**) changes how the model is drawn, never 
 - **Shadows**: tick **Show shadows**, then pick the date, the time (local sun time) and the latitude; **Light** and **Dark** set how bright the sun and the shade are; **On the ground** and **On faces** choose where shadows fall. North is along green.
 
 Sliders show their effect as you drag and are one undo step when you let go. Styles and shadows are saved with the model, and a scene saved after changing them brings them back when you go to it.
+
+### Soft and smooth edges
+
+A round part is drawn as flat faces: a dowel of 24 sides, a rounded slab, a turned leg. Make it read as one round surface by softening the edges between those faces: a **soft** edge is not drawn as a line (where the surface turns away from you it is still drawn, as its outline), and a **smooth** edge lets the shading run across it. A **hidden** edge is not drawn at all.
+
+- **Soften edges** in the Styles pane: select the solids, set **Faces turning by at most** (20° rounds a 24-sided cylinder, whose sides turn 15° each; its rims turn 90° and stay sharp), tick **Soften** and / or **Smooth** and click **Soften selected**. Every edge of those solids within the angle is softened and smoothed and every other edge goes hard: one undo step. To soften the parts of a group or component, open it first (double-click); every copy of a component follows.
+- **With the Eraser** (E), edge by edge or dragged across several: **Ctrl** softens and smooths, **Shift** hides, **Ctrl+Shift** unsoftens (soft, smooth and hidden all cleared). Nothing is erased. Hovering an edge tells you if it is soft, smooth or hidden. Soft and hidden edges cannot be clicked by accident; holding Ctrl+Shift reaches them.
+- **Soft and hidden edges** in the Edges list draws them dashed, so you can see where they are.
+- SketchUp files keep their soft, smooth and hidden edges when imported. Saved `.shz` files keep them. GLB exports carry the smooth shading, OBJ exports carry it as smoothing groups, SVG drawings leave soft and hidden edges out; STL and 3MF have no edges to mark.
 
 ## Section planes
 

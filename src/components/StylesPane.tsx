@@ -18,6 +18,11 @@ export interface StylesPaneProps {
   onShadows: (s: Shadows) => void;
   /** Live preview while a slider moves (null: back to the document's). */
   onPreviewShadows: (s: Shadows | null) => void;
+  /** Lane 15: the solids the Soften control acts on (the selection's), and how to say so. */
+  softenTarget?: { objects: number[]; label: string } | null;
+  /** Lane 15: soften and / or smooth every edge of the target turning by at most `angle`
+   * degrees (others go hard): one undo step. */
+  onSoften?: (angle: number, soft: boolean, smooth: boolean) => void;
 }
 
 function Toggle({ label, checked, onChange, disabled, title }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; title?: string }) {
@@ -41,8 +46,12 @@ function Colour({ label, value, fallback, onChange }: { label: string; value: [n
   );
 }
 
-export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadows }: StylesPaneProps) {
+export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadows, softenTarget, onSoften }: StylesPaneProps) {
   const s = fullStyle(style);
+  // Lane 15: the Soften control (SketchUp-style: 20 degrees softens a 24-sided cylinder).
+  const [angle, setAngle] = useState(20);
+  const [soften, setSoften] = useState(true);
+  const [smooth, setSmooth] = useState(true);
   const set = (next: Partial<FullStyle>) => onStyle(compactStyle({ ...s, preset: null, ...next }));
   const doc = shadows ?? DEFAULT_SHADOWS;
   // Slider values while dragging (committed when let go).
@@ -111,6 +120,31 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
         <Toggle label="Profiles" checked={s.edges.profiles} disabled={!s.edges.edges} onChange={(v) => set({ edges: { ...s.edges, profiles: v } })} title="Outlines drawn heavier" />
         <Toggle label="Extensions" checked={s.edges.extensions} disabled={!s.edges.edges} onChange={(v) => set({ edges: { ...s.edges, extensions: v } })} title="Edges run a little past their ends" />
         <Toggle label="Endpoints" checked={s.edges.endpoints} disabled={!s.edges.edges} onChange={(v) => set({ edges: { ...s.edges, endpoints: v } })} title="The ends of edges drawn heavier" />
+        <Toggle label="Soft and hidden edges" checked={s.edges.soft} disabled={!s.edges.edges} onChange={(v) => set({ edges: { ...s.edges, soft: v } })} title="Show soft and hidden edges dashed, so you can see and pick them (the Eraser with Ctrl+Shift unsoftens)" />
+      </div>
+
+      <h4>Soften edges</h4>
+      <div className="soften" data-testid="soften">
+        <label className="slider">
+          <span>
+            Faces turning by at most <b>{angle}°</b>
+          </span>
+          <input type="range" aria-label="Soften angle" min={0} max={180} step={1} value={angle} onChange={(e) => setAngle(Number(e.target.value))} />
+        </label>
+        <div className="radios">
+          <Toggle label="Soften" checked={soften} onChange={setSoften} title="Soft edges are not drawn (a silhouette still is)" />
+          <Toggle label="Smooth" checked={smooth} onChange={setSmooth} title="The shading runs across smooth edges, as if the faces were one curved face" />
+        </div>
+        <button
+          type="button"
+          className="btn"
+          disabled={!onSoften || !softenTarget || softenTarget.objects.length === 0}
+          title="Every edge of the selected solids whose faces turn by at most this angle is softened and smoothed; every other edge of them goes hard. One undo step."
+          onClick={() => onSoften?.(angle, soften, smooth)}
+        >
+          Soften selected
+        </button>
+        <p className="note">{softenTarget && softenTarget.objects.length ? softenTarget.label : "Select solids (open a group or component to reach its solids)."} The Eraser does it edge by edge: Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens.</p>
       </div>
 
       <h4>Background</h4>

@@ -92,6 +92,14 @@ pub struct ViewMesh {
     /// Owners of edges: an object (edges of its solid) or a sketch (its strokes).
     pub edge_owners: Vec<EdgeOwner>,
     pub parts: Vec<MeshPart>,
+    /// One per edge segment (lane 15): its soft (1), smooth (2) and hidden (4) flags.
+    pub edge_flags: Vec<u8>,
+    /// Shading normals, three per render vertex (lane 15), only when some edge in view is
+    /// smooth (faces meeting at a smooth edge share normals at its ends); empty otherwise,
+    /// and the faces are shaded flat from their triangles.
+    pub normals: Vec<f32>,
+    /// Fill `normals` (set when some edge in view is smooth).
+    want_normals: bool,
 }
 
 /// What a run of view-mesh edges belongs to (for window / crossing selection).
@@ -122,6 +130,10 @@ impl ViewMesh {
             self.positions.extend([p.x as f32, p.y as f32, p.z as f32]);
             let [u, v] = uv(*p);
             self.uvs.extend([u as f32, v as f32]);
+            if self.want_normals {
+                let n = part.normal;
+                self.normals.extend([n[0] as f32, n[1] as f32, n[2] as f32]);
+            }
         }
         let id = self.parts.len() as u32;
         for t in tris {
@@ -133,10 +145,11 @@ impl ViewMesh {
     }
 
     fn push_edge(&mut self, a: DVec3, b: DVec3) {
-        self.push_edge_n(a, b, [DVec3::ZERO; 2]);
+        self.push_edge_n(a, b, [DVec3::ZERO; 2], 0);
     }
 
-    fn push_edge_n(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2]) {
+    fn push_edge_n(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2], flags: u8) {
+        self.edge_flags.push(flags);
         self.edges.extend([
             a.x as f32, a.y as f32, a.z as f32, b.x as f32, b.y as f32, b.z as f32,
         ]);
@@ -160,7 +173,13 @@ impl ViewMesh {
         self.begin_owner("object", id);
         let b = o.brep();
         let default = model.solid_default(o);
-        for (_, f) in b.faces() {
+        let smooth = if self.want_normals {
+            o.smooth_normals()
+        } else {
+            None
+        };
+        for (fid, f) in b.faces() {
+            let first = self.normals.len();
             let outer = b.loop_points(f.outer);
             let holes: Vec<Vec<DVec3>> = f.holes.iter().map(|&h| b.loop_points(h)).collect();
             let plane = f.plane;
@@ -195,6 +214,19 @@ impl ViewMesh {
                     self.push_face(part, &outer, &holes, |p| plane.to_local(p), |_| [0.0; 2])?
                 }
             }
+            // Lane 15: across smooth edges the faces share their normals.
+            if let Some(map) = &smooth {
+                let mut k = first;
+                for l in f.loops() {
+                    for v in b.loop_vertices(l) {
+                        if let Some(n) = map.get(&(fid, v)) {
+                            self.normals[k..k + 3]
+                                .copy_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+                        }
+                        k += 3;
+                    }
+                }
+            }
         }
         let normal_of = |he: Option<crate::ids::HalfEdgeId>| {
             he.and_then(|h| b.half_edge(h))
@@ -204,7 +236,12 @@ impl ViewMesh {
         };
         for (e, edge) in b.edges() {
             let (p, q) = b.edge_points(e);
-            self.push_edge_n(p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)]);
+            self.push_edge_n(
+                p,
+                q,
+                [normal_of(Some(edge.he)), normal_of(edge.twin)],
+                o.flags_of(e),
+            );
         }
         Ok(())
     }
@@ -213,6 +250,11 @@ impl ViewMesh {
     /// mesh is shown as it came), then its edges and loose lines.
     fn push_loose(&mut self, id: u64, mesh: &LooseMesh, material: Option<(&str, [u8; 4])>) {
         self.begin_owner("mesh", id);
+        let smooth = if self.want_normals {
+            mesh.smooth_normals()
+        } else {
+            None
+        };
         let (tris, owner) = mesh.triangles();
         let mut by_face: std::collections::BTreeMap<u32, Vec<[u32; 3]>> = Default::default();
         for (t, f) in tris.into_iter().zip(owner) {
@@ -224,6 +266,15 @@ impl ViewMesh {
             };
             let base = (self.positions.len() / 3) as u32;
             let mut local = std::collections::BTreeMap::new();
+            // The face's own normal, from the way its first triangle is wound.
+            let flat = {
+                let p = |i: u32| mesh.positions[i as usize];
+                let t = ts[0];
+                let n = (p(t[1]) - p(t[0]))
+                    .cross(p(t[2]) - p(t[0]))
+                    .normalize_or_zero();
+                if n == DVec3::ZERO { plane.normal } else { n }
+            };
             for t in &ts {
                 for &v in t {
                     let next = local.len() as u32;
@@ -231,6 +282,14 @@ impl ViewMesh {
                         let p = mesh.positions[v as usize];
                         self.positions.extend([p.x as f32, p.y as f32, p.z as f32]);
                         self.uvs.extend([0.0, 0.0]);
+                        if self.want_normals {
+                            let n = smooth
+                                .as_ref()
+                                .and_then(|m| m.get(&(fi as usize, v)))
+                                .copied()
+                                .unwrap_or(flat);
+                            self.normals.extend([n.x as f32, n.y as f32, n.z as f32]);
+                        }
                         next
                     });
                 }
@@ -251,14 +310,24 @@ impl ViewMesh {
                 for k in 0..r.len() {
                     let (a, b) = (r[k], r[(k + 1) % r.len()]);
                     if drawn.insert((a.min(b), a.max(b))) {
-                        self.push_edge(mesh.positions[a as usize], mesh.positions[b as usize]);
+                        self.push_edge_n(
+                            mesh.positions[a as usize],
+                            mesh.positions[b as usize],
+                            [DVec3::ZERO; 2],
+                            mesh.flags_between(a, b),
+                        );
                     }
                 }
             }
         }
         for l in &mesh.lines {
             if drawn.insert((l[0].min(l[1]), l[0].max(l[1]))) {
-                self.push_edge(mesh.positions[l[0] as usize], mesh.positions[l[1] as usize]);
+                self.push_edge_n(
+                    mesh.positions[l[0] as usize],
+                    mesh.positions[l[1] as usize],
+                    [DVec3::ZERO; 2],
+                    mesh.flags_between(l[0], l[1]),
+                );
             }
         }
     }
@@ -276,7 +345,10 @@ fn mesh_material<'a>(model: &'a Model, mesh: &'a LooseMesh) -> Option<(&'a str, 
 /// Everything: objects (in order, faces in order), then imported meshes, then sketch
 /// regions and edges.
 pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
-    let mut m = ViewMesh::default();
+    let mut m = ViewMesh {
+        want_normals: model.has_smooth_edges(),
+        ..ViewMesh::default()
+    };
     for (id, o) in model.objects() {
         if model.is_visible(id) {
             m.push_object(model, id, o)?;
@@ -315,7 +387,10 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
 /// One object only (`None` when there is no such object).
 pub fn object_view_mesh(model: &Model, object: u64) -> Option<Result<ViewMesh, TessellateError>> {
     let o = model.object(object)?;
-    let mut m = ViewMesh::default();
+    let mut m = ViewMesh {
+        want_normals: o.smooth_normals().is_some(),
+        ..ViewMesh::default()
+    };
     Some(m.push_object(model, object, o).map(|_| m))
 }
 

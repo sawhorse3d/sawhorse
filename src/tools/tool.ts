@@ -75,6 +75,8 @@ export interface InferContext {
   exclude?: number | null;
   /** Allow grid snapping on the ground when nothing else is near (default true). */
   grid?: boolean;
+  /** Lane 15: with Ctrl+Shift held, soft and hidden edges can be picked (the Eraser). */
+  pickSoftWithCtrlShift?: boolean;
 }
 
 /** What tools may use from the app. */

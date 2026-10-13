@@ -6,6 +6,7 @@ use glam::DVec3;
 
 use crate::geom::{PixelModel, Ray, ray_segment, ray_triangle};
 use crate::scene::{Owner, OwnerKind, Scene, SurfaceRef};
+use sawhorse_kernel::edges::{HIDDEN, SOFT};
 
 /// Something the user can point at.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -21,6 +22,9 @@ pub enum Entity {
         b: [f64; 3],
         /// Drawn by the user (sketch strokes, lines on faces): erasable.
         drawn: bool,
+        /// Lane 15: soft (1), smooth (2) and hidden (4); absent when none.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        flags: u8,
     },
     Face {
         object: u64,
@@ -83,6 +87,9 @@ pub struct PickQuery {
     /// Radius for edges, CSS pixels.
     #[serde(default = "default_edge_px")]
     pub edge_px: f64,
+    /// Lane 15: pick soft and hidden edges too (the Eraser with Ctrl+Shift, to unsoften).
+    #[serde(default)]
+    pub soft: bool,
 }
 
 pub fn default_point_px() -> f64 {
@@ -181,6 +188,10 @@ pub fn near_segments(
 
 /// Candidate (pixel distance `d`, ray parameter `t`) beats (`bd`, `bt`): clearly nearer the
 /// cursor, or about as near and nearer the eye.
+fn is_zero(x: &u8) -> bool {
+    *x == 0
+}
+
 pub fn closer(d: f64, t: f64, bd: f64, bt: f64) -> bool {
     if (d - bd).abs() <= 0.25 {
         t < bt
@@ -193,7 +204,11 @@ pub fn pick(scene: &Scene, q: &PickQuery) -> Option<Picked> {
     let ray = Ray::new(DVec3::from_array(q.origin), DVec3::from_array(q.dir))?;
     let px = &q.px;
     let hit = surface_hit(scene, &ray);
-    let near = near_segments(scene, &ray, px, q.point_px.max(q.edge_px), hit.as_ref());
+    let mut near = near_segments(scene, &ray, px, q.point_px.max(q.edge_px), hit.as_ref());
+    // Lane 15: soft and hidden edges are out of reach unless asked for.
+    if !q.soft {
+        near.retain(|&(i, ..)| scene.segs[i].flags & (SOFT | HIDDEN) == 0);
+    }
     // Vertices first; on a tie (within a quarter pixel) the one nearer the eye wins.
     let mut best_v: Option<(f64, f64, DVec3, Owner)> = None;
     for &(i, _, _, _) in &near {
@@ -236,6 +251,7 @@ pub fn pick(scene: &Scene, q: &PickQuery) -> Option<Picked> {
                 a: s.a.to_array(),
                 b: s.b.to_array(),
                 drawn: s.drawn,
+                flags: s.flags,
             }
         };
         return Some(Picked {
@@ -338,6 +354,7 @@ mod tests {
             },
             point_px: 8.0,
             edge_px: 5.0,
+            soft: false,
         }
     }
 

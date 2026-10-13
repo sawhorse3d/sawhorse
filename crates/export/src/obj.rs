@@ -146,9 +146,12 @@ pub fn document(model: &Model, scope: &Scope, mtl_file: &str) -> Result<String, 
         let ids = o.brep().persistent_face_ids();
         let mats: Vec<Option<&str>> = ids.iter().map(|&f| model.face_material(*id, f)).collect();
         let textured = ids.iter().any(|&f| model.face_texture(*id, f).is_some());
+        // Lane 15: smooth edges become OBJ smoothing groups (`s 1`, `s off`), which every
+        // importer turns back into shared normals.
+        let groups = o.smoothing_groups();
         // As before lane 10 when every face shows the solid's own material and none is
         // textured: one usemtl for the whole object.
-        if !textured && mats.iter().all(|m| *m == o.material()) {
+        if groups.is_none() && !textured && mats.iter().all(|m| *m == o.material()) {
             if let Some(m) = o.material() {
                 let _ = writeln!(out, "usemtl {}", clean_name(m));
             }
@@ -161,8 +164,19 @@ pub fn document(model: &Model, scope: &Scope, mtl_file: &str) -> Result<String, 
         let (points, f) = solid_faces(o);
         vertices(&mut out, &points);
         let mut current: Option<Option<&str>> = None;
+        let mut group: Option<u32> = None;
         for (k, face) in f.iter().enumerate() {
-            if current != Some(mats[k]) {
+            if let Some(g) = groups.as_ref().map(|g| g[k])
+                && group != Some(g)
+            {
+                if g == 0 {
+                    out.push_str("s off\n");
+                } else {
+                    let _ = writeln!(out, "s {g}");
+                }
+                group = Some(g);
+            }
+            if current != Some(mats[k]) && (mats[k].is_some() || painted) {
                 let _ = writeln!(
                     out,
                     "usemtl {}",
@@ -219,8 +233,27 @@ pub fn document(model: &Model, scope: &Scope, mtl_file: &str) -> Result<String, 
                 (r(&f[0]), f[1..].iter().map(r).collect())
             })
             .collect();
-        // Faces of a non-solid mesh that do not triangulate are written as n-gons anyway.
-        if faces(&mut out, &m.positions, &f, base).is_err() {
+        // Lane 15: smoothing groups, face by face, when the mesh has smooth edges.
+        if let Some(groups) = m.smoothing_groups() {
+            let mut group: Option<u32> = None;
+            for (k, face) in f.iter().enumerate() {
+                if group != Some(groups[k]) {
+                    if groups[k] == 0 {
+                        out.push_str("s off\n");
+                    } else {
+                        let _ = writeln!(out, "s {}", groups[k]);
+                    }
+                    group = Some(groups[k]);
+                }
+                if faces(&mut out, &m.positions, std::slice::from_ref(face), base).is_err() {
+                    out.push('f');
+                    for &i in &face.0 {
+                        let _ = write!(out, " {}", base + i + 1);
+                    }
+                    out.push('\n');
+                }
+            }
+        } else if faces(&mut out, &m.positions, &f, base).is_err() {
             for (outer, _) in &f {
                 out.push('f');
                 for &i in outer {

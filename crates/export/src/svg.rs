@@ -181,6 +181,12 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
                 .map_or(DVec3::ZERO, |f| f.plane.normal)
         };
         for (e, edge) in b.edges() {
+            // Lane 15: soft and hidden edges are not drawn (a softened cylinder is a
+            // silhouette, not 24 lines).
+            if o.flags_of(e) & (sawhorse_kernel::edges::SOFT | sawhorse_kernel::edges::HIDDEN) != 0
+            {
+                continue;
+            }
             let (p, q) = b.edge_points(e);
             edges.push((p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)]));
         }
@@ -192,7 +198,10 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
         for r in m.faces.iter().flatten() {
             for k in 0..r.len() {
                 let (a, b) = (r[k], r[(k + 1) % r.len()]);
-                if seen.insert((a.min(b), a.max(b))) {
+                let soft = m.flags_between(a, b)
+                    & (sawhorse_kernel::edges::SOFT | sawhorse_kernel::edges::HIDDEN)
+                    != 0;
+                if seen.insert((a.min(b), a.max(b))) && !soft {
                     edges.push((
                         m.positions[a as usize],
                         m.positions[b as usize],

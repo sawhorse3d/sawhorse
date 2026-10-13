@@ -84,7 +84,7 @@ export function kernelResolver(
   memory = new InferenceMemory(),
   onInference?: (inf: Inference | null, q: InferQuery) => void,
 ): Resolver {
-  return async (x, y, ctx) => {
+  return async (x, y, ctx, mods) => {
     const eng = engine();
     const k = kernel();
     if (!eng) return null;
@@ -102,6 +102,7 @@ export function kernelResolver(
       anchors: memory.anchors,
       grid: ctx.grid ?? true,
       grid_step: gridStep(),
+      ...(ctx.pickSoftWithCtrlShift && mods?.ctrl && mods?.shift ? { soft: true } : {}),
     };
     let inf: Inference | null = null;
     try {

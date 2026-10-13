@@ -9,7 +9,7 @@ export const DEFAULT_SHADOWS: Shadows = { on: false, month: 6, day: 21, minutes:
 export interface FullStyle {
   preset: string | null;
   face: FaceStyle;
-  edges: { edges: boolean; profiles: boolean; extensions: boolean; endpoints: boolean };
+  edges: { edges: boolean; profiles: boolean; extensions: boolean; endpoints: boolean; soft: boolean };
   background: [number, number, number] | null;
   sky: [number, number, number] | null;
   ground: [number, number, number] | null;
@@ -35,6 +35,7 @@ export function fullStyle(s: Style | null | undefined): FullStyle {
       profiles: s?.edges?.profiles ?? false,
       extensions: s?.edges?.extensions ?? false,
       endpoints: s?.edges?.endpoints ?? false,
+      soft: s?.edges?.soft ?? false,
     },
     background: s?.background ?? null,
     sky: s?.sky ?? null,
@@ -54,12 +55,13 @@ export function compactStyle(s: FullStyle): Style | null {
   if (s.preset) out.preset = s.preset;
   if (s.face !== "textured") out.face = s.face;
   const e = s.edges;
-  if (!e.edges || e.profiles || e.extensions || e.endpoints) {
+  if (!e.edges || e.profiles || e.extensions || e.endpoints || e.soft) {
     out.edges = {};
     if (!e.edges) out.edges.edges = false;
     if (e.profiles) out.edges.profiles = true;
     if (e.extensions) out.edges.extensions = true;
     if (e.endpoints) out.edges.endpoints = true;
+    if (e.soft) out.edges.soft = true;
   }
   if (s.background) out.background = s.background;
   if (s.sky) out.sky = s.sky;
@@ -79,7 +81,7 @@ export interface StylePreset {
   style: FullStyle;
 }
 
-const base = (o: Partial<FullStyle> & { name: string }): FullStyle => ({ ...fullStyle(null), ...o, preset: o.name, edges: { ...fullStyle(null).edges, ...(o.edges ?? {}) } });
+const base = (o: Omit<Partial<FullStyle>, "edges"> & { name: string; edges?: Partial<FullStyle["edges"]> }): FullStyle => ({ ...fullStyle(null), ...o, preset: o.name, edges: { ...fullStyle(null).edges, ...(o.edges ?? {}) } });
 
 /** The six presets of the Styles pane. Ours: chosen for a woodworker's drawing, not copied from any program. */
 export const STYLE_PRESETS: StylePreset[] = [

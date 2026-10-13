@@ -12,7 +12,7 @@
 // under the cursor; a cut face at the plane selects its solid); a click on the arrow at its
 // centre, its reverse control, reverses it.
 import type { DocState, Entity } from "../kernel/types";
-import { applySelection, boxSelect, entityKey, modeFor, objectOf } from "../lib/entities";
+import { applySelection, boxSelect, edgeFlagWords, entityKey, modeFor, objectOf } from "../lib/entities";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, reachableContext, scopeEntity } from "../lib/scope";
 import { describeSection } from "../lib/sections";
@@ -154,7 +154,7 @@ export function describe(e: Entity, state?: DocState | null): string {
         ? "Selected a sketch edge. Delete erases it."
         : e.drawn
           ? `Selected a line drawn on ${solidName(e.owner.id)}. Delete erases it.`
-          : `Selected an edge of ${solidName(e.owner.id)}.`;
+          : `Selected an edge of ${solidName(e.owner.id)}${edgeFlagWords(e.flags) ? ` (${edgeFlagWords(e.flags)})` : ""}.`;
     case "vertex":
       return "Selected a point.";
     case "region":

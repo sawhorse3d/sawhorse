@@ -21,7 +21,7 @@ import { loadCutRounding, saveCutRounding } from "./cutlist/rounding-store";
 import { PDF_TYPE } from "./cutlist/pdf";
 import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef, StockPiece } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
-import { createKernel, KernelUnavailableError, type EditResult, type KernelClient } from "./kernel/client";
+import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient } from "./kernel/client";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
@@ -183,6 +183,18 @@ function loadImportUnits(): ImportUnit {
 export const plural = (n: number, w: string) => `${n} ${n === 1 ? w : /(?:s|x|sh|ch)$/.test(w) ? `${w}es` : `${w}s`}`;
 
 /** One line for the status bar after an import or open. */
+/** Lane 15: the solids the Styles pane's Soften control acts on: every solid the selection
+ * names (a solid, one of its faces or edges). Groups and components are opened first. */
+export function softenTargetOf(selection: Entity[]): { objects: number[]; label: string } | null {
+  const ids = new Set<number>();
+  for (const e of selection) {
+    if (e.kind === "object" || e.kind === "face") ids.add(e.object);
+    else if (e.kind === "edge" && e.owner.kind === "object") ids.add(e.owner.id);
+  }
+  if (!ids.size) return null;
+  return { objects: [...ids], label: `${ids.size} solid${ids.size === 1 ? "" : "s"} selected` };
+}
+
 export function describeImport(name: string, o: OpOutcome, graph?: import("./kernel/types").SceneGraph | null): string {
   if (o.kind === "restored") return `Opened ${name}: ${plural(o.objects, "solid")}${o.meshes ? `, ${plural(o.meshes, "mesh")} (not solid)` : ""}.`;
   if (o.kind !== "imported") return `Imported ${name}.`;
@@ -529,17 +541,41 @@ export function App() {
       const ext = extensionOf(f.name);
       setMessage({ text: `Importing ${f.name}…`, error: false });
       let notes: string[] = [];
+      let empty: EmptySkp | null = null;
       const r = await run(
         async (k) => {
           const res = ext === ".skp" ? await k.importSkp(f.name, f.bytes) : await k.importFile(f.name, f.bytes, { units: importUnits });
           notes = res.notes;
-          return res;
+          if (!("empty" in res && res.empty)) return res as EditResult;
+          // Lane 15: an empty SketchUp file (a blank template) opens as an empty model in its
+          // own units and style, in place of the current one.
+          empty = res.empty;
+          if (!confirmDiscard()) throw new Error(`${f.name} is an empty model; the current model was kept.`);
+          let n = await k.newDocument();
+          const face = res.empty.style?.face;
+          if (face) n = await k.apply({ op: "set_style", style: { face } } as KernelOp);
+          return n;
         },
         null,
-        (res) => describeImport(f.name, res.outcome, res.scene.state.graph),
+        (res) => (empty ? `Opened ${f.name}: an empty model.` : describeImport(f.name, res.outcome, res.scene.state.graph)),
       );
       if (!r) {
         setReport({ title: `Could not import ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });
+        return;
+      }
+      if (empty) {
+        const e = empty as EmptySkp;
+        pluginsRef.current?.documentOpened(null);
+        setDocName(null);
+        fileHandle.current = undefined;
+        setSavedLogLen(r.scene.state.log_len);
+        if (e.units && UNIT_SYSTEMS.some((x) => x.id === e.units)) {
+          setUnits(e.units as UnitSystem);
+          live.current.units = e.units as UnitSystem;
+        }
+        setReport({ title: `Opened ${f.name}: an empty model`, lines: notes });
+        setSelection([]);
+        setView("iso");
         return;
       }
       const kernelNotes = r.outcome.kind === "imported" ? r.outcome.notes : [];
@@ -548,7 +584,7 @@ export function App() {
       w.__sawhorse = { ...(w.__sawhorse ?? {}), lastImport: { name: f.name, outcome: r.outcome, notes: [...notes, ...kernelNotes] } };
       setFitSeq((n) => n + 1);
     },
-    [run, importUnits],
+    [run, importUnits, confirmDiscard],
   );
 
   /** Open a .shz in place of the current model. */
@@ -2507,6 +2543,16 @@ export function App() {
           onStyle: (style) => void apply({ op: "set_style", style }, () => `Style: ${style?.preset ?? "custom"}.`),
           onShadows: (shadows) => void apply({ op: "set_shadows", shadows }, () => (shadows.on ? "Shadows on." : "Shadows off.")),
           onPreviewShadows: setShadowPreview,
+          softenTarget: softenTargetOf(selection),
+          onSoften: (angle, soft, smooth) => {
+            const t = softenTargetOf(live.current.selection);
+            if (!t) return;
+            void apply({ op: "soften_edges", objects: t.objects, angle, soft, smooth }, (r) => {
+              const n = r.outcome.kind === "edges_set" ? r.outcome.changed : 0;
+              const what = soft && smooth ? "softened and smoothed" : soft ? "softened" : smooth ? "smoothed" : "made hard";
+              return `${t.label}: ${n} edge${n === 1 ? "" : "s"} changed (faces turning by at most ${angle}° ${what}, the rest hard).`;
+            });
+          },
         }}
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{

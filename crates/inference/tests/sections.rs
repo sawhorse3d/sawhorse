@@ -62,6 +62,7 @@ fn pick_at(m: &Model, y: f64, z: f64) -> sawhorse_inference::pick::Picked {
             px,
             point_px: 8.0,
             edge_px: 5.0,
+            soft: false,
         },
     )
     .expect("a pick")
@@ -136,6 +137,7 @@ fn the_cut_corners_snap_and_the_removed_edges_do_not() {
         grid_step: None,
         point_px: 10.0,
         line_px: 7.0,
+        soft: false,
     };
     let r = infer(&s, &q).unwrap();
     assert_eq!(r.kind, K::Endpoint);

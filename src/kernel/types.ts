@@ -83,6 +83,10 @@ export type KernelOp =
   | { op: "set_include"; part: PartRef; include: boolean }
   /** Lane 15: each edge-connected piece of loose non-solid faces into a group of its own (none named: every mesh in the open context). */
   | { op: "group_loose"; meshes: number[] }
+  /** Lane 15: soft (1), smooth (2), hidden (4) on edges named by owner and end points. */
+  | { op: "set_edge_flags"; edges: EdgeAt[]; set: number; clear: number }
+  /** Lane 15: soften by angle (degrees) every edge of these solids and meshes. */
+  | { op: "soften_edges"; objects: number[]; meshes?: number[]; angle: number; soft: boolean; smooth: boolean }
   /** Nesting (lane 9): add a stock, or replace the stock named `replace` (a rename carries the defaults). */
   | { op: "define_stock"; stock: StockDef; replace?: string | null }
   | { op: "delete_stock"; name: string }
@@ -132,6 +136,14 @@ export interface Xform {
 }
 
 /** One imported polygon soup (crates/kernel/src/meshbuild.rs `ImportItem`): metres, Z up. */
+/** Lane 15: one edge of a solid or a mesh, by its end points (world metres). */
+export interface EdgeAt {
+  object?: number;
+  mesh?: number;
+  a: V3;
+  b: V3;
+}
+
 export interface ImportItem {
   name: string;
   group?: string | null;
@@ -147,6 +159,8 @@ export interface ImportItem {
   face_materials?: (string | null)[];
   /** Lane 10: each face's texture mapping, two affine rows in world metres (u, v in repeats). */
   face_uvs?: ([number[], number[]] | null)[];
+  /** Lane 15: soft (1), smooth (2) and hidden (4) edges as [index, index, flags]. */
+  edge_flags?: [number, number, number][];
 }
 
 /** A component definition in an import: geometry in its own coordinates, plus nested groups
@@ -224,6 +238,8 @@ export interface EdgeStyle {
   profiles?: boolean;
   extensions?: boolean;
   endpoints?: boolean;
+  /** Lane 15: soft and hidden edges drawn dashed. */
+  soft?: boolean;
 }
 
 /** A drawing style (crates/kernel/src/looks.rs `Style`). Colours are sRGB [r, g, b]. */
@@ -321,6 +337,7 @@ export type OpOutcome =
   | { kind: "mesh_deleted" }
   | { kind: "part_set" }
   | { kind: "loose_grouped"; groups: number[] }
+  | { kind: "edges_set"; changed: number }
   | { kind: "stock_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "section_added"; section: number }
@@ -538,7 +555,7 @@ export interface Owner {
 /** Something the user can point at (crates/inference pick::Entity), plus whole objects. */
 export type Entity =
   | { kind: "vertex"; owner: Owner; at: V3 }
-  | { kind: "edge"; owner: Owner; a: V3; b: V3; drawn: boolean }
+  | { kind: "edge"; owner: Owner; a: V3; b: V3; drawn: boolean; /** Lane 15: soft 1, smooth 2, hidden 4. */ flags?: number }
   | { kind: "face"; object: number; face: number }
   | { kind: "region"; sketch: number; region: number }
   | { kind: "guide"; guide: number }
@@ -619,7 +636,9 @@ export interface InferQuery {
   dir: V3;
   px: PixelModel;
   start?: V3 | null;
-  plane?: { origin: V3; normal: V3 } | null;
+  plane?: { origin: V3; normal: V3   /** Lane 15: the pick may be a soft or hidden edge (the Eraser with Ctrl+Shift). */
+  soft?: boolean;
+} | null;
   lock?: { dir: V3; kind: import("../lib/inferenceStyle").InferenceKind } | null;
   refs?: [V3, V3][];
   anchors?: V3[];
@@ -673,6 +692,10 @@ export interface MeshData {
   uvs?: Float32Array;
   /** The two face normals at each edge, six per edge segment (zero where there is none). */
   edgeNormals?: Float32Array;
+  /** Lane 15: soft (1), smooth (2) and hidden (4) flags, one per edge segment. */
+  edgeFlags?: Uint8Array;
+  /** Lane 15: shading normals, three per render vertex, only when some edge is smooth. */
+  normals?: Float32Array;
 }
 
 /** A texture image the UI has not seen yet (sent once per digest, transferred). */
@@ -705,6 +728,8 @@ export interface WasmMesh {
   parts_json(): string;
   uvs(): Float32Array;
   edge_normals(): Float32Array;
+  edge_flags(): Uint8Array;
+  normals(): Float32Array;
   free(): void;
 }
 
@@ -861,6 +886,8 @@ export type WorkerResponse =
       notes?: string[];
       /** What opening a .shz found: the unit system it was saved in, who wrote it. */
       opened?: { display_units: string | null; generator: string };
+      /** Lane 15: the .skp was empty (nothing drawn): its units and style; nothing changed. */
+      emptySkp?: { units: string | null; unitsWord: string | null; style: { name: string; face: FaceStyle | null } | null };
       cutList?: CutList;
       nesting?: Nesting;
       /** A sampled material (null: the default look). */
