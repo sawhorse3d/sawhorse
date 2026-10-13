@@ -24,7 +24,9 @@ import { decodePluginFrame, encodeHostMessage, peekFrame, PROTOCOL, WireError, t
 import { moduleFiles, type PluginPackage } from "./loader";
 import sandboxScriptUrl from "./sandbox.worker.ts?worker&url";
 
-const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+// Lane 17: own keys only, so "constructor", "toString" or "__proto__" never find a function
+// on Object.prototype (whose source a refusal would then print as the permission it needs).
+const own = (o: object, k: string) => Object.hasOwn(o, k);
 
 /** What each request method needs. */
 export const METHODS: Record<string, Permission | null> = {

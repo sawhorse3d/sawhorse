@@ -79,19 +79,26 @@ export function usePlugins({ bridge, toolHost, scene, selection, toolId, units, 
 
   useEffect(() => {
     void manager.init();
-    // Developer and test hooks (read the state, load a plugin's files for this session).
-    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-    w.__sawhorse = {
-      ...(w.__sawhorse ?? {}),
-      plugins: {
-        list: () => manager.list().map((e) => ({ id: e.id, name: e.name, version: e.version, source: e.source, enabled: e.enabled, status: e.status, lastError: e.lastError, errors: e.errors, logs: e.logs.map((l) => `${l.level}: ${l.text}`) })),
-        loadSession: async (files: Record<string, string>) => (await manager.loadSession(files)).id,
-        enable: (id: string) => manager.enable(id),
-        disable: (id: string) => manager.disable(id),
-        commands: () => [...manager.commands.keys()],
-        run: (key: string) => manager.runCommand(key),
-      },
-    };
+    // Developer and test hooks (read the state, load a plugin's files for this session, enable
+    // one without the dialog). Lane 17: `enable` grants a whole manifest with no consent, so
+    // any script in the page could have used it; the hooks exist only in the dev server, the
+    // unit tests and the end-to-end build (vite.config.ts, testHooks), never in a release.
+    if (__SAWHORSE_TEST_HOOKS__) {
+      const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+      w.__sawhorse = {
+        ...(w.__sawhorse ?? {}),
+        plugins: {
+          // scripts/check-test-hooks.mjs looks for this string in a build.
+          build: "sawhorse-test-hooks",
+          list: () => manager.list().map((e) => ({ id: e.id, name: e.name, version: e.version, source: e.source, enabled: e.enabled, status: e.status, lastError: e.lastError, errors: e.errors, logs: e.logs.map((l) => `${l.level}: ${l.text}`) })),
+          loadSession: async (files: Record<string, string>) => (await manager.loadSession(files)).id,
+          enable: (id: string) => manager.enable(id),
+          disable: (id: string) => manager.disable(id),
+          commands: () => [...manager.commands.keys()],
+          run: (key: string) => manager.runCommand(key),
+        },
+      };
+    }
     return () => manager.dispose();
   }, [manager]);
 

@@ -2,6 +2,8 @@
 node_modules/
 target/
 dist/
+# the end-to-end tests' build, with the plugin test hooks (scripts/e2e-serve.mjs)
+dist-e2e/
 # assembled public site (npm run site)
 dist-site/
 # packed plugins (npm run plugin:pack)

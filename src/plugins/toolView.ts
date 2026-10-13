@@ -37,7 +37,8 @@ export function checkToolView(raw: unknown): PluginToolView {
       budget -= points.length;
       if (points.length < 2) continue;
       const c = typeof o.color === "string" ? o.color : "accent";
-      const color = COLORS[c] ?? (c in INFERENCE_STYLES ? INFERENCE_STYLES[c as InferenceKind].token : "--accent");
+      // Lane 17: own keys only ("constructor" is not a colour).
+      const color = Object.hasOwn(COLORS, c) ? COLORS[c] : Object.hasOwn(INFERENCE_STYLES, c) ? INFERENCE_STYLES[c as InferenceKind].token : "--accent";
       const width = typeof o.width === "number" && Number.isFinite(o.width) ? Math.min(Math.max(o.width, 0.5), 6) : 1.75;
       v.overlay.push({ kind, points, color, width, dashed: !!o.dashed });
     }
@@ -50,7 +51,7 @@ export function checkToolView(raw: unknown): PluginToolView {
   if (isObj(inf)) {
     if (isV3(inf.start)) v.inference.start = inf.start;
     if (isObj(inf.plane) && isV3(inf.plane.origin) && isV3(inf.plane.normal)) v.inference.plane = { origin: inf.plane.origin, normal: inf.plane.normal };
-    if (isObj(inf.lock) && isV3(inf.lock.dir) && typeof inf.lock.kind === "string" && inf.lock.kind in INFERENCE_STYLES) v.inference.lock = { dir: inf.lock.dir, kind: inf.lock.kind as InferenceKind };
+    if (isObj(inf.lock) && isV3(inf.lock.dir) && typeof inf.lock.kind === "string" && Object.hasOwn(INFERENCE_STYLES, inf.lock.kind)) v.inference.lock = { dir: inf.lock.dir, kind: inf.lock.kind as InferenceKind };
     if (typeof inf.grid === "boolean") v.inference.grid = inf.grid;
   }
   return v;

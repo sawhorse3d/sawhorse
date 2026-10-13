@@ -15,7 +15,9 @@ export const PERMISSIONS: readonly Permission[] = ["model.read", "model.write", 
 
 /** What each permission lets a plugin do, in the words the enable dialog shows. */
 export const PERMISSION_TEXT: Record<Permission, { title: string; detail: string }> = {
-  "model.read": { title: "Read the model", detail: "solids, groups and components, faces, the selection, materials and the cut list, and what is under the pointer while its tools are in use" },
+  // Lane 17: model.select is under model.read (METHODS), and the selection steers the
+  // person's next Delete or Move, so the dialog says so.
+  "model.read": { title: "Read the model", detail: "solids, groups and components, faces, materials, the cut list and the selection, and change the selection; also what is under the pointer while its tools are in use" },
   "model.write": { title: "Change the model", detail: "every change is one named undo step, checked by the kernel like your own edits" },
   ui: { title: "Add to the window", detail: "panels in the side panel, commands in the Plugins menu, tools on the rail (they follow the pointer, but see nothing of the model without \"Read the model\"), messages and questions" },
   storage: { title: "Keep settings", detail: "a small store of its own, for this app and inside the documents you save" },
@@ -223,6 +225,25 @@ function uniqueIds(errors: string[], where: string, items: { id: string }[]): vo
   }
 }
 
+/** Latin look-alikes from other scripts that NFKC does not fold (Cyrillic, Greek). */
+const LOOKALIKE: Record<string, string> = { "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0455": "s", "\u04bb": "h", "\u0501": "d", "\u051d": "w", "\u0461": "w", "\u03bf": "o", "\u03b1": "a", "\u03b5": "e", "\u03c1": "p", "\u0391": "a", "\u0395": "e", "\u039f": "o", "\u0405": "s", "\u0410": "a", "\u0415": "e", "\u041e": "o", "\u0420": "p", "\u0421": "c", "\u0397": "h", "\u041d": "h", "\u0428": "w" };
+
+/**
+ * Lane 17: whether a plugin's name would pass for the app's own: "Sawhorse", or "Sawhorse"
+ * followed by anything but a letter ("Sawhorse Updates", "Sawhorse: Save", "Sawhorse3D"),
+ * after folding case, compatibility forms (full-width letters), invisible characters,
+ * spacing and common look-alike letters. "Sawhorses for kids" is fine.
+ */
+export function reservedName(name: string): boolean {
+  const folded = [...name.normalize("NFKC").replace(/[\p{Cf}\p{Mn}]/gu, "")]
+    .map((ch) => LOOKALIKE[ch] ?? ch)
+    .join("")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^saw ?horse(?![a-z])/.test(folded);
+}
+
 /** Check a parsed plugin.json. Every problem is listed, in the order found. */
 export function validateManifest(raw: unknown): ManifestResult {
   const errors: string[] = [];
@@ -232,6 +253,7 @@ export function validateManifest(raw: unknown): ManifestResult {
   const id = text(errors, "id", raw.id, 3, 100);
   if (id && !ID_PATTERN.test(id)) errors.push(`id "${id}" must be reverse-DNS: lower-case words separated by dots, like "org.example.cabinet-generator"`);
   const name = text(errors, "name", raw.name, 1, 64);
+  if (name && reservedName(name)) errors.push(`name "${name}" is reserved: the app's dialogs and status line say "from <name>", so a plugin may not be called Sawhorse or "Sawhorse ..."`);
   const version = text(errors, "version", raw.version, 1, 64);
   if (version && !VERSION_PATTERN.test(version)) errors.push(`version "${version}" must be a semantic version like 1.0.0`);
   if (raw.api !== API_VERSION) errors.push(`api must be ${API_VERSION} (this app speaks plugin API ${API_VERSION}; the plugin says ${JSON.stringify(raw.api)})`);

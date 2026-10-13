@@ -82,7 +82,7 @@ Everything is in metres, Z up, like the kernel. Show and read lengths with [`uni
 | Field | Required | What |
 |---|---|---|
 | `id` | yes | Reverse-DNS, lower case: `org.example.cabinet-generator`. Unique; installing a plugin with the same id replaces the old one. |
-| `name` | yes | 1 to 64 characters, shown everywhere. |
+| `name` | yes | 1 to 64 characters, shown everywhere (dialogs say "from <name>", status lines start with it). "Sawhorse" and "Sawhorse ..." (in any case, width or look-alike letters) are refused: they are the app's. |
 | `version` | yes | Semantic version: `1.2.0`. |
 | `api` | yes | `1`. |
 | `description` | yes | Up to 500 characters (may be empty). Shown in the Plugins pane and the enable dialog. |
@@ -116,7 +116,7 @@ Declared in `permissions`, listed in the dialog the person sees before enabling,
 
 | Permission | Lets the plugin | API |
 |---|---|---|
-| `model.read` | read solids, groups and components, faces, the tree, the selection (and set it), materials, the cut list; hear `selectionChanged`, `documentChanged`, `documentOpened`; see the model under the pointer in its tools' events (`snap`, `picked`) | `model.*` reads, `model.select`, those events, tool events in full |
+| `model.read` | read solids, groups and components, faces, the tree, the selection, materials, the cut list, and change the selection (`model.select`: what the person's next Delete or Move acts on); hear `selectionChanged`, `documentChanged`, `documentOpened`; see the model under the pointer in its tools' events (`snap`, `picked`) | `model.*` reads, `model.select`, those events, tool events in full |
 | `model.write` | change the model, one named undo step per batch, validated by the kernel | `batch.commit()` |
 | `ui` | panels, commands, tools, menus, shortcuts, messages, prompts and confirms; hear `toolChanged`. A tool follows the pointer, but without `model.read` its events carry nothing of the model ([Tools](#tools)) | `ui.*` |
 | `storage` | a small store of its own: per app (256 KB) and inside the document (64 KB, saved in the `.shz`) | `storage.app`, `storage.document` |
@@ -124,6 +124,8 @@ Declared in `permissions`, listed in the dialog the person sees before enabling,
 | `net` | requests to the hosts in `net`, over https, without cookies or credentials, through the app | `net.fetch`, and a global `fetch` |
 
 Without `net` there is no `fetch` in the sandbox at all, and no other way out (see [What a plugin cannot do](#what-a-plugin-cannot-do)).
+
+**A grant is what the person saw, and never grows by itself.** It records the permissions and the `net` entries the dialog listed; when a plugin's files ask for less (a sample updated with the app, a folder you are working on), the grant shrinks to match, so a permission or a host dropped and asked for again later shows the dialog again.
 
 **A grant is for the files the person enabled**, not for the plugin's id. The app keeps a SHA-256 of the package (every file, its path and contents) with the grant. A different package with the same id (an update, a replacement zip, a zip that takes a bundled sample's id) is listed **Off**, with "These are not the files you enabled: enable it again to let it run", until the person enables it again and sees what it asks for; the dialog says when it takes a bundled sample's place. When a new version also asks for more than was granted, the message lists what is new. Two sources keep their grant when their files change, because the person chose the source rather than a build of it: a bundled sample updated with the app, and a folder loaded with Load unpacked folder on the desktop (Reload reads it again while you work on it).
 
@@ -197,7 +199,7 @@ const cut = await model.cutList({ rounding: "sixteenth", visibleOnly: false }); 
 
 ### Changing the model: batches
 
-Every change is a **batch**: collect ops, then `commit()`. The app applies the whole batch through the kernel as **one undo step named after the batch** ("Undone: Generate cabinet"), validated like any edit. If any op is refused, nothing changes and `commit()` rejects with the reason, naming the op ("op 3 (push_pull): no face #12 on this object"). `commit()` needs `model.write`.
+Every change is a **batch**: collect ops, then `commit()`. The app applies the whole batch through the kernel as **one undo step named after the batch** ("Undone: Generate cabinet"), validated like any edit. If any op is refused, nothing changes and `commit()` rejects with the reason, naming the op ("op 3 (push_pull): no face #12 on this object"). `commit()` needs `model.write`. The kernel's reason names the model, so a plugin with `model.write` but not `model.read` hears only which op was refused ("op 3 was refused; nothing changed ..."); the person still sees the whole reason in the status line. A batch's outcomes (the ids it made) come back either way: placeholders need them.
 
 ```js
 const b = model.batch("Make a shelf");
@@ -279,7 +281,7 @@ const ok = await ui.confirm({ title: "Replace it?", text: "The selected cabinet 
 await ui.activateTool("drill"); // one of this plugin's tools
 ```
 
-Dialogs are the app's, titled with the plugin's name ("from Cabinet generator"), so a plugin cannot pass itself off as the app.
+Dialogs are the app's, titled with the plugin's name ("from Cabinet generator"), and a plugin's lines in the status bar start with its name (`ui.notify`, a tool's `status`, a tool's hint), so a plugin cannot pass itself off as the app; for the same reason a plugin may not be named Sawhorse.
 
 ### Panels
 

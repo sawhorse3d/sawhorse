@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schemaJson from "../manifest.schema.json";
-import { describeNetEntry, isPublicSuffix, originAllowed, parseManifest, PERMISSIONS, validateManifest } from "../src/manifest.ts";
+import { describeNetEntry, isPublicSuffix, originAllowed, parseManifest, PERMISSIONS, reservedName, validateManifest } from "../src/manifest.ts";
 
 const good = {
   id: "org.example.cabinet-generator",
@@ -112,6 +112,16 @@ describe("validateManifest", () => {
     expect(describeNetEntry("https://api.example.com:443")).toBe("https://api.example.com");
     expect(describeNetEntry("http://localhost:3000")).toBe("http://localhost:3000");
     expect(describeNetEntry("localhost")).toBe("any port on localhost (http or https)");
+  });
+
+  it("refuses the app's own name, so a plugin's dialogs cannot say \"from Sawhorse\" (lane 17, F6)", () => {
+    const named = (name: string) => errorsOf({ ...good, name }).join("\n");
+    // A full-width S, a zero-width space inside, a Cyrillic a, a Cyrillic o, and a space.
+    for (const name of ["Sawhorse", "sawhorse", "  SAWHORSE  ", "Sawhorse Updates", "Sawhorse: Save failed", "Sawhorse-Pro", "Sawhorse3D", "\uff33awhorse", "Saw\u200bhorse", "S\u0430whorse", "Sawh\u043erse", "Saw horse"]) {
+      expect(named(name), JSON.stringify(name)).toContain("is reserved");
+      expect(reservedName(name), JSON.stringify(name)).toBe(true);
+    }
+    for (const name of ["Sawhorses for kids", "My Sawhorse tools", "Cabinet generator", "Horse saw"]) expect(named(name), name).toBe("");
   });
 
   it("reports bad JSON", () => {

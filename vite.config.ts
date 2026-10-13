@@ -62,7 +62,19 @@ function cspMeta(): Plugin {
   };
 }
 
-export default defineConfig({
+/**
+ * Lane 17: the page-context test hooks that load and enable plugins without the permission
+ * dialog (window.__sawhorse.plugins, src/plugins/usePlugins.tsx) are compiled only into the
+ * dev server, the unit tests and the end-to-end build (SAWHORSE_TEST_HOOKS=1,
+ * scripts/e2e-serve.mjs). A production build has none: the constant is false and the code is
+ * dropped, which scripts/check-test-hooks.mjs confirms after every `npm run build`.
+ */
+export function testHooks(command: string, mode: string): boolean {
+  return command === "serve" || mode === "test" || process.env.SAWHORSE_TEST_HOOKS === "1";
+}
+
+export default defineConfig(({ command, mode }) => ({
+  define: { __SAWHORSE_TEST_HOOKS__: JSON.stringify(testHooks(command, mode)) },
   plugins: [react(), cspMeta()],
   clearScreen: false,
   // Relative by default (the Tauri webview and any static folder). The public demo is built
@@ -101,4 +113,4 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}", "packages/**/*.test.ts"],
     setupFiles: ["src/test-setup.ts"],
   },
-});
+}));

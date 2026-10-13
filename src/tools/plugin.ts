@@ -35,7 +35,9 @@ export class PluginTool extends Tool {
       if (key !== this.id || !this.active) return;
       // Checked once by the manager when it arrived (lane 16).
       this.view_ = this.manager.toolView(this.id);
-      if (this.view_.status !== undefined) this.host.status(this.view_.status);
+      // Lane 17: a plugin's status line starts with its name, like its notices, so it cannot
+      // pass itself off as the app ("Saved." from a plugin reads "Cabinet generator: Saved.").
+      if (this.view_.status !== undefined) this.host.status(this.view_.status === null ? null : `${this.owner()}: ${this.view_.status}`);
       if (this.view_.value !== undefined) this.host.showValue(this.view_.value);
       this.host.changed();
     });
@@ -47,6 +49,11 @@ export class PluginTool extends Tool {
 
   private def() {
     return this.manager.tools.get(this.id)?.def;
+  }
+
+  /** The name of the plugin this tool belongs to. */
+  private owner(): string {
+    return this.manager.tools.get(this.id)?.pluginName ?? "A plugin";
   }
 
   /** In order with the other calls; failures go to the plugin's console, not the app. */
@@ -90,7 +97,7 @@ export class PluginTool extends Tool {
 
   variantHint(): string | null {
     const d = this.def();
-    return d?.hint ? `${d.title}: ${d.hint}` : null;
+    return d?.hint ? `${d.title} (${this.owner()}): ${d.hint}` : null;
   }
 
   inferContext(): InferContext {

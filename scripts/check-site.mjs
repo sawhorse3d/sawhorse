@@ -162,6 +162,9 @@ if (existsSync(path.join(dir, "app", "index.html"))) {
   if (assets.some((a) => a.endsWith(".map"))) bad("app/assets: source maps in the public build");
   const bundle = assets.filter((a) => a.endsWith(".js")).map((a) => readFileSync(path.join(dir, "app", "assets", a), "utf8")).join("\n");
   if (!bundle.includes("Runs in your browser, nothing is uploaded.")) bad("app: the demo banner is not in the bundle (VITE_WEB_DEMO=1 missing?)");
+  // Lane 17: the public demo has no page-context plugin hooks (they enable a plugin with no
+  // permission dialog; scripts/check-test-hooks.mjs, vite.config.ts testHooks).
+  if (bundle.includes("sawhorse-test-hooks")) bad("app: the plugin test hooks (window.__sawhorse.plugins) are in the public build (SAWHORSE_TEST_HOOKS set?)");
 }
 
 // ---- identity: no machine paths or personal names -------------------------------------

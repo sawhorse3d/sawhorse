@@ -39,6 +39,9 @@ export interface Grant {
   source?: "bundled" | "installed" | "unpacked" | "session";
   /** The folder of an unpacked plugin (desktop). */
   location?: string;
+  /** Lane 17: the `net` entries the person saw in the dialog (absent on older grants, which
+   * then cover no network: a plugin with `net` is enabled again once). */
+  net?: string[];
 }
 
 /**
@@ -95,9 +98,26 @@ export function saveGrants(g: Record<string, Grant>): void {
   writeJson(ENABLED_KEY, g);
 }
 
-/** Whether a grant still covers what the manifest asks for. */
-export function grantCovers(g: Grant | undefined, permissions: Permission[]): boolean {
-  return !!g && Array.isArray(g.permissions) && permissions.every((p) => g.permissions.includes(p));
+/** Whether a grant still covers what the manifest asks for: its permissions and (lane 17)
+ * every `net` entry. */
+export function grantCovers(g: Grant | undefined, permissions: Permission[], net: string[] = []): boolean {
+  if (!g || !Array.isArray(g.permissions) || !permissions.every((p) => g.permissions.includes(p))) return false;
+  const granted = Array.isArray(g.net) ? g.net : [];
+  return net.every((n) => granted.includes(n));
+}
+
+/**
+ * Lane 17: a grant cut down to what the manifest still asks for. A grant used to be changed
+ * only by Enable, so a source that keeps its grant across changes (a bundled sample, an
+ * unpacked folder) could drop a permission and later ask for it again with no new consent.
+ * Returns `g` itself when nothing is cut.
+ */
+export function trimGrant(g: Grant, permissions: Permission[], net: string[] = []): Grant {
+  const keep = Array.isArray(g.permissions) ? g.permissions.filter((p) => permissions.includes(p)) : [];
+  const keepNet = Array.isArray(g.net) ? g.net.filter((n) => net.includes(n)) : undefined;
+  const same = keep.length === (g.permissions?.length ?? 0) && (keepNet === undefined || keepNet.length === g.net!.length);
+  if (same) return g;
+  return { ...g, permissions: keep, ...(keepNet !== undefined ? { net: keepNet } : {}) };
 }
 
 const checkKey = (key: unknown): string => {

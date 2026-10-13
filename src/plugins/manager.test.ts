@@ -6,8 +6,13 @@ import type { HostMessage } from "../../packages/plugin-api/src/rpc.ts";
 import type { DocState, SceneData } from "../kernel/types";
 import { NeedsUserActivation, pickFile, saveFile } from "../io/files";
 import { fakeChannel, type FakeChannel } from "./fakeChannel";
-import { permissionLines, PluginManager, type AppBridge } from "./manager";
-import { grantMatches, packageDigest } from "./store";
+import { PERMISSION_TEXT } from "../../packages/plugin-api/src/manifest.ts";
+import { fakeHost } from "../tools/fakeHost";
+import { PluginTool } from "../tools/plugin";
+import { METHODS } from "./host";
+import { batchRefusedWithoutRead, permissionLines, PluginManager, type AppBridge } from "./manager";
+import { grantCovers, grantMatches, loadGrants, packageDigest, trimGrant } from "./store";
+import { checkToolView } from "./toolView";
 
 const flush = async () => {
   for (let i = 0; i < 6; i++) await Promise.resolve();
@@ -162,7 +167,10 @@ describe("model requests", () => {
     expect(ok).toMatchObject({ ok: true, value: [{ kind: "renamed" }] });
     expect(bridge.applyBatch).toHaveBeenCalledWith("Rename", [{ op: "rename", item: { object: 7 }, name: "Leg" }], "Test", expect.any(AbortSignal));
     bridge.applyBatch.mockRejectedValueOnce(new Error("no object #99"));
-    expect(await req(c, "model.batch", { name: "Bad", ops: [{ op: "delete_object", object: 99 }] })).toMatchObject({ ok: false, code: "refused", error: "no object #99" });
+    // Lane 17 (F5): without model.read the kernel's reason (which names the model) stays out.
+    const bad = await req(c, "model.batch", { name: "Bad", ops: [{ op: "delete_object", object: 99 }] });
+    expect(bad).toMatchObject({ ok: false, code: "refused" });
+    expect(bad.ok === false && bad.error).toMatch(/^the batch was refused; nothing changed/);
   });
 });
 
@@ -612,5 +620,101 @@ describe("the network allowlist is by origin (lane 17, F3)", () => {
     bridge.fetch.mockResolvedValueOnce(small as unknown as Response);
     const r = await req(c, "net.fetch", { url: "https://api.example.com/small" });
     expect(r.ok && (r.value as { body: Uint8Array }).body.byteLength).toBe(5);
+  });
+});
+
+describe("consent, attribution and grants (lane 17, F4 to F9)", () => {
+  it("F4: the consent text for model.read says it changes the selection, and model.select needs model.read", async () => {
+    expect(PERMISSION_TEXT["model.read"].detail).toContain("and change the selection");
+    expect(METHODS["model.select"]).toBe("model.read");
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("docs/PLUGINS.md", "utf8")).toMatch(/\| `model\.read` \|[^\n]*and change the selection/);
+    const { c, req, bridge } = await running({ permissions: ["ui"] });
+    expect(await req(c, "model.select", { items: [{ kind: "solid", id: 7 }] })).toMatchObject({ ok: false, code: "permission" });
+    expect(bridge.select).not.toHaveBeenCalled();
+  });
+
+  it("F5: without model.read a refused batch says only which op was refused, never the kernel's reason", async () => {
+    const reason = 'op 1 (push_pull): no face #12 on object 7 "Secret leg"';
+    const w = await running({ permissions: ["model.write"] });
+    w.bridge.applyBatch.mockRejectedValueOnce(new Error(reason));
+    const r = await w.req(w.c, "model.batch", { name: "Probe", ops: [{ op: "rename", item: { object: 7 }, name: "x" }, { op: "push_pull", object: 7, face: 12, distance: 1 }] });
+    expect(r).toMatchObject({ ok: false, code: "refused" });
+    const text = r.ok === false ? r.error : "";
+    expect(text).toContain("op 1 was refused");
+    expect(text).not.toMatch(/face|#12|object 7|Secret|push_pull/);
+    w.bridge.applyBatch.mockRejectedValueOnce(new Error("the kernel is busy with Secret leg"));
+    const r2 = await w.req(w.c, "model.batch", { name: "Probe", ops: [{ op: "rename", item: { object: 7 }, name: "x" }] });
+    expect(r2.ok === false && r2.error).toMatch(/^the batch was refused; nothing changed/);
+    // With model.read the reason is the plugin's to read.
+    const rw = await running({ permissions: ["model.read", "model.write"] });
+    rw.bridge.applyBatch.mockRejectedValueOnce(new Error(reason));
+    expect(await rw.req(rw.c, "model.batch", { name: "Probe", ops: [{ op: "push_pull", object: 7, face: 12, distance: 1 }] })).toMatchObject({ ok: false, code: "refused", error: reason });
+    expect(batchRefusedWithoutRead("op 12: placeholder regions.9 is missing")).toBe('op 12 was refused; nothing changed (the reason names the model, and plugin.json does not ask for "model.read")');
+  });
+
+  it("F6: a plugin tool's status line and hint start with the plugin's name", async () => {
+    const { m, c, req, bridge } = await running({ permissions: ["ui"], contributes: { tools: [{ id: "t", title: "Tool", hint: "Click a face." }] } });
+    (bridge as { activeTool: () => string }).activeTool = () => "plugin:org.example.test/t";
+    await req(c, "ui.registerTool", { id: "t" });
+    const host = fakeHost();
+    const tool = new PluginTool(host, m, "plugin:org.example.test/t");
+    tool.activate();
+    await req(c, "ui.toolView", { id: "t", view: { status: "Saved. Your document is safe." } });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(host.statuses.at(-1)?.text).toBe("Test: Saved. Your document is safe.");
+    expect(tool.variantHint()).toBe("Tool (Test): Click a face.");
+    await req(c, "ui.toolView", { id: "t", view: { status: null } });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(host.statuses.at(-1)?.text).toBeNull();
+    tool.dispose();
+  });
+
+  it("F8: a grant shrinks to what the files ask for, so a permission dropped and asked for again needs the person again", async () => {
+    const t = setup();
+    const e = t.m.add(files({ permissions: ["model.read", "ui", "net"], net: ["api.example.com"] }), "bundled");
+    await t.m.enable(e.id);
+    expect(loadGrants()[e.id]).toMatchObject({ permissions: ["model.read", "ui", "net"], net: ["api.example.com"] });
+    // The sample (it keeps its grant across updates) drops model.read and the network ...
+    t.m.add(files({ permissions: ["ui"] }), "bundled");
+    expect(loadGrants()[e.id]).toMatchObject({ permissions: ["ui"], net: [] });
+    expect(t.m.get(e.id)!.enabled).toBe(true);
+    // ... and asks for them again: off until the person says yes.
+    const back = t.m.add(files({ permissions: ["model.read", "ui", "net"], net: ["api.example.com"] }), "bundled");
+    expect(back.enabled).toBe(false);
+    expect(back.lastError).toContain("asks for more (model.read, net, net api.example.com)");
+    t.m.dispose();
+  });
+
+  it("F8: a new net entry is a new grant too, even with the same permissions", async () => {
+    const t = setup();
+    const e = t.m.add(files({ permissions: ["net"], net: ["api.example.com"] }), "bundled");
+    await t.m.enable(e.id);
+    const more = t.m.add(files({ permissions: ["net"], net: ["api.example.com", "localhost"] }), "bundled");
+    expect(more.enabled).toBe(false);
+    expect(more.lastError).toContain("asks for more (net localhost)");
+    expect(grantCovers({ version: "1", permissions: ["net"] }, ["net"], ["api.example.com"])).toBe(false);
+    expect(trimGrant({ version: "1", permissions: ["ui"] }, ["ui"])).toEqual({ version: "1", permissions: ["ui"] });
+    t.m.dispose();
+  });
+
+  it("F9: names on Object.prototype are not methods or events, and a refusal never prints a function", async () => {
+    const { c, req } = await running({ permissions: ["ui"] });
+    for (const method of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf", "__defineGetter__"]) {
+      const r = await req(c, method);
+      // "__proto__" and "__defineGetter__" are not method names on the wire ("invalid"); the rest
+      // are refused by the method table.
+      expect(r, method).toMatchObject({ ok: false, code: method.startsWith("__") ? "invalid" : "unknown" });
+      expect(r.ok === false && r.error, method).not.toMatch(/function|native code|\{/);
+    }
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      const r = await req(c, "events.subscribe", { name });
+      expect(r, name).toMatchObject({ ok: false, code: "invalid" });
+      expect(r.ok === false && r.error, name).not.toMatch(/function|native code/);
+    }
+    // A tool view's colour or lock named after a prototype key is not one.
+    const v = checkToolView({ overlay: [{ points: [[0, 0, 0], [1, 0, 0]], color: "constructor" }], inference: { start: [0, 0, 0], lock: { dir: [0, 0, 1], kind: "toString" } } });
+    expect(v.overlay[0].color).toBe("--accent");
+    expect(v.inference.lock).toBeUndefined();
   });
 });

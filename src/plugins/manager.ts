@@ -17,7 +17,7 @@ import { loadPackage, type PluginPackage, type PluginSource } from "./loader";
 import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selectionOf, solidOf, solidsOf, statsOf, treeOf } from "./model";
 import { checkBody, patchFields, valuesOf, type FieldValue, type PanelField } from "./panel";
 import type { PluginPlatform } from "./platform";
-import { AppStore, DocStore, grantCovers, grantMatches, loadGrants, packageDigest, saveGrants, type Grant } from "./store";
+import { AppStore, DocStore, grantCovers, grantMatches, loadGrants, packageDigest, saveGrants, trimGrant, type Grant } from "./store";
 import { redactToolEvent } from "./toolEvent";
 import { checkToolView, type PluginToolView } from "./toolView";
 import { readPluginZip } from "./zip";
@@ -184,6 +184,17 @@ export const toolKey = (plugin: string, tool: string) => `plugin:${plugin}/${too
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * Lane 17: what a plugin without `model.read` hears when its batch is refused: the index of
+ * the op the kernel refused ("op 3 ..." in its reason), and nothing of why, since the
+ * reason quotes the model.
+ */
+export function batchRefusedWithoutRead(reason: string): string {
+  const at = /\bop (\d{1,6})\b/.exec(reason);
+  const tail = 'nothing changed (the reason names the model, and plugin.json does not ask for "model.read")';
+  return at ? `op ${Number(at[1])} was refused; ${tail}` : `the batch was refused; ${tail}`;
+}
+
 /** What the permission dialog lists for a manifest. */
 export function permissionLines(m: Manifest): { permission: Permission; title: string; detail: string }[] {
   // Lane 17: each net entry as what it reaches ("https://api.example.com", "any port on
@@ -305,18 +316,31 @@ export class PluginManager {
     const prev = this.entries.get(id);
     // A bundled sample never replaces what the person installed.
     if (prev && source === "bundled" && prev.source !== "bundled") return prev;
-    const grant = this.grants[id];
+    let grant = this.grants[id];
     const digest = r.ok ? p.digest : "";
     // A plugin taking a bundled sample's place says so (the enable dialog and the pane).
     const replaces = source !== "bundled" ? (prev?.source === "bundled" ? prev.name : prev?.replaces) : undefined;
-    const covers = r.ok && grantCovers(grant, r.pkg.manifest.permissions);
     const matches = r.ok && grantMatches(grant, { digest, source, location });
+    // Lane 17: a grant that holds for these files shrinks to what they ask for, so a
+    // permission (or a net entry) dropped and asked for again later needs the person again.
+    if (r.ok && grant && matches) {
+      const trimmed = trimGrant(grant, r.pkg.manifest.permissions, r.pkg.manifest.net);
+      if (trimmed !== grant) {
+        this.grants[id] = grant = trimmed;
+        saveGrants(this.grants);
+      }
+    }
+    const covers = r.ok && grantCovers(grant, r.pkg.manifest.permissions, r.pkg.manifest.net);
     const entry: PluginEntry = r.ok
       ? { id, name: r.pkg.manifest.name, version: r.pkg.manifest.version, source, pkg: r.pkg, digest, errors: [], location, enabled: covers && matches, status: "disabled", lastError: null, logs: prev?.logs ?? [] }
       : { id, name: r.name, version: "", source, pkg: null, digest, errors: r.errors, location, enabled: false, status: "invalid", lastError: r.errors[0] ?? null, logs: prev?.logs ?? [] };
     if (replaces) entry.replaces = replaces;
     // Asking for more than was granted turns it off until granted again.
-    if (r.ok && grant && !covers) entry.lastError = `This version asks for more (${r.pkg.manifest.permissions.filter((p) => !grant.permissions.includes(p)).join(", ")}): enable it again to allow that.`;
+    if (r.ok && grant && !covers) {
+      const g = grant;
+      const more = [...r.pkg.manifest.permissions.filter((p) => !g.permissions.includes(p)), ...r.pkg.manifest.net.filter((n) => !(g.net ?? []).includes(n)).map((n) => `net ${n}`)];
+      entry.lastError = `This version asks for more (${more.join(", ")}): enable it again to allow that.`;
+    }
     // A grant is for the package the person enabled, not for its id: other files with the
     // same id (a replacement zip, an update, a zip claiming a bundled sample's id) wait for
     // the person to enable them again and see what they ask for.
@@ -377,7 +401,7 @@ export class PluginManager {
   async enable(id: string): Promise<void> {
     const e = this.entries.get(id);
     if (!e?.pkg) throw new Error(e ? e.errors.join("; ") : `no plugin ${id}`);
-    this.grants[id] = { version: e.pkg.manifest.version, permissions: [...e.pkg.manifest.permissions], digest: e.digest, source: e.source, ...(e.location ? { location: e.location } : {}) };
+    this.grants[id] = { version: e.pkg.manifest.version, permissions: [...e.pkg.manifest.permissions], ...(e.pkg.manifest.net.length ? { net: [...e.pkg.manifest.net] } : {}), digest: e.digest, source: e.source, ...(e.location ? { location: e.location } : {}) };
     saveGrants(this.grants);
     e.enabled = true;
     e.lastError = null;
@@ -647,7 +671,13 @@ export class PluginManager {
         try {
           return (await b.applyBatch(name.trim(), p.ops, host.name, host.signal)) as unknown as Data;
         } catch (e) {
-          throw new PluginRefusal(e instanceof Error ? e.message : String(e), host.signal.aborted ? "stopped" : "refused");
+          const reason = e instanceof Error ? e.message : String(e);
+          if (host.signal.aborted) throw new PluginRefusal(reason, "stopped");
+          // Lane 17: the kernel's reason names the model ("no face #12 on object 7", a
+          // solid's name), so a plugin that may write but not read hears only which op was
+          // refused (the person sees the whole reason in the status line).
+          if (!host.has("model.read")) throw new PluginRefusal(batchRefusedWithoutRead(reason), "refused");
+          throw new PluginRefusal(reason, "refused");
         }
       }
 

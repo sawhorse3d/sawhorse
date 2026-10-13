@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/wasm-checkout.mjs && tsc -b && vite build && node scripts/check-provenance.mjs dist",
+    "build": "node scripts/wasm-checkout.mjs && tsc -b && vite build && node scripts/check-provenance.mjs dist && node scripts/check-test-hooks.mjs dist",
     "check:wasm": "node scripts/wasm-checkout.mjs",
     "build:all": "npm run wasm && npm run build",
     "check:provenance": "node scripts/check-provenance.mjs",
@@ -18,6 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:serve": "node scripts/e2e-serve.mjs",
+    "check:test-hooks": "node scripts/check-test-hooks.mjs",
     "e2e:bookshelf": "playwright test e2e/bookshelf.spec.ts --reporter=line",
     "tauri": "tauri",
     "check:tauri": "node scripts/check-tauri-version.mjs",

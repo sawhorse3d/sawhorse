@@ -16,9 +16,13 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], channel, viewport: { width: 1440, height: 900 } } }],
+  // Lane 17: the specs run against their own build, the production build with the plugin
+  // test hooks compiled in (dist-e2e/, scripts/e2e-serve.mjs); a release (npm run build, dist/)
+  // has none. The build takes a minute or two, hence the timeout.
   webServer: {
-    command: `npm run preview -- --port ${port} --strictPort`,
+    command: `node scripts/e2e-serve.mjs --port ${port}`,
     url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
+    timeout: 300_000,
   },
 });
