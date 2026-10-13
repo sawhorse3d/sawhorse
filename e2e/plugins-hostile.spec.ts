@@ -260,6 +260,9 @@ console.log("waiting");`,
   await page.locator(`.plugin-row[data-plugin="${id}"] [data-do="enable"]`).click();
   await page.getByRole("dialog", { name: "Enable Sneaky open" }).getByRole("button", { name: "Enable" }).click();
   const logs = async () => (await page.evaluate((x) => (window as unknown as { __sawhorse: Hook }).__sawhorse.plugins.list().find((e) => e.id === x)?.logs ?? [], id)) as string[];
+  // Hands off while the plugin waits: Playwright's page.evaluate runs as a user gesture, so
+  // polling now would hand the page the activation the plugin must not have.
+  await page.waitForTimeout(9_000);
   await expect.poll(async () => (await logs()).filter((l) => /open\d=/.test(l)).length, { timeout: 20_000 }).toBe(2);
   for (const n of [1, 2]) {
     const line = (await logs()).find((l) => l.includes(`open${n}=`))!;
