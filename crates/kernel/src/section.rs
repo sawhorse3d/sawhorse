@@ -225,28 +225,63 @@ struct Piece {
     b: Node,
 }
 
+/// A face this close to parallel with the plane (the cross product of the normals) is
+/// parallel: the cut never crosses it (the tie rule).
+const PARALLEL: f64 = 1e-12;
+
+fn parallel(plane: &Plane, face: &crate::brep::Face) -> bool {
+    plane.normal.cross(face.plane.normal).length() < PARALLEL
+}
+
+/// The signed distance of every vertex of `b` from `plane`, as the cut and the kept volume
+/// both read it: within ON_PLANE of zero is zero, and every vertex of a face the cut treats
+/// as parallel ([`parallel`]) takes the face's mean distance, so a face that is parallel to
+/// the plane is wholly on one side or wholly on it. Without that, a face tilted 1e-13 off a
+/// plane through it (a plane copied with a squashing scale, 2026-10-12 fuzz) had two corners
+/// at 0 and two at -1e-12: the cut skipped it as parallel while the kept volume split it,
+/// and the halves no longer made the whole.
+fn vertex_distances(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, f64> {
+    let mut dist: BTreeMap<VertexId, f64> = b
+        .vertices()
+        .map(|(k, v)| (k, plane.signed_distance(v.pos)))
+        .collect();
+    for (_, f) in b.faces() {
+        if !parallel(plane, f) {
+            continue;
+        }
+        let vs: Vec<VertexId> = f.loops().flat_map(|l| b.loop_vertices(l)).collect();
+        let first = dist[&vs[0]];
+        if vs.iter().all(|v| dist[v] == first) {
+            continue;
+        }
+        let mean = vs.iter().map(|v| dist[v]).sum::<f64>() / vs.len() as f64;
+        for v in vs {
+            dist.insert(v, mean);
+        }
+    }
+    for d in dist.values_mut() {
+        if d.abs() < ON_PLANE {
+            *d = 0.0;
+        }
+    }
+    dist
+}
+
 /// The rings where `plane` cuts a solid, in the plane's frame: material on the left of
 /// every ring (outer rings counter-clockwise, holes clockwise). Exact up to the crossing
 /// interpolation; see the module docs for the tie rule.
 pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
     let b = o.brep();
     let n = plane.normal;
-    let dist: BTreeMap<VertexId, f64> = b
-        .vertices()
-        .map(|(k, v)| {
-            let d = plane.signed_distance(v.pos);
-            (k, if d.abs() < ON_PLANE { 0.0 } else { d })
-        })
-        .collect();
+    let dist = vertex_distances(b, plane);
     let kept = |v: VertexId| dist[&v] >= 0.0;
     let mut points: BTreeMap<Node, DVec3> = BTreeMap::new();
     let mut pieces: Vec<Piece> = Vec::new();
     for (_, f) in b.faces() {
-        let t = n.cross(f.plane.normal);
-        if t.length() < 1e-12 {
+        if parallel(plane, f) {
             continue; // parallel to the plane: never crossed (the tie rule)
         }
-        let t = t.normalize();
+        let t = n.cross(f.plane.normal).normalize();
         let mut xs: Vec<(f64, Node)> = Vec::new();
         for l in f.loops() {
             let vs = b.loop_vertices(l);
@@ -648,13 +683,7 @@ impl Model {
             // points as the cap (`solid_rings`): a face lying on the plane to within
             // ON_PLANE is kept whole exactly when the cap leaves it out, so the two halves
             // always add up to the whole.
-            let dist: BTreeMap<VertexId, f64> = b
-                .vertices()
-                .map(|(k, vx)| {
-                    let d = frame.signed_distance(vx.pos);
-                    (k, if d.abs() < ON_PLANE { 0.0 } else { d })
-                })
-                .collect();
+            let dist = vertex_distances(b, &frame);
             for (_, f) in b.faces() {
                 let fp = &f.plane;
                 let mut area = 0.0;
