@@ -54,7 +54,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: fuzz-repro
-          path: crates/kernel/tests/repro/pending-*.json
+          path: crates/kernel/tests/repro/pending/*.json
           if-no-files-found: ignore
 
   web:

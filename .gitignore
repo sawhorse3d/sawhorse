@@ -24,6 +24,8 @@ crates/kernel/proptest-regressions/*.tmp
 .DS_Store
 # fuzzer boolean-refusal dumps (FUZZ_DUMP_REFUSALS=1), study material only
 crates/kernel/tests/repro/refusals/
+# fresh fuzzer finds, not yet promoted to named cases (tests/repro/README.md)
+crates/kernel/tests/repro/pending/
 
 
 # Generated .skp corpus (npm run corpus:skp); only the manifest and golden images are committed.

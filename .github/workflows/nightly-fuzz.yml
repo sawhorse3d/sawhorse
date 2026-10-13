@@ -74,7 +74,7 @@ jobs:
         env:
           SEED: ${{ steps.seed.outputs.seed }}
         run: |
-          if ls kernel/tests/repro/pending-*.json >/dev/null 2>&1; then
+          if ls kernel/tests/repro/pending/*.json >/dev/null 2>&1; then
             echo "### Shard ${{ matrix.shard }}: FAILED (FUZZ_SEED=$SEED), repro uploaded as fuzz-repro-seed$SEED" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "### Shard ${{ matrix.shard }}: clean (FUZZ_SEED=$SEED)" >> "$GITHUB_STEP_SUMMARY"
@@ -84,5 +84,5 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: fuzz-repro-seed${{ steps.seed.outputs.seed }}
-          path: crates/kernel/tests/repro/pending-*.json
+          path: crates/kernel/tests/repro/pending/*.json
           if-no-files-found: ignore

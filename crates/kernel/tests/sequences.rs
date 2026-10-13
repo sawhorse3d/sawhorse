@@ -32,8 +32,11 @@
 //! rectangle at these fractions of a face". That keeps most ops meaningful (a random id
 //! would almost always be refused) while still feeding garbage on purpose (NaN, huge,
 //! sub-tolerance, unknown ids). The resolved, concrete op list is what gets checked by
-//! [`check_sequence`] and, on failure, written to `tests/repro/pending-<name>.json`
-//! (rename it, fix the kernel, commit both; `tests/repro.rs` replays it forever).
+//! [`check_sequence`] and, on failure, written to `tests/repro/pending/pending-<name>.json`
+//! (gitignored, and never replayed, so a fresh find breaks nobody else's `cargo test`).
+//! Promote it: give it a name that says what it found, move it up into `tests/repro/`,
+//! fix the kernel, commit both; `tests/repro.rs` replays it forever. A find made with
+//! `FUZZ_PLANE_SNAP=0` records `"plane_snap": false` and replays the same way.
 //!
 //! `cargo test --test sequences` runs a quick pass. The long run, seeded so shards can run
 //! in parallel: `FUZZ_CASES=6250 FUZZ_SEED=1 cargo test --release --test sequences --
@@ -48,7 +51,7 @@ use sawhorse_kernel::Document;
 use sawhorse_kernel::cutlist::{Grain, PartRef};
 use sawhorse_kernel::model::{Op, SceneDef};
 use sawhorse_kernel::nodes::Item;
-use sawhorse_kernel::testing::{check_sequence, write_repro};
+use sawhorse_kernel::testing::{check_sequence, pending_dir, write_repro};
 use sawhorse_kernel::transform::Xform;
 
 fn grid() -> impl Strategy<Value = f64> {
@@ -2336,15 +2339,24 @@ fn concrete(intents: &[Fuzz], tally: &mut Tally) -> (Vec<Op>, Option<String>) {
     (ops, None)
 }
 
-/// Where a failing sequence is written: `tests/repro/` (replayed by `tests/repro.rs` until it
-/// is fixed), or `FUZZ_REPRO_DIR` when set (a long local run that should leave the checkout
-/// alone).
+/// The repro directory: `tests/repro/`, or `FUZZ_REPRO_DIR` when set (a long local run
+/// that should leave the checkout alone). Refusal dumps go to its `refusals/`.
 fn repro_dir() -> PathBuf {
     match std::env::var_os("FUZZ_REPRO_DIR") {
         Some(d) if !d.is_empty() => PathBuf::from(d),
         _ => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("repro"),
+    }
+}
+
+/// Where a failing sequence is written: `tests/repro/pending/` (gitignored, and never read
+/// by `tests/repro.rs`, so a fresh find breaks nobody's replay until it is promoted), or
+/// `FUZZ_REPRO_DIR` itself when set.
+fn repro_out() -> PathBuf {
+    match std::env::var_os("FUZZ_REPRO_DIR") {
+        Some(d) if !d.is_empty() => PathBuf::from(d),
+        _ => pending_dir(&repro_dir()),
     }
 }
 
@@ -2610,7 +2622,7 @@ fn run(name: &str, cases: u32, max_len: usize, seed: Option<u64>) {
                 Ok(())
             }
             Err(e) => {
-                let _ = write_repro(&repro_dir(), &format!("pending-{name}"), &e, &ops);
+                let _ = write_repro(&repro_out(), &format!("pending-{name}"), &e, &ops);
                 Err(TestCaseError::fail(e))
             }
         }
@@ -2630,7 +2642,7 @@ fn run(name: &str, cases: u32, max_len: usize, seed: Option<u64>) {
     if let Err(e) = result {
         panic!(
             "{e}\nminimal failing sequence written to {}",
-            repro_dir().join(format!("pending-{name}.json")).display()
+            repro_out().join(format!("pending-{name}.json")).display()
         );
     }
 }

@@ -7,8 +7,10 @@
 # From Git Bash keep MSYS_NO_PATHCONV=1 (Git Bash rewrites /mnt/... arguments otherwise).
 # Defaults: 6250 per shard (50,000 in all), seeds 20261101..20261108, plane snapping on.
 # Logs: /tmp/sawhorse-fuzz-<seed>.log. A failing shard writes its shrunk sequence to
-# crates/kernel/tests/repro/pending-long_fuzz_seed<seed>.json, or to $FUZZ_REPRO_DIR when it
-# is set (a run that should leave the checkout alone: FUZZ_REPRO_DIR=/tmp/sawhorse-repro).
+# crates/kernel/tests/repro/pending/pending-long_fuzz_seed<seed>.json (gitignored, never
+# replayed; promote it to a named case as crates/kernel/tests/repro/README.md says), or to
+# $FUZZ_REPRO_DIR when it is set (a run that should leave the checkout alone:
+# FUZZ_REPRO_DIR=/tmp/sawhorse-repro).
 set -u
 cases="${1:-6250}"
 base="${2:-20261100}"
