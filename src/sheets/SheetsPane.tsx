@@ -6,7 +6,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { CutColumn, DimKind, DimStyle, ItemKind, LengthFormat, PaperSizeKind, Scale, SheetRow, SheetSetup, TitleBlock, ViewportSource } from "../kernel/sheetTypes";
 import type { SceneDef } from "../kernel/types";
-import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, canBeToScale, captionFor, formatKey, paperSize, paperText, parsePaper, scaleKey, scaleLabel, sourceLabel } from "./paper";
+import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, canBeToScale, captionFor, formatKey, localDate, paperSize, paperText, parsePaper, scaleKey, scaleLabel, sourceLabel } from "./paper";
 import type { SheetRender } from "./render";
 import type { SheetToolId } from "./SheetCanvas";
 
@@ -522,7 +522,7 @@ export function SheetsPane(props: SheetsPaneProps) {
                 <Field label="Revision" value={setup.title?.revision ?? ""} onCommit={(v) => title({ revision: v })} />
               </div>
               <Field label="Drawn by" value={setup.title?.drawn_by ?? ""} onCommit={(v) => title({ drawn_by: v })} />
-              <button type="button" className="btn" onClick={() => title({ date: new Date().toISOString().slice(0, 10) })}>
+              <button type="button" className="btn" onClick={() => title({ date: localDate() })}>
                 Today's date
               </button>
             </Section>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IN, MM, canBeToScale, captionFor, fittingScale, newSetup, paperSize, paperText, parsePaper, scaleFactor, scaleLabel, STANDARD_SCALES } from "./paper";
+import { IN, MM, canBeToScale, captionFor, fittingScale, localDate, newSetup, paperSize, paperText, parsePaper, scaleFactor, scaleLabel, STANDARD_SCALES } from "./paper";
 import { circumcentre, dimOffset, dimPreview, hitItem, modelToPaper, sheetLayers, sheetSvg, snapPoint, toDrawing, toPaper, type SheetRender, type ViewportInfo } from "./render";
 import { nextSheetName } from "./SheetsWorkspace";
 import { PT, crc32, pngDpi, sheetsPdf, withDpi } from "./exports";
@@ -84,6 +84,12 @@ describe("paper", () => {
     expect(parsePaper("wide", "inches")).toBeNull();
     expect(paperText(0.5 * IN, "inches")).toBe('0.5"');
     expect(paperText(0.0125, "millimetres")).toBe("12.5 mm");
+  });
+
+  it("dates the title block by the local calendar, not UTC", () => {
+    // 17:30 on 12 October in the person's time zone, whatever UTC says.
+    expect(localDate(new Date(2026, 9, 12, 17, 30))).toBe("2026-10-12");
+    expect(localDate(new Date(2026, 0, 3, 23, 59))).toBe("2026-01-03");
   });
 
   it("names new sheets", () => {

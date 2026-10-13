@@ -208,3 +208,10 @@ export const ITEM_NAMES: Record<ItemKind["kind"], string> = {
   line: "Line",
   rect: "Rectangle",
 };
+
+/** The date on the person's own calendar, as a title block writes it ("2026-10-12"); never
+ *  the UTC date, which is already tomorrow on a Pacific evening. */
+export function localDate(d: Date = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
