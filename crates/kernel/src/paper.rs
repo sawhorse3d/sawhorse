@@ -228,7 +228,9 @@ impl DimKind {
 
 /// What a dimension of `kind` reads for model points `pts`, in a view whose right and up
 /// directions are `right` and `up`: metres (degrees for an angle). `None` when the points
-/// do not make one (coincident, collinear for an arc).
+/// do not make one (coincident, collinear for an arc), and for a length shorter than the
+/// kernel's point-merge distance, so a dimension that measures nothing in its view reads the
+/// same whether its view is a standard one or a scene's camera with a little float noise.
 pub fn measure(right: DVec3, up: DVec3, kind: DimKind, pts: &[DVec3]) -> Option<f64> {
     if pts.len() < kind.points() || pts.iter().any(|p| !p.is_finite()) {
         return None;
@@ -253,7 +255,12 @@ pub fn measure(right: DVec3, up: DVec3, kind: DimKind, pts: &[DVec3]) -> Option<
             if kind == DimKind::Radius { r } else { 2.0 * r }
         }
     };
-    (v.is_finite() && v > 0.0).then_some(v)
+    let least = if kind == DimKind::Angular {
+        0.0
+    } else {
+        crate::tolerance::POINT_MERGE
+    };
+    (v.is_finite() && v > least).then_some(v)
 }
 
 /// The centre of the circle through three points (`None`: collinear).
@@ -534,6 +541,17 @@ mod tests {
         let al = measure(r, u, DimKind::Aligned, &[a, b]).unwrap();
         assert!((al - (30.0f64.hypot(72.0)) * IN).abs() < 1e-12);
         assert_eq!(measure(r, u, DimKind::Aligned, &[a, a]), None);
+        // Nothing measured, seen through a camera whose axes carry float noise: the same
+        // "nothing" as in a standard view (it read 0" before, the verifier's finding).
+        let noisy_r = DVec3::new(1.0, 3e-17, -2e-16).normalize();
+        let noisy_u = DVec3::new(-1e-16, 4e-17, 1.0).normalize();
+        let top = DVec3::new(30.0 * IN, 0.0, 72.0 * IN);
+        let below = DVec3::new(30.0 * IN, 12.0 * IN, 0.0);
+        assert_eq!(measure(r, u, DimKind::Horizontal, &[top, below]), None);
+        assert_eq!(
+            measure(noisy_r, noisy_u, DimKind::Horizontal, &[top, below]),
+            None
+        );
         // A right angle, and the radius and diameter of a circle through three points.
         let o = DVec3::ZERO;
         let ang = measure(r, u, DimKind::Angular, &[o, DVec3::X, DVec3::Z]).unwrap();
