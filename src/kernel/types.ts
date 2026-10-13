@@ -969,6 +969,9 @@ export interface CutRow {
   not_solid: boolean;
   /** Lane 15: counted in the totals and nested (false: dropped by the person, still listed). */
   included: boolean;
+  /** Lane 15 fixes: listed but counted nowhere and not nested: a flat face with no
+   * thickness, or open faces thicker than any board (the whole of something, not a board). */
+  uncounted?: Uncounted;
   /** Lane 15: the nominal (rough) thickness board feet are counted on, metres (4/4: 1 in). */
   nominal_thickness?: number;
   /** Lane 15: that board's nominal ("4/4"), when a library board gave it. */
@@ -984,6 +987,16 @@ export interface CutRow {
   occurrences: Occurrence[];
 }
 
+/** Lane 15 fixes: why a listed part counts nowhere. */
+export type Uncounted = "flat" | "not_a_board";
+
+/** Lane 15 fixes: a group or instance holding faces outside any part. */
+export interface LoosePlace {
+  node: number | null;
+  name: string;
+  faces: number;
+}
+
 export interface CutTotals {
   parts: number;
   /** Pieces counted (dropped rows left out). */
@@ -994,6 +1007,12 @@ export interface CutTotals {
   not_solid: number;
   /** Lane 15: faces of non-solid geometry outside any part (never listed). */
   loose_faces: number;
+  /** Lane 15 fixes: of those, the faces in the open context (what Make parts from loose faces acts on). */
+  loose_here: number;
+  /** Lane 15 fixes: where the rest are (a group or instance; `node` null: the top level). */
+  loose_places: LoosePlace[];
+  /** Lane 15 fixes: rows listed but counted nowhere ({@link CutRow.uncounted}). */
+  uncounted: number;
   hidden: number;
   board_feet: number;
   lumber: { material: string | null; board_feet: number }[];
@@ -1109,7 +1128,7 @@ export interface StockPiece {
   efficiency: number;
 }
 
-export type UnplacedReason = "no_stock" | "thickness" | "too_large" | "grain";
+export type UnplacedReason = "no_stock" | "thickness" | "too_large" | "grain" | "flat" | "not_a_board";
 
 export interface Unplaced {
   row: number;

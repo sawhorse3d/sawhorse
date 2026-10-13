@@ -169,6 +169,11 @@ fn loose_faces_are_counted_not_listed_and_group_loose_makes_them_parts() {
     let l = list(&d);
     assert!(l.rows.is_empty(), "loose faces are never parts");
     assert_eq!(l.totals.loose_faces, 10, "the header counts them");
+    assert_eq!(
+        l.totals.loose_here, 10,
+        "all of them in the open context (the model)"
+    );
+    assert!(l.totals.loose_places.is_empty());
     sawhorse_kernel::testing::check_cut_list(d.model()).unwrap();
     let before = d.hash();
 
@@ -337,4 +342,131 @@ fn the_mixed_cut_list_golden_is_this_document() {
             "golden/cutlist-mixed.json is not this document (UPDATE_GOLDEN=1)"
         );
     }
+}
+
+// ---- lane 15 fixes: what real furniture taught -------------------------------------------
+
+/// The verifier's real files: a bench drawn as one piece of open faces (14 x 18 x 72 in)
+/// counted 126 board feet, and a flat face ("Rodeo#2", 0 x 8.967 x 19.636 in) was listed as
+/// sheet goods and added a 4 x 8 sheet. Both stay listed and flagged, but count nowhere and
+/// are reported, not nested, with what to do; a real open board and an open 4 x 4 post
+/// still count.
+#[test]
+fn a_flat_face_and_an_open_piece_thicker_than_any_board_count_nowhere() {
+    use sawhorse_kernel::cutlist::Uncounted;
+    use sawhorse_kernel::nesting::UnplacedReason;
+    let mut d = Document::new();
+    ok(
+        &mut d,
+        import(
+            vec![],
+            vec![
+                group(
+                    "Bench",
+                    vec![box_item("Bench", [0.0; 3], [14.0, 18.0, 72.0], &[0])],
+                ),
+                group(
+                    "Rodeo#2",
+                    vec![box_item(
+                        "Rodeo#2",
+                        [100.0, 0.0, 0.0],
+                        [8.967, 19.636, 0.0],
+                        &[1, 2, 3, 4, 5],
+                    )],
+                ),
+                group(
+                    "Rail",
+                    vec![box_item("Rail", [200.0, 0.0, 0.0], [5.0, 30.0, 0.75], &[1])],
+                ),
+                group(
+                    "Post",
+                    vec![box_item("Post", [300.0, 0.0, 0.0], [3.5, 3.5, 30.0], &[1])],
+                ),
+            ],
+        ),
+    );
+    let l = list(&d);
+    let row = |n: &str| l.rows.iter().find(|r| r.name == n).unwrap();
+    assert_eq!(row("Bench").uncounted, Some(Uncounted::NotABoard));
+    assert_eq!(row("Rodeo#2").uncounted, Some(Uncounted::Flat));
+    assert_eq!(row("Rail").uncounted, None);
+    assert_eq!(
+        row("Post").uncounted,
+        None,
+        "an open 4 x 4 is still one board"
+    );
+    for n in ["Bench", "Rodeo#2"] {
+        let r = row(n);
+        assert!(r.not_solid && r.included, "{n} stays listed and flagged");
+        assert_eq!((r.board_feet, r.area_m2, r.sheet), (0.0, 0.0, false), "{n}");
+    }
+    assert!(row("Rail").board_feet > 0.0 && row("Post").board_feet > 0.0);
+    assert_eq!(
+        l.totals.board_feet,
+        row("Rail").board_feet + row("Post").board_feet
+    );
+    assert!(l.totals.sheets.is_empty(), "no sheet for a flat face");
+    assert_eq!(l.totals.sheet_count, 0);
+    assert_eq!(l.totals.uncounted, 2);
+    assert_eq!(l.totals.pieces, 4, "still pieces of the model");
+    let n = d.model().nest(&NestOptions::default());
+    let why = |name: &str| n.unplaced.iter().find(|u| u.name == name).map(|u| u.reason);
+    assert_eq!(why("Bench"), Some(UnplacedReason::NotABoard));
+    assert_eq!(why("Rodeo#2"), Some(UnplacedReason::Flat));
+    assert!(
+        n.pieces
+            .iter()
+            .flat_map(|p| &p.placements)
+            .any(|p| p.name == "Rail"),
+        "the rail still nests"
+    );
+    assert!(
+        n.pieces
+            .iter()
+            .all(|p| p.kind != sawhorse_kernel::stock::StockKind::Sheet)
+    );
+    sawhorse_kernel::testing::check_cut_list(d.model()).unwrap();
+    sawhorse_kernel::testing::check_nesting(d.model()).unwrap();
+}
+
+/// The verifier's cupboard and gondola: faces outside parts sat inside assemblies, but Make
+/// parts from loose faces only acts on the open context, so it refused. The list now says
+/// how many are here and where the rest are; opening the place makes them "here".
+#[test]
+fn loose_faces_inside_an_assembly_say_where_they_are() {
+    let mut d = Document::new();
+    let cupboard = ImportNode {
+        name: Some("Cupboard".into()),
+        tag: None,
+        hidden: false,
+        sections: vec![],
+        kind: ImportNodeKind::Group {
+            items: vec![box_item("Shelf", [0.0; 3], [12.0, 30.0, 0.75], &[1])],
+            children: vec![group(
+                "Door",
+                vec![box_item("Door", [0.0, 0.0, 10.0], [15.0, 30.0, 0.75], &[])],
+            )],
+        },
+    };
+    ok(&mut d, import(vec![], vec![cupboard]));
+    let l = list(&d);
+    assert_eq!(l.totals.loose_faces, 5);
+    assert_eq!(l.totals.loose_here, 0, "none at the top level");
+    assert_eq!(l.totals.loose_places.len(), 1);
+    let place = &l.totals.loose_places[0];
+    assert_eq!((place.name.as_str(), place.faces), ("Cupboard", 5));
+    let node = place.node.expect("a group holds them");
+    // At the top level there is nothing to group: refused, as before.
+    assert!(d.apply(&Op::GroupLoose { meshes: vec![] }).is_err());
+    sawhorse_kernel::testing::check_cut_list(d.model()).unwrap();
+    // Open the cupboard: they are here now, and Make parts from loose faces works.
+    ok(&mut d, Op::SetContext { node: Some(node) });
+    let l = list(&d);
+    assert_eq!((l.totals.loose_here, l.totals.loose_places.len()), (5, 0));
+    sawhorse_kernel::testing::check_cut_list(d.model()).unwrap();
+    ok(&mut d, Op::GroupLoose { meshes: vec![] });
+    let l = list(&d);
+    assert_eq!(l.totals.loose_faces, 0);
+    assert!(l.rows.iter().any(|r| r.name == "Shelf" && r.not_solid));
+    sawhorse_kernel::testing::check_cut_list(d.model()).unwrap();
 }

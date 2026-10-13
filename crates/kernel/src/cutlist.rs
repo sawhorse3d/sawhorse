@@ -93,6 +93,13 @@ pub const SHEET_WORDS: [&str; 10] = [
     "baltic",
     "sheet",
 ];
+/// A part this thin or thinner has no thickness: a flat face (the merge distance, 0.01 mm).
+/// It is neither lumber nor sheet goods ([`Uncounted::Flat`]).
+pub const NO_THICKNESS: f64 = crate::tolerance::POINT_MERGE;
+/// The thickest lumber a yard sells, 16/4 (4 in): a part that is not a solid, sized from
+/// its bounds thicker than this and than every board in the library, is not one board
+/// ([`Uncounted::NotABoard`]).
+pub const THICKEST_LUMBER: f64 = 4.0 * M_PER_IN;
 /// Directions closer than this (1 - |cos|) are the same direction.
 const PARALLEL: f64 = 1e-9;
 /// Most face directions tried for a shaped part's box (largest faces first).
@@ -281,6 +288,40 @@ pub struct PartBox {
     pub shaped: bool,
 }
 
+/// Why a listed part counts in no total and is not nested (lane 15 verification: real
+/// furniture gave 553 board feet for a bench and a sheet of plywood for a flat face).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Uncounted {
+    /// No thickness (at most [`NO_THICKNESS`]): a flat face, such as a label or a decal
+    /// drawn on the model, not a piece of wood.
+    Flat,
+    /// Not a solid, and its bounds are thicker than any board ([`THICKEST_LUMBER`] and
+    /// every board in the library): almost always several parts drawn as one piece of
+    /// faces (a whole bench, a desk). Its size is that of the whole, not of a board.
+    NotABoard,
+}
+
+impl Uncounted {
+    fn code(self) -> u64 {
+        match self {
+            Uncounted::Flat => 1,
+            Uncounted::NotABoard => 2,
+        }
+    }
+}
+
+/// Where faces outside any part are (lane 15 fixes): the group or instance that holds
+/// them, so the pane can say where they are and open it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct LoosePlace {
+    /// The group or instance (`None`: the model's top level).
+    pub node: Option<u64>,
+    /// Its Outliner name ("the model" at the top level).
+    pub name: String,
+    pub faces: usize,
+}
+
 /// One piece of a part in the model.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Occurrence {
@@ -325,6 +366,10 @@ pub struct CutRow {
     pub not_solid: bool,
     /// Lane 15: counted in the totals and nested (false: dropped by the person, still listed).
     pub included: bool,
+    /// Lane 15 fixes: listed but counted nowhere and not nested, and why (no board feet, no
+    /// area, no sheet). `None` for every ordinary part.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncounted: Option<Uncounted>,
     /// Lane 15: the nominal (rough) thickness board feet are counted on, metres: the board
     /// the part comes from in the stock library (one its stock or material names, else the
     /// thinnest board at least as thick: 4/4 for a 3/4 in part). A part thicker than every
@@ -387,6 +432,15 @@ pub struct CutTotals {
     /// Lane 15: faces of non-solid geometry outside any part (loose faces at the top level
     /// or beside nested groups), never parts: "312 faces outside parts".
     pub loose_faces: usize,
+    /// Lane 15 fixes: of those, the faces directly in the open context: what Make parts from
+    /// loose faces (`group_loose` with no meshes named) acts on. Not hashed: it follows the
+    /// open context, not the model.
+    pub loose_here: usize,
+    /// Lane 15 fixes: where the rest are, one entry per group, instance or the top level,
+    /// in Outliner order. Not hashed.
+    pub loose_places: Vec<LoosePlace>,
+    /// Lane 15 fixes: rows listed but counted nowhere ([`CutRow::uncounted`]).
+    pub uncounted: usize,
     /// Pieces hidden among those in the model.
     pub hidden: usize,
     pub board_feet: f64,
@@ -831,6 +885,14 @@ fn place(local: &PartBox, x: &Xform, solids: &[&Object], meshes: &[&LooseMesh]) 
 
 // ---- the model's parts ---------------------------------------------------------------------
 
+/// Faces outside any part, and where they are.
+#[derive(Default)]
+struct Loose {
+    all: usize,
+    here: usize,
+    places: Vec<LoosePlace>,
+}
+
 /// One piece found in the world walk.
 struct Piece {
     key: PartKey,
@@ -1034,13 +1096,29 @@ impl Model {
             .collect()
     }
 
+    /// A container's Outliner name: a group's or instance's own name, else its definition's
+    /// ("Group" for an unnamed group), or "the model" at the top level.
+    fn container_name(&self, c: Option<NodeId>) -> String {
+        let Some(n) = c else {
+            return "the model".into();
+        };
+        let node = &self.nodes[n];
+        if let Some(name) = node.name.clone().filter(|s| !s.trim().is_empty()) {
+            return name;
+        }
+        match node.kind {
+            NodeKind::Instance(d) => self.defs[d].name.clone(),
+            _ => "Group".into(),
+        }
+    }
+
     /// Every piece, in Outliner order (each container's groups and instances by id, then
     /// its solids in creation order), and the faces of non-solid meshes outside any part.
-    fn pieces(&self) -> (Vec<Piece>, usize) {
+    fn pieces(&self) -> (Vec<Piece>, Loose) {
         let kids = self.kids();
         let mut cache: BTreeMap<PartKey, Option<(PartBox, bool)>> = BTreeMap::new();
         let mut out = Vec::new();
-        let mut loose = 0usize;
+        let mut loose = Loose::default();
         // Depth first, in Outliner order.
         fn walk(
             m: &Model,
@@ -1048,13 +1126,33 @@ impl Model {
             c: Option<NodeId>,
             cache: &mut BTreeMap<PartKey, Option<(PartBox, bool)>>,
             out: &mut Vec<Piece>,
-            loose: &mut usize,
+            loose: &mut Loose,
         ) {
             let things = kids.things.get(&c).cloned().unwrap_or_default();
             for t in things {
                 match t {
-                    // Faces outside any part: counted, never a part (lane 15).
-                    Thing::Mesh(k) => *loose += m.meshes[k].faces.len(),
+                    // Faces outside any part: counted, never a part (lane 15), and where
+                    // they are (lane 15 fixes).
+                    Thing::Mesh(k) => {
+                        let faces = m.meshes[k].faces.len();
+                        if faces == 0 {
+                            continue;
+                        }
+                        loose.all += faces;
+                        if c == m.context {
+                            loose.here += faces;
+                        } else {
+                            let node = c.map(to_public);
+                            match loose.places.iter_mut().find(|p| p.node == node) {
+                                Some(p) => p.faces += faces,
+                                None => loose.places.push(LoosePlace {
+                                    node,
+                                    name: m.container_name(c),
+                                    faces,
+                                }),
+                            }
+                        }
+                    }
                     Thing::Object(k) => {
                         if let Some(p) = m.solid_piece(k, cache) {
                             out.push(p);
@@ -1286,7 +1384,7 @@ impl Model {
 
     /// The cut list (see the module docs).
     pub fn cut_list(&self, opts: &CutOptions) -> CutList {
-        let (pieces, loose_faces) = self.pieces();
+        let (pieces, loose) = self.pieces();
         let library = self.stock.clone().unwrap_or_default();
         // Rows: one per part and size (a scaled copy gets its own), in order of first piece.
         let mut order: Vec<(PartKey, [i64; 3])> = Vec::new();
@@ -1328,9 +1426,14 @@ impl Model {
             };
             // Classification, board feet and area from the exact sizes: the rounding (and
             // the units, which pick it) is display only and never changes a total.
-            let sheet = attrs.sheet.or(linked_sheet).unwrap_or_else(|| {
-                material.as_deref().is_some_and(is_sheet_word) || thin_enough_for_sheet(size[0])
-            });
+            // Lane 15 fixes: a flat face is not wood at all, and a piece of open faces
+            // thicker than any board is the whole of something (a bench), not a board.
+            let not_solid = idx.iter().any(|&i| !pieces[i].solid);
+            let flat = size[0] <= NO_THICKNESS;
+            let sheet = !flat
+                && attrs.sheet.or(linked_sheet).unwrap_or_else(|| {
+                    material.as_deref().is_some_and(is_sheet_word) || thin_enough_for_sheet(size[0])
+                });
             let inches = size.map(exact_inches);
             // Lane 15: board feet are bought on the nominal rough thickness (a 3/4 in part
             // comes from 4/4, one inch), times the finished width and length.
@@ -1341,14 +1444,21 @@ impl Model {
                 Some(b) => (b.nominal_inches(), b.nominal.clone()),
                 None => (inches[0], None),
             };
-            let board_feet = if sheet {
+            let uncounted = if flat {
+                Some(Uncounted::Flat)
+            } else if not_solid && !sheet && board.is_none() && size[0] > THICKEST_LUMBER {
+                Some(Uncounted::NotABoard)
+            } else {
+                None
+            };
+            let board_feet = if sheet || uncounted.is_some() {
                 0.0
             } else {
                 // In f64 (a 10 km solid once overflowed an i64 step product; found by the
                 // fuzzer).
                 nominal_in * inches[1] * inches[2] / 144.0 * qty as f64
             };
-            let area_m2 = if sheet {
+            let area_m2 = if sheet && uncounted.is_none() {
                 inches[1] * inches[2] * (M_PER_IN * M_PER_IN) * qty as f64
             } else {
                 0.0
@@ -1370,8 +1480,9 @@ impl Model {
                 steps,
                 shaped: idx.iter().any(|&i| pieces[i].bbox.shaped),
                 scaled: sizes_per_key[&first.key] > 1,
-                not_solid: idx.iter().any(|&i| !pieces[i].solid),
+                not_solid,
                 included: attrs.included(),
+                uncounted,
                 nominal_thickness: nominal_in * M_PER_IN,
                 nominal,
                 grain: attrs.grain.unwrap_or_default(),
@@ -1400,7 +1511,9 @@ impl Model {
         // works through them, and the sheets sit together for the rough sheet count.
         rows.sort_by_key(|r| r.sheet);
         let mut totals = totals(&rows, r);
-        totals.loose_faces = loose_faces;
+        totals.loose_faces = loose.all;
+        totals.loose_here = loose.here;
+        totals.loose_places = loose.places;
         let mut list = CutList {
             rounding: r,
             visible_only: opts.visible_only,
@@ -1419,8 +1532,9 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
     // Grouped by material and exact thickness (0.1 um), never by the rounded thickness: a
     // coarser rounding must not merge two stocks (and so change the sheet count).
     let mut sheets: BTreeMap<(Option<String>, i64), (f64, bool, i64)> = BTreeMap::new();
-    // Rows the person dropped stay listed but count nowhere (lane 15).
-    let counted = || rows.iter().filter(|r| r.included);
+    // Rows the person dropped stay listed but count nowhere (lane 15), and so do flat faces
+    // and open pieces thicker than any board (lane 15 fixes).
+    let counted = || rows.iter().filter(|r| r.included && r.uncounted.is_none());
     for row in counted() {
         if row.sheet {
             let e = sheets
@@ -1452,10 +1566,13 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
         .collect();
     CutTotals {
         parts: rows.len(),
-        pieces: counted().map(|r| r.qty).sum(),
+        pieces: rows.iter().filter(|r| r.included).map(|r| r.qty).sum(),
         excluded: rows.iter().filter(|r| !r.included).count(),
         not_solid: rows.iter().filter(|r| r.not_solid).count(),
         loose_faces: 0,
+        loose_here: 0,
+        loose_places: Vec::new(),
+        uncounted: rows.iter().filter(|r| r.uncounted.is_some()).count(),
         hidden: rows
             .iter()
             .map(|r| r.total - r.occurrences.iter().filter(|o| o.visible).count())
@@ -1519,7 +1636,8 @@ impl CutList {
                     | u64::from(r.scaled) << 1
                     | u64::from(r.sheet) << 2
                     | u64::from(r.not_solid) << 3
-                    | u64::from(!r.included) << 4,
+                    | u64::from(!r.included) << 4
+                    | r.uncounted.map_or(0, Uncounted::code) << 5,
             );
             h.u64(
                 r.grain.code()

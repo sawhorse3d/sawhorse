@@ -125,6 +125,10 @@ export function reasonText(u: Unplaced): string {
       return `larger than ${u.stock ?? "any stock"}; glue it up or add larger stock`;
     case "grain":
       return `fits ${u.stock} only with its grain across; turn its grain or pick other stock`;
+    case "flat":
+      return "a flat face with no thickness, not a piece of wood; give it a thickness (Push/Pull) or leave it out";
+    case "not_a_board":
+      return "open faces thicker than any board, sized as one piece: likely several parts drawn as one; group each board on its own";
   }
 }
 

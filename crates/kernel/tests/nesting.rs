@@ -714,6 +714,12 @@ fn list_of(parts: &[(f64, f64, f64, usize, Grain, bool, u8)], visible_mask: u64)
             // Lane 15: flagged parts nest like any other; a dropped part is never nested.
             not_solid: k % 3 == 1,
             included: k % 7 != 3,
+            // Lane 15 fixes: now and then a row counted nowhere (reported, never placed).
+            uncounted: match k % 11 {
+                5 => Some(sawhorse_kernel::cutlist::Uncounted::Flat),
+                8 => Some(sawhorse_kernel::cutlist::Uncounted::NotABoard),
+                _ => None,
+            },
             nominal_thickness: size[0],
             nominal: None,
             grain,
@@ -737,6 +743,9 @@ fn list_of(parts: &[(f64, f64, f64, usize, Grain, bool, u8)], visible_mask: u64)
             excluded: 0,
             not_solid: 0,
             loose_faces: 0,
+            loose_here: 0,
+            loose_places: vec![],
+            uncounted: 0,
             hidden: 0,
             board_feet: 0.0,
             lumber: vec![],

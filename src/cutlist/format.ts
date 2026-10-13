@@ -1,6 +1,6 @@
 // How the cut list reads (lane 7): finished sizes from the kernel's rounding steps, so the
 // table, the CSV, the report, the PDF and the labels all say exactly the same thing.
-import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
+import type { CutList, CutRow, Grain, Rounding, Uncounted } from "../kernel/types";
 import type { UnitSystem } from "../lib/units";
 
 /** What the Round to menu offers: follow the display units (the default), or a fixed step. */
@@ -117,6 +117,11 @@ export const GRAIN_WORDS: Record<Grain, string> = { length: "along L", width: "a
 export const NOT_SOLID_NOTE = "not solid (sizes from bounds)";
 /** What a part dropped from the totals says (lane 15). */
 export const LEFT_OUT_NOTE = "left out of the totals";
+/** Lane 15 fixes: what a part that counts nowhere says, everywhere it is written. */
+export const UNCOUNTED_NOTES: Record<Uncounted, string> = {
+  flat: "flat face, no thickness (not counted)",
+  not_a_board: "thicker than any board: several parts drawn as one? (not counted)",
+};
 
 /** Plain-language notes for a row, the same in the pane, the CSV, the print view, the PDF
  * and the labels: left out of the totals, not solid (sized from its bounds), a grain set
@@ -125,6 +130,7 @@ export const LEFT_OUT_NOTE = "left out of the totals";
 export function rowNotes(row: CutRow): string[] {
   const notes: string[] = [];
   if (row.included === false) notes.push(LEFT_OUT_NOTE);
+  if (row.uncounted) notes.push(UNCOUNTED_NOTES[row.uncounted]);
   if (row.not_solid) notes.push(NOT_SOLID_NOTE);
   if (row.grain_set) notes.push(row.grain === "none" ? "no grain" : `grain ${GRAIN_WORDS[row.grain]}`);
   if (row.shaped) notes.push("shaped");
@@ -159,6 +165,7 @@ export function summary(list: CutList): { boardFeet: string; boardFeetLabel: str
 /** Board feet for a lumber row, area for a sheet row, with its unit: "8.35 bd ft",
  * "17.07 sq ft", "1.59 m²". */
 export function amountText(row: CutRow, r: Rounding): string {
+  if (row.uncounted) return "—";
   return row.sheet ? formatArea(row.area_m2, r) : `${formatBoardFeet(row.board_feet)} bd ft`;
 }
 
@@ -205,7 +212,19 @@ export function geometryNote(list: CutList): string {
   const bits: string[] = [];
   const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
   if (t.not_solid) bits.push(`${n(t.not_solid, "part", "parts")} not solid (sizes from bounds)`);
-  if (t.loose_faces) bits.push(`${n(t.loose_faces, "face", "faces")} outside parts`);
+  if (t.uncounted) bits.push(`${n(t.uncounted, "part", "parts")} not counted (flat, or thicker than any board)`);
+  if (t.loose_faces) bits.push(`${n(t.loose_faces, "face", "faces")} outside parts${looseWhere(t)}`);
   if (t.excluded) bits.push(`${n(t.excluded, "part", "parts")} left out of the totals`);
   return bits.join(" · ");
+}
+
+/** Lane 15 fixes: where faces outside parts are, when not all of them are in the open
+ * context: " (in Cupboard)", " (12 here, the rest in Cupboard and 2 more)". Empty when they
+ * are all here (Make parts from loose faces takes them all). */
+export function looseWhere(t: CutList["totals"]): string {
+  const places = t.loose_places ?? [];
+  if (!places.length) return "";
+  const first = places[0].node === null ? "at the top level" : `in ${places[0].name}`;
+  const more = places.length > 1 ? ` and ${places.length - 1} more` : "";
+  return t.loose_here ? ` (${t.loose_here} here, the rest ${first}${more})` : ` (${first}${more})`;
 }

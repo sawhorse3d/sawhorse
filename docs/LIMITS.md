@@ -39,4 +39,4 @@ What comes across from a file that opens, and what does not: [skp-compat.md](skp
 
 ## Hand-made furniture that is not watertight
 
-Most furniture drawn in SketchUp is open faces, not closed solids. It opens (as amber meshes), its groups and components are listed in the cut list sized from their bounds and flagged "not solid (sizes from bounds)", and they nest like any part. They cannot be pushed or pulled, and STL and 3MF export refuse them by name; GLB, OBJ and DXF export them.
+Most furniture drawn in SketchUp is open faces, not closed solids. It opens (as amber meshes), its groups and components are listed in the cut list sized from their bounds and flagged "not solid (sizes from bounds)", and they nest like any part. A group that holds a whole piece of furniture as one set of faces is sized as a whole: when its box is thicker than any board it is listed but not counted or nested, and a flat face is never sheet goods. The cut list does not split a piece of furniture into its boards for you; group each board's faces first. They cannot be pushed or pulled, and STL and 3MF export refuse them by name; GLB, OBJ and DXF export them.

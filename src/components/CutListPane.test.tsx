@@ -7,6 +7,7 @@ import { CutListReport } from "./CutListReport";
 import { REPORT_COLUMNS, reportCells } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
 import { reportPdf } from "../cutlist/documents";
+import { cutListCsv } from "../cutlist/csv";
 import type { CutList, CutRow } from "../kernel/types";
 
 afterEach(cleanup);
@@ -305,9 +306,54 @@ describe("Parts that are not solids (lane 15)", () => {
     const list = bookshelf();
     list.rows[0] = { ...list.rows[0], name: "Bench seat", not_solid: true };
     list.rows[3] = { ...list.rows[3], included: false };
-    list.totals = { ...list.totals, not_solid: 1, excluded: 1, loose_faces: 312 };
+    list.totals = { ...list.totals, not_solid: 1, excluded: 1, loose_faces: 312, loose_here: 312 };
     return list;
   }
+
+  // Lane 15 verifier: the cupboard's 171 and the gondola's 40 faces outside parts sat inside
+  // assemblies; the link acted only on the open context and refused.
+  it("says where faces outside parts are when they are not here, and opens the place instead", () => {
+    const list = mixed();
+    list.totals = { ...list.totals, loose_faces: 171, loose_here: 0, loose_places: [{ node: 7, name: "Cupboard", faces: 120 }, { node: 9, name: "Drawer", faces: 51 }] };
+    const p = props({ list, onGroupLoose: vi.fn(), onOpenPlace: vi.fn() });
+    render(<CutListPane {...p} />);
+    const note = screen.getByTestId("cutlist-geometry");
+    expect(note.textContent).toContain("171 faces outside parts (in Cupboard and 1 more)");
+    expect(within(note).queryByRole("button", { name: "Make parts from loose faces" })).toBeNull();
+    fireEvent.click(within(note).getByRole("button", { name: "Open Cupboard" }));
+    expect(p.onOpenPlace).toHaveBeenCalledWith(7);
+    expect(p.onGroupLoose).not.toHaveBeenCalled();
+  });
+
+  it("says why the list is empty when every face is loose (benches.skp)", () => {
+    const list = bookshelf();
+    list.rows = [];
+    list.totals = { ...list.totals, parts: 0, pieces: 0, board_feet: 0, lumber: [], sheets: [], sheet_count: 0, loose_faces: 500, loose_here: 500 };
+    render(<CutListPane {...props({ list, onGroupLoose: vi.fn() })} />);
+    const empty = screen.getByTestId("cutlist-empty").textContent!;
+    expect(empty).toContain("the model's 500 faces are loose, outside any group or component");
+    expect(empty).toContain("Make parts from loose faces");
+    expect(within(screen.getByTestId("cutlist-geometry")).getByRole("button", { name: "Make parts from loose faces" })).toBeTruthy();
+  });
+
+  // Lane 15 verifier: a bench drawn as one piece of open faces counted 126 board feet, and a
+  // flat face was sheet goods with a 4 x 8 sheet of its own.
+  it("marks a flat face and an open piece thicker than any board as not counted", () => {
+    const list = mixed();
+    list.rows[1] = { ...list.rows[1], name: "Rodeo#2", not_solid: true, uncounted: "flat", board_feet: 0, area_m2: 0, sheet: false };
+    list.rows[2] = { ...list.rows[2], name: "benches 1", not_solid: true, uncounted: "not_a_board", board_feet: 0, area_m2: 0, sheet: false };
+    list.totals = { ...list.totals, uncounted: 2 };
+    render(<CutListPane {...props({ list })} />);
+    const flat = screen.getByText("Rodeo#2").closest("tr")!;
+    expect(flat.getAttribute("data-uncounted")).toBe("flat");
+    expect(flat.className).toContain("out");
+    expect(flat.querySelector("small")!.textContent).toContain("flat face, no thickness (not counted)");
+    const bench = screen.getByText("benches 1").closest("tr")!;
+    expect(bench.querySelector("small")!.textContent).toContain("thicker than any board: several parts drawn as one? (not counted)");
+    expect(screen.getByTestId("cutlist-geometry").textContent).toContain("2 parts not counted (flat, or thicker than any board)");
+    const csv = cutListCsv(list);
+    expect(csv).toContain("Not counted");
+  });
 
   it("flags the part in the pane, says what is outside parts, and offers to make parts of it", () => {
     const p = props({ list: mixed(), onInclude: vi.fn(), onGroupLoose: vi.fn() });

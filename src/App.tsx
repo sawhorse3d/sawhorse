@@ -1795,6 +1795,18 @@ export function App() {
     [apply],
   );
 
+  /** Lane 15 fixes: open the group or instance holding faces outside parts (null: the top level). */
+  const openLoosePlace = useCallback(
+    (node: number | null) => {
+      live.current.selection = [];
+      setSelection([]);
+      void apply({ op: "set_context", node }, (r) =>
+        node === null ? "At the top level. Make parts from loose faces now takes the faces here." : `Editing ${describeNode(r.scene.state.graph, node)}. Make parts from loose faces now takes the faces here; Esc closes it.`,
+      );
+    },
+    [apply],
+  );
+
   // ---- nesting (lane 9) -------------------------------------------------------------------
 
   const toggleNest = useCallback(() => {
@@ -2507,6 +2519,7 @@ export function App() {
           onStock: setStock,
           onInclude: setInclude,
           onGroupLoose: groupLoose,
+          onOpenPlace: openLoosePlace,
           onCsv: () => void saveCut(csvBytes, "cut list.csv", CSV_TYPE, "the cut list as a spreadsheet"),
           onPdf: () => void saveCut((l) => reportPdf(l, cutTitle), "cut list.pdf", PDF_TYPE, "the cut list report"),
           onPrint: printCut,

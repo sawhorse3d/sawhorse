@@ -347,6 +347,9 @@ pub fn check_nesting_of(
             if !seen.insert((q.row, q.copy)) {
                 return bad(format!("{} placed twice", q.tag));
             }
+            if row.uncounted.is_some() {
+                return bad(format!("{} is counted nowhere but placed", q.tag));
+            }
             if counted(row).get(q.copy.wrapping_sub(1)) != Some(&q.item) {
                 return bad(format!("{} is not its row's piece", q.tag));
             }
@@ -441,6 +444,19 @@ pub fn check_nesting_of(
         }
         if counted(row).get(u.copy.wrapping_sub(1)) != Some(&u.item) {
             return Err(format!("unplaced {} is not its row's piece", u.tag));
+        }
+        // Lane 15 fixes: a flat face or an open piece thicker than any board is reported
+        // as exactly that, and nothing else is.
+        let says = row.uncounted.map(|x| match x {
+            crate::cutlist::Uncounted::Flat => UnplacedReason::Flat,
+            crate::cutlist::Uncounted::NotABoard => UnplacedReason::NotABoard,
+        });
+        let reason_uncounted = matches!(u.reason, UnplacedReason::Flat | UnplacedReason::NotABoard);
+        if says.is_some() != reason_uncounted || says.is_some_and(|r| r != u.reason) {
+            return Err(format!(
+                "unplaced {} reported {:?}, its row says {:?}",
+                u.tag, u.reason, row.uncounted
+            ));
         }
         if let (Some(name), UnplacedReason::TooLarge | UnplacedReason::Grain) = (&u.stock, u.reason)
         {
@@ -715,6 +731,58 @@ pub fn check_cut_list(m: &Model) -> Result<(), String> {
             "cut list: {} faces outside parts, the model has {loose}",
             all.totals.loose_faces
         ));
+    }
+    // Lane 15 fixes: the loose faces are split between the open context (what group_loose
+    // acts on) and the places that hold the rest, each place once.
+    let here: usize = m
+        .meshes()
+        .into_iter()
+        .map(|(_, x)| x)
+        .filter(|x| {
+            x.member.parent() == m.context()
+                && match x.member.parent() {
+                    None => true,
+                    Some(p) => g.nodes.iter().any(|y| y.parent == Some(p)),
+                }
+        })
+        .map(|x| x.faces.len())
+        .sum();
+    let t = &all.totals;
+    let placed: usize = t.loose_places.iter().map(|p| p.faces).sum();
+    if here != t.loose_here || t.loose_here + placed != t.loose_faces {
+        return Err(format!(
+            "cut list: {} faces outside parts here (model {here}), {placed} elsewhere, {} in all",
+            t.loose_here, t.loose_faces
+        ));
+    }
+    let mut nodes_seen = BTreeSet::new();
+    if t.loose_places
+        .iter()
+        .any(|p| p.faces == 0 || p.node == m.context() || !nodes_seen.insert(p.node))
+    {
+        return Err("cut list: a place of loose faces is empty, here, or listed twice".into());
+    }
+    // Rows counted nowhere carry nothing into the totals, and say why truthfully.
+    for row in &all.rows {
+        let Some(u) = row.uncounted else { continue };
+        if row.board_feet != 0.0 || row.area_m2 != 0.0 || row.sheet {
+            return Err(format!(
+                "cut list: {} is uncounted but carries a total",
+                row.name
+            ));
+        }
+        let ok = match u {
+            crate::cutlist::Uncounted::Flat => row.size[0] <= crate::cutlist::NO_THICKNESS,
+            crate::cutlist::Uncounted::NotABoard => {
+                row.not_solid && row.size[0] > crate::cutlist::THICKEST_LUMBER
+            }
+        };
+        if !ok {
+            return Err(format!("cut list: {} is {u:?} but it is not", row.name));
+        }
+    }
+    if t.uncounted != all.rows.iter().filter(|r| r.uncounted.is_some()).count() {
+        return Err("cut list: the uncounted total is not its rows".into());
     }
     let solids: BTreeSet<u64> = m.object_ids().into_iter().collect();
     if seen != solids {

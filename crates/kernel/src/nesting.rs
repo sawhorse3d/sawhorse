@@ -173,6 +173,11 @@ pub enum UnplacedReason {
     TooLarge,
     /// It would fit turned 90 degrees, but its grain must run along the stock's.
     Grain,
+    /// Lane 15 fixes: a flat face with no thickness ([`crate::cutlist::Uncounted::Flat`]).
+    Flat,
+    /// Lane 15 fixes: open faces thicker than any board, sized as a whole
+    /// ([`crate::cutlist::Uncounted::NotABoard`]): split it into its boards first.
+    NotABoard,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -390,6 +395,17 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
         // A part dropped from the list takes no stock (lane 15); `nest_list` skips it.
         if !row.included {
             out[i] = Some(Err((UnplacedReason::NoStock, None)));
+            continue;
+        }
+        // Listed but counted nowhere (lane 15 fixes): reported with the reason, never stocked.
+        if let Some(u) = row.uncounted {
+            out[i] = Some(Err((
+                match u {
+                    crate::cutlist::Uncounted::Flat => UnplacedReason::Flat,
+                    crate::cutlist::Uncounted::NotABoard => UnplacedReason::NotABoard,
+                },
+                None,
+            )));
             continue;
         }
         let t = row.size[0];

@@ -37,6 +37,9 @@ export interface CutListPaneProps {
   onInclude?: (rows: CutRow[], include: boolean) => void;
   /** Lane 15: make each piece of the loose faces in the open context a part (Group loose faces). */
   onGroupLoose?: () => void;
+  /** Lane 15 fixes: open the group or instance that holds faces outside parts (null: the top
+   * level), so Make parts from loose faces can act on them there. */
+  onOpenPlace?: (node: number | null) => void;
   onCsv: () => void;
   onPdf: () => void;
   onPrint: () => void;
@@ -190,9 +193,19 @@ export function CutListPane(p: CutListPaneProps) {
       {list && geometryNote(list) ? (
         <p className="note geom" data-testid="cutlist-geometry">
           <span>{geometryNote(list)}.</span>
-          {list.totals.loose_faces && p.onGroupLoose ? (
-            <button type="button" className="link" onClick={p.onGroupLoose} title="Put each connected piece of the loose faces into a group of its own, so each becomes a part (one undo step; nothing moves)">
+          {list.totals.loose_here > 0 && p.onGroupLoose ? (
+            <button type="button" className="link" onClick={p.onGroupLoose} title="Put each connected piece of the loose faces here into a group of its own, so each becomes a part (one undo step; nothing moves)">
               Make parts from loose faces
+            </button>
+          ) : null}
+          {list.totals.loose_here === 0 && list.totals.loose_places?.length && p.onOpenPlace ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => p.onOpenPlace?.(list.totals.loose_places[0].node)}
+              title={`The faces outside parts are in ${list.totals.loose_places.map((x) => `${x.node === null ? "the top level" : x.name} (${x.faces})`).join(", ")}. Open it, then Make parts from loose faces there.`}
+            >
+              {list.totals.loose_places[0].node === null ? "Go to the top level" : `Open ${list.totals.loose_places[0].name}`}
             </button>
           ) : null}
         </p>
@@ -201,7 +214,11 @@ export function CutListPane(p: CutListPaneProps) {
         p.problem ? null : <p className="note">Working out the cut list…</p>
       ) : empty ? (
         <p className="placeholder" data-testid="cutlist-empty">
-          {list.visible_only && list.totals.hidden ? "Everything is hidden. Untick Visible only to list the hidden parts too." : "No parts yet. Every solid is a part; make the parts you repeat components (select, then Make Component) and each becomes one row with its quantity."}
+          {list.visible_only && list.totals.hidden
+            ? "Everything is hidden. Untick Visible only to list the hidden parts too."
+            : list.totals.loose_faces
+              ? `No parts yet: the model's ${list.totals.loose_faces} face${list.totals.loose_faces === 1 ? " is" : "s are"} loose, outside any group or component, and only a solid, a group or a component is a part. Make parts from loose faces puts each connected piece into a group of its own; to list each board on its own, select a board's faces and Make Group.`
+              : "No parts yet. Every solid is a part; make the parts you repeat components (select, then Make Component) and each becomes one row with its quantity."}
         </p>
       ) : (
         <>
@@ -238,7 +255,8 @@ export function CutListPane(p: CutListPaneProps) {
                       data-part={row.name}
                       aria-selected={sel}
                       data-not-solid={row.not_solid ? "true" : undefined}
-                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`}
+                      data-uncounted={row.uncounted}
+                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false || row.uncounted ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`}
                       onMouseDown={(e) => e.shiftKey && e.preventDefault()}
                       onClick={(e) => clickRow(e, row)}
                       onContextMenu={(e) => openMenu(e, row)}
