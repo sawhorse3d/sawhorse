@@ -14,6 +14,7 @@
 
 #![warn(missing_debug_implementations)]
 
+pub(crate) mod arrangement;
 pub mod boolean;
 pub mod brep;
 pub mod cutlist;
