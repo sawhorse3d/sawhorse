@@ -400,6 +400,11 @@ pub enum ItemKind {
         /// Draw its frame.
         #[serde(default, skip_serializing_if = "is_false")]
         border: bool,
+        /// The scale it had when it last showed a view to scale, kept while it shows one
+        /// that is not (isometric, perspective: NTS), so going back to Top or Front gives the
+        /// scale back (lane 12c). Never NTS. Hashed only when present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ortho_scale: Option<Scale>,
     },
     Dimension {
         /// The viewport item whose model points it measures.
@@ -508,6 +513,7 @@ impl ItemKind {
                 hidden_lines,
                 caption,
                 border,
+                ortho_scale,
             } => {
                 h.tag("viewport");
                 rect(h, r);
@@ -533,6 +539,10 @@ impl ItemKind {
                 }
                 h.u64(u64::from(*hidden_lines) | u64::from(*border) << 1);
                 h.tag(caption.as_deref().unwrap_or("\u{0}"));
+                if let Some(s) = ortho_scale {
+                    h.tag("ortho-scale");
+                    s.hash_into(h);
+                }
             }
             ItemKind::Dimension {
                 viewport,
@@ -773,6 +783,19 @@ impl Model {
         }
     }
 
+    /// Whether a viewport showing `source` can be to scale: a standard view square to the
+    /// model, or a parallel camera or scene. Isometric and perspective views cannot (their
+    /// dimensions read the model's own lengths, lane 12c); a missing scene cannot either.
+    pub fn viewport_can_be_to_scale(&self, source: &ViewportSource) -> bool {
+        match source {
+            ViewportSource::Standard { view } => view.to_scale(),
+            ViewportSource::Camera { camera } => camera.parallel,
+            ViewportSource::Scene { name } => {
+                self.scenes.iter().any(|s| s.name == *name && s.parallel)
+            }
+        }
+    }
+
     /// Whether a viewport may show `source` at `scale`: views that are not square to the
     /// model (isometric, perspective) are not to scale.
     fn check_viewport(&self, source: &ViewportSource, scale: &Scale) -> Result<(), SheetError> {
@@ -825,8 +848,15 @@ impl Model {
                 scale,
                 centre,
                 caption,
+                ortho_scale,
                 ..
             } => {
+                if let Some(s) = ortho_scale {
+                    s.check().map_err(|m| SheetError::Bad(m.into()))?;
+                    if *s == Scale::Nts {
+                        return bad("a viewport's remembered scale is a real scale, never NTS");
+                    }
+                }
                 if !finite_rect(rect)
                     || centre.is_some_and(|c| {
                         !c.iter()
@@ -1125,13 +1155,14 @@ impl Model {
                 if let ItemKind::Viewport {
                     source: ViewportSource::Scene { name },
                     scale,
+                    ortho_scale,
                     ..
                 } = &mut i.kind
                     && name == from
                 {
                     *name = scene.name.clone();
                     if !scene.parallel {
-                        *scale = Scale::Nts;
+                        not_to_scale(scale, ortho_scale);
                     }
                 }
             }
@@ -1150,12 +1181,17 @@ impl Model {
         };
         for s in self.sheets.values_mut() {
             for i in &mut s.items {
-                if let ItemKind::Viewport { source, scale, .. } = &mut i.kind
+                if let ItemKind::Viewport {
+                    source,
+                    scale,
+                    ortho_scale,
+                    ..
+                } = &mut i.kind
                     && matches!(source, ViewportSource::Scene { name } if *name == scene.name)
                 {
                     *source = ViewportSource::Camera { camera };
                     if !camera.parallel {
-                        *scale = Scale::Nts;
+                        not_to_scale(scale, ortho_scale);
                     }
                 }
             }
@@ -1193,6 +1229,15 @@ impl Model {
         }
         Ok(())
     }
+}
+
+/// A viewport that now shows a view that is not to scale: NTS, remembering the scale it
+/// had (when it had one) so going back to a square view restores it.
+fn not_to_scale(scale: &mut Scale, ortho_scale: &mut Option<Scale>) {
+    if *scale != Scale::Nts {
+        *ortho_scale = Some(*scale);
+    }
+    *scale = Scale::Nts;
 }
 
 #[cfg(test)]

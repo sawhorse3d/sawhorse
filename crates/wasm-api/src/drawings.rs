@@ -254,6 +254,7 @@ impl DocCore {
             hidden_lines: false,
             caption: None,
             border: false,
+            ortho_scale: None,
         };
         let (d, info) = sawhorse_export::sheet::viewport_drawing(self.doc.model(), &fitted, 0)
             .ok_or("that item is not a viewport")?;
@@ -431,6 +432,7 @@ mod tests {
                 hidden_lines: false,
                 caption: None,
                 border: false,
+                ortho_scale: None,
             }),
         })
         .unwrap();

@@ -548,6 +548,7 @@ fn random_sheets_lay_out() {
                         hidden_lines: r & 512 != 0,
                         caption: Some("VIEW".into()),
                         border: r & 1024 != 0,
+                        ortho_scale: None,
                     }
                 }
                 2 if !viewports.is_empty() => {
@@ -647,4 +648,141 @@ fn random_sheets_lay_out() {
         laid += r.items.len();
     }
     assert!(laid > 200, "{laid}");
+}
+
+/// Lane 12c: a dimension in an isometric or perspective viewport reads the model's own
+/// length (or "NTS" for a horizontal or vertical one), never the foreshortened length the
+/// view shows; the same points in a Front viewport read what Front shows.
+#[test]
+fn dimensions_in_views_not_to_scale_read_the_model() {
+    use sawhorse_export::sheet::{RenderOptions, render};
+    use sawhorse_kernel::paper::{CameraSpec, StdView as View};
+    use sawhorse_kernel::sheets::{DimStyle, ItemKind, SheetSetup, ViewportSource};
+    let mut d = {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../kernel/tests/golden/cutlist.json");
+        let g: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let ops: Vec<Op> = serde_json::from_value(g["ops"].clone()).unwrap();
+        Document::replay(&ops).unwrap()
+    };
+    let sheet = match d
+        .apply(&Op::AddSheet {
+            setup: Box::new(SheetSetup::named("Dims")),
+        })
+        .unwrap()
+    {
+        sawhorse_kernel::model::OpOutcome::SheetAdded { sheet } => sheet,
+        o => panic!("{o:?}"),
+    };
+    let add = |d: &mut Document, kind: ItemKind| match d
+        .apply(&Op::AddSheetItem {
+            sheet,
+            item: Box::new(kind),
+        })
+        .unwrap()
+    {
+        sawhorse_kernel::model::OpOutcome::SheetItemAdded { item, .. } => item,
+        o => panic!("{o:?}"),
+    };
+    let vp = |source: ViewportSource, scale: Scale, x: f64| ItemKind::Viewport {
+        rect: [x * IN, 0.5 * IN, 3.0 * IN, 3.0 * IN],
+        source,
+        scale,
+        centre: None,
+        hidden_lines: false,
+        caption: None,
+        border: false,
+        ortho_scale: None,
+    };
+    let front = add(
+        &mut d,
+        vp(
+            ViewportSource::Standard { view: View::Front },
+            Scale::Ratio {
+                paper: 1.0,
+                model: 24.0,
+            },
+            0.5,
+        ),
+    );
+    let iso = add(
+        &mut d,
+        vp(
+            ViewportSource::Standard { view: View::Iso },
+            Scale::Nts,
+            3.75,
+        ),
+    );
+    let persp = add(
+        &mut d,
+        vp(
+            ViewportSource::Camera {
+                camera: CameraSpec {
+                    eye: [3.0, -3.0, 2.0],
+                    target: [0.4, 0.0, 0.8],
+                    up: [0.0, 0.0, 1.0],
+                    parallel: false,
+                    fov: 35.0,
+                },
+            },
+            Scale::Nts,
+            7.0,
+        ),
+    );
+    // A 30 in edge along red, and a point 12 in back: a 30 in by 12 in diagonal.
+    let (a, b) = ([0.0, 0.0, 0.0], [30.0 * IN, 0.0, 0.0]);
+    let c = [30.0 * IN, 12.0 * IN, 0.0];
+    let dim = |viewport: u64, kind: DimKind, points: Vec<[f64; 3]>| ItemKind::Dimension {
+        viewport,
+        dim: kind,
+        points,
+        anchors: Vec::new(),
+        offset: 0.2 * IN,
+        style: DimStyle::Arrows,
+        text: None,
+    };
+    let mut want = Vec::new();
+    for (v, square) in [(front, true), (iso, false), (persp, false)] {
+        let al = add(&mut d, dim(v, DimKind::Aligned, vec![a, b]));
+        let diag = add(&mut d, dim(v, DimKind::Aligned, vec![a, c]));
+        let h = add(&mut d, dim(v, DimKind::Horizontal, vec![a, b]));
+        let ang = add(&mut d, dim(v, DimKind::Angular, vec![b, a, c]));
+        want.push((al, "30\"".to_string()));
+        want.push((
+            h,
+            if square {
+                "30\"".to_string()
+            } else {
+                "NTS".to_string()
+            },
+        ));
+        // Front sees the diagonal edge-on (its depth does not show): 30 in and 0 degrees.
+        // The model has 32 5/16 in and 90 degrees; the other two views read exactly that.
+        let len = (30.0f64.hypot(12.0)) * IN;
+        if square {
+            want.push((diag, "30\"".to_string()));
+        } else {
+            want.push((diag, format_length(len, LengthFormat::Fraction { den: 16 })));
+            want.push((ang, "90°".to_string()));
+        }
+    }
+    let (id, _) = d.model().sheets()[0];
+    let r = render(
+        d.model(),
+        id,
+        &RenderOptions {
+            number: 1,
+            count: 1,
+        },
+    )
+    .unwrap();
+    for (item, text) in want {
+        let got = r
+            .items
+            .iter()
+            .find(|i| i.id == item)
+            .and_then(|i| i.text.clone());
+        assert_eq!(got.as_deref(), Some(text.as_str()), "item {item}");
+    }
 }

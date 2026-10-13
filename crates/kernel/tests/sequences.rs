@@ -730,6 +730,19 @@ fn sheet_item(
                 hidden_lines: *hidden,
                 caption: (v % 3 == 0).then(|| format!("VIEW {v}")),
                 border: v % 2 == 0,
+                // Lane 12c: a remembered scale, sometimes NTS or broken (both refused).
+                ortho_scale: match v % 7 {
+                    1 => Some(Scale::Ratio {
+                        paper: 1.0,
+                        model: 4.0,
+                    }),
+                    2 => Some(Scale::Nts),
+                    3 => Some(Scale::Ratio {
+                        paper: 1.0,
+                        model: -2.0,
+                    }),
+                    _ => None,
+                },
             }
         }
         SheetPick::Dimension(v, k, pts, offset) => {

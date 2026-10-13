@@ -75,6 +75,9 @@ export type ItemKind =
       hidden_lines?: boolean;
       caption?: string | null;
       border?: boolean;
+      /** The scale it had when it last showed a view to scale, kept while it shows an
+       * isometric or perspective one (NTS), so going back restores it (lane 12c). */
+      ortho_scale?: Scale | null;
     }
   | { kind: "dimension"; viewport: number; dim: DimKind; points: V3[]; anchors?: (ModelAnchor | null)[]; offset: number; style?: DimStyle; text?: string | null }
   | { kind: "label"; at: [number, number]; text: string; size: number; leader?: LeaderEnd | null }

@@ -51,6 +51,18 @@ export interface SheetsPaneProps {
 }
 
 /** A sheet's setup: everything but its items. */
+/** The scale a viewport takes when it is sent to a view that is (`toScale`) or is not to
+ * scale (lane 12c): going isometric or perspective makes it NTS and remembers the scale it
+ * had in `ortho_scale`; coming back to a square view gives that scale back and forgets it.
+ * A scale chosen by hand (NTS on a Top view, say) is kept as it is. */
+export function viewportScaleFor(kind: { scale: Scale; ortho_scale?: Scale | null }, toScale: boolean): { scale: Scale; ortho_scale: Scale | null } {
+  if (toScale) {
+    const back = kind.scale.kind === "nts" && kind.ortho_scale ? kind.ortho_scale : kind.scale;
+    return { scale: back, ortho_scale: null };
+  }
+  return { scale: { kind: "nts" }, ortho_scale: kind.scale.kind === "nts" ? (kind.ortho_scale ?? null) : kind.scale };
+}
+
 export function setupOf(row: SheetRow): SheetSetup {
   const { items: _items, next_item: _next, ...setup } = row.sheet;
   void _items;
@@ -256,6 +268,13 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
   // item still on its way (see useInFlight).
   const flight = useInFlight<ItemKind, ItemKind>();
   const set = (k: ItemKind) => flight.send(kind, rebase(flight.base(kind, kind), kind, k), (v) => props.onSetItem(id, v));
+  // An edit that reads a field it changes (a column ticked in a list) reads it from the edit
+  // still on its way, so two ticks in quick succession keep each other (lane 12c: the second
+  // used to rebuild the list from the props and drop the first).
+  const update = (f: (cur: ItemKind) => ItemKind | null) => {
+    const next = f(flight.base(kind, kind));
+    if (next) set(next);
+  };
   const sheet = props.sheets.find((s) => s.id === props.active)?.sheet;
   const units = sheet?.units ?? "inches";
   const count = sheet?.items.length ?? 0;
@@ -276,10 +295,13 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
               value={kind.source}
               scenes={props.scenes}
               allowCamera
-              onChange={(source) => {
-                const scale: Scale = canBeToScale(source, props.scenes) ? kind.scale : { kind: "nts" };
-                set({ ...kind, source, centre: null, scale, caption: caption(source, scale) });
-              }}
+              onChange={(source) =>
+                update((cur) => {
+                  if (cur.kind !== "viewport") return null;
+                  const { scale, ortho_scale } = viewportScaleFor(cur, canBeToScale(source, props.scenes));
+                  return { ...cur, source, centre: null, scale, ortho_scale, caption: caption(source, scale) };
+                })
+              }
             />
             <ScaleSelect value={kind.scale} toScale={toScale} onChange={(scale) => set({ ...kind, scale, caption: caption(kind.source, scale) })} />
             {!toScale ? <p className="note">An isometric or perspective view is never to scale: it fits its frame.</p> : null}
@@ -361,8 +383,11 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
                     checked={kind.columns.includes(c.id)}
                     onChange={(e) => {
                       const on = e.currentTarget.checked;
-                      const columns: CutColumn[] = CUT_COLUMNS.map((x) => x.id).filter((x) => (x === c.id ? on : kind.columns.includes(x)));
-                      if (columns.length) set({ ...kind, columns });
+                      update((cur) => {
+                        if (cur.kind !== "table") return null;
+                        const columns: CutColumn[] = CUT_COLUMNS.map((x) => x.id).filter((x) => (x === c.id ? on : cur.columns.includes(x)));
+                        return columns.length ? { ...cur, columns } : null;
+                      });
                     }}
                   />{" "}
                   {c.label}

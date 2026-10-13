@@ -263,6 +263,47 @@ pub fn measure(right: DVec3, up: DVec3, kind: DimKind, pts: &[DVec3]) -> Option<
     (v.is_finite() && v > least).then_some(v)
 }
 
+/// What a dimension of `kind` reads in a viewport that is **not to scale** (isometric,
+/// perspective; lane 12c): the model's own length, never a length foreshortened by the view.
+/// An aligned dimension reads the true distance between its points, an angle the true angle
+/// at its corner, a radius or diameter the true circle through its three points. Horizontal
+/// and vertical have no model meaning in such a view (the paper's axes are no model
+/// direction there), so they read `None` and the sheet writes "NTS". Same refusals as
+/// [`measure`] otherwise.
+pub fn measure_true(kind: DimKind, pts: &[DVec3]) -> Option<f64> {
+    if pts.len() < kind.points() || pts.iter().any(|p| !p.is_finite()) {
+        return None;
+    }
+    let v = match kind {
+        DimKind::Horizontal | DimKind::Vertical => return None,
+        DimKind::Aligned => pts[0].distance(pts[1]),
+        DimKind::Angular => {
+            let (a, b) = (pts[1] - pts[0], pts[2] - pts[0]);
+            if a.length() < 1e-12 || b.length() < 1e-12 {
+                return None;
+            }
+            a.cross(b).length().atan2(a.dot(b)).to_degrees()
+        }
+        DimKind::Radius | DimKind::Diameter => {
+            // R = |ab| |bc| |ca| / (2 |ab x ac|).
+            let (a, b, c) = (pts[0], pts[1], pts[2]);
+            let twice = 2.0 * (b - a).cross(c - a).length();
+            let scale = (b - a).length().max((c - a).length()).max(1e-30);
+            if twice <= 2e-12 * scale * scale {
+                return None;
+            }
+            let r = a.distance(b) * b.distance(c) * c.distance(a) / twice;
+            if kind == DimKind::Radius { r } else { 2.0 * r }
+        }
+    };
+    let least = if kind == DimKind::Angular {
+        0.0
+    } else {
+        crate::tolerance::POINT_MERGE
+    };
+    (v.is_finite() && v > least).then_some(v)
+}
+
 /// The centre of the circle through three points (`None`: collinear).
 pub fn circumcentre(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
     let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
@@ -562,6 +603,38 @@ mod tests {
         assert!((measure(r, u, DimKind::Diameter, &pts).unwrap() - 1.0).abs() < 1e-12);
         assert_eq!(
             measure(r, u, DimKind::Radius, &[o, DVec3::X, DVec3::X * 2.0]),
+            None
+        );
+    }
+
+    #[test]
+    fn dimensions_in_a_view_not_to_scale_read_the_model() {
+        // A 30" edge seen in an isometric view: the projection is shorter, the model is not.
+        let a = DVec3::ZERO;
+        let b = DVec3::new(30.0 * IN, 0.0, 0.0);
+        let iso_r = DVec3::new(1.0, -1.0, 0.0).normalize();
+        let iso_u = DVec3::new(-1.0, -1.0, 2.0).normalize();
+        let projected = measure(iso_r, iso_u, DimKind::Aligned, &[a, b]).unwrap();
+        assert!(projected < 25.0 * IN);
+        assert!((measure_true(DimKind::Aligned, &[a, b]).unwrap() - 30.0 * IN).abs() < 1e-12);
+        assert_eq!(measure_true(DimKind::Horizontal, &[a, b]), None);
+        assert_eq!(measure_true(DimKind::Vertical, &[a, b]), None);
+        assert_eq!(measure_true(DimKind::Aligned, &[a, a]), None);
+        // A right angle in the model stays 90 degrees however the view shows it.
+        let ang =
+            measure_true(DimKind::Angular, &[a, DVec3::X, DVec3::new(0.0, 1.0, 1.0)]).unwrap();
+        assert!((ang - 90.0).abs() < 1e-12);
+        // A circle of radius 0.5 in a tilted plane.
+        let (u, v) = (
+            DVec3::new(1.0, 1.0, 0.0).normalize(),
+            DVec3::new(0.0, 0.0, 1.0),
+        );
+        let c = |t: f64| DVec3::new(2.0, 1.0, 1.0) + (u * t.cos() + v * t.sin()) * 0.5;
+        let pts = [c(0.1), c(1.3), c(2.9)];
+        assert!((measure_true(DimKind::Radius, &pts).unwrap() - 0.5).abs() < 1e-12);
+        assert!((measure_true(DimKind::Diameter, &pts).unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(
+            measure_true(DimKind::Radius, &[a, DVec3::X, DVec3::X * 2.0]),
             None
         );
     }

@@ -25,7 +25,7 @@ use sawhorse_kernel::Model;
 use sawhorse_kernel::cutlist::{CutOptions, Rounding};
 use sawhorse_kernel::hash::StableHasher;
 use sawhorse_kernel::paper::{
-    DimKind, LengthFormat, Scale, circumcentre, format_angle, format_length, measure,
+    DimKind, LengthFormat, Scale, circumcentre, format_angle, format_length, measure, measure_true,
 };
 use sawhorse_kernel::sheets::{DimStyle, ItemKind, LeaderEnd, PaperUnits, Sheet, ViewportSource};
 
@@ -671,7 +671,22 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
                     points_out = Some(model_pts.iter().map(|p| p.to_array()).collect());
                     let r = DVec3::from_array(info.frame.right);
                     let u = DVec3::from_array(info.frame.up);
-                    let value = measure(r, u, *dim, &model_pts);
+                    // To scale: what the view shows, measured in its plane. Not to scale
+                    // (isometric, perspective): the model's own length, or "NTS" for a
+                    // horizontal or vertical one, never a foreshortened length (lane 12c).
+                    let square = sheet.items.iter().any(|i| {
+                        i.id == *viewport
+                            && matches!(&i.kind, ItemKind::Viewport { source, .. }
+                                if model.viewport_can_be_to_scale(source))
+                    });
+                    let value = if square {
+                        measure(r, u, *dim, &model_pts)
+                    } else {
+                        measure_true(*dim, &model_pts)
+                    };
+                    let nts = !square
+                        && matches!(dim, DimKind::Horizontal | DimKind::Vertical)
+                        && model_pts.iter().all(|p| p.is_finite());
                     let words = match (own, value) {
                         (Some(t), _) => t.clone(),
                         (None, Some(v)) => match dim {
@@ -680,6 +695,7 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
                             DimKind::Diameter => format!("Ø {}", format_length(v, fmt)),
                             _ => format_length(v, fmt),
                         },
+                        (None, None) if nts => "NTS".into(),
                         (None, None) => "?".into(),
                     };
                     let paper: Option<Vec<DVec2>> =

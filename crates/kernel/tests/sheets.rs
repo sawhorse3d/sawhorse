@@ -73,6 +73,7 @@ fn viewport(view: StdView, rect: [f64; 4], scale: Scale) -> ItemKind {
         hidden_lines: false,
         caption: None,
         border: false,
+        ortho_scale: None,
     }
 }
 
@@ -288,6 +289,7 @@ fn what_is_refused() {
                 hidden_lines: false,
                 caption: None,
                 border: false,
+                ortho_scale: None,
             }),
         },
     );
@@ -383,6 +385,7 @@ fn viewports_follow_their_scenes() {
             hidden_lines: false,
             caption: Some("SIDE 1:8".into()),
             border: true,
+            ortho_scale: None,
         },
     );
     // Renamed: the viewport follows.
@@ -412,6 +415,12 @@ fn viewports_follow_their_scenes() {
         },
     );
     assert_eq!(src(&d).1, Scale::Nts);
+    // ... and remembers its 1:8, so the pane can give it back (lane 12c).
+    let remembered = |d: &Document| match &d.model().sheet(a).unwrap().item(v).unwrap().kind {
+        ItemKind::Viewport { ortho_scale, .. } => *ortho_scale,
+        _ => unreachable!(),
+    };
+    assert_eq!(remembered(&d), Some(eighth()));
     // Deleted: the viewport keeps its camera.
     ok(
         &mut d,
@@ -599,6 +608,7 @@ fn the_sheet_golden_is_this_drawing() {
             hidden_lines: false,
             caption: Some("FRONT ELEVATION 1:12".into()),
             border: false,
+            ortho_scale: None,
         },
     );
     add_item(
@@ -614,6 +624,7 @@ fn the_sheet_golden_is_this_drawing() {
             hidden_lines: false,
             caption: Some("PLAN 1:12".into()),
             border: false,
+            ortho_scale: None,
         },
     );
     add_item(
@@ -633,6 +644,7 @@ fn the_sheet_golden_is_this_drawing() {
             hidden_lines: false,
             caption: Some("SECTION A 1:4".into()),
             border: true,
+            ortho_scale: None,
         },
     );
     let dim = |kind: DimKind, a: [f64; 3], b: [f64; 3], offset: f64| ItemKind::Dimension {
@@ -718,5 +730,93 @@ fn the_sheet_golden_is_this_drawing() {
             g["ops"], ops,
             "golden/sheet.json is not this drawing (UPDATE_GOLDEN=1)"
         );
+    }
+}
+
+/// Lane 12c: a viewport sent through an isometric view keeps the scale it had, so going back
+/// to Top restores it. The remembered scale is a real one (never NTS), is saved and hashed
+/// only when present, and a viewport without one hashes as before.
+#[test]
+fn a_viewport_remembers_its_scale_through_an_isometric_view() {
+    let mut d = golden_doc("cutlist");
+    let a = add_sheet(&mut d, "A");
+    let top = viewport(StdView::Top, r(1.0, 1.0, 4.0, 4.0), eighth());
+    let v = add_item(&mut d, a, top.clone());
+    let plain = d.hash();
+    // To Isometric, as the pane sends it: NTS, remembering 1:8.
+    let iso = ItemKind::Viewport {
+        rect: r(1.0, 1.0, 4.0, 4.0),
+        source: ViewportSource::Standard { view: StdView::Iso },
+        scale: Scale::Nts,
+        centre: None,
+        hidden_lines: false,
+        caption: None,
+        border: false,
+        ortho_scale: Some(eighth()),
+    };
+    ok(
+        &mut d,
+        Op::SetSheetItem {
+            sheet: a,
+            item: v,
+            kind: Box::new(iso.clone()),
+        },
+    );
+    assert_eq!(d.model().sheet(a).unwrap().item(v).unwrap().kind, iso);
+    // Saved and read back.
+    let json = serde_json::to_string(&d.model().sheet(a).unwrap().item(v).unwrap().kind).unwrap();
+    assert!(json.contains("\"ortho_scale\""), "{json}");
+    let back: ItemKind = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, iso);
+    // Back to Top with the remembered scale: the same item, and the same hash, as before.
+    ok(
+        &mut d,
+        Op::SetSheetItem {
+            sheet: a,
+            item: v,
+            kind: Box::new(top.clone()),
+        },
+    );
+    assert_eq!(d.hash(), plain);
+    // Hashed when present: the same viewport remembering a scale is another document.
+    let mut with = top.clone();
+    if let ItemKind::Viewport { ortho_scale, .. } = &mut with {
+        *ortho_scale = Some(eighth());
+    }
+    ok(
+        &mut d,
+        Op::SetSheetItem {
+            sheet: a,
+            item: v,
+            kind: Box::new(with),
+        },
+    );
+    assert_ne!(d.hash(), plain);
+    // Never NTS, never a broken scale.
+    for bad in [
+        Scale::Nts,
+        Scale::Ratio {
+            paper: 1.0,
+            model: -8.0,
+        },
+    ] {
+        let mut k = iso.clone();
+        if let ItemKind::Viewport { ortho_scale, .. } = &mut k {
+            *ortho_scale = Some(bad);
+        }
+        refused(
+            &mut d,
+            Op::SetSheetItem {
+                sheet: a,
+                item: v,
+                kind: Box::new(k),
+            },
+        );
+    }
+    // An older viewport (no field) reads as remembering nothing.
+    let old = r#"{"kind":"viewport","rect":[0.0,0.0,0.1,0.1],"source":{"from":"standard","view":"top"},"scale":{"kind":"nts"}}"#;
+    match serde_json::from_str::<ItemKind>(old).unwrap() {
+        ItemKind::Viewport { ortho_scale, .. } => assert_eq!(ortho_scale, None),
+        k => panic!("{k:?}"),
     }
 }

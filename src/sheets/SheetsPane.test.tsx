@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SheetRow } from "../kernel/sheetTypes";
 import { newSetup } from "./paper";
-import { SheetsPane, setupOf, type SheetsPaneProps } from "./SheetsPane";
+import { SheetsPane, setupOf, viewportScaleFor, type SheetsPaneProps } from "./SheetsPane";
 import { ModeSwitch, SheetTabs } from "./SheetTabs";
 
 afterEach(cleanup);
@@ -152,6 +152,46 @@ describe("Sheets pane", () => {
     fireEvent.change(text, { target: { value: "36 (overall)" } });
     fireEvent.keyDown(text, { key: "Enter" });
     expect(p.onSetItem).toHaveBeenLastCalledWith(2, expect.objectContaining({ text: "36 (overall)" }));
+  });
+
+  it("keeps both of two column ticks made before the kernel answers (lane 12c)", async () => {
+    const pending = () => new Promise<never>(() => {});
+    const p = props({ selection: [3], onSetItem: vi.fn(pending) });
+    render(<SheetsPane {...p} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Material" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Qty" }));
+    // The second tick builds on the first, still on its way: Material stays, Qty goes.
+    expect(p.onSetItem).toHaveBeenLastCalledWith(3, expect.objectContaining({ columns: ["part", "material"] }));
+    expect(p.onSetItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives a viewport its scale back when it comes back from an isometric view (lane 12c)", () => {
+    const p = props({ selection: [1] });
+    const { rerender } = render(<SheetsPane {...p} />);
+    const shows = () => within(screen.getByTestId("item-props")).getByRole("combobox", { name: "Shows" });
+    fireEvent.change(shows(), { target: { value: "std:iso" } });
+    const sent = (p.onSetItem as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(sent).toMatchObject({ source: { from: "standard", view: "iso" }, scale: { kind: "nts" }, ortho_scale: { kind: "ratio", paper: 1, model: 12 }, caption: "ISOMETRIC NTS" });
+    // The kernel's answer: the viewport is isometric now, remembering 1:12.
+    const answered = sheet();
+    answered.sheet.items[0] = { id: 1, ...sent };
+    rerender(<SheetsPane {...p} sheets={[answered]} />);
+    fireEvent.change(shows(), { target: { value: "std:top" } });
+    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ source: { from: "standard", view: "top" }, scale: { kind: "ratio", paper: 1, model: 12 }, ortho_scale: null, caption: "PLAN 1:12" }));
+  });
+
+  it("works out the scale a viewport takes for a view (lane 12c)", () => {
+    const eighth = { kind: "ratio" as const, paper: 1, model: 8 };
+    const nts = { kind: "nts" as const };
+    expect(viewportScaleFor({ scale: eighth }, false)).toEqual({ scale: nts, ortho_scale: eighth });
+    expect(viewportScaleFor({ scale: nts, ortho_scale: eighth }, true)).toEqual({ scale: eighth, ortho_scale: null });
+    // Isometric to perspective: still remembering.
+    expect(viewportScaleFor({ scale: nts, ortho_scale: eighth }, false)).toEqual({ scale: nts, ortho_scale: eighth });
+    // Front to Top: the scale stays.
+    expect(viewportScaleFor({ scale: eighth }, true)).toEqual({ scale: eighth, ortho_scale: null });
+    // NTS chosen by hand on a square view stays NTS.
+    expect(viewportScaleFor({ scale: nts }, true)).toEqual({ scale: nts, ortho_scale: null });
+    expect(viewportScaleFor({ scale: nts }, false)).toEqual({ scale: nts, ortho_scale: null });
   });
 
   it("shows the new viewport's source and the dimension kinds with their tools", () => {
