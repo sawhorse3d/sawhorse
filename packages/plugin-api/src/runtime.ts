@@ -6,10 +6,19 @@
 // The sandbox (src/plugins/sandbox.worker.ts in the app) builds one runtime per worker and
 // installs its `api` where the "sawhorse" module (sawhorse.js) picks it up. Unit tests
 // build it over a fake transport (test/runtime.test.ts).
+//
+// Lane 16: the runtime serializes every message it sends ONCE into a frame (wire.ts) and
+// posts that one buffer; the app checks the frame's size before it reads anything. A call
+// whose parameters cannot be serialized (not plain data, or over the budget) rejects with a
+// PluginApiError ("invalid" / "too_large") and nothing is sent.
 import { bbox, plane, transform, vec3, type Bounds, type Transform, type Vec3 } from "./geometry.ts";
-import { checkData, EVENT_NAMES, logText, PluginApiError, type Data, type HostMessage, type LogLevel, type PluginInfo, type PluginMessage } from "./rpc.ts";
+import { decodeHostFrame, encodePluginMessage, EVENT_NAMES, logText, peekFrame, PluginApiError, type Data, type HostMessage, type LogLevel, type PluginInfo, type PluginMessage } from "./rpc.ts";
+import { encodeValue, WireError } from "./wire.ts";
 
 export { PluginApiError };
+
+/** Taken when the runtime loads, before plugin code runs (a plugin may replace the global one). */
+const isArray = Array.isArray;
 
 /** Lane 15: a call refused before it is sent rejects (never throws) with a typed error. */
 const refuse = (e: unknown, code = "invalid"): Promise<never> =>
@@ -31,7 +40,8 @@ export interface UnitsImpl {
 }
 
 export interface RuntimeOptions {
-  send(msg: PluginMessage): void;
+  /** Post one serialized frame (the sandbox transfers it to the app). */
+  post(frame: ArrayBuffer): void;
   plugin: PluginInfo;
   units: string;
   unitsImpl: UnitsImpl;
@@ -99,8 +109,8 @@ export function outcomeValue(outcome: unknown, path: string): unknown {
   let at: unknown = outcome;
   if (path === "") return at;
   for (const part of path.split(".")) {
-    if (Array.isArray(at) && /^\d+$/.test(part)) at = at[Number(part)];
-    else if (at && typeof at === "object" && !Array.isArray(at)) at = (at as Record<string, unknown>)[part];
+    if (isArray(at) && /^\d+$/.test(part)) at = at[Number(part)];
+    else if (at && typeof at === "object" && !isArray(at)) at = (at as Record<string, unknown>)[part];
     else return undefined;
   }
   return at;
@@ -210,10 +220,11 @@ export class Batch {
   op(op: { op: string; [k: string]: unknown }): Ref {
     if (this.done) throw new Error(`batch "${this.name}" was already committed`);
     if (!op || typeof op.op !== "string") throw new TypeError('an op is an object with an "op" field, like { op: "rename", item: { object: 3 }, name: "Top" }');
-    const clean = plain(op) as { op: string };
-    checkData(clean, `op ${this.ops.length}`);
-    this.ops.push(clean);
-    return new Ref(this.ops.length - 1, op.op);
+    const kind = op.op;
+    // Serialized now, once (lane 16): a bad op throws at the line that added it, and what is
+    // sent is exactly what was checked.
+    this.ops.push(encodeValue(op, `op ${this.ops.length}`));
+    return new Ref(this.ops.length - 1, kind);
   }
 
   /** A rectangular solid. `ref.object` is the new solid. */
@@ -296,6 +307,8 @@ export function plain(v: unknown): unknown {
 export interface Runtime {
   api: Record<string, unknown>;
   receive(msg: HostMessage): void;
+  /** A serialized frame from the app (what the sandbox hands over). */
+  receiveFrame(raw: unknown): void;
   /** Send a log line (the sandbox's console goes here). */
   log(level: LogLevel, args: unknown[]): void;
 }
@@ -308,6 +321,12 @@ interface ToolHandlers {
   onCancel?: (tool: unknown) => unknown;
 }
 
+/** A PluginApiError from anything a send threw. */
+function sendError(method: string, e: unknown): PluginApiError {
+  if (e instanceof WireError) return new PluginApiError(`${method}: ${e.message}`, e.code);
+  return new PluginApiError(`${method}: the request could not be sent (${e instanceof Error ? e.message : String(e)})`, "send_failed");
+}
+
 export function createRuntime(opts: RuntimeOptions): Runtime {
   let nextId = 1;
   const pending = new Map<number, { resolve: (v: Data) => void; reject: (e: Error) => void }>();
@@ -317,30 +336,46 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
   const tools = new Map<string, { handlers: ToolHandlers; handle: unknown }>();
   const listeners = new Map<string, Set<Handler>>();
 
-  const send = (msg: PluginMessage) => opts.send(msg);
+  /** Serialize and post; throws what serializing or posting threw. */
+  const send = (msg: PluginMessage) => opts.post(encodePluginMessage(msg));
   const request = (method: string, params: unknown = null): Promise<Data> => {
     const id = nextId++;
-    // Lane 15: parameters that cannot cross reject the call (they used to throw at the caller).
-    let data: Data;
+    // Serialized once, here (lane 16). Parameters that cannot cross (not plain data, over the
+    // budget) reject the call with "invalid" or "too_large" and nothing is sent; a message
+    // the channel would not take rejects with "send_failed" at once instead of waiting for
+    // an answer that cannot come.
+    let frame: ArrayBuffer;
     try {
-      data = checkData(plain(params), `${method} params`);
+      frame = encodePluginMessage({ t: "req", id, method, params: params as Data });
     } catch (e) {
-      return refuse(e, "invalid");
+      return Promise.reject(sendError(method, e));
     }
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
       try {
-        send({ t: "req", id, method, params: data });
+        opts.post(frame);
       } catch (e) {
-        // The message could not be sent (the channel is gone, or the browser would not copy
-        // it): the call fails now instead of waiting for an answer that cannot come.
         pending.delete(id);
-        reject(new PluginApiError(`${method}: the request could not be sent (${e instanceof Error ? e.message : String(e)})`, "send_failed"));
+        reject(sendError(method, e));
       }
     });
   };
 
-  const log = (level: LogLevel, args: unknown[]) => send({ t: "log", level, text: logText(args) });
+  const log = (level: LogLevel, args: unknown[]) => {
+    try {
+      send({ t: "log", level, text: logText(args) });
+    } catch {
+      /* the console is best effort */
+    }
+  };
+  /** Send an answer the app waits on; a channel that is gone is the watchdog's business. */
+  const done = (m: PluginMessage) => {
+    try {
+      send(m);
+    } catch {
+      /* nothing more to do */
+    }
+  };
 
   const model = {
     document: () => request("model.document"),
@@ -360,7 +395,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
       // A batch is built step by step before it is applied, so a bad name is a mistake in the
       // plugin's code at that line: it throws (apply() rejects on anything the host refuses).
       if (typeof name !== "string" || !name.trim() || name.length > 80) throw new TypeError("a batch needs a name of 1 to 80 characters (it names the undo step)");
-      return new Batch(name, async (n, ops) => (await request("model.batch", { name: n, ops: ops as Data[] })) as unknown[]);
+      return new Batch(name, async (n, ops) => (await request("model.batch", { name: n, ops: ops as unknown as Data[] })) as unknown[]);
     },
   };
 
@@ -383,7 +418,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
       return request("ui.registerCommand", { id: spec.id });
     },
     registerPanel: (spec: { id: string; title?: string; body: unknown[]; onAction?: Handler; onChange?: Handler }) => {
-      if (!spec || !Array.isArray(spec.body)) return refuse(new TypeError("registerPanel needs { id, body: [...] }"));
+      if (!spec || !isArray(spec.body)) return refuse(new TypeError("registerPanel needs { id, body: [...] }"));
       panels.set(spec.id, { onAction: spec.onAction, onChange: spec.onChange });
       const handle = panelHandle(spec.id);
       return request("ui.registerPanel", { id: spec.id, title: spec.title ?? null, body: spec.body as Data[] }).then(() => handle);
@@ -550,18 +585,17 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
           .then(() => run(msg.fn, msg.args))
           .then(
             (value) => {
-              let v: Data = null;
+              // A result that cannot cross (not plain data, too large) is answered as null.
               try {
-                v = checkData(value === undefined ? null : value, "result");
+                send({ t: "done", id, ok: true, value: (value === undefined ? null : value) as Data });
               } catch {
-                v = null;
+                done({ t: "done", id, ok: true, value: null });
               }
-              send({ t: "done", id, ok: true, value: v });
             },
             (e) => {
               const text = e instanceof Error ? e.message : String(e);
               log("error", [`${msg.fn} failed:`, e]);
-              send({ t: "done", id, ok: false, error: text });
+              done({ t: "done", id, ok: false, error: text.slice(0, 10_000) });
             },
           );
         return;
@@ -571,7 +605,32 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     }
   };
 
-  return { api, receive, log };
+  /**
+   * A frame from the app. One that cannot be read is never dropped silently: an answer settles
+   * its pending call with a PluginApiError ("too_large" / "invalid"), a callback is answered
+   * with a failure, anything else is logged.
+   */
+  const receiveFrame = (raw: unknown) => {
+    let msg: HostMessage;
+    try {
+      msg = decodeHostFrame(raw);
+    } catch (e) {
+      const code = e instanceof WireError ? e.code : "invalid";
+      const text = e instanceof Error ? e.message : String(e);
+      const h = peekFrame(raw);
+      const p = h?.kind === "res" ? pending.get(h.id) : undefined;
+      if (h && p) {
+        pending.delete(h.id);
+        p.reject(new PluginApiError(`${h.name || "the call"}: the app's answer could not be read (${text})`, code));
+      } else if (h?.kind === "call") {
+        done({ t: "done", id: h.id, ok: false, error: `the app's call could not be read (${text})` });
+      } else log("error", [`sandbox: refused a message from the app: ${text}`]);
+      return;
+    }
+    receive(msg);
+  };
+
+  return { api, receive, receiveFrame, log };
 }
 
 export type { Bounds, Transform, Vec3 };

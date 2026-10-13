@@ -30,6 +30,19 @@ describe("checkData", () => {
     expect(() => checkData(deep)).toThrow("nested more than 64 deep");
   });
 
+  it("lane 16: measures byte arrays by their whole buffer, refuses holes, long keys and too much in all", () => {
+    const view = new Uint8Array(new ArrayBuffer(40 * 1024 * 1024), 0, 1);
+    expect(() => checkData({ view })).toThrow("counting its whole buffer");
+    const sparse: unknown[] = [];
+    sparse.length = 2 ** 32 - 1;
+    const t0 = performance.now();
+    expect(() => checkData(sparse)).toThrow("a list of 4294967295 items");
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(() => checkData([1, , 2])).toThrow("holes or extra properties");
+    expect(() => checkData({ ["k".repeat(300)]: 1 })).toThrow("key longer than 256");
+    expect(() => checkData(Array.from({ length: 3 }, () => "x".repeat(2_000_000)))).toThrow("too large (more than 4096 KiB in all)");
+  });
+
   it("allows the same object twice when it is not a cycle", () => {
     const shared = { x: 1 };
     expect(() => checkData({ a: shared, b: shared })).not.toThrow();

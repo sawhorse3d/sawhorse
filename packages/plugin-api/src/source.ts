@@ -57,10 +57,31 @@ function eachNode(root: AstNode, visit: (n: AstNode) => void): void {
   }
 }
 
-function lineOf(src: string, at: number): number {
-  let n = 1;
-  for (let k = 0; k < at && k < src.length; k++) if (src[k] === "\n") n++;
-  return n;
+/**
+ * Lane 16: line numbers from a table of line starts built once per module (binary search),
+ * and at most MAX_PROBLEMS problems reported: a module of 100,000 forbidden names used to
+ * cost 100,000 scans of the whole text before the plugin was even shown.
+ */
+export const MAX_PROBLEMS = 20;
+
+/** Largest module (characters) and all modules of a plugin together: what the sandbox can be sent. */
+export const MODULE_LIMITS = { module: 4 * 1024 * 1024, total: 16 * 1024 * 1024 };
+
+function lineTable(src: string): number[] {
+  const starts = [0];
+  for (let k = src.indexOf("\n"); k !== -1; k = src.indexOf("\n", k + 1)) starts.push(k + 1);
+  return starts;
+}
+
+function lineIn(starts: number[], at: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= at) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
 }
 
 /** Parse one module the way a browser loads it (module goal: strict, top-level await, no HTML comments). */
@@ -81,8 +102,23 @@ export function scanModule(path: string, src: string): ModuleScan {
     const message = String(err.message ?? e).replace(/\s*\(\d+:\d+\)$/, "");
     return { imports, problems: [`${path}:${line}: cannot be read as a JavaScript module: ${message}`] };
   }
-  const at = (n: AstNode) => `${path}:${lineOf(src, n.start)}`;
+  let starts: number[] | null = null;
+  const at = (n: AstNode) => `${path}:${lineIn((starts ??= lineTable(src)), n.start)}`;
+  let more = 0;
+  const push = problems.push.bind(problems);
+  problems.push = (...p: string[]) => {
+    if (problems.length >= MAX_PROBLEMS) {
+      more += p.length;
+      return problems.length;
+    }
+    return push(...p);
+  };
   eachNode(program, (n) => {
+    // Past the cap only imports are still collected (no more problem text is built).
+    if (problems.length >= MAX_PROBLEMS && n.type !== "ImportDeclaration" && n.type !== "ExportAllDeclaration" && n.type !== "ExportNamedDeclaration") {
+      if (n.type === "ImportExpression" || n.type === "MetaProperty" || ((n.type === "Identifier" || n.type === "PrivateIdentifier") && n.name === "importScripts")) more++;
+      return;
+    }
     switch (n.type) {
       case "ImportExpression":
         problems.push(`${at(n)}: dynamic import() is not allowed in a plugin (import modules statically from the plugin's own folder)`);
@@ -115,8 +151,9 @@ export function scanModule(path: string, src: string): ModuleScan {
   // In source order (the walk is depth first from the end).
   imports.sort((a, b) => a.start - b.start);
   const order = (p: string) => Number(/:(\d+):/.exec(p)?.[1] ?? 0);
-  problems.sort((a, b) => order(a) - order(b));
-  return { imports, problems };
+  const out = [...problems].sort((a, b) => order(a) - order(b));
+  if (more) out.push(`${path}: and ${more} more problem${more === 1 ? "" : "s"} like these`);
+  return { imports, problems: out };
 }
 
 /** A path inside the plugin, normalised ("a/./b/../c.js" -> "a/c.js"); null when it leaves the folder. */
@@ -142,7 +179,7 @@ export function resolveSpecifier(from: string, spec: string, files: Record<strin
   const path = normalisePath(dir + spec);
   if (path === null) return { problem: `${from} imports "${spec}", which is outside the plugin folder` };
   if (!/\.m?js$/.test(path)) return { problem: `${from} imports "${spec}": name the file with its .js extension` };
-  if (!(path in files)) return { problem: `${from} imports "${spec}", but the plugin has no ${path}` };
+  if (!Object.prototype.hasOwnProperty.call(files, path)) return { problem: `${from} imports "${spec}", but the plugin has no ${path}` };
   return { path };
 }
 
@@ -160,6 +197,7 @@ export function checkPackage(files: Record<string, string>, entry: string): Pack
   const order: string[] = [];
   const links: PackageCheck["links"] = {};
   const state = new Map<string, "visiting" | "done">();
+  let total = 0;
   const visit = (path: string, trail: string[]) => {
     const s = state.get(path);
     if (s === "done") return;
@@ -168,7 +206,19 @@ export function checkPackage(files: Record<string, string>, entry: string): Pack
       return;
     }
     state.set(path, "visiting");
-    const scan = scanModule(path, files[path]);
+    const src = files[path];
+    total += src.length;
+    if (src.length > MODULE_LIMITS.module) {
+      problems.push(`${path} is larger than ${MODULE_LIMITS.module / 1024 / 1024} MB of code (split it, or leave data out of the modules)`);
+      state.set(path, "done");
+      return;
+    }
+    if (total > MODULE_LIMITS.total) {
+      problems.push(`the plugin's modules are larger than ${MODULE_LIMITS.total / 1024 / 1024} MB of code in all`);
+      state.set(path, "done");
+      return;
+    }
+    const scan = scanModule(path, src);
     problems.push(...scan.problems);
     links[path] = [];
     for (const ref of scan.imports) {
@@ -183,7 +233,8 @@ export function checkPackage(files: Record<string, string>, entry: string): Pack
     state.set(path, "done");
     order.push(path);
   };
-  if (!(entry in files)) problems.push(`the entry ${entry} is missing from the plugin`);
+  if (!Object.prototype.hasOwnProperty.call(files, entry)) problems.push(`the entry ${entry} is missing from the plugin`);
   else visit(entry, []);
-  return { order, links, problems: [...new Set(problems)] };
+  const unique = [...new Set(problems)];
+  return { order, links, problems: unique.length > MAX_PROBLEMS + 1 ? [...unique.slice(0, MAX_PROBLEMS), `and ${unique.length - MAX_PROBLEMS} more problems`] : unique };
 }

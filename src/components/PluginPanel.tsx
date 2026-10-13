@@ -1,7 +1,7 @@
 // A plugin's panel, drawn by the app from the plugin's declarative fields (src/plugins/panel.ts
 // checked them): text, number (lengths in the document's units), select, checkbox, button,
 // table, note, image. No plugin markup reaches the page.
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { FieldValue, PanelField } from "../plugins/panel";
 import { formatLength, parseLength, type UnitSystem } from "../lib/units";
 
@@ -122,7 +122,7 @@ function TextField({ f, onChange, domId }: { f: Extract<PanelField, { type: "tex
   );
 }
 
-export function PluginPanel({ panelKey, fields, units, onChange, onAction }: PluginPanelProps) {
+function PluginPanelView({ panelKey, fields, units, onChange, onAction }: PluginPanelProps) {
   const domId = (id: string) => `pp-${panelKey.replace(/[^A-Za-z0-9_-]/g, "_")}-${id}`;
   const buttons: Extract<PanelField, { type: "button" }>[] = [];
   const out: React.ReactNode[] = [];
@@ -218,3 +218,11 @@ export function PluginPanel({ panelKey, fields, units, onChange, onAction }: Plu
   flush("end");
   return <div className="plugin-panel">{out}</div>;
 }
+
+/**
+ * Lane 16: a panel redraws only when its own fields (or the units) change, not on every
+ * change anywhere in the plugin system (another plugin's request used to redraw every
+ * table cell of every panel). The callbacks name the panel by its key, so the first ones
+ * stay right.
+ */
+export const PluginPanel = memo(PluginPanelView, (a, b) => a.panelKey === b.panelKey && a.fields === b.fields && a.units === b.units);

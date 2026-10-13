@@ -7,57 +7,13 @@
 // Pointer moves are coalesced: while the plugin is still handling one move, only the latest
 // next one is kept. Presses, clicks, drags and values go in order.
 import type { Data } from "../../packages/plugin-api/src/rpc.ts";
-import type { V3 } from "../kernel/types";
-import { INFERENCE_STYLES, type InferenceKind } from "../lib/inferenceStyle";
 import type { PluginToolId } from "../lib/tools";
 import type { PluginManager } from "../plugins/manager";
 import { snapOfEvent } from "../plugins/model";
-import type { OverlayItem } from "../viewport/engine";
+import { checkToolView, type PluginToolView } from "../plugins/toolView";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolHost, type ToolView } from "./tool";
 
-const COLORS: Record<string, string> = { accent: "--accent", preview: "--sel", selection: "--sel", warning: "--warn", ok: "--ok", red: "--axis-x", green: "--axis-y", blue: "--axis-z", muted: "--muted" };
-
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isV3 = (v: unknown): v is V3 => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
-
-export interface PluginToolView {
-  overlay: OverlayItem[];
-  labels: { at: V3; text: string }[];
-  status: string | null | undefined;
-  value: string | undefined;
-  busy: boolean;
-  inference: InferContext;
-}
-
-/** A plugin's ToolView, checked: known colours, finite points, bounded sizes. */
-export function checkToolView(raw: unknown): PluginToolView {
-  const v: PluginToolView = { overlay: [], labels: [], status: undefined, value: undefined, busy: false, inference: {} };
-  if (!isObj(raw)) return v;
-  if (Array.isArray(raw.overlay))
-    for (const o of raw.overlay.slice(0, 200)) {
-      if (!isObj(o) || !Array.isArray(o.points)) continue;
-      const kind = o.kind === "strip" || o.kind === "loop" ? o.kind : "segments";
-      const points = o.points.slice(0, 5000).filter(isV3);
-      if (points.length < 2) continue;
-      const c = typeof o.color === "string" ? o.color : "accent";
-      const color = COLORS[c] ?? (c in INFERENCE_STYLES ? INFERENCE_STYLES[c as InferenceKind].token : "--accent");
-      const width = typeof o.width === "number" && Number.isFinite(o.width) ? Math.min(Math.max(o.width, 0.5), 6) : 1.75;
-      v.overlay.push({ kind, points, color, width, dashed: !!o.dashed });
-    }
-  if (Array.isArray(raw.labels))
-    for (const l of raw.labels.slice(0, 100)) if (isObj(l) && isV3(l.at) && typeof l.text === "string") v.labels.push({ at: l.at, text: l.text.slice(0, 80) });
-  if (raw.status === null || typeof raw.status === "string") v.status = raw.status === null ? null : raw.status.slice(0, 300);
-  if (typeof raw.value === "string") v.value = raw.value.slice(0, 80);
-  v.busy = !!raw.busy;
-  const inf = raw.inference;
-  if (isObj(inf)) {
-    if (isV3(inf.start)) v.inference.start = inf.start;
-    if (isObj(inf.plane) && isV3(inf.plane.origin) && isV3(inf.plane.normal)) v.inference.plane = { origin: inf.plane.origin, normal: inf.plane.normal };
-    if (isObj(inf.lock) && isV3(inf.lock.dir) && typeof inf.lock.kind === "string" && inf.lock.kind in INFERENCE_STYLES) v.inference.lock = { dir: inf.lock.dir, kind: inf.lock.kind as InferenceKind };
-    if (typeof inf.grid === "boolean") v.inference.grid = inf.grid;
-  }
-  return v;
-}
+export { checkToolView, type PluginToolView } from "../plugins/toolView";
 
 export class PluginTool extends Tool {
   readonly id: PluginToolId;
@@ -75,9 +31,9 @@ export class PluginTool extends Tool {
     this.id = id;
     this.manager = manager;
     this.off = manager.onToolView((key) => {
-      if (key !== this.id) return;
-      this.view_ = checkToolView(this.manager.tools.get(this.id)?.view);
-      if (!this.active) return;
+      if (key !== this.id || !this.active) return;
+      // Checked once by the manager when it arrived (lane 16).
+      this.view_ = this.manager.toolView(this.id);
       if (this.view_.status !== undefined) this.host.status(this.view_.status);
       if (this.view_.value !== undefined) this.host.showValue(this.view_.value);
       this.host.changed();
@@ -100,6 +56,7 @@ export class PluginTool extends Tool {
 
   activate(): void {
     this.active = true;
+    this.view_ = this.manager.toolView(this.id);
     void this.send("tool.activate");
   }
 

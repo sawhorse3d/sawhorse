@@ -44,13 +44,32 @@ export function usePlugins({ bridge, toolHost, scene, selection, toolId, units, 
     });
   }, []);
   const closeDialog = useCallback(() => setDialog(dialogQueue.current.shift() ?? null), []);
+  /** Take a dialog away, shown or queued (its plugin stopped). */
+  const dropDialog = useCallback((d: PluginDialogState) => {
+    dialogQueue.current = dialogQueue.current.filter((x) => x !== d);
+    setDialog((cur) => (cur === d ? (dialogQueue.current.shift() ?? null) : cur));
+  }, []);
 
   const managerRef = useRef<PluginManager | null>(null);
   if (!managerRef.current) {
     managerRef.current = new PluginManager(
       {
         ...bridge,
-        dialog: (req: DialogRequest) => new Promise((resolve) => openDialog({ kind: "plugin", req, resolve })),
+        // Lane 16: a plugin that stops takes its dialog with it (shown or still queued).
+        dialog: (req: DialogRequest, signal?: AbortSignal) =>
+          new Promise((resolve) => {
+            if (signal?.aborted) return resolve(null);
+            const d: PluginDialogState = { kind: "plugin", req, resolve };
+            openDialog(d);
+            signal?.addEventListener(
+              "abort",
+              () => {
+                dropDialog(d);
+                resolve(null);
+              },
+              { once: true },
+            );
+          }),
       },
       pluginPlatform(),
     );

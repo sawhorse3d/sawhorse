@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Batch, componentOp } from "../../packages/plugin-api/src/runtime.ts";
+import { decodeValue, Encoded } from "../../packages/plugin-api/src/wire.ts";
 import type { CutList, DocState, WasmDoc } from "../kernel/types";
 import { cutListOf, solidsOf, statsOf, treeOf } from "./model";
 
@@ -24,7 +25,8 @@ async function kernel(): Promise<Mod> {
 async function opsOf(build: (b: Batch) => void): Promise<{ name: string; ops: unknown[] }> {
   let sent: { name: string; ops: unknown[] } | null = null;
   const b = new Batch("Test", async (name, ops) => {
-    sent = { name, ops };
+    // Each op was serialized when it was added (lane 16): read back as the app reads it.
+    sent = { name, ops: ops.map((o) => (o instanceof Encoded ? decodeValue(o.bytes) : o)) };
     return [];
   });
   build(b);

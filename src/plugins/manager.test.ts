@@ -159,7 +159,7 @@ describe("model requests", () => {
     expect(bridge.applyBatch).not.toHaveBeenCalled();
     const ok = await req(c, "model.batch", { name: "Rename", ops: [{ op: "rename", item: { object: 7 }, name: "Leg" }] });
     expect(ok).toMatchObject({ ok: true, value: [{ kind: "renamed" }] });
-    expect(bridge.applyBatch).toHaveBeenCalledWith("Rename", [{ op: "rename", item: { object: 7 }, name: "Leg" }], "Test");
+    expect(bridge.applyBatch).toHaveBeenCalledWith("Rename", [{ op: "rename", item: { object: 7 }, name: "Leg" }], "Test", expect.any(AbortSignal));
     bridge.applyBatch.mockRejectedValueOnce(new Error("no object #99"));
     expect(await req(c, "model.batch", { name: "Bad", ops: [{ op: "delete_object", object: 99 }] })).toMatchObject({ ok: false, code: "refused", error: "no object #99" });
   });

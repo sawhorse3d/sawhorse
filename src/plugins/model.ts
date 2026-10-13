@@ -2,7 +2,39 @@
 // made from the kernel's document state, so the API stays put when the kernel's own
 // structures grow. Pure functions, unit-tested in model.test.ts.
 import type { CutList, DocState, Entity, Inference, Picked, SurfaceHit, V3 } from "../kernel/types";
-import { graphOf, objectEditable } from "../lib/scope";
+import { graphOf } from "../lib/scope";
+
+/**
+ * Lookups built once per document state (lane 16): plugin reads used to rescan the whole
+ * graph per solid or per node (O(n^2) on a model of thousands of solids).
+ */
+interface StateIndex {
+  leaf: Map<number, ReturnType<typeof graphOf>["objects"][number]>;
+  nodes: Set<number>;
+  childObjects: Map<number | null, number[]>;
+  childNodes: Map<number | null, number[]>;
+  solids: PluginSolid[] | null;
+  solidById: Map<number, PluginSolid> | null;
+}
+const indexes = new WeakMap<DocState, StateIndex>();
+
+function indexOf(state: DocState): StateIndex {
+  let ix = indexes.get(state);
+  if (ix) return ix;
+  const g = graphOf(state);
+  const childObjects = new Map<number | null, number[]>();
+  const childNodes = new Map<number | null, number[]>();
+  const push = (m: Map<number | null, number[]>, k: number | null, v: number) => {
+    const list = m.get(k);
+    if (list) list.push(v);
+    else m.set(k, [v]);
+  };
+  for (const o of g.objects) push(childObjects, o.parent ?? null, o.id);
+  for (const n of g.nodes) push(childNodes, n.parent ?? null, n.id);
+  ix = { leaf: new Map(g.objects.map((o) => [o.id, o])), nodes: new Set(g.nodes.map((n) => n.id)), childObjects, childNodes, solids: null, solidById: null };
+  indexes.set(state, ix);
+  return ix;
+}
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -25,10 +57,12 @@ export interface PluginSolid {
 
 export function solidsOf(state: DocState | null): PluginSolid[] {
   if (!state) return [];
+  const ix = indexOf(state);
+  if (ix.solids) return ix.solids;
   const g = graphOf(state);
   const info = new Map(state.object_info.map((o) => [o.id, o]));
-  const leaf = new Map(g.objects.map((o) => [o.id, o]));
-  return state.solids.map((s) => {
+  const leaf = ix.leaf;
+  ix.solids = state.solids.map((s) => {
     const i = info.get(s.id);
     const l = leaf.get(s.id);
     return {
@@ -44,10 +78,20 @@ export function solidsOf(state: DocState | null): PluginSolid[] {
       volume: s.volume,
       visible: l?.visible ?? true,
       locked: l?.locked ?? false,
-      editable: objectEditable(state, s.id),
+      // As objectEditable (lib/scope.ts), from the index: in the open context and not locked.
+      editable: !l || (l.parent === g.context && !l.locked),
       inComponent: l?.in_component ?? false,
     };
   });
+  return ix.solids;
+}
+
+/** One solid by id (model.solid), without listing them all again. */
+export function solidOf(state: DocState | null, id: unknown): PluginSolid | null {
+  if (!state || typeof id !== "number") return null;
+  const ix = indexOf(state);
+  if (!ix.solidById) ix.solidById = new Map(solidsOf(state).map((s) => [s.id, s]));
+  return ix.solidById.get(id) ?? null;
 }
 
 export function nodesOf(state: DocState | null) {
@@ -182,7 +226,7 @@ const idOf = (v: unknown, what: string): number => {
 export function entitiesOfTargets(targets: unknown, state: DocState | null): Entity[] {
   if (!Array.isArray(targets)) throw new TypeError("select takes a list of { kind, id } items");
   if (targets.length > 10_000) throw new TypeError("select takes at most 10,000 items");
-  const g = graphOf(state);
+  const nodes = state ? indexOf(state).nodes : new Set<number>();
   const solids = new Set(state?.objects ?? []);
   return targets.map((t, i) => {
     if (!isObj(t)) throw new TypeError(`item ${i} must be an object`);
@@ -193,7 +237,7 @@ export function entitiesOfTargets(targets: unknown, state: DocState | null): Ent
     }
     if (t.kind === "group" || t.kind === "instance" || t.kind === "node") {
       const id = idOf(t.id, `item ${i}.id`);
-      if (!g.nodes.some((n) => n.id === id)) throw new TypeError(`there is no group or instance ${id}`);
+      if (!nodes.has(id)) throw new TypeError(`there is no group or instance ${id}`);
       return { kind: "node", node: id };
     }
     if (t.kind === "face") {
@@ -208,26 +252,38 @@ export function entitiesOfTargets(targets: unknown, state: DocState | null): Ent
 /** The box round some solids, groups and instances (everything when `es` is null), or null. */
 export function boundsOf(es: Entity[] | null, state: DocState | null): { min: V3; max: V3 } | null {
   if (!state) return null;
-  const g = graphOf(state);
   let ids: Set<number>;
   if (es === null) ids = new Set(state.objects);
   else {
+    // Each node is walked once, iteratively, however often the targets name it.
+    const ix = indexOf(state);
     ids = new Set();
-    const under = (node: number): number[] => {
-      const out = g.objects.filter((o) => o.parent === node).map((o) => o.id);
-      for (const n of g.nodes) if (n.parent === node) out.push(...under(n.id));
-      return out;
-    };
+    const walked = new Set<number>();
     for (const e of es) {
       if (e.kind === "object" || e.kind === "face") ids.add(e.object);
-      if (e.kind === "node") under(e.node).forEach((o) => ids.add(o));
+      if (e.kind !== "node") continue;
+      const stack = [e.node];
+      while (stack.length) {
+        const n = stack.pop()!;
+        if (walked.has(n)) continue;
+        walked.add(n);
+        for (const o of ix.childObjects.get(n) ?? []) ids.add(o);
+        for (const c of ix.childNodes.get(n) ?? []) stack.push(c);
+      }
     }
   }
-  const boxes = state.solids.filter((s) => ids.has(s.id));
-  if (!boxes.length) return null;
-  const min = [0, 1, 2].map((k) => Math.min(...boxes.map((b) => b.min[k]))) as V3;
-  const max = [0, 1, 2].map((k) => Math.max(...boxes.map((b) => b.max[k]))) as V3;
-  return { min, max };
+  let found = false;
+  const min: V3 = [Infinity, Infinity, Infinity];
+  const max: V3 = [-Infinity, -Infinity, -Infinity];
+  for (const b of state.solids) {
+    if (!ids.has(b.id)) continue;
+    found = true;
+    for (let k = 0; k < 3; k++) {
+      if (b.min[k] < min[k]) min[k] = b.min[k];
+      if (b.max[k] > max[k]) max[k] = b.max[k];
+    }
+  }
+  return found ? { min, max } : null;
 }
 
 /** The cut list, plugin-shaped (metres, square metres, board feet). */

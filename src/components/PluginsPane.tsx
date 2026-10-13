@@ -32,6 +32,9 @@ const STATUS_WORDS: Record<PluginStatus, string> = {
   failed: "Did not start",
 };
 
+/** Lane 16: an error is shown cut to 600 characters (its text can quote what a plugin sent). */
+const clipText = (t: string) => (t.length > 600 ? `${t.slice(0, 600)}…` : t);
+
 const SOURCE_WORDS: Record<PluginEntry["source"], string> = { bundled: "sample", installed: "installed", unpacked: "folder", session: "this session" };
 
 function Row({ e, props }: { e: PluginEntry; props: PluginsPaneProps }) {
@@ -77,12 +80,12 @@ function Row({ e, props }: { e: PluginEntry; props: PluginsPaneProps }) {
       {e.errors.length ? (
         <ul className="plugin-errors">
           {e.errors.slice(0, 6).map((x, i) => (
-            <li key={i}>{x}</li>
+            <li key={i}>{clipText(x)}</li>
           ))}
         </ul>
       ) : e.lastError ? (
         <p className="plugin-error" data-last-error>
-          {e.lastError}
+          {clipText(e.lastError)}
         </p>
       ) : null}
       <div className="btnrow">
@@ -102,7 +105,7 @@ function Row({ e, props }: { e: PluginEntry; props: PluginsPaneProps }) {
             Reload
           </button>
         ) : null}
-        {alive && e.status === "unresponsive" ? (
+        {alive ? (
           <button type="button" className="btn" data-do="stop" onClick={() => act("stop", () => manager.stopNow(e.id))}>
             Stop
           </button>

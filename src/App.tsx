@@ -1088,8 +1088,13 @@ export function App() {
         live.current.selection = es;
         setSelection(es);
       },
-      applyBatch: async (name, ops, plugin) => {
-        const r = await run((k) => k.namedBatch(name, ops), null, () => `${plugin}: ${name}. Ctrl+Z undoes it in one step.`);
+      applyBatch: async (name, ops, plugin, signal) => {
+        // Lane 16: a batch still waiting in the edit queue when its plugin stops is dropped.
+        const r = await run(
+          (k) => (signal?.aborted ? Promise.reject(new Error(`${plugin} stopped before "${name}" ran; nothing changed`)) : k.namedBatch(name, ops)),
+          null,
+          () => `${plugin}: ${name}. Ctrl+Z undoes it in one step.`,
+        );
         if (!r) throw new Error(live.current.lastError ?? "refused");
         namedSteps.current = [...namedSteps.current.filter((n) => n.depth !== r.scene.state.undo_depth).slice(-199), { depth: r.scene.state.undo_depth, hash: r.scene.state.stats.hash, name }];
         return r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { boxItem, componentOp, createRuntime, outcomeValue } from "../src/runtime.ts";
-import type { PluginMessage } from "../src/rpc.ts";
+import { decodePluginFrame, type PluginMessage } from "../src/rpc.ts";
 
 function setup(permissions = ["model.read", "model.write", "ui"]) {
   const sent: PluginMessage[] = [];
   const rt = createRuntime({
-    send: (m) => sent.push(m),
+    // What the sandbox posts, read back as the app reads it.
+    post: (f) => void sent.push(decodePluginFrame(f)),
     plugin: { id: "org.example.t", name: "T", version: "1.0.0", permissions },
     units: "mm",
     unitsImpl: {
@@ -70,8 +71,8 @@ describe("requests", () => {
 
   it("a request that cannot be sent rejects with a typed error at once (lane 15)", async () => {
     const rt = createRuntime({
-      send: (m) => {
-        if (m.t === "req") throw new DOMException("could not be cloned", "DataCloneError");
+      post: (f) => {
+        if (decodePluginFrame(f).t === "req") throw new DOMException("could not be cloned", "DataCloneError");
       },
       plugin: { id: "org.example.t", name: "T", version: "1.0.0", permissions: [] },
       units: "mm",
@@ -246,5 +247,67 @@ describe("callbacks", () => {
     const { api } = setup();
     expect(Object.isFrozen(api)).toBe(true);
     expect(Object.isFrozen(api.model)).toBe(true);
+  });
+});
+
+describe("the wire (lane 16)", () => {
+  it("a call over its budget rejects with too_large and sends nothing", async () => {
+    const { api, sent } = setup(["storage"]);
+    const store = (api.storage as unknown as { app: { set(k: string, v: unknown): Promise<unknown> } }).app;
+    // 100 strings of 4 M characters: each within the per-string limit, 400 MB in all.
+    const big = Array.from({ length: 100 }, () => "x".repeat(4 * 1024 * 1024));
+    await expect(store.set("k", big)).rejects.toMatchObject({ name: "PluginApiError", code: "too_large" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("an answer the app could not fit settles the call with a typed error instead of hanging", async () => {
+    const { rt, api, last } = setup(["model.read"]);
+    const p = api.model.solids() as Promise<unknown>;
+    const m = last() as Extract<PluginMessage, { t: "req" }>;
+    // A res frame whose body claims more items than it holds: unreadable on this side.
+    const buf = new ArrayBuffer(14 + 11 + 5);
+    const b = new Uint8Array(buf);
+    b.set([0x53, 0x48, 0x57, 0x31, 12]);
+    new DataView(buf).setFloat64(5, m.id, true);
+    b[13] = 11;
+    b.set([..."model.solid"].map((c) => c.charCodeAt(0)), 14);
+    b.set([7, 0xff, 0xff, 0xff, 0x7f], 25);
+    rt.receiveFrame(buf);
+    await expect(p).rejects.toMatchObject({ name: "PluginApiError", code: "too_large" });
+  });
+
+  it("an app call it cannot read is answered with a failure, not dropped", () => {
+    const { rt, sent } = setup();
+    const buf = new ArrayBuffer(14 + 7 + 1);
+    const b = new Uint8Array(buf);
+    b.set([0x53, 0x48, 0x57, 0x31, 13]);
+    new DataView(buf).setFloat64(5, 5, true);
+    b[13] = 7;
+    b.set([..."command"].map((c) => c.charCodeAt(0)), 14);
+    b[21] = 99; // an unknown value tag
+    rt.receiveFrame(buf);
+    expect(sent.at(-1)).toMatchObject({ t: "done", id: 5, ok: false, error: expect.stringContaining("could not be read") });
+  });
+
+  it("a batch op is serialized once, when it is added (a getter is read once)", async () => {
+    const { api, last } = setup();
+    let reads = 0;
+    const op = {
+      op: "rename",
+      item: { object: 1 },
+      get name() {
+        reads++;
+        return `A${reads}`;
+      },
+    };
+    const b = (api.model.batch as (n: string) => { op(o: unknown): unknown; commit(): Promise<unknown> })("Rename");
+    b.op(op);
+    void b.commit();
+    const m = last() as Extract<PluginMessage, { t: "req" }>;
+    expect(m.params).toEqual({ name: "Rename", ops: [{ op: "rename", item: { object: 1 }, name: "A1" }] });
+    expect(reads).toBe(1);
+    // And a bad op throws at the line that adds it.
+    const c = (api.model.batch as (n: string) => { op(o: unknown): unknown })("Bad");
+    expect(() => c.op({ op: "rename", name: () => 1 })).toThrow(/op 0\.name is a function/);
   });
 });

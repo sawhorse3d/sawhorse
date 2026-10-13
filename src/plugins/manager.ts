@@ -13,10 +13,11 @@ import type { UnitSystem } from "../lib/units";
 import { bundledPlugins } from "./bundled";
 import { DEFAULT_HOST_OPTIONS, PluginHost, PluginRefusal, workerChannel, type Channel, type HostOptions, type HostStatus, type LogLine } from "./host";
 import { loadPackage, type PluginPackage, type PluginSource } from "./loader";
-import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selectionOf, solidsOf, statsOf, treeOf } from "./model";
+import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selectionOf, solidOf, solidsOf, statsOf, treeOf } from "./model";
 import { checkBody, patchFields, valuesOf, type FieldValue, type PanelField } from "./panel";
 import type { PluginPlatform } from "./platform";
 import { AppStore, DocStore, grantCovers, grantMatches, loadGrants, packageDigest, saveGrants, type Grant } from "./store";
+import { checkToolView, type PluginToolView } from "./toolView";
 import { readPluginZip } from "./zip";
 
 /** Ops a plugin batch may not hold: history, nesting batches, navigation, whole-document replacement. */
@@ -24,6 +25,50 @@ export const FORBIDDEN_OPS = new Set(["undo", "redo", "batch", "set_context", "l
 export const MAX_BATCH_OPS = 10_000;
 
 export type DialogRequest = { kind: "prompt"; plugin: string; title: string; label: string; value: string; ok: string } | { kind: "confirm"; plugin: string; title: string; text: string; ok: string };
+
+/** Lane 16: the network answer a plugin may receive, and how much it may download a minute. */
+export const NET_LIMITS = { answer: 10 * 1024 * 1024, perMinute: 50 * 1024 * 1024, seconds: 30 };
+
+/** Lane 16: what prompt and confirm take (longer text is refused, not cut). */
+export const DIALOG_LIMITS = { title: 80, label: 80, value: 500, text: 1000, ok: 32, notify: 500 };
+
+/** A string field of at most `max` characters (absent: `fallback`); anything else is refused. */
+function text(v: unknown, what: string, max: number, fallback: string): string {
+  if (v === undefined || v === null) return fallback;
+  if (typeof v !== "string") throw new PluginRefusal(`${what} must be text`, "invalid");
+  if (v.length > max) throw new PluginRefusal(`${what} is longer than ${max} characters`, "invalid");
+  return v;
+}
+
+/** Read a response body, refusing it past `max` bytes without reading the rest. */
+async function readCapped(res: Response, max: number): Promise<Uint8Array> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) {
+    void res.body?.cancel().catch(() => undefined);
+    throw new PluginRefusal(`the answer is larger than ${Math.round(max / 1024 / 1024)} MB (it says ${declared} bytes)`, "too_large");
+  }
+  if (!res.body) return new Uint8Array(await res.arrayBuffer()).slice(0, max + 1);
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      void reader.cancel().catch(() => undefined);
+      throw new PluginRefusal(`the answer is larger than ${Math.round(max / 1024 / 1024)} MB`, "too_large");
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
 
 /** What the app gives the plugin system. */
 export interface AppBridge {
@@ -35,11 +80,13 @@ export interface AppBridge {
   docName(): string | null;
   selection(): Entity[];
   select(es: Entity[]): void;
-  /** Apply a named batch as one undo step; resolves to the outcomes, throws the kernel's reason when refused. */
-  applyBatch(name: string, ops: unknown[], plugin: string): Promise<OpOutcome[]>;
+  /** Apply a named batch as one undo step; resolves to the outcomes, throws the kernel's reason when refused.
+   * `signal` aborts when the plugin stops: a batch still waiting in the edit queue is then dropped. */
+  applyBatch(name: string, ops: unknown[], plugin: string, signal?: AbortSignal): Promise<OpOutcome[]>;
   /** A line in the status bar, with optional actions. */
   status(text: string, kind: "info" | "warning" | "error", actions?: { label: string; run: () => void }[]): void;
-  dialog(req: DialogRequest): Promise<string | boolean | null>;
+  /** `signal` aborts when the plugin stops: its dialog closes (or never opens) and answers null. */
+  dialog(req: DialogRequest, signal?: AbortSignal): Promise<string | boolean | null>;
   saveFile(name: string, bytes: Uint8Array, type: FileType): Promise<{ name: string } | null>;
   pickFile(types: FileType[]): Promise<PickedFile | null>;
   /** Make a tool active ("select", "plugin:<id>/<tool>"). */
@@ -96,8 +143,10 @@ export interface ToolState {
   id: string;
   def: ToolContribution;
   shortcut?: string;
-  /** What the plugin last asked the tool to show (already checked). */
+  /** What the plugin last asked the tool to show, as sent. */
   view: unknown;
+  /** The same, checked (lane 16: once, when it arrives for the active tool, or when the tool is activated). */
+  checked?: PluginToolView | null;
 }
 
 export const toolKey = (plugin: string, tool: string) => `plugin:${plugin}/${tool}`;
@@ -111,6 +160,8 @@ export function permissionLines(m: Manifest): { permission: Permission; title: s
 
 export class PluginManager {
   private entries = new Map<string, PluginEntry>();
+  /** Bytes each plugin downloaded in the current minute (net.fetch). */
+  private netUsage = new Map<string, { start: number; bytes: number }>();
   private hosts = new Map<string, PluginHost>();
   private grants: Record<string, Grant> = loadGrants();
   readonly doc = new DocStore();
@@ -139,9 +190,25 @@ export class PluginManager {
     return () => this.listeners.delete(fn);
   };
   version = (): number => this.ver;
+  private notifyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Something changed: the version moves now, the window hears it once per frame (lane 16:
+   * a plugin registering in a loop used to re-render the app for every message). */
   private changed(): void {
     this.ver++;
-    for (const fn of this.listeners) fn();
+    if (this.notifyTimer !== null) return;
+    this.notifyTimer = setTimeout(() => {
+      this.notifyTimer = null;
+      for (const fn of this.listeners) fn();
+    }, 16);
+  }
+  private viewTimer: ReturnType<typeof setTimeout> | null = null;
+  private viewsChanged = new Set<string>();
+  /** The checked view of a plugin tool (checked now if it has not been). */
+  toolView(key: string): PluginToolView {
+    const t = this.tools.get(key);
+    if (!t) return checkToolView(null);
+    if (!t.checked) t.checked = checkToolView(t.view);
+    return t.checked;
   }
   /** Tool views changed (the active plugin tool redraws). */
   onToolView(fn: (key: string) => void): () => void {
@@ -452,7 +519,7 @@ export class PluginManager {
         return solidsOf(state()) as unknown as Data;
       case "model.solid":
         await b.settled();
-        return (solidsOf(state()).find((s) => s.id === p.id) ?? null) as unknown as Data;
+        return solidOf(state(), p.id) as unknown as Data;
       case "model.faces": {
         await b.settled();
         const k = b.kernel();
@@ -523,9 +590,9 @@ export class PluginManager {
           if (FORBIDDEN_OPS.has(op.op)) throw new PluginRefusal(`op ${i}: "${op.op}" cannot be part of a plugin batch (history and navigation belong to the person)`, "invalid");
         });
         try {
-          return (await b.applyBatch(name.trim(), p.ops, host.name)) as unknown as Data;
+          return (await b.applyBatch(name.trim(), p.ops, host.name, host.signal)) as unknown as Data;
         } catch (e) {
-          throw new PluginRefusal(e instanceof Error ? e.message : String(e), "refused");
+          throw new PluginRefusal(e instanceof Error ? e.message : String(e), host.signal.aborted ? "stopped" : "refused");
         }
       }
 
@@ -533,6 +600,8 @@ export class PluginManager {
       case "ui.registerCommand": {
         const c = declared("commands", p.id) as { id: string; title: string };
         const key = `${m.id}/${c.id}`;
+        // Registering the same command again changes nothing (and redraws nothing).
+        if (this.commands.has(key)) return null;
         this.commands.set(key, { key, plugin: m.id, pluginName: m.name, id: c.id, title: c.title, group: m.contributes.menus.find((x) => x.command === c.id)?.group, shortcut: shortcutFor("command", c.id) });
         this.changed();
         return null;
@@ -546,7 +615,10 @@ export class PluginManager {
           throw new PluginRefusal(e instanceof Error ? e.message : String(e), "invalid");
         }
         const key = `${m.id}/${c.id}`;
-        this.panels.set(key, { key, plugin: m.id, pluginName: m.name, id: c.id, title: typeof p.title === "string" && p.title ? p.title.slice(0, 64) : c.title, fields });
+        const title = typeof p.title === "string" && p.title ? p.title.slice(0, 64) : c.title;
+        const was = this.panels.get(key);
+        if (was && was.title === title && JSON.stringify(was.fields) === JSON.stringify(fields)) return null;
+        this.panels.set(key, { key, plugin: m.id, pluginName: m.name, id: c.id, title, fields });
         this.changed();
         return null;
       }
@@ -567,7 +639,8 @@ export class PluginManager {
       case "ui.registerTool": {
         const def = declared("tools", p.id) as ToolContribution;
         const key = toolKey(m.id, def.id);
-        this.tools.set(key, { key, plugin: m.id, pluginName: m.name, id: def.id, def, shortcut: shortcutFor("tool", def.id), view: null });
+        if (this.tools.has(key)) return null;
+        this.tools.set(key, { key, plugin: m.id, pluginName: m.name, id: def.id, def, shortcut: shortcutFor("tool", def.id), view: null, checked: null });
         this.changed();
         return null;
       }
@@ -576,7 +649,19 @@ export class PluginManager {
         const t = this.tools.get(key);
         if (!t) throw new PluginRefusal(`tool ${JSON.stringify(p.id)} is not registered`, "invalid");
         t.view = p.view ?? null;
-        for (const fn of this.toolListeners) fn(key);
+        t.checked = null;
+        // Lane 16: only the active tool's view is checked and drawn now, at most once a frame;
+        // another tool's is checked when it is activated.
+        if (b.activeTool() !== key) return null;
+        t.checked = checkToolView(t.view);
+        this.viewsChanged.add(key);
+        if (this.viewTimer === null)
+          this.viewTimer = setTimeout(() => {
+            this.viewTimer = null;
+            const keys = [...this.viewsChanged];
+            this.viewsChanged.clear();
+            for (const k of keys) for (const fn of this.toolListeners) fn(k);
+          }, 16);
         return null;
       }
       case "ui.activateTool": {
@@ -586,18 +671,21 @@ export class PluginManager {
         return null;
       }
       case "ui.notify": {
-        const text = typeof p.text === "string" ? p.text.slice(0, 500) : "";
+        // Lane 16: text is required to be text and refused over the limit, never coerced or cut.
+        const msg = text(p.text, "notify text", DIALOG_LIMITS.notify, "");
         const kind = p.kind === "warning" || p.kind === "error" ? p.kind : "info";
-        if (text) b.status(`${m.name}: ${text}`, kind);
-        host.log(kind === "error" ? "error" : kind === "warning" ? "warn" : "info", `notify: ${text}`);
+        if (msg) b.status(`${m.name}: ${msg}`, kind);
+        host.log(kind === "error" ? "error" : kind === "warning" ? "warn" : "info", `notify: ${msg}`);
         return null;
       }
       case "ui.prompt": {
-        const r = await b.dialog({ kind: "prompt", plugin: m.name, title: String(p.title ?? m.name).slice(0, 80), label: String(p.label ?? "").slice(0, 80), value: String(p.value ?? "").slice(0, 500), ok: String(p.ok ?? "OK").slice(0, 32) });
+        const req: DialogRequest = { kind: "prompt", plugin: m.name, title: text(p.title, "prompt title", DIALOG_LIMITS.title, m.name), label: text(p.label, "prompt label", DIALOG_LIMITS.label, ""), value: text(p.value, "prompt value", DIALOG_LIMITS.value, ""), ok: text(p.ok, "prompt ok", DIALOG_LIMITS.ok, "OK") };
+        const r = await b.dialog(req, host.signal);
         return typeof r === "string" ? r : null;
       }
       case "ui.confirm": {
-        const r = await b.dialog({ kind: "confirm", plugin: m.name, title: String(p.title ?? m.name).slice(0, 80), text: String(p.text ?? "").slice(0, 1000), ok: String(p.ok ?? "OK").slice(0, 32) });
+        const req: DialogRequest = { kind: "confirm", plugin: m.name, title: text(p.title, "confirm title", DIALOG_LIMITS.title, m.name), text: text(p.text, "confirm text", DIALOG_LIMITS.text, ""), ok: text(p.ok, "confirm ok", DIALOG_LIMITS.ok, "OK") };
+        const r = await b.dialog(req, host.signal);
         return r === true;
       }
 
@@ -659,12 +747,21 @@ export class PluginManager {
         const headers: Record<string, string> = {};
         if (isObj(p.headers)) for (const [k, v] of Object.entries(p.headers)) if (typeof v === "string" && !/^(cookie|host|origin|referer)$/i.test(k)) headers[k] = v;
         const body = typeof p.body === "string" || p.body instanceof Uint8Array ? (p.body as BodyInit) : undefined;
+        // Lane 16: bytes a minute per plugin, checked before asking and counted as they arrive.
+        const now = Date.now();
+        const usage = this.netUsage.get(m.id);
+        const used = usage && now - usage.start < 60_000 ? usage : { start: now, bytes: 0 };
+        this.netUsage.set(m.id, used);
+        if (used.bytes >= NET_LIMITS.perMinute) throw new PluginRefusal(`${m.name} has downloaded ${Math.round(NET_LIMITS.perMinute / 1024 / 1024)} MB in the last minute; wait a little`, "busy");
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), 30_000);
+        const timer = setTimeout(() => ctl.abort(), NET_LIMITS.seconds * 1000);
+        // Stopping the plugin cancels its downloads.
+        const stop = () => ctl.abort();
+        host.signal.addEventListener("abort", stop);
         try {
           const res = await b.fetch(url.href, { method, headers, body: method === "GET" || method === "HEAD" ? undefined : body, credentials: "omit", redirect: "error", signal: ctl.signal, referrerPolicy: "no-referrer" });
-          const buf = new Uint8Array(await res.arrayBuffer());
-          if (buf.byteLength > 10 * 1024 * 1024) throw new PluginRefusal("the answer is larger than 10 MB", "refused");
+          const buf = await readCapped(res, Math.min(NET_LIMITS.answer, NET_LIMITS.perMinute - used.bytes));
+          used.bytes += buf.byteLength;
           const h: Record<string, string> = {};
           res.headers.forEach((v, k) => (h[k] = v));
           host.log("info", `${method} ${url.href} -> ${res.status}`);
@@ -674,6 +771,7 @@ export class PluginManager {
           throw new PluginRefusal(`${method} ${url.href} failed: ${e instanceof Error ? e.message : String(e)}`, "refused");
         } finally {
           clearTimeout(timer);
+          host.signal.removeEventListener("abort", stop);
         }
       }
     }

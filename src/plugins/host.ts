@@ -10,10 +10,21 @@
 // `budgetMs` is reported unresponsive (the Plugins pane and the status line say so, with
 // Stop); one that has not answered for `killMs` is stopped. The worker is a separate
 // thread, so a plugin stuck in a loop never freezes the app; a crash ends only its worker.
+//
+// Lane 16, the message path: every message is one serialized frame (packages/plugin-api
+// src/wire.ts). A frame's size is checked against its kind's budget (4 MiB, more only for
+// file.save, file.open and net.fetch) before anything in it is read, and its values are read
+// with every limit applied before anything is allocated for them; a refused request is
+// answered with a typed refusal ("too_large", "invalid", "busy"), never dropped. Requests are
+// rate-limited (a token bucket per plugin, a cap on batches a second and on work in flight
+// per method), and the time the app spends on a plugin's messages is measured: a plugin that
+// keeps the app busy is reported and stopped like an unresponsive one.
 import type { Permission } from "../../packages/plugin-api/src/manifest.ts";
-import { decodePluginMessage, PROTOCOL, ProtocolError, transferables, type Data, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";
+import { decodePluginFrame, encodeHostMessage, peekFrame, PROTOCOL, WireError, type Data, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";
 import { moduleFiles, type PluginPackage } from "./loader";
 import sandboxScriptUrl from "./sandbox.worker.ts?worker&url";
+
+const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
 /** What each request method needs. */
 export const METHODS: Record<string, Permission | null> = {
@@ -62,7 +73,7 @@ export const EVENTS: Record<string, Permission | null> = {
 };
 
 /** Why a request was refused, for the plugin (`error.code`). */
-export type RefusalCode = "permission" | "unknown" | "invalid" | "refused" | "busy" | "stopped";
+export type RefusalCode = "permission" | "unknown" | "invalid" | "refused" | "busy" | "stopped" | "too_large";
 
 export class PluginRefusal extends Error {
   readonly code: RefusalCode;
@@ -74,7 +85,8 @@ export class PluginRefusal extends Error {
 }
 
 export interface Channel {
-  post(msg: HostMessage, transfer?: Transferable[]): void;
+  /** Post one serialized frame; its buffer is transferred (the sender no longer has it). */
+  post(frame: ArrayBuffer): void;
   onMessage(cb: (raw: unknown) => void): void;
   /** The worker itself failed (its script would not load, or an error escaped the sandbox). */
   onError(cb: (message: string) => void): void;
@@ -100,7 +112,7 @@ export function workerChannel(name: string): Channel {
   // The worker has fetched (or is fetching) its script; the URL is not needed again.
   setTimeout(() => URL.revokeObjectURL(boot), 60_000);
   return {
-    post: (msg, transfer = []) => w.postMessage(msg, transfer),
+    post: (frame) => w.postMessage(frame, [frame]),
     onMessage: (cb) => w.addEventListener("message", (e: MessageEvent) => cb(e.data)),
     onError: (cb) => {
       w.addEventListener("error", (e: ErrorEvent) => {
@@ -143,9 +155,33 @@ export interface HostOptions {
   maxPending: number;
   /** Lines kept for the developer console. */
   maxLog: number;
+  /** Messages a second a plugin may send (a token bucket refilled at this rate) ... */
+  ratePerSec: number;
+  /** ... holding at most this many at once. */
+  burst: number;
+  /** Batches a second a plugin may apply. */
+  batchesPerSec: number;
+  /** App time (ms) a plugin's messages may take in one second before that second counts against it ... */
+  cpuMsPerSec: number;
+  /** ... and how many such seconds in a row stop it. */
+  cpuStrikes: number;
 }
 
-export const DEFAULT_HOST_OPTIONS: HostOptions = { pingMs: 1000, budgetMs: 5000, killMs: 15000, callBudgetMs: 10000, maxPending: 256, maxLog: 500 };
+export const DEFAULT_HOST_OPTIONS: HostOptions = { pingMs: 1000, budgetMs: 5000, killMs: 15000, callBudgetMs: 10000, maxPending: 64, maxLog: 500, ratePerSec: 300, burst: 100, batchesPerSec: 10, cpuMsPerSec: 250, cpuStrikes: 5 };
+
+/** Requests of one method a plugin may have waiting at once (the rest: maxPending). */
+export const IN_FLIGHT: Record<string, number> = {
+  "model.batch": 4,
+  "net.fetch": 4,
+  "file.save": 1,
+  "file.open": 1,
+  // One dialog at a time per plugin (prompt and confirm share it).
+  dialog: 1,
+};
+
+/** Longest line kept in a plugin's console, and longest error the Plugins pane shows. */
+export const LOG_TEXT_MAX = 2000;
+const clip = (t: string, max = LOG_TEXT_MAX) => (t.length > max ? `${t.slice(0, max)}… (${t.length - max} more characters)` : t);
 
 interface PendingCall {
   fn: string;
@@ -176,6 +212,18 @@ export class PluginHost {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private ready: { resolve: () => void; reject: (e: Error) => void } | null = null;
   private logWindow = { start: 0, count: 0, dropped: 0 };
+  /** The rate limit: tokens left and when they were last refilled. */
+  private bucket = { tokens: 0, at: 0 };
+  /** Batches applied in the current second. */
+  private batchWindow = { start: 0, count: 0 };
+  /** Requests waiting, by method (and "dialog"). */
+  private flying = new Map<string, number>();
+  /** Time spent on this plugin's messages in the current second, and seconds over budget in a row. */
+  private cpu = { start: 0, ms: 0, strikes: 0 };
+  /** Messages refused for the rate in the current second. */
+  private refusedWindow = { start: 0, count: 0 };
+  /** Aborted when the plugin stops: work it asked for and that has not run yet is dropped. */
+  private abort = new AbortController();
 
   constructor(pkg: PluginPackage, channel: Channel, delegate: HostDelegate, opts: Partial<HostOptions> = {}) {
     this.pkg = pkg;
@@ -183,6 +231,7 @@ export class PluginHost {
     this.channel = channel;
     this.delegate = delegate;
     this.opts = { ...DEFAULT_HOST_OPTIONS, ...opts };
+    this.bucket = { tokens: this.opts.burst, at: Date.now() };
     channel.onMessage((raw) => this.onMessage(raw));
     channel.onError((message) => this.crash(`the plugin's worker failed: ${message}`));
   }
@@ -199,13 +248,19 @@ export class PluginHost {
     return this.pkg.manifest.permissions.includes(p);
   }
 
+  /** Aborted when the plugin stops (queued batches and dialogs check it). */
+  get signal(): AbortSignal {
+    return this.abort.signal;
+  }
+
   /** Send the modules and wait for the entry to run. Rejects with the reason it did not. */
   start(units: string): Promise<void> {
     const m = this.pkg.manifest;
     this.lastPong = Date.now();
     this.startWatchdog();
     const done = new Promise<void>((resolve, reject) => (this.ready = { resolve, reject }));
-    this.post({ t: "init", protocol: PROTOCOL, plugin: { id: m.id, name: m.name, version: m.version, permissions: [...m.permissions] }, files: moduleFiles(this.pkg), entry: m.entry, units });
+    const err = this.post({ t: "init", protocol: PROTOCOL, plugin: { id: m.id, name: m.name, version: m.version, permissions: [...m.permissions] }, files: moduleFiles(this.pkg), entry: m.entry, units });
+    if (err) this.stop(`${this.name} could not start: its modules could not be sent (${err.message})`, "failed");
     return done;
   }
 
@@ -215,7 +270,11 @@ export class PluginHost {
     const id = this.nextCall++;
     return new Promise((resolve, reject) => {
       this.calls.set(id, { fn, label, started: Date.now(), reported: false, resolve, reject });
-      this.post({ t: "call", id, fn, args });
+      const err = this.post({ t: "call", id, fn, args });
+      if (err) {
+        this.calls.delete(id);
+        reject(new PluginRefusal(`${label}: the call could not be sent (${err.message})`, err.code));
+      }
     });
   }
 
@@ -228,14 +287,16 @@ export class PluginHost {
   emit(name: string, payload: Data): void {
     // The units always go (sawhorse.units follows them); the rest only when listened to.
     if (!this.alive || (name !== "unitsChanged" && !this.subscriptions.has(name))) return;
-    this.post({ t: "evt", name, payload });
+    const err = this.post({ t: "evt", name, payload });
+    if (err) this.log("warn", `a ${name} event was not delivered: ${err.message}`);
   }
 
   /** End the plugin: its worker is terminated, its callbacks fail. */
   stop(reason: string | null = null, status: HostStatus = "stopped"): void {
     if (!this.alive && this.status !== "starting") return;
     this.status = status;
-    if (reason) this.lastError = reason;
+    if (reason) this.lastError = clip(reason);
+    this.abort.abort();
     this.stopWatchdog();
     this.channel.terminate();
     for (const c of this.calls.values()) c.reject(new PluginRefusal(reason ?? `${this.name} stopped`, "stopped"));
@@ -247,12 +308,29 @@ export class PluginHost {
 
   // ---- internals ----------------------------------------------------------------------------
 
-  private post(msg: HostMessage): void {
+  /**
+   * Serialize and post a message. A message that cannot be serialized (over its budget, not
+   * plain data) is not sent and the error comes back: an answer is replaced by a refusal with
+   * the same code, so the plugin's call settles; the other callers decide.
+   */
+  private post(msg: HostMessage): WireError | null {
+    let frame: ArrayBuffer;
     try {
-      this.channel.post(msg, transferables(msg));
+      frame = encodeHostMessage(msg);
+    } catch (e) {
+      const err = e instanceof WireError ? e : new WireError(e instanceof Error ? e.message : String(e), "invalid");
+      if (msg.t === "res" && msg.ok) {
+        this.log("warn", `the answer to ${msg.method ?? "a request"} was not sent: ${err.message}`);
+        return this.post({ t: "res", id: msg.id, ok: false, error: `${msg.method ?? "the request"}: the answer is too large to send (${err.message})`, code: err.code, method: msg.method });
+      }
+      return err;
+    }
+    try {
+      this.channel.post(frame);
     } catch (e) {
       this.log("error", `could not send to the plugin: ${e instanceof Error ? e.message : String(e)}`);
     }
+    return null;
   }
 
   private crash(text: string): void {
@@ -263,6 +341,9 @@ export class PluginHost {
   }
 
   log(level: LogLevel, text: string): void {
+    // Lines are cut here, whoever wrote them (the plugin's own lines are cut to 4,000 on the
+    // wire; the app's lines quote what a plugin sent).
+    text = clip(text);
     const now = Date.now();
     // At most 100 lines a second reach the console; the rest are counted.
     if (now - this.logWindow.start > 1000) {
@@ -279,12 +360,85 @@ export class PluginHost {
     this.delegate.changed(this);
   }
 
+  /** Take a token from the rate bucket; false: over the rate. */
+  private take(): boolean {
+    const now = Date.now();
+    const b = this.bucket;
+    b.tokens = Math.min(this.opts.burst, b.tokens + ((now - b.at) * this.opts.ratePerSec) / 1000);
+    b.at = now;
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
+  }
+
+  /** Count a message refused for the rate; ten seconds' worth in one second stops the plugin. */
+  private flooding(): boolean {
+    const now = Date.now();
+    if (now - this.refusedWindow.start > 1000) this.refusedWindow = { start: now, count: 0 };
+    if (++this.refusedWindow.count === 1) this.log("warn", `slowed down: more than ${this.opts.ratePerSec} messages a second (the rest are refused with "busy")`);
+    if (this.refusedWindow.count > this.opts.ratePerSec * 10) {
+      const text = `${this.name} stopped: it sent more than ${this.opts.ratePerSec * 10} messages in a second. Reload starts it again.`;
+      this.log("error", text);
+      this.stop(text, "stopped");
+      this.delegate.report(this, text, "error", "reload");
+      return true;
+    }
+    return false;
+  }
+
+  /** Time spent on this plugin's messages: a plugin that keeps the app busy is stopped. */
+  private charge(ms: number): void {
+    const now = Date.now();
+    if (now - this.cpu.start >= 1000) {
+      // A second over budget is a strike; a second under it clears them.
+      const over = this.cpu.ms > this.opts.cpuMsPerSec;
+      this.cpu = { start: now, ms: 0, strikes: over ? this.cpu.strikes + 1 : 0 };
+      if (over && this.cpu.strikes >= this.opts.cpuStrikes && this.alive) {
+        const text = `${this.name} stopped: its requests kept the app busy for ${this.opts.cpuStrikes} s. Reload starts it again.`;
+        this.log("error", text);
+        this.stop(text, "stopped");
+        this.delegate.report(this, text, "error", "reload");
+        return;
+      }
+    }
+    this.cpu.ms += ms;
+  }
+
   private onMessage(raw: unknown): void {
+    if (!this.alive) return;
+    const t0 = performance.now();
+    try {
+      this.receive(raw);
+    } finally {
+      this.charge(performance.now() - t0);
+    }
+  }
+
+  private receive(raw: unknown): void {
+    // The header first: its size and kind decide the budget before any value is read.
+    const head = peekFrame(raw);
+    if (head && head.kind !== "pong" && head.kind !== "done" && !this.take()) {
+      if (this.flooding()) return;
+      if (head.kind === "req") this.post({ t: "res", id: head.id, ok: false, error: `too many requests: at most ${this.opts.ratePerSec} a second`, code: "busy", method: head.name });
+      else if (head.kind === "log") this.logWindow.dropped++;
+      return;
+    }
     let msg: PluginMessage;
     try {
-      msg = decodePluginMessage(raw);
+      msg = decodePluginFrame(raw);
     } catch (e) {
-      this.log("error", `refused a message: ${e instanceof ProtocolError ? e.message : String(e)}`);
+      const text = e instanceof Error ? e.message : String(e);
+      const code = e instanceof WireError ? e.code : "invalid";
+      this.log("error", `refused a message: ${text}`);
+      // A request or an answer that cannot be read is answered, never dropped.
+      if (head?.kind === "req") this.post({ t: "res", id: head.id, ok: false, error: `${head.name}: the request could not be read (${text})`, code, method: head.name });
+      else if (head?.kind === "done") {
+        const c = this.calls.get(head.id);
+        if (c) {
+          this.calls.delete(head.id);
+          c.reject(new PluginRefusal(`the plugin's answer could not be read (${text})`, code));
+        }
+      }
       return;
     }
     switch (msg.t) {
@@ -323,12 +477,12 @@ export class PluginHost {
   }
 
   private async request(id: number, method: string, params: Data): Promise<void> {
-    const refuse = (error: string, code: RefusalCode) => this.post({ t: "res", id, ok: false, error, code });
-    if (!(method in METHODS)) return refuse(`there is no ${method} in plugin API 1`, "unknown");
+    const refuse = (error: string, code: RefusalCode) => void this.post({ t: "res", id, ok: false, error, code, method });
+    if (!own(METHODS, method)) return refuse(`there is no ${method} in plugin API 1`, "unknown");
     let need = METHODS[method];
     if (method === "events.subscribe") {
       const name = (params as { name?: unknown } | null)?.name;
-      if (typeof name !== "string" || !(name in EVENTS)) return refuse(`there is no event ${JSON.stringify(name)} (events: ${Object.keys(EVENTS).join(", ")})`, "invalid");
+      if (typeof name !== "string" || !own(EVENTS, name)) return refuse(`there is no event ${JSON.stringify(typeof name === "string" ? name.slice(0, 40) : name)} (events: ${Object.keys(EVENTS).join(", ")})`, "invalid");
       need = EVENTS[name];
     }
     if (need && !this.has(need)) {
@@ -336,19 +490,30 @@ export class PluginHost {
       return refuse(`${this.name} may not use ${method}: plugin.json does not ask for the "${need}" permission`, "permission");
     }
     if (this.inFlight >= this.opts.maxPending) return refuse(`too many requests at once (more than ${this.opts.maxPending})`, "busy");
+    // Work in flight per method: batches, fetches, files, one dialog at a time.
+    const slot = method === "ui.prompt" || method === "ui.confirm" ? "dialog" : method;
+    const cap = IN_FLIGHT[slot];
+    if (cap !== undefined && (this.flying.get(slot) ?? 0) >= cap) return refuse(`${method}: ${cap === 1 ? "one is already waiting" : `${cap} are already waiting`}; wait for ${cap === 1 ? "it" : "them"} first`, "busy");
+    if (method === "model.batch") {
+      const now = Date.now();
+      if (now - this.batchWindow.start >= 1000) this.batchWindow = { start: now, count: 0 };
+      if (++this.batchWindow.count > this.opts.batchesPerSec) return refuse(`too many batches: at most ${this.opts.batchesPerSec} a second`, "busy");
+    }
     this.inFlight++;
+    if (cap !== undefined) this.flying.set(slot, (this.flying.get(slot) ?? 0) + 1);
     try {
       let value: Data;
       if (method === "events.subscribe") {
         this.subscriptions.add((params as { name: string }).name);
         value = null;
       } else value = await this.delegate.handle(this, method, params);
-      if (this.alive) this.post({ t: "res", id, ok: true, value });
+      if (this.alive) this.post({ t: "res", id, ok: true, value, method });
     } catch (e) {
       const code: RefusalCode = e instanceof PluginRefusal ? e.code : "refused";
       if (this.alive) refuse(e instanceof Error ? e.message : String(e), code);
     } finally {
       this.inFlight--;
+      if (cap !== undefined) this.flying.set(slot, (this.flying.get(slot) ?? 1) - 1);
     }
   }
 

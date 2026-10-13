@@ -11,9 +11,14 @@
 // the worker runs under the page's content security policy (it is started from a blob:
 // URL, host.ts). A plugin that throws, loops or crashes takes down this worker and nothing
 // else.
+//
+// Every message is one serialized frame, transferred (lane 16, wire.ts): what this worker
+// sends is serialized once by the runtime and checked again by the app; what it receives is
+// read with the same limits, and a frame it cannot read is answered (a pending call is
+// rejected with a PluginApiError), never dropped.
 import { lockdown } from "./lockdown";
 import { createRuntime, type Runtime } from "../../packages/plugin-api/src/runtime.ts";
-import { decodeHostMessage, logText, transferables, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";
+import { decodeHostFrame, encodePluginMessage, logText, peekFrame, type HostMessage, type LogLevel, type PluginMessage } from "../../packages/plugin-api/src/rpc.ts";
 import { checkPackage } from "../../packages/plugin-api/src/source.ts";
 import shimSource from "../../packages/plugin-api/sawhorse.js?raw";
 import { formatLength, parseLength, UNIT_SYSTEMS, unitInfo, type UnitSystem } from "../lib/units";
@@ -24,12 +29,21 @@ const postRaw = scope.postMessage.bind(scope);
 const createObjectURL = URL.createObjectURL.bind(URL);
 const consoleOriginal = { ...console };
 
+/** Post one frame, transferring its buffer (no copy; what the app measures is what was sent). */
+function post(frame: ArrayBuffer): void {
+  postRaw(frame, [frame]);
+}
+
+/** Messages the sandbox itself sends (before the runtime exists, and its own errors). */
 function send(msg: PluginMessage): void {
   try {
-    postRaw(msg, transferables(msg));
+    post(encodePluginMessage(msg));
   } catch {
-    // Not cloneable (a plugin handed back something odd): say so instead.
-    postRaw({ t: "log", level: "error", text: `could not send a ${msg.t} message` } satisfies PluginMessage);
+    try {
+      post(encodePluginMessage({ t: "log", level: "error", text: `could not send a ${msg.t} message` }));
+    } catch {
+      /* nothing left to say it with */
+    }
   }
 }
 
@@ -64,7 +78,7 @@ async function start(init: Extract<HostMessage, { t: "init" }>): Promise<void> {
   if (survivors.length) send({ t: "log", level: "warn", text: `sandbox: could not remove ${survivors.join(", ")}` });
 
   runtime = createRuntime({
-    send,
+    post,
     plugin: init.plugin,
     units: init.units,
     unitsImpl: {
@@ -98,22 +112,25 @@ async function start(init: Extract<HostMessage, { t: "init" }>): Promise<void> {
 }
 
 scope.addEventListener("message", (ev: MessageEvent) => {
+  // Once running, the runtime reads every frame (and answers what it cannot read).
+  if (runtime) return runtime.receiveFrame(ev.data);
   let msg: HostMessage;
   try {
-    msg = decodeHostMessage(ev.data);
+    msg = decodeHostFrame(ev.data);
   } catch (e) {
-    send({ t: "log", level: "error", text: `sandbox: refused a message from the app: ${e instanceof Error ? e.message : String(e)}` });
+    const text = e instanceof Error ? e.message : String(e);
+    // An init it cannot read fails the start, so the app's Enable never waits forever.
+    if (peekFrame(ev.data)?.kind === "init" && !started) {
+      started = true;
+      send({ t: "fail", error: `the sandbox could not read the plugin's modules: ${text}` });
+    } else send({ t: "log", level: "error", text: `sandbox: refused a message from the app: ${text}` });
     return;
   }
   if (msg.t === "init") {
     void start(msg);
     return;
   }
-  if (msg.t === "ping" && !runtime) {
-    send({ t: "pong", n: msg.n });
-    return;
-  }
-  runtime?.receive(msg);
+  if (msg.t === "ping") send({ t: "pong", n: msg.n });
 });
 
 // Errors the plugin did not catch: logged (the Plugins pane shows the last one); the
