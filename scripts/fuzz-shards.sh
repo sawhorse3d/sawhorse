@@ -7,7 +7,8 @@
 # From Git Bash keep MSYS_NO_PATHCONV=1 (Git Bash rewrites /mnt/... arguments otherwise).
 # Defaults: 6250 per shard (50,000 in all), seeds 20261101..20261108, plane snapping on.
 # Logs: /tmp/sawhorse-fuzz-<seed>.log. A failing shard writes its shrunk sequence to
-# crates/kernel/tests/repro/pending-long_fuzz_seed<seed>.json.
+# crates/kernel/tests/repro/pending-long_fuzz_seed<seed>.json, or to $FUZZ_REPRO_DIR when it
+# is set (a run that should leave the checkout alone: FUZZ_REPRO_DIR=/tmp/sawhorse-repro).
 set -u
 cases="${1:-6250}"
 base="${2:-20261100}"
@@ -20,7 +21,7 @@ cargo test -p sawhorse-kernel --test sequences --no-run >/dev/null 2>&1 || { ech
 start=$(date +%s)
 for s in 1 2 3 4 5 6 7 8; do
   seed=$((base + s))
-  FUZZ_PLANE_SNAP=$snap FUZZ_REPORT=1 FUZZ_CASES=$cases FUZZ_SEED=$seed \
+  FUZZ_REPRO_DIR="${FUZZ_REPRO_DIR:-}" FUZZ_PLANE_SNAP=$snap FUZZ_REPORT=1 FUZZ_CASES=$cases FUZZ_SEED=$seed \
     cargo test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture > "/tmp/sawhorse-fuzz-$seed.log" 2>&1 &
 done
 wait

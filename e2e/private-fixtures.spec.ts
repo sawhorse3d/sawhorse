@@ -33,10 +33,11 @@ import { IN, solids, type Solid } from "./helpers";
 //
 // SAWHORSE_PRIVATE_CAPTURES (a directory; default test-results/private-fixtures) receives a
 // screenshot of each imported model, named <SAWHORSE_PRIVATE_CAPTURE_PREFIX>private-fixture-
-// <name>.png.
+// <name>.png; "off" takes none (the sweep table still goes to the default directory).
 const FIXTURES = process.env.SAWHORSE_PRIVATE_FIXTURES;
 const dir = FIXTURES && existsSync(FIXTURES) ? FIXTURES : null;
-const capturesDir = process.env.SAWHORSE_PRIVATE_CAPTURES || path.join("test-results", "private-fixtures");
+const capturesOff = process.env.SAWHORSE_PRIVATE_CAPTURES === "off";
+const capturesDir = (!capturesOff && process.env.SAWHORSE_PRIVATE_CAPTURES) || path.join("test-results", "private-fixtures");
 const capturePrefix = process.env.SAWHORSE_PRIVATE_CAPTURE_PREFIX ?? "";
 
 const BOX = "box-slot-defective-current.skp";
@@ -147,6 +148,7 @@ async function capture(page: Page, name: string) {
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   mkdirSync(capturesDir, { recursive: true });
   const out = path.join(capturesDir, `${capturePrefix}private-fixture-${name}.png`);
+  if (capturesOff) return out;
   await page.screenshot({ path: out, animations: "disabled" });
   return out;
 }

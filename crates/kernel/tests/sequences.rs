@@ -2336,10 +2336,16 @@ fn concrete(intents: &[Fuzz], tally: &mut Tally) -> (Vec<Op>, Option<String>) {
     (ops, None)
 }
 
+/// Where a failing sequence is written: `tests/repro/` (replayed by `tests/repro.rs` until it
+/// is fixed), or `FUZZ_REPRO_DIR` when set (a long local run that should leave the checkout
+/// alone).
 fn repro_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("repro")
+    match std::env::var_os("FUZZ_REPRO_DIR") {
+        Some(d) if !d.is_empty() => PathBuf::from(d),
+        _ => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("repro"),
+    }
 }
 
 /// Per-op-kind accepted / refused counts, and the most common refusal reasons.
