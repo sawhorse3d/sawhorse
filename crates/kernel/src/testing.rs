@@ -216,25 +216,12 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
                     .collect::<Vec<f64>>()
             })
             .fold(0.0, f64::max);
-        let cut_length: f64 = cut
-            .caps
-            .iter()
-            .flat_map(|c| std::iter::once(&c.outer).chain(&c.holes))
-            .map(|r| {
-                (0..r.len())
-                    .map(|i| {
-                        let (a, b) = (r[i], r[(i + 1) % r.len()]);
-                        (a[0] - b[0]).hypot(a[1] - b[1])
-                    })
-                    .sum::<f64>()
-            })
-            .sum();
         for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
             let open = p.vector_area.length();
-            if open > 1e-9 * (1.0 + p.area) + 2.0 * bend * cut_length {
+            if open > 1e-9 * (1.0 + p.area) + 2.0 * bend * p.cap_length {
                 return Err(format!(
-                    "section {id}: the {half} half is not closed (vector area {open} of {} m2; faces bend {bend}, cut {cut_length} m long)",
-                    p.area
+                    "section {id}: the {half} half is not closed (vector area {open} of {} m2; faces bend {bend}, cap {} m around)",
+                    p.area, p.cap_length
                 ));
             }
         }

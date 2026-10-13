@@ -235,6 +235,9 @@ pub struct KeptPart {
     pub vector_area: DVec3,
     /// The surface's total (unsigned) area, square metres: the scale to compare against.
     pub area: f64,
+    /// The length of the cap's rings, metres (this plane's cut alone, before other planes
+    /// clip it): how long the seam between the faces and the cap is.
+    pub cap_length: f64,
 }
 
 impl KeptPart {
@@ -800,7 +803,16 @@ impl Model {
                 }
                 part.add(fp.normal, fp.origin, area);
             }
-            let cap: f64 = assemble(solid_rings(obj, &frame))
+            let rings = solid_rings(obj, &frame);
+            part.cap_length += rings
+                .iter()
+                .map(|r| {
+                    (0..r.len())
+                        .map(|i| r[i].distance(r[(i + 1) % r.len()]))
+                        .sum::<f64>()
+                })
+                .sum::<f64>();
+            let cap: f64 = assemble(rings)
                 .iter()
                 .map(|(outer, holes)| {
                     sawhorse_tessellate::signed_area(outer)
