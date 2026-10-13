@@ -419,13 +419,33 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
         Err(UnplacedReason::Grain) => 1,
         Err(_) => 2,
     };
-    // Sheets, automatically: within 1/16 in of the thickness, fitting first, then the
-    // closest thickness, then library order.
+    // Sheets, automatically: within 1/16 in of the thickness, fitting first, then a stock
+    // whose name shares a sheet word with the part's material ("MDF", "Baltic"), then the
+    // closest thickness, actual or nominal (lane 15: a part drawn 3/4 in is as close to
+    // "3/4" ply, 23/32 actual, as to 3/4 MDF), then library order.
+    let words = |s: &str| -> Vec<&'static str> {
+        let l = s.to_lowercase();
+        crate::cutlist::SHEET_WORDS
+            .iter()
+            .copied()
+            .filter(|w| *w != "sheet" && l.contains(w))
+            .collect()
+    };
+    let near = |s: &StockDef, t: f64| {
+        let nominal = s
+            .nominal
+            .as_ref()
+            .map(|_| s.nominal_inches() * crate::cutlist::M_PER_IN);
+        let d = (s.thickness - t).abs();
+        nominal.map_or(d, |n| d.min((n - t).abs()))
+    };
     for (i, row) in list.rows.iter().enumerate() {
         if out[i].is_some() || !row.sheet {
             continue;
         }
         let t = row.size[0];
+        let mine = row.material.as_deref().map(words).unwrap_or_default();
+        let affinity = |s: &StockDef| u8::from(!words(&s.name).iter().any(|w| mine.contains(w)));
         let best = lib
             .stocks
             .iter()
@@ -434,11 +454,8 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
             .min_by(|(a, sa), (b, sb)| {
                 rank(row, sa)
                     .cmp(&rank(row, sb))
-                    .then(
-                        (sa.thickness - t)
-                            .abs()
-                            .total_cmp(&(sb.thickness - t).abs()),
-                    )
+                    .then(affinity(sa).cmp(&affinity(sb)))
+                    .then(near(sa, t).total_cmp(&near(sb, t)))
                     .then(a.cmp(b))
             })
             .map(|(k, _)| k);

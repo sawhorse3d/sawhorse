@@ -113,7 +113,8 @@ fn an_open_box_in_a_group_is_a_part_sized_from_its_bounds() {
     assert_eq!(inches(r.size), [0.75, 5.0, 30.0]);
     assert_eq!(r.steps, [12, 80, 480]);
     assert!(!r.sheet);
-    assert_eq!(r.board_feet, 0.75 * 5.0 * 30.0 / 144.0);
+    // Board feet on the nominal 4/4 the part comes from (lane 15).
+    assert_eq!(r.board_feet, 1.0 * 5.0 * 30.0 / 144.0);
     assert_eq!(l.totals.not_solid, 1);
     assert_eq!(l.totals.loose_faces, 0);
     assert!(matches!(r.target, PartRef::Node(_)));

@@ -33,11 +33,12 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
     ["Shelf", "4", "3/4", "11", "34 1/2", "—"],
     ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "—"],
   ]);
-  // 2735.15625 cubic inches of lumber: 18.99 board feet; the back panel fits one sheet.
-  await expect(page.getByTestId("tile-board-feet")).toHaveText("18.99board feet");
+  // 2735.15625 cubic inches of finished 3/4 in lumber, bought as 4/4 (1 in rough, lane 15):
+  // 3646.875 cubic inches, 25.33 board feet; the back panel fits one sheet.
+  await expect(page.getByTestId("tile-board-feet")).toHaveText("25.33board feet");
   await expect(page.getByTestId("tile-sheets")).toHaveText("1sheet 4×8, 1/4");
   const kernel = await page.evaluate(async () => (await (window as unknown as { __sawhorse: { cutList(): Promise<{ totals: { board_feet: number } }> } }).__sawhorse.cutList()).totals.board_feet);
-  expect(kernel).toBe(2735.15625 / 144);
+  expect(kernel).toBe(3646.875 / 144);
   // Rounding is display only: every rounding (so every unit system) gives the same totals.
   const totals = await page.evaluate(async () => {
     const api = (window as unknown as { __sawhorse: { cutList(o: { rounding: string }): Promise<{ totals: { board_feet: number; sheet_count: number }; rows: { name: string; sheet: boolean }[] }> } }).__sawhorse;
@@ -48,7 +49,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
     }
     return out;
   });
-  expect(totals).toEqual([0, 1, 2].map(() => [18.994140625, 1, ["Back panel"]]));
+  expect(totals).toEqual([0, 1, 2].map(() => [25.326171875, 1, ["Back panel"]]));
 
   // Stock from the right-click menu, for many rows at once: Side, then Shift+click Shelf
   // picks the carcass and shelves (one range of four rows); one Stock sets them all, as one
@@ -92,7 +93,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   await expect(page.locator(".cutlist tbody tr", { hasText: "Top" }).locator("td").nth(3).locator("i.grain")).toHaveCount(1);
   await expect(page.getByLabel("Visible only")).not.toBeChecked();
   await expect.poll(async () => (await cutRows(page)).map((r) => r[5])).toEqual(["White oak", "White oak", "White oak", "White oak", "1/4 birch ply"]);
-  await expect(page.getByTestId("tile-board-feet")).toHaveText("18.99board feet, White oak");
+  await expect(page.getByTestId("tile-board-feet")).toHaveText("25.33board feet, White oak");
   await expect(page.getByTestId("tile-sheets")).toHaveText("1sheet 4×8 1/4 birch ply, 1/4");
 
   // A row click selects its pieces in the model.
@@ -106,16 +107,16 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   expect(csv.name).toBe("Untitled cut list.csv");
   const text = csv.bytes.toString("utf8").replace(/^﻿/, "");
   const lines = parseCsv(text).map((l) => l.map(csvCellText));
-  expect(lines[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary"]);
+  expect(lines[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary", "Board feet on"]);
   // Fractions reach a spreadsheet as text (="3/4"), never as a date.
   expect(text).toContain('"=""3/4"""');
   expect(lines.slice(1).map((l) => [...l.slice(0, 13), l[14]])).toEqual([
-    ["Side", "2", "3/4", "11 1/4", "71 1/4", "0.75", "11.25", "71.25", "White oak", "along L", "Lumber", "8.35", "", ""],
-    ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "White oak", "across W", "Lumber", "2.11", "", ""],
-    ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "0.75", "3.5", "34.5", "White oak", "along L", "Lumber", "0.63", "", ""],
-    ["Shelf", "4", "3/4", "11", "34 1/2", "0.75", "11", "34.5", "White oak", "along L", "Lumber", "7.91", "", ""],
+    ["Side", "2", "3/4", "11 1/4", "71 1/4", "0.75", "11.25", "71.25", "White oak", "along L", "Lumber", "11.13", "", ""],
+    ["Top", "1", "3/4", "11 1/4", "36", "0.75", "11.25", "36", "White oak", "across W", "Lumber", "2.81", "", ""],
+    ["Toe kick", "1", "3/4", "3 1/2", "34 1/2", "0.75", "3.5", "34.5", "White oak", "along L", "Lumber", "0.84", "", ""],
+    ["Shelf", "4", "3/4", "11", "34 1/2", "0.75", "11", "34.5", "White oak", "along L", "Lumber", "10.54", "", ""],
     ["Back panel", "1", "1/4", "34 1/2", "71 1/4", "0.25", "34.5", "71.25", "1/4 birch ply", "along L", "Sheet", "", "17.07", ""],
-    ["Total", "9", "", "", "", "", "", "", "", "", "", "18.99", "17.07", "1 sheet 4x8"],
+    ["Total", "9", "", "", "", "", "", "", "", "", "", "25.33", "17.07", "1 sheet 4x8"],
   ]);
 
   // The report and the labels are PDFs.

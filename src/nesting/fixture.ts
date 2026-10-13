@@ -7,8 +7,8 @@ import type { Nesting, NestCut, Placement, StockDef, StockPiece } from "../kerne
 const IN = 0.0254;
 
 export const LIBRARY_STOCK: StockDef[] = [
-  { name: "4 x 8 sheet, 1/4", kind: "sheet", length: 96 * IN, width: 48 * IN, thickness: 0.25 * IN, grain: "length" },
-  { name: "4/4 x 12 x 96", kind: "board", length: 96 * IN, width: 12 * IN, thickness: 0.8125 * IN, nominal: "4/4", grain: "length" },
+  { name: "4 x 8 sheet, 1/4", kind: "sheet", length: 96 * IN, width: 48 * IN, thickness: (7 / 32) * IN, nominal: "1/4", grain: "length" },
+  { name: "4/4 x 12 x 96", kind: "board", length: 96 * IN, width: 12 * IN, thickness: 0.75 * IN, nominal: "4/4", grain: "length" },
 ];
 
 function place(tag: string, name: string, x: number, y: number, w: number, l: number, node: number, row: number, copy: number): Placement {
@@ -34,7 +34,7 @@ export function boardPiece(): StockPiece {
     material: "Oak",
     length: 96 * IN,
     width: 12 * IN,
-    thickness: 0.8125 * IN,
+    thickness: 0.75 * IN,
     grain: "length",
     trim: 0,
     kerf: IN / 8,
@@ -63,7 +63,7 @@ export function sheetPiece(): StockPiece {
     material: null,
     length: 96 * IN,
     width: 48 * IN,
-    thickness: 0.25 * IN,
+    thickness: (7 / 32) * IN,
     grain: "length",
     trim: 0,
     kerf: IN / 8,
@@ -99,8 +99,8 @@ export function smallNesting(): Nesting {
       stock_area: stock,
       efficiency: parts / stock,
       groups: [
-        { stock: "4/4 x 12 x 96", kind: "board", nominal: "4/4", material: "Oak", length: 96 * IN, width: 12 * IN, thickness: 0.8125 * IN, count: 1, parts: 2, parts_area: pieces[0].parts_area, stock_area: pieces[0].stock_area, efficiency: pieces[0].efficiency, board_feet: 8 },
-        { stock: "4 x 8 sheet, 1/4", kind: "sheet", material: null, length: 96 * IN, width: 48 * IN, thickness: 0.25 * IN, count: 1, parts: 1, parts_area: pieces[1].parts_area, stock_area: pieces[1].stock_area, efficiency: pieces[1].efficiency, board_feet: 0 },
+        { stock: "4/4 x 12 x 96", kind: "board", nominal: "4/4", material: "Oak", length: 96 * IN, width: 12 * IN, thickness: 0.75 * IN, count: 1, parts: 2, parts_area: pieces[0].parts_area, stock_area: pieces[0].stock_area, efficiency: pieces[0].efficiency, board_feet: 8 },
+        { stock: "4 x 8 sheet, 1/4", kind: "sheet", material: null, length: 96 * IN, width: 48 * IN, thickness: (7 / 32) * IN, count: 1, parts: 1, parts_area: pieces[1].parts_area, stock_area: pieces[1].stock_area, efficiency: pieces[1].efficiency, board_feet: 0 },
       ],
       by_nominal: [{ nominal: "4/4", count: 1, board_feet: 8 }],
     },

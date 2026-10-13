@@ -137,7 +137,7 @@ describe("Stock dialog", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "5 x 5 birch, 1/2" } });
     fireEvent.change(screen.getByLabelText("Width"), { target: { value: "60" } });
     fireEvent.change(screen.getByLabelText("Length"), { target: { value: "5'" } });
-    fireEvent.change(screen.getByLabelText("Thickness"), { target: { value: "1/2" } });
+    fireEvent.change(screen.getByLabelText("Actual thickness"), { target: { value: "1/2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add stock" }));
     expect(p.onDefine).toHaveBeenLastCalledWith({ name: "5 x 5 birch, 1/2", kind: "sheet", width: 60 * IN, length: 60 * IN, thickness: 0.5 * IN, nominal: null, grain: "length" }, null);
     // Edit the board: the form fills in with units; saving names the one replaced.
@@ -153,11 +153,37 @@ describe("Stock dialog", () => {
     expect(p.onReset).toHaveBeenCalled();
   });
 
+  it("fills the actual thickness from the nominal until it is typed (lane 15)", () => {
+    const p = dprops();
+    render(<StockDialog {...p} />);
+    const actual = () => (screen.getByLabelText("Actual thickness") as HTMLInputElement).value;
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Ply 3/4" } });
+    fireEvent.change(screen.getByLabelText("Nominal"), { target: { value: "3/4" } });
+    expect(actual()).toBe("23/32 in");
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "board" } });
+    fireEvent.change(screen.getByLabelText("Nominal"), { target: { value: "8/4" } });
+    expect(actual()).toBe("1 3/4 in");
+    fireEvent.change(screen.getByLabelText("Nominal"), { target: { value: "5/4" } });
+    expect(actual()).toBe("1 1/16 in");
+    // An override sticks: the nominal no longer changes it.
+    fireEvent.change(screen.getByLabelText("Actual thickness"), { target: { value: "1-1/8\"" } });
+    fireEvent.change(screen.getByLabelText("Nominal"), { target: { value: "6/4" } });
+    expect(actual()).toBe('1-1/8"');
+    fireEvent.click(screen.getByRole("button", { name: "Add stock" }));
+    expect(p.onDefine).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Ply 3/4", kind: "board", thickness: 1.125 * IN, nominal: "6/4" }), null);
+    // A sheet keeps its nominal too.
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Ply half" } });
+    fireEvent.change(screen.getByLabelText("Nominal"), { target: { value: "1/2" } });
+    expect(actual()).toBe("15/32 in");
+    fireEvent.click(screen.getByRole("button", { name: "Add stock" }));
+    expect(p.onDefine).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "sheet", thickness: (15 / 32) * IN, nominal: "1/2" }), null);
+  });
+
   it("refuses stock nobody can cut from, and says why", () => {
     const p = dprops();
     render(<StockDialog {...p} />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Odd" } });
-    fireEvent.change(screen.getByLabelText("Thickness"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText("Actual thickness"), { target: { value: "60" } });
     fireEvent.click(screen.getByRole("button", { name: "Add stock" }));
     expect(p.onDefine).not.toHaveBeenCalled();
     expect(screen.getByText(/thicker than it is wide/)).toBeTruthy();

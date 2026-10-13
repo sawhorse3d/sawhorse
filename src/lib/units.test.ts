@@ -61,6 +61,45 @@ describe("parseLength", () => {
     expect(ok("5′ 6″")).toBeCloseTo(66 * IN, 12);
   });
 
+  // Lane 15: every way a woodworker writes one and a half inches reads the same.
+  it.each([
+    ['1-1/2"', true],
+    ["1-1/2", false],
+    ["1 1/2", false],
+    ['1 1/2"', true],
+    ["1.5", false],
+    ['1.5"', true],
+    ["1.5 in", true],
+    ["1-1/2 in", true],
+    ["1 1/2in", true],
+    ["1 - 1/2", false],
+    ["1½", false],
+    ['1½"', true],
+    ["1 ½", false],
+    ["1 1/2''", true],
+    ["1.5 inches", true],
+    ["1 1/2 inch", true],
+    ["  1-1/2” ", true],
+    ["3/2", false],
+  ] as const)("reads %j as 1 1/2 in (with inches typed: %s)", (s, inch) => {
+    expect(ok(s)).toBeCloseTo(1.5 * IN, 12);
+    // In a metric model a bare number is millimetres; a typed inch mark still wins.
+    expect(ok(s, "mm")).toBeCloseTo(inch ? 1.5 * IN : 0.0015, 12);
+  });
+
+  it("reads fractions in feet-and-inches and with every unit", () => {
+    expect(ok(`1'-1-1/2"`)).toBeCloseTo(13.5 * IN, 12);
+    expect(ok(`1' 1 1/2"`)).toBeCloseTo(13.5 * IN, 12);
+    expect(ok("¾")).toBeCloseTo(0.75 * IN, 12);
+    expect(ok("23/32\"", "mm")).toBeCloseTo((23 / 32) * IN, 12);
+    expect(ok("1 1/2 mm", "frac-in")).toBeCloseTo(0.0015, 12);
+    expect(ok("-1-1/2\"")).toBeCloseTo(-1.5 * IN, 12);
+  });
+
+  it.each(["1-1/2-1/4", "1 1/2 1/4", "1.5.5", "1/2/4\"", "½½", "1--1/2"])("rejects the malformed %j", (s) => {
+    expect(parseLength(s, "frac-in").ok).toBe(false);
+  });
+
   it("keeps the sign", () => {
     expect(ok("-3/4")).toBeCloseTo(-0.75 * IN, 12);
     expect(ok("-1 1/2")).toBeCloseTo(-1.5 * IN, 12);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { csvBytes, csvCellText, cutListCsv, parseCsv, textCell } from "./csv";
 import { labelSlot, labelsPdf, LABEL_SHEET, reportPdf } from "./documents";
-import { decimalSteps, defaultRounding, formatSteps, GRAIN_WORDS, rowNotes, summary } from "./format";
+import { decimalSteps, defaultRounding, formatSteps, GRAIN_WORDS, nominalText, rowNotes, scopeNote, summary } from "./format";
 import { parseNumber } from "../lib/units";
 import { fit, PdfDoc, readPdf, textWidth, winAnsi } from "./pdf";
 import { bookshelf, row } from "./fixture";
@@ -18,12 +18,15 @@ describe("cut list formatting", () => {
     expect(defaultRounding("frac-in")).toBe("sixteenth");
   });
 
-  it("the bookshelf: 18.99 board feet of oak and one 4x8 sheet of ply", () => {
+  it("the bookshelf: 25.33 board feet of oak (on 4/4 rough) and one 4x8 sheet of ply", () => {
     const list = bookshelf();
-    // 2735.15625 cubic inches of lumber / 144.
-    expect(list.totals.board_feet).toBe(2735.15625 / 144);
+    // 3646.875 cubic inches of 1 in rough lumber / 144 (the finished 3/4 in parts' 2735.15625 over 3/4).
+    expect(list.totals.board_feet).toBe(3646.875 / 144);
+    expect(nominalText(list.rows[0])).toBe("4/4 (1 in rough)");
+    expect(nominalText(list.rows[4])).toBe("");
+    expect(scopeNote("sixteenth")).toContain("a 3/4 in part from 4/4 lumber counts as 1 in");
     const s = summary(list);
-    expect(s).toEqual({ boardFeet: "18.99", boardFeetLabel: "board feet, Oak", sheets: "1", sheetsLabel: "sheet 4×8 1/4 birch ply, 1/4" });
+    expect(s).toEqual({ boardFeet: "25.33", boardFeetLabel: "board feet, Oak", sheets: "1", sheetsLabel: "sheet 4×8 1/4 birch ply, 1/4" });
     expect(rowNotes({ ...list.rows[0], handed: 1, total: 2, hidden: 1, shaped: true })).toEqual(["shaped", "1 of 2 handed", "1 hidden"]);
     expect(rowNotes({ ...list.rows[2], scaled: true, hidden: 1, total: 1 })).toEqual(["grain across W", "hidden", "scaled"]);
     expect(rowNotes({ ...list.rows[0], grain: "none", grain_set: true })).toEqual(["no grain"]);
@@ -39,9 +42,9 @@ describe("CSV", () => {
     const text = cutListCsv(list);
     expect(text.endsWith("\r\n")).toBe(true);
     const rows = parseCsv(text);
-    expect(rows[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary"]);
+    expect(rows[0]).toEqual(["Part", "Qty", "T", "W", "L", "T (in)", "W (in)", "L (in)", "Material", "Grain", "Stock", "Board feet", "Area (sq ft)", "Notes", "Summary", "Board feet on"]);
     // Every line has every column.
-    for (const r of rows) expect(r).toHaveLength(15);
+    for (const r of rows) expect(r).toHaveLength(16);
     // Fractions are text formulas, so spreadsheets do not read 3/4 as a date or 11 1/4 as a number.
     expect(rows[1].slice(2, 5)).toEqual(['="3/4"', '="11 1/4"', '="71 1/4"']);
     expect(rows[2][3]).toBe("11");
@@ -58,10 +61,12 @@ describe("CSV", () => {
     expect(text).not.toContain("—");
     // The decimals are the shown sizes, exactly.
     for (const r of read.slice(1, 6)) for (let k = 0; k < 3; k++) expect(parseNumber(r[2 + k])).toBe(Number(r[5 + k]));
-    expect(read[1][11]).toBe("8.35");
+    expect(read[1][11]).toBe("11.13");
+    expect(read[1][15]).toBe("4/4 (1 in rough)");
+    expect(read[5][15]).toBe("");
     expect(read[5].slice(10, 13)).toEqual(["Sheet", "", "17.07"]);
     // The Total row: pieces, board feet, sheet area; the sheet count in Summary, not Stock.
-    expect(read[6]).toEqual(["Total", "9", "", "", "", "", "", "", "", "", "", "18.99", "17.07", "", "1 sheet 4x8"]);
+    expect(read[6]).toEqual(["Total", "9", "", "", "", "", "", "", "", "", "", "25.33", "17.07", "", "1 sheet 4x8", ""]);
     expect(rows).toHaveLength(7);
     const bytes = csvBytes(list);
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
@@ -115,7 +120,7 @@ describe("PDF writer", () => {
     expect(back.pages).toBe(1);
     const text = back.text[0];
     expect(text[0]).toBe("Cut list: Bookshelf");
-    for (const want of ["Side", "Shelf", "Top", "Toe kick", "Back panel", "71 1/4", "34 1/2", "18.99 board feet, Oak"]) expect(text.some((t) => t.includes(want)), want).toBe(true);
+    for (const want of ["Side", "Shelf", "Top", "Toe kick", "Back panel", "71 1/4", "34 1/2", "25.33 board feet, Oak", "counts as 1 in"]) expect(text.some((t) => t.includes(want)), want).toBe(true);
     expect(text.some((t) => t.startsWith("1 sheet 4x8, 1/4 birch ply"))).toBe(true);
     expect(text.join(" ")).toContain("Nesting lays the parts out");
   });

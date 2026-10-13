@@ -1633,7 +1633,8 @@ mod tests {
             r["occurrences"][0]["axes"][2],
             serde_json::json!([1.0, 0.0, 0.0])
         );
-        assert_eq!(l["totals"]["board_feet"], 4.0 * 1.9765625);
+        // On the nominal 4/4 (1 in rough) a 3/4 in shelf comes from (lane 15).
+        assert_eq!(l["totals"]["board_feet"], 4.0 * (379.5 / 144.0));
         // Grain across, stock named, through the op log's JSON.
         let out = op(
             &mut d,

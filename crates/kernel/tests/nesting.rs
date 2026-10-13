@@ -714,6 +714,8 @@ fn list_of(parts: &[(f64, f64, f64, usize, Grain, bool, u8)], visible_mask: u64)
             // Lane 15: flagged parts nest like any other; a dropped part is never nested.
             not_solid: k % 3 == 1,
             included: k % 7 != 3,
+            nominal_thickness: size[0],
+            nominal: None,
             grain,
             grain_set: grain != Grain::Length,
             material: Some(["Oak", "Maple", "Birch ply", "MDF"][mat as usize % 4].into()),

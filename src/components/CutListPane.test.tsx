@@ -77,7 +77,7 @@ describe("Cut list pane", () => {
     expect(rows[2].querySelectorAll("td")[3].querySelector("i.grain")).toBeTruthy();
     expect(rows[2].querySelectorAll("td")[4].querySelector("i.grain")).toBeNull();
     expect(rows[4].textContent).toContain("sheet");
-    expect(screen.getByTestId("tile-board-feet").textContent).toBe("18.99board feet, Oak");
+    expect(screen.getByTestId("tile-board-feet").textContent).toBe("25.33board feet, Oak");
     expect(screen.getByTestId("tile-sheets").textContent).toBe("1sheet 4×8 1/4 birch ply, 1/4");
     expect((screen.getByRole("button", { name: /Nesting/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("cutlist-note").textContent).toMatch(/Edge banding is not included; the sheet count here is a rough area estimate \(Nesting lays/);
@@ -238,11 +238,11 @@ describe("Printable report", () => {
     expect(report.querySelector("h1")?.textContent).toBe("Cut list: Bookshelf");
     const rows = [...report.querySelectorAll("tbody tr")].map((r) => [...r.querySelectorAll("td")].map((td) => td.textContent));
     expect([...report.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Part", "Qty", "T", "W", "L", "Material", "Grain", "Bd ft / area", "Notes"]);
-    expect(rows[2]).toEqual(["Top", "1", "3/4", "11 1/4", "36", "Oak", "across W", "2.11 bd ft", "grain across W"]);
-    expect(rows[0].slice(6)).toEqual(["along L", "8.35 bd ft", ""]);
+    expect(rows[2]).toEqual(["Top", "1", "3/4", "11 1/4", "36", "Oak", "across W", "2.81 bd ft", "grain across W"]);
+    expect(rows[0].slice(6)).toEqual(["along L", "11.13 bd ft", ""]);
     expect(rows[4][5]).toBe("1/4 birch ply (sheet)");
     expect(rows[4][7]).toBe("17.07 sq ft");
-    expect(report.querySelector(".totals")?.textContent).toContain("18.99 board feet, Oak");
+    expect(report.querySelector(".totals")?.textContent).toContain("25.33 board feet, Oak");
     expect(report.querySelector("footer")?.textContent).toMatch(/Nesting lays the parts out on real sheets/);
   });
 });

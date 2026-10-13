@@ -184,7 +184,18 @@ export function reportCells(row: CutRow, list: CutList): string[] {
 /** The footer every output carries. */
 export function scopeNote(r: Rounding): string {
   const step = r === "sixteenth" ? "1/16 in" : r === "thirty_second" ? "1/32 in" : "0.5 mm";
-  return `Finished sizes, rounded to the nearest ${step}. Grain runs along L unless noted. Edge banding is not included; the sheet count here is a rough area estimate (Nesting lays the parts out on real sheets and boards, kerf included).`;
+  return `Finished sizes, rounded to the nearest ${step}. Grain runs along L unless noted. ${BOARD_FEET_NOTE} Edge banding is not included; the sheet count here is a rough area estimate (Nesting lays the parts out on real sheets and boards, kerf included).`;
+}
+
+/** Lane 15: board feet are bought on the rough thickness, not the finished one. */
+export const BOARD_FEET_NOTE = "Board feet are counted on the rough (nominal) thickness each part is cut from: a 3/4 in part from 4/4 lumber counts as 1 in.";
+
+/** Lane 15: the nominal board a lumber row's board feet are counted on: "4/4 (1 in rough)",
+ * or "" for sheet goods and parts thicker than any board in the library. */
+export function nominalText(row: CutRow): string {
+  if (row.sheet || !row.nominal) return "";
+  const inches = Math.round(((row.nominal_thickness ?? 0) / 0.0254) * 10000) / 10000;
+  return `${row.nominal} (${String(inches)} in rough)`;
 }
 
 /** Lane 15: what the list says about geometry that is not a solid: "2 parts not solid

@@ -195,25 +195,55 @@ fn in_inches(m: f64) -> f64 {
     (m / M_PER_IN * 1_048_576.0).round() / 1_048_576.0
 }
 
-fn sheet(name: &str, w: f64, l: f64, t: f64, grain: StockGrain) -> StockDef {
+/// The actual thickness (inches) a nominal thickness comes to by default (lane 15), as a
+/// lumber yard sells it: plywood is undersized ("3/4" ply is 23/32 in, "1/2" is 15/32, "1/4"
+/// is 7/32); hardwood boards are sold rough by the quarter and surfaced four sides (S4S):
+/// 4/4 (1 in rough) is 3/4 in, 5/4 is 1 1/16, 6/4 is 1 5/16, 8/4 is 1 3/4, 12/4 is 2 3/4.
+/// `None` for a nominal not in the table (the stock's own actual thickness is used). The
+/// Stock dialog fills the actual thickness from this and lets it be overridden per stock.
+pub fn standard_actual(kind: StockKind, nominal: &str) -> Option<f64> {
+    let n = nominal.trim();
+    match kind {
+        StockKind::Sheet => match n {
+            "3/4" => Some(23.0 / 32.0),
+            "1/2" => Some(15.0 / 32.0),
+            "1/4" => Some(7.0 / 32.0),
+            "5/8" => Some(19.0 / 32.0),
+            "3/8" => Some(11.0 / 32.0),
+            _ => None,
+        },
+        StockKind::Board => match n {
+            "4/4" => Some(0.75),
+            "5/4" => Some(1.0625),
+            "6/4" => Some(1.3125),
+            "8/4" => Some(1.75),
+            "10/4" => Some(2.25),
+            "12/4" => Some(2.75),
+            "16/4" => Some(3.75),
+            _ => None,
+        },
+    }
+}
+
+fn sheet(name: &str, w: f64, l: f64, nominal: &str, actual: f64, grain: StockGrain) -> StockDef {
     StockDef {
         name: name.into(),
         kind: StockKind::Sheet,
         length: inch(l),
         width: inch(w),
-        thickness: inch(t),
-        nominal: None,
+        thickness: inch(actual),
+        nominal: Some(nominal.into()),
         grain,
     }
 }
 
-fn board(nominal: &str, t: f64, w: f64, l: f64) -> StockDef {
+fn board(nominal: &str, w: f64, l: f64) -> StockDef {
     StockDef {
         name: format!("{nominal} x {w} x {l}"),
         kind: StockKind::Board,
         length: inch(l),
         width: inch(w),
-        thickness: inch(t),
+        thickness: inch(standard_actual(StockKind::Board, nominal).expect("a standard nominal")),
         nominal: Some(nominal.into()),
         grain: StockGrain::Length,
     }
@@ -305,25 +335,42 @@ impl StockDef {
 
 impl StockLibrary {
     /// What a new document starts with: plywood and MDF sheets, and hardwood boards 8 ft
-    /// long in the common nominal thicknesses (surfaced two sides: 4/4 is 13/16 in).
+    /// long in the common nominal thicknesses, each at the actual thickness a yard sells
+    /// ([`standard_actual`], lane 15: "3/4" ply is 23/32 in, 4/4 S4S is 3/4 in; Baltic birch
+    /// is metric, 18 and 12 mm; MDF is its nominal thickness).
     pub fn builtin() -> StockLibrary {
         use StockGrain::{Length, None};
+        let ply = |n: &str| standard_actual(StockKind::Sheet, n).expect("a standard nominal");
         StockLibrary {
             stocks: vec![
-                sheet("4 x 8 sheet, 3/4", 48.0, 96.0, 0.75, Length),
-                sheet("4 x 8 sheet, 1/2", 48.0, 96.0, 0.5, Length),
-                sheet("4 x 8 sheet, 1/4", 48.0, 96.0, 0.25, Length),
-                sheet("5 x 5 Baltic birch, 3/4", 60.0, 60.0, 0.75, Length),
-                sheet("5 x 5 Baltic birch, 1/2", 60.0, 60.0, 0.5, Length),
-                sheet("4 x 8 MDF, 3/4", 48.0, 96.0, 0.75, None),
-                board("4/4", 0.8125, 4.0, 96.0),
-                board("4/4", 0.8125, 6.0, 96.0),
-                board("4/4", 0.8125, 8.0, 96.0),
-                board("4/4", 0.8125, 12.0, 96.0),
-                board("5/4", 1.0625, 6.0, 96.0),
-                board("6/4", 1.3125, 6.0, 96.0),
-                board("8/4", 1.75, 6.0, 96.0),
-                board("12/4", 2.75, 6.0, 96.0),
+                sheet("4 x 8 sheet, 3/4", 48.0, 96.0, "3/4", ply("3/4"), Length),
+                sheet("4 x 8 sheet, 1/2", 48.0, 96.0, "1/2", ply("1/2"), Length),
+                sheet("4 x 8 sheet, 1/4", 48.0, 96.0, "1/4", ply("1/4"), Length),
+                sheet(
+                    "5 x 5 Baltic birch, 3/4",
+                    60.0,
+                    60.0,
+                    "3/4",
+                    18.0 / 25.4,
+                    Length,
+                ),
+                sheet(
+                    "5 x 5 Baltic birch, 1/2",
+                    60.0,
+                    60.0,
+                    "1/2",
+                    12.0 / 25.4,
+                    Length,
+                ),
+                sheet("4 x 8 MDF, 3/4", 48.0, 96.0, "3/4", 0.75, None),
+                board("4/4", 4.0, 96.0),
+                board("4/4", 6.0, 96.0),
+                board("4/4", 8.0, 96.0),
+                board("4/4", 12.0, 96.0),
+                board("5/4", 6.0, 96.0),
+                board("6/4", 6.0, 96.0),
+                board("8/4", 6.0, 96.0),
+                board("12/4", 6.0, 96.0),
             ],
             defaults: BTreeMap::new(),
             settings: NestSettings::default(),
@@ -490,7 +537,24 @@ mod tests {
         assert!(l.find("4 x 8 SHEET, 3/4").is_some(), "names ignore case");
         let b = l.find("4/4 x 12 x 96").unwrap().1;
         assert_eq!(b.kind, StockKind::Board);
-        assert_eq!(b.thickness, 0.8125 * M_PER_IN);
+        assert_eq!(b.thickness, 0.75 * M_PER_IN, "4/4 S4S is 3/4 in");
+        let ply = l.find("4 x 8 sheet, 3/4").unwrap().1;
+        assert_eq!(ply.thickness, 23.0 / 32.0 * M_PER_IN, "3/4 ply is 23/32 in");
+        assert_eq!(ply.nominal.as_deref(), Some("3/4"));
+        assert_eq!(
+            l.find("4 x 8 sheet, 1/2").unwrap().1.thickness,
+            15.0 / 32.0 * M_PER_IN
+        );
+        assert_eq!(
+            l.find("4 x 8 sheet, 1/4").unwrap().1.thickness,
+            7.0 / 32.0 * M_PER_IN
+        );
+        assert_eq!(
+            l.find("5/4 x 6 x 96").unwrap().1.thickness,
+            1.0625 * M_PER_IN
+        );
+        assert_eq!(standard_actual(StockKind::Board, " 8/4 "), Some(1.75));
+        assert_eq!(standard_actual(StockKind::Sheet, "thick"), None);
         assert_eq!(b.board_feet(), 8.0);
         assert_eq!(l.find("8/4 x 6 x 96").unwrap().1.board_feet(), 8.0);
         assert_eq!(l.find("4 x 8 sheet, 1/4").unwrap().1.board_feet(), 0.0);
@@ -549,7 +613,12 @@ mod tests {
         let l = StockLibrary::builtin();
         assert_eq!(l.find("5/4 x 6 x 96").unwrap().1.nominal_inches(), 1.25);
         let mut s = l.stocks[0].clone();
+        assert_eq!(s.nominal_inches(), 0.75, "\"3/4\" ply is bought as 3/4");
         s.nominal = Some("thick".into());
-        assert_eq!(s.nominal_inches(), 0.75);
+        assert_eq!(
+            s.nominal_inches(),
+            23.0 / 32.0,
+            "an unreadable nominal: the actual"
+        );
     }
 }

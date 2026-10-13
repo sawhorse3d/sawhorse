@@ -79,12 +79,19 @@ function defaultScale(system: UnitSystem): number {
   }
 }
 
+/** Unicode vulgar fractions as typed text: "1½" reads as "1 1/2" (lane 15). */
+const VULGAR: Record<string, string> = { "½": "1/2", "¼": "1/4", "¾": "3/4", "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8", "⅓": "1/3", "⅔": "2/3" };
+
 function normalise(text: string): string {
   return text
     .trim()
     .toLowerCase()
-    .replace(/[″”]/g, '"')
-    .replace(/[′’]/g, "'")
+    .replace(/(\d?)\s*([½¼¾⅛⅜⅝⅞⅓⅔])/g, (_, d: string, f: string) => `${d ? `${d} ` : ""}${VULGAR[f]}`)
+    .replace(/[″”“]/g, '"')
+    .replace(/[′’‘]/g, "'")
+    // Two single quotes typed for inches (1 1/2''), and "inch"/"inches" for "in".
+    .replace(/''/g, '"')
+    .replace(/\binch(?:es)?$/, "in")
     .replace(/\s+/g, " ");
 }
 

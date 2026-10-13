@@ -209,11 +209,15 @@ fn the_bookshelf_as_components() {
         assert!(matches!(r.key, PartKey::Definition(_)));
         assert_eq!(r.occurrences.len(), r.total);
     }
-    // Board feet, exactly: (2 x 3/4 x 11 1/4 x 71 1/4 + 4 x 3/4 x 11 x 34 1/2
-    //   + 3/4 x 11 1/4 x 36 + 3/4 x 3 1/2 x 34 1/2) / 144 = 2735.15625 / 144.
-    assert_eq!(l.totals.board_feet, 2735.15625 / 144.0);
-    assert_eq!(l.totals.board_feet, 18.994140625);
-    assert_eq!(row(&l, "Side").board_feet, 2.0 * 601.171875 / 144.0);
+    // Board feet, exactly, on the nominal rough thickness (lane 15): every part is 3/4 in
+    // finished, so it comes from 4/4 (1 in) lumber: (2 x 1 x 11 1/4 x 71 1/4 + 4 x 1 x 11 x
+    // 34 1/2 + 1 x 11 1/4 x 36 + 1 x 3 1/2 x 34 1/2) / 144 = 3646.875 / 144 (the finished
+    // volume, 2735.15625 in^3, over 3/4).
+    assert_eq!(l.totals.board_feet, 3646.875 / 144.0);
+    assert_eq!(row(&l, "Side").board_feet, 2.0 * 801.5625 / 144.0);
+    assert_eq!(row(&l, "Side").nominal.as_deref(), Some("4/4"));
+    assert_eq!(row(&l, "Side").nominal_thickness, IN);
+    assert_eq!(row(&l, "Back panel").nominal, None);
     assert_eq!(l.totals.lumber.len(), 1);
     assert_eq!(l.totals.lumber[0].material.as_deref(), Some("Oak"));
     // The back panel: 1/4 in thick, so sheet goods: 34 1/2 x 71 1/4 in on one 4 x 8 sheet.
@@ -664,7 +668,7 @@ fn every_rounding_classifies_and_totals_the_same() {
         })
         .collect();
     for l in &lists {
-        assert_eq!(l.totals.board_feet, 18.994140625, "{:?}", l.rounding);
+        assert_eq!(l.totals.board_feet, 3646.875 / 144.0, "{:?}", l.rounding);
         assert_eq!(l.totals.sheet_count, 1, "{:?}", l.rounding);
         assert!(row(l, "Back panel").sheet, "{:?}", l.rounding);
         assert_eq!(
@@ -741,9 +745,63 @@ fn the_quarter_inch_line_uses_the_exact_thickness() {
         assert_eq!(l.totals.sheets.len(), 3, "{:?}", l.rounding);
         assert_eq!(classified(l), classified(&lists[0]), "{:?}", l.rounding);
     }
-    // 0.26 x 20 x 30 in = 156 in^3 = 13/12 board feet (0.26 is not a binary fraction, so
-    // within the 24 nm noise grid).
-    assert!((row(&lists[0], "Thick").board_feet - 156.0 / 144.0).abs() < 1e-5);
+    // 0.26 in finished comes from 4/4 lumber: 1 x 20 x 30 in = 600 in^3 of rough board.
+    assert_eq!(row(&lists[0], "Thick").board_feet, 600.0 / 144.0);
+}
+
+/// Lane 15: board feet are bought on the nominal rough thickness of the board a part comes
+/// from: the thinnest board at least as thick (5/4 for a 1 in part), a board the part's
+/// stock or its material names, or (thicker than every board) the part's own thickness.
+#[test]
+fn board_feet_use_the_nominal_rough_thickness() {
+    let mut d = Document::with_ground_sketch();
+    let (_, apron) = part(&mut d, "Apron", None, [0.0, 0.0, 0.0, 30.0, 4.0, 1.0]);
+    let (_, slab) = part(&mut d, "Slab", None, [40.0, 0.0, 0.0, 30.0, 12.0, 3.5]);
+    part(&mut d, "Post", None, [80.0, 0.0, 0.0, 30.0, 5.0, 4.5]);
+    let l = list(d.model());
+    // 1 in finished is thicker than 4/4 S4S (3/4): 5/4 (1 1/16 actual) it is, 1.25 in rough.
+    assert_eq!(row(&l, "Apron").nominal.as_deref(), Some("5/4"));
+    assert_eq!(row(&l, "Apron").board_feet, 1.25 * 4.0 * 30.0 / 144.0);
+    // 3 1/2 in: no board in the built-in library (12/4 is 2 3/4 actual) is that thick.
+    assert_eq!(row(&l, "Slab").nominal, None);
+    assert_eq!(row(&l, "Slab").board_feet, 3.5 * 12.0 * 30.0 / 144.0);
+    // The stock a part names wins when it is thick enough.
+    ok(
+        &mut d,
+        Op::SetStock {
+            part: PartRef::Definition(apron),
+            stock: Some("8/4 x 6 x 96".into()),
+            sheet: None,
+        },
+    );
+    let l = list(d.model());
+    assert_eq!(row(&l, "Apron").nominal.as_deref(), Some("8/4"));
+    assert_eq!(row(&l, "Apron").board_feet, 2.0 * 4.0 * 30.0 / 144.0);
+    // A library with a 16/4 board covers the slab: 4 in rough.
+    ok(
+        &mut d,
+        Op::DefineStock {
+            stock: sawhorse_kernel::stock::StockDef {
+                name: "16/4 x 8 x 96".into(),
+                kind: sawhorse_kernel::stock::StockKind::Board,
+                length: 96.0 * IN,
+                width: 8.0 * IN,
+                thickness: 3.75 * IN,
+                nominal: Some("16/4".into()),
+                grain: sawhorse_kernel::stock::StockGrain::Length,
+            },
+            replace: None,
+        },
+    );
+    let l = list(d.model());
+    assert_eq!(row(&l, "Slab").nominal.as_deref(), Some("16/4"));
+    assert_eq!(row(&l, "Slab").board_feet, 4.0 * 12.0 * 30.0 / 144.0);
+    assert_eq!(
+        row(&l, "Post").nominal,
+        None,
+        "4 1/2 in: thicker than 16/4 S4S"
+    );
+    let _ = slab;
 }
 
 #[test]

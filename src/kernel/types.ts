@@ -939,6 +939,10 @@ export interface CutRow {
   not_solid: boolean;
   /** Lane 15: counted in the totals and nested (false: dropped by the person, still listed). */
   included: boolean;
+  /** Lane 15: the nominal (rough) thickness board feet are counted on, metres (4/4: 1 in). */
+  nominal_thickness?: number;
+  /** Lane 15: that board's nominal ("4/4"), when a library board gave it. */
+  nominal?: string;
   grain: Grain;
   grain_set: boolean;
   material: string | null;

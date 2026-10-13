@@ -62,6 +62,7 @@ use crate::meshbuild::LooseMesh;
 use crate::model::Model;
 use crate::nodes::{Item, Kids, MemberKind, NodeKind, Thing};
 use crate::object::Object;
+use crate::stock::{STOCK_EPSILON, StockDef, StockKind, StockLibrary};
 use crate::transform::Xform;
 
 /// Metres per inch.
@@ -324,6 +325,14 @@ pub struct CutRow {
     pub not_solid: bool,
     /// Lane 15: counted in the totals and nested (false: dropped by the person, still listed).
     pub included: bool,
+    /// Lane 15: the nominal (rough) thickness board feet are counted on, metres: the board
+    /// the part comes from in the stock library (one its stock or material names, else the
+    /// thinnest board at least as thick: 4/4 for a 3/4 in part). A part thicker than every
+    /// board, and sheet goods, use their own thickness.
+    pub nominal_thickness: f64,
+    /// That board's nominal ("4/4"), when a board gave it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominal: Option<String>,
     pub grain: Grain,
     /// The grain was set on this part (not the default).
     pub grain_set: bool,
@@ -833,6 +842,32 @@ fn exact_inches(x: f64) -> f64 {
     (x / M_PER_IN * NOISE_PER_IN).round() / NOISE_PER_IN
 }
 
+/// The board a lumber part's board feet are counted on (lane 15): the library board its
+/// stock text names, else its material's default board, when thick enough; else the
+/// thinnest board at least as thick as the part (library order on a tie). `None`: no board
+/// is that thick.
+fn nominal_board<'a>(
+    lib: &'a StockLibrary,
+    material: Option<&str>,
+    stock_set: bool,
+    thickness: f64,
+) -> Option<&'a StockDef> {
+    let thick_enough =
+        |s: &&StockDef| s.kind == StockKind::Board && s.thickness >= thickness - STOCK_EPSILON;
+    if let Some(m) = material {
+        let named = if stock_set { lib.find(m) } else { None }
+            .map(|(_, s)| s)
+            .or_else(|| lib.default_for(m).and_then(|n| lib.find(n)).map(|(_, s)| s));
+        if let Some(s) = named.filter(thick_enough) {
+            return Some(s);
+        }
+    }
+    lib.stocks
+        .iter()
+        .filter(thick_enough)
+        .min_by(|a, b| a.thickness.total_cmp(&b.thickness))
+}
+
 /// Sheet goods by thickness alone: the exact thickness, 1/4 in or less.
 pub fn thin_enough_for_sheet(thickness: f64) -> bool {
     thickness <= SHEET_MAX_THICKNESS + SHEET_EPSILON
@@ -1229,6 +1264,7 @@ impl Model {
     /// The cut list (see the module docs).
     pub fn cut_list(&self, opts: &CutOptions) -> CutList {
         let (pieces, loose_faces) = self.pieces();
+        let library = self.stock.clone().unwrap_or_default();
         // Rows: one per part and size (a scaled copy gets its own), in order of first piece.
         let mut order: Vec<(PartKey, [i64; 3])> = Vec::new();
         let mut groups: BTreeMap<(PartKey, [i64; 3]), Vec<usize>> = BTreeMap::new();
@@ -1273,12 +1309,21 @@ impl Model {
                 material.as_deref().is_some_and(is_sheet_word) || thin_enough_for_sheet(size[0])
             });
             let inches = size.map(exact_inches);
+            // Lane 15: board feet are bought on the nominal rough thickness (a 3/4 in part
+            // comes from 4/4, one inch), times the finished width and length.
+            let board = (!sheet)
+                .then(|| nominal_board(&library, material.as_deref(), stock_set, size[0]))
+                .flatten();
+            let (nominal_in, nominal) = match board {
+                Some(b) => (b.nominal_inches(), b.nominal.clone()),
+                None => (inches[0], None),
+            };
             let board_feet = if sheet {
                 0.0
             } else {
                 // In f64 (a 10 km solid once overflowed an i64 step product; found by the
                 // fuzzer).
-                inches[0] * inches[1] * inches[2] / 144.0 * qty as f64
+                nominal_in * inches[1] * inches[2] / 144.0 * qty as f64
             };
             let area_m2 = if sheet {
                 inches[1] * inches[2] * (M_PER_IN * M_PER_IN) * qty as f64
@@ -1304,6 +1349,8 @@ impl Model {
                 scaled: sizes_per_key[&first.key] > 1,
                 not_solid: idx.iter().any(|&i| !pieces[i].solid),
                 included: attrs.included(),
+                nominal_thickness: nominal_in * M_PER_IN,
+                nominal,
                 grain: attrs.grain.unwrap_or_default(),
                 grain_set: attrs.grain.is_some(),
                 material,

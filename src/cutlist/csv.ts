@@ -4,14 +4,15 @@
 // Columns: Part, Qty; T, W, L as shown (the shop's fractions, "11 1/4", or mm); T, W, L as
 // decimal numbers in the size unit (inches or mm) for formulas; Material, Grain, Stock
 // (Lumber / Sheet), Board feet, Area, Notes; and Summary, filled only on the Total row
-// (the rough 4 x 8 sheet count). Empty cells are empty: no dash placeholders.
+// (the rough 4 x 8 sheet count); Board feet on (lane 15: the nominal board a lumber row's
+// board feet are counted on, "4/4 (1 in rough)"). Empty cells are empty: no dash placeholders.
 //
 // Spreadsheet programs read "3/4" as a date and "11 1/4" as a number, so a shown size that
 // holds a fraction is written as the text formula ="3/4" (Excel, LibreOffice Calc and
 // Google Sheets all show it as the text 3/4). A plain CSV reader sees ="3/4";
 // `csvCellText` unwraps it. The decimal columns are plain numbers.
 import type { CutList } from "../kernel/types";
-import { decimalSteps, formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, listStyle, rowNotes, SQ_FT, sizeUnit } from "./format";
+import { decimalSteps, formatBoardFeet, formatSteps, GRAIN_WORDS, isMetric, listStyle, nominalText, rowNotes, SQ_FT, sizeUnit } from "./format";
 
 export const CSV_TYPE = { description: "Cut list (CSV)", mime: "text/csv", extensions: [".csv"] };
 
@@ -34,7 +35,7 @@ export function csvCellText(s: string): string {
 export function csvHeader(list: CutList): string[] {
   const u = sizeUnit(list.rounding);
   const area = isMetric(list.rounding) ? "Area (m²)" : "Area (sq ft)";
-  return ["Part", "Qty", "T", "W", "L", `T (${u})`, `W (${u})`, `L (${u})`, "Material", "Grain", "Stock", "Board feet", area, "Notes", "Summary"];
+  return ["Part", "Qty", "T", "W", "L", `T (${u})`, `W (${u})`, `L (${u})`, "Material", "Grain", "Stock", "Board feet", area, "Notes", "Summary", "Board feet on"];
 }
 
 export function cutListCsv(list: CutList): string {
@@ -55,12 +56,13 @@ export function cutListCsv(list: CutList): string {
       area(row.area_m2),
       rowNotes(row).join("; "),
       "",
+      nominalText(row),
     ]);
   }
   const t = list.totals;
   const totalArea = t.sheets.reduce((s, x) => s + x.area_m2, 0);
   const sheets = t.sheet_count ? `${t.sheet_count} sheet${t.sheet_count === 1 ? "" : "s"} 4x8` : "";
-  lines.push(["Total", String(t.pieces), "", "", "", "", "", "", "", "", "", formatBoardFeet(t.board_feet), area(totalArea), "", sheets]);
+  lines.push(["Total", String(t.pieces), "", "", "", "", "", "", "", "", "", formatBoardFeet(t.board_feet), area(totalArea), "", sheets, ""]);
   return lines.map((l) => l.map(field).join(",")).join("\r\n") + "\r\n";
 }
 

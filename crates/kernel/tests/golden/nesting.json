@@ -444,7 +444,7 @@
       }
     }
   ],
-  "hash": "3d9d01ac22a50165",
+  "hash": "5cd312e1ef2cc369",
   "stats": {
     "objects": 9,
     "faces": 54,
@@ -454,5 +454,5 @@
     "watertight": true
   },
   "cut_list": "4e7162fa2451cc22",
-  "nesting": "f29efb9e577bad48"
+  "nesting": "e430ddd4dc33611c"
 }

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { StockDef, StockGrain, StockKind, StockLibrary } from "../kernel/types";
 import { parseLength, type UnitSystem } from "../lib/units";
-import { len, lenU, stockSize, type Units } from "../nesting/format";
+import { fineU, len, lenU, standardActual, stockSize, type Units } from "../nesting/format";
 
 export interface StockDialogProps {
   library: StockLibrary;
@@ -27,6 +27,11 @@ interface Draft {
   thickness: string;
   nominal: string;
   grain: StockGrain;
+  /** Lane 15: the actual thickness was typed (not filled in from the nominal). */
+  actualSet?: boolean;
+  /** Lane 15: the exact sizes of the stock being edited, by the text first shown, so an
+   * untouched 18 mm (shown as 45/64 in) saves as 18 mm, not as the shown rounding. */
+  exact?: Partial<Record<"width" | "length" | "thickness", [string, number]>>;
 }
 
 const IN = 0.0254;
@@ -47,10 +52,26 @@ export function StockDialog(p: StockDialogProps) {
   const edit = (s: StockDef) => {
     setEditing(s.name);
     setErr(null);
-    setDraft({ name: s.name, kind: s.kind, width: lenU(s.width, p.rounding), length: lenU(s.length, p.rounding), thickness: lenU(s.thickness, p.rounding), nominal: s.nominal ?? "", grain: s.grain });
+    const std = s.nominal ? standardActual(s.kind, s.nominal) : null;
+    const width = lenU(s.width, p.rounding);
+    const length = lenU(s.length, p.rounding);
+    const thickness = fineU(s.thickness, p.rounding);
+    setDraft({
+      name: s.name,
+      kind: s.kind,
+      width,
+      length,
+      thickness,
+      nominal: s.nominal ?? "",
+      grain: s.grain,
+      actualSet: std === null || Math.abs(std * IN - s.thickness) > 1e-9,
+      exact: { width: [width, s.width], length: [length, s.length], thickness: [thickness, s.thickness] },
+    });
   };
   const save = () => {
-    const read = (label: string, t: string) => {
+    const read = (label: string, t: string, key?: "width" | "length" | "thickness") => {
+      const kept = key ? draft.exact?.[key] : undefined;
+      if (kept && kept[0] === t) return kept[1];
       const r = parseLength(t, units);
       if (!r.ok) throw new Error(`${label}: ${r.error}`);
       if (r.metres <= 0) throw new Error(`${label} must be more than zero.`);
@@ -62,10 +83,10 @@ export function StockDialog(p: StockDialogProps) {
       const stock: StockDef = {
         name,
         kind: draft.kind,
-        width: read("Width", draft.width),
-        length: read("Length", draft.length),
-        thickness: read("Thickness", draft.thickness),
-        nominal: draft.kind === "board" && draft.nominal.trim() ? draft.nominal.trim() : null,
+        width: read("Width", draft.width, "width"),
+        length: read("Length", draft.length, "length"),
+        thickness: read("Actual thickness", draft.thickness, "thickness"),
+        nominal: draft.nominal.trim() ? draft.nominal.trim() : null,
         grain: draft.grain,
       };
       if (stock.thickness > Math.min(stock.width, stock.length)) throw new Error("It cannot be thicker than it is wide or long.");
@@ -77,10 +98,21 @@ export function StockDialog(p: StockDialogProps) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
-  const field = (key: keyof Draft, label: string, extra: { placeholder?: string; size?: number } = {}) => (
-    <label>
+  // Lane 15: a nominal in the standard table fills in the actual thickness until it is typed.
+  const fill = (d: Draft): Draft => {
+    if (d.actualSet) return d;
+    const std = standardActual(d.kind, d.nominal);
+    return std === null ? d : { ...d, thickness: fineU(std * IN, p.rounding) };
+  };
+  const set = (key: keyof Draft, v: string) => {
+    if (key === "thickness") setDraft({ ...draft, thickness: v, actualSet: true });
+    else if (key === "nominal") setDraft(fill({ ...draft, nominal: v }));
+    else setDraft({ ...draft, [key]: v });
+  };
+  const field = (key: Exclude<keyof Draft, "actualSet" | "exact">, label: string, extra: { placeholder?: string; size?: number; title?: string } = {}) => (
+    <label title={extra.title}>
       <span>{label}</span>
-      <input aria-label={label} value={draft[key]} size={extra.size ?? 6} placeholder={extra.placeholder} onChange={(e) => setDraft({ ...draft, [key]: e.currentTarget.value })} onKeyDown={(e) => e.key === "Enter" && save()} />
+      <input aria-label={label} value={draft[key] as string} size={extra.size ?? 6} placeholder={extra.placeholder} onChange={(e) => set(key, e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
     </label>
   );
   return (
@@ -130,7 +162,7 @@ export function StockDialog(p: StockDialogProps) {
                 <td className="nm">
                   {s.name}
                   <small>
-                    {s.kind === "sheet" ? "sheet" : `board${s.nominal ? ` ${s.nominal}` : ""}`} · {stockSize(s, p.rounding)}
+                    {s.kind === "sheet" ? `sheet${s.nominal ? ` ${s.nominal} nominal` : ""}` : `board${s.nominal ? ` ${s.nominal}` : ""}`} · {stockSize(s, p.rounding)} actual
                     {s.grain === "none" ? " · no grain" : ""}
                   </small>
                 </td>
@@ -152,15 +184,15 @@ export function StockDialog(p: StockDialogProps) {
         {field("name", "Name", { placeholder: "3/4 Baltic birch 5 x 5", size: 18 })}
         <label>
           <span>Kind</span>
-          <select aria-label="Kind" value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.currentTarget.value as StockKind })}>
+          <select aria-label="Kind" value={draft.kind} onChange={(e) => setDraft(fill({ ...draft, kind: e.currentTarget.value as StockKind }))}>
             <option value="sheet">Sheet</option>
             <option value="board">Board</option>
           </select>
         </label>
         {field("width", "Width")}
         {field("length", "Length")}
-        {field("thickness", "Thickness")}
-        {draft.kind === "board" ? field("nominal", "Nominal", { placeholder: "4/4", size: 4 }) : null}
+        {field("nominal", "Nominal", { placeholder: draft.kind === "board" ? "4/4" : "3/4", size: 4, title: "What the yard calls it: 4/4, 8/4 for boards (board feet are counted on it), 3/4 for plywood" })}
+        {field("thickness", "Actual thickness", { title: "What it measures. Filled in from the nominal (3/4 ply is 23/32 in, 4/4 S4S is 3/4 in); type to override" })}
         <label>
           <span>Grain</span>
           <select aria-label="Grain" value={draft.grain} onChange={(e) => setDraft({ ...draft, grain: e.currentTarget.value as StockGrain })}>
@@ -195,7 +227,7 @@ export function StockDialog(p: StockDialogProps) {
         </button>
       </div>
       <p className="note">
-        Sizes in {units === "mm" || units === "cm" || units === "m" ? units : "inches"} unless typed with a unit. Lengths run along the grain. A bare number like {len(0.75 * IN, p.rounding)} is read in the model's units.
+        Sizes in {units === "mm" || units === "cm" || units === "m" ? units : "inches"} unless typed with a unit. Lengths run along the grain. Sizes are actual (what the stock measures); board feet are counted on a board's nominal thickness. A bare number like {len(0.75 * IN, p.rounding)} is read in the model's units.
       </p>
     </section>
   );

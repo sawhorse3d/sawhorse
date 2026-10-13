@@ -163,3 +163,17 @@ export function settingsText(n: Nesting, r: Units): string {
 export function nestNote(n: Nesting, r: Units): string {
   return `${settingsText(n, r)}. Parts at their exact finished sizes; grain runs along each sheet's and board's length. Sizes in ${sizeUnit(r)}.`;
 }
+
+/** Lane 15: the actual thickness (inches) a nominal one comes to by default, as a lumber yard
+ * sells it (the kernel's `stock::standard_actual`, the same table): plywood is undersized
+ * ("3/4" is 23/32 in, "1/2" 15/32, "1/4" 7/32, "5/8" 19/32, "3/8" 11/32); hardwood is sold
+ * rough by the quarter and surfaced four sides (4/4 is 3/4 in, 5/4 1 1/16, 6/4 1 5/16, 8/4
+ * 1 3/4, 10/4 2 1/4, 12/4 2 3/4, 16/4 3 3/4). `null` for a nominal not in the table. */
+export function standardActual(kind: "sheet" | "board", nominal: string): number | null {
+  const n = nominal.trim();
+  const table: Record<string, number> =
+    kind === "sheet"
+      ? { "3/4": 23 / 32, "1/2": 15 / 32, "1/4": 7 / 32, "5/8": 19 / 32, "3/8": 11 / 32 }
+      : { "4/4": 0.75, "5/4": 1.0625, "6/4": 1.3125, "8/4": 1.75, "10/4": 2.25, "12/4": 2.75, "16/4": 3.75 };
+  return Object.prototype.hasOwnProperty.call(table, n) ? table[n] : null;
+}

@@ -8,7 +8,7 @@
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
-import { formatSteps, geometryNote, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
+import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
 
 export interface CutListPaneProps {
   list: CutList | null;
@@ -264,7 +264,12 @@ export function CutListPane(p: CutListPaneProps) {
                         const t = formatSteps(row.steps[k], r, style);
                         const m = k ? mark(k as 1 | 2) : null;
                         return (
-                          <td key={k} className={m ? "n mk" : "n"} title={t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}>
+                          <td
+                            key={k}
+                            className={m ? "n mk" : "n"}
+                            data-nominal={k === 0 && nominalText(row) ? row.nominal : undefined}
+                            title={k === 0 && nominalText(row) ? `${t} ${sizeUnit(r)} finished; board feet on ${nominalText(row)}` : t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}
+                          >
                             <span className="v">{t}</span>
                             {m}
                           </td>
@@ -280,7 +285,7 @@ export function CutListPane(p: CutListPaneProps) {
             </table>
           </div>
           <div className="sum">
-            <div data-testid="tile-board-feet">
+            <div data-testid="tile-board-feet" title={BOARD_FEET_NOTE}>
               <b>{s!.boardFeet}</b>
               <span>{s!.boardFeetLabel}</span>
             </div>
