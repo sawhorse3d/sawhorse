@@ -167,6 +167,11 @@ function Editor({ m, onDefine, onRename, onDelete, onPosition, units, taken }: {
     setH(formatLength(size[1], units));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.size?.[0], m.size?.[1], units]);
+  // Lane 15: every field follows the material when it changes elsewhere (undo, a rename,
+  // another pane), so what the field shows is what the model holds.
+  useEffect(() => setName(m.name), [m.name]);
+  useEffect(() => setRot(String(Math.round((m.rotation ?? 0) * 10) / 10)), [m.rotation]);
+  useEffect(() => setSpecies(m.stock?.species ?? ""), [m.stock?.species]);
   const commitSize = (which: 0 | 1, text: string) => {
     const r = parseLength(text, units);
     if (!r.ok || r.metres <= 0) {
@@ -174,6 +179,12 @@ function Editor({ m, onDefine, onRename, onDelete, onPosition, units, taken }: {
       return;
     }
     setProblem(null);
+    // Unchanged (Enter, then the blur that follows it): nothing to commit, no undo step.
+    if (Math.abs(r.metres - size[which]) <= 1e-9) {
+      if (which === 0) setW(formatLength(size[0], units));
+      else setH(formatLength(size[1], units));
+      return;
+    }
     // The other side follows to keep the image's shape.
     const k = r.metres / size[which];
     const next: [number, number] = which === 0 ? [r.metres, size[1] * k] : [size[0] * k, r.metres];
@@ -210,11 +221,11 @@ function Editor({ m, onDefine, onRename, onDelete, onPosition, units, taken }: {
         <>
           <label>
             Texture width
-            <input aria-label="Texture width" value={w} onChange={(e) => setW(e.target.value)} onBlur={() => commitSize(0, w)} onKeyDown={(e) => e.key === "Enter" && commitSize(0, w)} />
+            <input aria-label="Texture width" value={w} onChange={(e) => setW(e.target.value)} onBlur={() => commitSize(0, w)} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
           </label>
           <label>
             Height
-            <input aria-label="Texture height" value={h} onChange={(e) => setH(e.target.value)} onBlur={() => commitSize(1, h)} onKeyDown={(e) => e.key === "Enter" && commitSize(1, h)} />
+            <input aria-label="Texture height" value={h} onChange={(e) => setH(e.target.value)} onBlur={() => commitSize(1, h)} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
           </label>
           <label>
             Rotation
@@ -226,7 +237,8 @@ function Editor({ m, onDefine, onRename, onDelete, onPosition, units, taken }: {
               onChange={(e) => setRot(e.target.value)}
               onBlur={() => {
                 const v = Number(rot);
-                if (Number.isFinite(v)) onDefine(defOf(m, { rotation: v }));
+                if (rot.trim() === "" || !Number.isFinite(v)) setRot(String(Math.round((m.rotation ?? 0) * 10) / 10));
+                else if (Math.abs(v - (m.rotation ?? 0)) > 1e-9) onDefine(defOf(m, { rotation: v }));
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -248,12 +260,27 @@ function Editor({ m, onDefine, onRename, onDelete, onPosition, units, taken }: {
       {stockKind !== "none" ? (
         <label>
           Species
-          <input aria-label="Species" value={species} placeholder={m.name} onChange={(e) => setSpecies(e.target.value)} onBlur={() => setStock(stockKind, species)} onKeyDown={(e) => e.key === "Enter" && setStock(stockKind, species)} />
+          <input
+            aria-label="Species"
+            value={species}
+            placeholder={m.name}
+            onChange={(e) => setSpecies(e.target.value)}
+            onBlur={() => {
+              if (species.trim() !== (m.stock?.species ?? "")) setStock(stockKind, species);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+          />
         </label>
       ) : null}
       {problem ? <p className="note err">{problem}</p> : null}
       <div className="row">
-        <button type="button" className="mini" disabled={!onPosition || !m.held} onClick={() => onPosition?.()} title="Select one face showing this texture first">
+        <button
+          type="button"
+          className="mini"
+          disabled={!onPosition || !m.held}
+          onClick={() => onPosition?.()}
+          title={!m.held ? "This material has no texture image in the model to position" : !onPosition ? "Select one face showing this texture first" : "Move, turn and scale the texture on the selected face with handles in the view (or double-click a textured face)"}
+        >
           Position texture
         </button>
         <button type="button" className="mini danger" onClick={() => onDelete(m.name)}>

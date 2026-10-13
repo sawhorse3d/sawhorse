@@ -49,7 +49,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
     }
     return out;
   });
-  expect(totals).toEqual([0, 1, 2].map(() => [25.326171875, 1, ["Back panel"]]));
+  expect(totals).toEqual([0, 1, 2].map(() => [3646.875 / 144, 1, ["Back panel"]]));
 
   // Stock from the right-click menu, for many rows at once: Side, then Shift+click Shelf
   // picks the carcass and shelves (one range of four rows); one Stock sets them all, as one
@@ -151,7 +151,7 @@ test("the bookshelf's cut list: rows, totals, grain and stock, hidden parts, sel
   await expect(page.locator(".cutlist tbody tr", { hasText: "Shelf" })).toContainText("1 hidden");
   await page.getByLabel("Visible only").check();
   await expect.poll(async () => (await cutRows(page)).find((r) => r[0] === "Shelf")?.[1]).toBe("3");
-  await expect(page.getByTestId("tile-board-feet")).toHaveText("17.02board feet, White oak");
+  await expect(page.getByTestId("tile-board-feet")).toHaveText("22.69board feet, White oak");
   // 1/32 in rounding changes nothing here (every size is in sixteenths); metric reads mm.
   await page.getByLabel("Round sizes to").selectOption("half_mm");
   await expect.poll(async () => (await cutRows(page))[0].slice(2, 5)).toEqual(["19", "286", "1810"]);

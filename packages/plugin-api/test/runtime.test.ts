@@ -54,10 +54,70 @@ describe("requests", () => {
     expect(m.params).toEqual({ id: "t" });
   });
 
-  it("refuse arguments that are not plain data before sending", () => {
+  it("refuse arguments that are not plain data before sending: the call rejects, it never throws (lane 15)", async () => {
     const { api, sent } = setup();
-    expect(() => (api.storage as unknown as { app: { set(k: string, v: unknown): unknown } }).app.set("k", () => 1)).toThrow("is a function");
+    let p: Promise<unknown> | undefined;
+    expect(() => {
+      p = (api.storage as unknown as { app: { set(k: string, v: unknown): Promise<unknown> } }).app.set("k", () => 1);
+    }).not.toThrow();
+    await expect(p).rejects.toMatchObject({ name: "PluginApiError", code: "invalid", message: expect.stringContaining("is a function") });
     expect(sent).toHaveLength(0);
+    // The same for registering with a missing handler.
+    await expect((api.ui.registerCommand as (s: unknown) => Promise<unknown>)({ id: "x" })).rejects.toMatchObject({ code: "invalid" });
+    await expect((api.ui.registerPanel as (s: unknown) => Promise<unknown>)({ id: "x" })).rejects.toMatchObject({ code: "invalid" });
+    await expect((api.ui.registerTool as (s: unknown) => Promise<unknown>)(null)).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("a request that cannot be sent rejects with a typed error at once (lane 15)", async () => {
+    const rt = createRuntime({
+      send: (m) => {
+        if (m.t === "req") throw new DOMException("could not be cloned", "DataCloneError");
+      },
+      plugin: { id: "org.example.t", name: "T", version: "1.0.0", permissions: [] },
+      units: "mm",
+      unitsImpl: { parse: () => ({ ok: false, error: "" }), format: () => "", short: () => "" },
+    });
+    const api = rt.api as unknown as { model: { stats(): Promise<unknown> }; PluginApiError: new (m: string, c?: string) => Error };
+    const p = api.model.stats();
+    await expect(p).rejects.toBeInstanceOf(api.PluginApiError);
+    await expect(p).rejects.toMatchObject({ code: "send_failed", message: expect.stringContaining("model.stats: the request could not be sent") });
+  });
+
+  it("every host refusal is a PluginApiError with its code", async () => {
+    const { rt, api, last } = setup();
+    const p = api.model.solids() as Promise<unknown>;
+    const m = last() as Extract<PluginMessage, { t: "req" }>;
+    rt.receive({ t: "res", id: m.id, ok: false, error: "nope", code: "busy" });
+    await expect(p).rejects.toMatchObject({ name: "PluginApiError", code: "busy" });
+  });
+});
+
+describe("events (lane 15)", () => {
+  it("an event the host refuses rejects `ready`, drops the listener and logs it", async () => {
+    const { rt, api, sent, last } = setup();
+    const got: unknown[] = [];
+    const off = (api.events.on as (n: string, f: (p: unknown) => void) => (() => void) & { ready: Promise<void> })("selectionChanged", (p) => got.push(p));
+    const m = last() as Extract<PluginMessage, { t: "req" }>;
+    expect(m.method).toBe("events.subscribe");
+    rt.receive({ t: "res", id: m.id, ok: false, error: "T may not use events.subscribe", code: "permission" });
+    await expect(off.ready).rejects.toMatchObject({ name: "PluginApiError", code: "permission" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent.some((x) => x.t === "log" && x.level === "error" && /events.on\("selectionChanged"\)/.test(x.text))).toBe(true);
+    rt.receive({ t: "evt", name: "selectionChanged", payload: { selection: [] } } as never);
+    expect(got).toEqual([]);
+  });
+
+  it("an event that does not exist rejects without asking the host; an accepted one resolves", async () => {
+    const { rt, api, sent, last } = setup();
+    const on = api.events.on as (n: string, f: unknown) => (() => void) & { ready: Promise<void> };
+    const before = sent.length;
+    await expect(on("selectionChange", () => 0).ready).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining('no event "selectionChange"') });
+    await expect(on("documentChanged", 5).ready).rejects.toMatchObject({ code: "invalid" });
+    expect(sent.length).toBe(before);
+    const ok = on("documentChanged", () => 0);
+    rt.receive({ t: "res", id: (last() as Extract<PluginMessage, { t: "req" }>).id, ok: true, value: null });
+    await expect(ok.ready).resolves.toBeUndefined();
+    expect(typeof ok).toBe("function");
   });
 });
 

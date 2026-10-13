@@ -1,7 +1,7 @@
 // Soft, smooth and hidden edges on the drawing side (lane 15): which edges are lines, which
 // only silhouettes, which only dashed; and the smooth blend of the theme's three face tones.
 import { describe, expect, it } from "vitest";
-import { edgeSets, toneWeights } from "./looks";
+import { edgeSets, gridTones, toneWeights } from "./looks";
 
 const seg = (k: number) => [k, 0, 0, k, 0, 1];
 const nrm = (k: number) => [1, 0, 0, 0, 1, k];
@@ -51,5 +51,22 @@ describe("tone weights", () => {
     const b = toneWeights(Math.sin(0.2), Math.cos(0.2), 0);
     expect(a[1]).toBeGreaterThan(b[1]);
     expect(a[1] - b[1]).toBeLessThan(0.05);
+  });
+});
+
+describe("grid tones (lane 15)", () => {
+  const theme = { grid: "#d4d8cf", gridMajor: "#9aa39a" };
+  it("the theme's colours without a background of the style's own", () => {
+    expect(gridTones(null, theme)).toEqual({ minor: "#d4d8cf", major: "#9aa39a" });
+  });
+  it("on a dark background the lines turn lighter, on a light one darker", () => {
+    const dark = gridTones([20, 24, 30], theme);
+    const light = gridTones([250, 248, 241], theme);
+    const lum = (h: string) => parseInt(h.slice(1, 3), 16) + parseInt(h.slice(3, 5), 16) + parseInt(h.slice(5, 7), 16);
+    expect(lum(dark.minor)).toBeGreaterThan(20 + 24 + 30);
+    expect(lum(dark.major)).toBeGreaterThan(lum(dark.minor));
+    expect(lum(light.minor)).toBeLessThan(250 + 248 + 241);
+    expect(lum(light.major)).toBeLessThan(lum(light.minor));
+    expect(light.minor).toMatch(/^#[0-9a-f]{6}$/);
   });
 });

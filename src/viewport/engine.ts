@@ -20,7 +20,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { GraphSection, MaterialInfo, MeshData, SectionView, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
 import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorners } from "../lib/sections";
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
-import { TextureCache, edgeSets, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
+import { TextureCache, edgeSets, gridTones, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
 import type { UnitSystem } from "../lib/units";
 import {
   AXIS_COLORS,
@@ -208,7 +208,9 @@ export class ViewportEngine {
       this.buildOverlays();
       this.requestRender();
     });
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCF (three 0.186 removed PCFSoft and fell back to PCF with a console warning each
+    // time shadows were first drawn; lane 15 asks for PCF directly: the same picture).
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.sunLight.shadow.mapSize.set(2048, 2048);
     this.groundShadow.receiveShadow = true;
     this.groundShadow.renderOrder = -1;
@@ -273,8 +275,9 @@ export class ViewportEngine {
       l.frustumCulled = false;
       return l;
     };
-    this.gridMinor = mk(gridLines(this.spec.minor, this.gridHalf, this.spec.ratio), this.theme.grid, -2);
-    this.gridMajor = mk(gridLines(this.spec.major, this.gridHalf), this.theme.gridMajor, -1);
+    const tones = gridTones(this.style.background, this.theme);
+    this.gridMinor = mk(gridLines(this.spec.minor, this.gridHalf, this.spec.ratio), tones.minor, -2);
+    this.gridMajor = mk(gridLines(this.spec.major, this.gridHalf), tones.major, -1);
     (this.gridMajor.material as THREE.LineBasicMaterial).opacity = 0.55;
     this.scene.add(this.gridMinor, this.gridMajor);
     this.updateGridVisibility();
@@ -331,8 +334,7 @@ export class ViewportEngine {
   applyTheme(): void {
     this.theme = readTheme(this.themeRoot);
     this.renderer.setClearColor(new THREE.Color(this.theme.vp), 1);
-    if (this.gridMinor) (this.gridMinor.material as THREE.LineBasicMaterial).color.set(this.theme.grid);
-    if (this.gridMajor) (this.gridMajor.material as THREE.LineBasicMaterial).color.set(this.theme.gridMajor);
+    this.colourGrid();
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.theme.edge);
     if (this.faces) this.colourFaces(this.faces.geometry);
     this.buildOverlays();
@@ -480,8 +482,22 @@ export class ViewportEngine {
     this.looksKey = key;
     this.style = style;
     this.shadows = shadows;
+    this.colourGrid();
     this.buildFaces();
     this.requestRender();
+  }
+
+  /** The grid's colours follow the style's background when it sets one (lane 15). */
+  private colourGrid(): void {
+    const tones = gridTones(this.style.background, this.theme);
+    if (this.gridMinor) (this.gridMinor.material as THREE.LineBasicMaterial).color.set(tones.minor);
+    if (this.gridMajor) (this.gridMajor.material as THREE.LineBasicMaterial).color.set(tones.major);
+  }
+
+  /** The grid's line colours now (tests and captures). */
+  gridColours(): { minor: string; major: string } {
+    const hex = (l: THREE.LineSegments | null) => (l ? `#${(l.material as THREE.LineBasicMaterial).color.getHexString()}` : "");
+    return { minor: hex(this.gridMinor), major: hex(this.gridMajor) };
   }
 
   /** What the style says right now (tests and captures). */
@@ -1287,18 +1303,35 @@ export class ViewportEngine {
     this.requestRender();
   }
 
-  /** A PNG of the current view, at most `max` pixels on its long side (.shz thumbnails). */
-  async snapshotPng(max = 512): Promise<Uint8Array> {
+  /** A picture of the current view for a .shz thumbnail (lane 15): WebP (JPEG where the
+   * browser cannot write WebP), at most `max` pixels on its long side and at most `limit`
+   * bytes, stepping the quality and then the size down until it fits; empty if it cannot. */
+  async snapshotThumbnail(max = 512, limit = 100 * 1024): Promise<Uint8Array> {
     this.beforeRender();
     this.renderer.render(this.scene, this.camera);
     const src = this.renderer.domElement;
-    const k = Math.min(1, max / Math.max(src.width, src.height));
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(src.width * k));
-    c.height = Math.max(1, Math.round(src.height * k));
-    c.getContext("2d")?.drawImage(src, 0, 0, c.width, c.height);
-    const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, "image/png"));
-    return blob ? new Uint8Array(await blob.arrayBuffer()) : new Uint8Array();
+    for (const side of [max, Math.round(max * 0.75), Math.round(max / 2), Math.round(max / 4)]) {
+      const k = Math.min(1, side / Math.max(src.width, src.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(src.width * k));
+      c.height = Math.max(1, Math.round(src.height * k));
+      const g = c.getContext("2d");
+      if (!g) return new Uint8Array();
+      // JPEG has no transparency: paint the viewport's background first.
+      g.fillStyle = this.style.background ? rgbCss(this.style.background) : this.theme.vp;
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(src, 0, 0, c.width, c.height);
+      for (const quality of [0.82, 0.7, 0.55, 0.4]) {
+        for (const type of ["image/webp", "image/jpeg"]) {
+          const blob = await new Promise<Blob | null>((resolve) => c.toBlob(resolve, type, quality));
+          // A browser that cannot write WebP hands back a PNG: try JPEG instead.
+          if (!blob || blob.type !== type) continue;
+          if (blob.size <= limit) return new Uint8Array(await blob.arrayBuffer());
+          break;
+        }
+      }
+    }
+    return new Uint8Array();
   }
 
   /** A compact description of the camera (tests and captures watch it change). */

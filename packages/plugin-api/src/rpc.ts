@@ -55,6 +55,23 @@ export type PluginMessage =
   | { t: "pong"; n: number }
   | { t: "log"; level: LogLevel; text: string };
 
+/**
+ * Lane 15: what every refused API call rejects with: the host's refusal (its `code`:
+ * "permission", "invalid", "not_found", "busy" ...), a parameter the runtime could not send
+ * ("invalid"), or a message that could not be sent at all ("send_failed").
+ */
+export class PluginApiError extends Error {
+  readonly code: string;
+  constructor(message: string, code = "error") {
+    super(message);
+    this.name = "PluginApiError";
+    this.code = code;
+  }
+}
+
+/** The events a plugin can listen to (API 1). */
+export const EVENT_NAMES = ["selectionChanged", "documentChanged", "documentOpened", "toolChanged", "unitsChanged"] as const;
+
 export class ProtocolError extends Error {
   constructor(message: string) {
     super(message);

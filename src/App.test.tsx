@@ -201,3 +201,31 @@ describe("plural and the import line", () => {
     expect(describeImport("a.shz", restored)).toBe("Opened a.shz: 3 solids, 4 meshes (not solid).");
   });
 });
+
+describe("keyboard after a pane control (lane 15)", () => {
+  it("a select picked with the mouse gives the keyboard back: r picks Rectangle", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "Cut list" }));
+    const sel = screen.getByLabelText("Round sizes to") as HTMLSelectElement;
+    sel.focus();
+    fireEvent.pointerDown(sel);
+    fireEvent.change(sel, { target: { value: "half_mm" } });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(document.activeElement).not.toBe(sel);
+    act(() => {
+      fireEvent.keyDown(document.activeElement ?? window, { key: "r" });
+    });
+    expect(pressed("rect")).toBe(true);
+  });
+
+  it("a select worked from the keyboard keeps focus (its arrows still move it)", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "Cut list" }));
+    const sel = screen.getByLabelText("Round sizes to") as HTMLSelectElement;
+    sel.focus();
+    fireEvent.keyDown(sel, { key: "ArrowDown" });
+    fireEvent.change(sel, { target: { value: "half_mm" } });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(document.activeElement).toBe(sel);
+  });
+});

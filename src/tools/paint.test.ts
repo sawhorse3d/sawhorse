@@ -64,9 +64,13 @@ const onFace = (object: number, face: number, opts: Parameters<typeof ev>[2] = {
 
 describe("Paint tool", () => {
   it("paints a face in the open context, a closed group's default, and a whole solid with Ctrl", async () => {
-    const { tool, painted } = setup();
+    const { h, tool, painted } = setup();
+    // Lane 15: face 2 already shows White oak: painting it again is not an edit (no undo step).
     tool.onEvent(onFace(1, 2));
-    expect(painted.at(-1)?.target).toEqual({ on: "faces", object: 1, faces: [2] });
+    expect(painted).toHaveLength(0);
+    expect(h.statuses.at(-1)?.text).toMatch(/already shows White oak: nothing to paint/);
+    tool.onEvent(onFace(1, 3));
+    expect(painted.at(-1)?.target).toEqual({ on: "faces", object: 1, faces: [3] });
     tool.onEvent(onFace(2, 2));
     expect(painted.at(-1)?.target).toEqual({ on: "items", items: [{ node: 5 }] });
     expect(painted.at(-1)?.what).toBe("group 'Carcass'");
@@ -170,5 +174,16 @@ describe("texture positioning maths", () => {
     const p = part(1, 1);
     expect(textureFrame(p, [[0, 0, 1], [2, 0, 1], [2, 1, 1], [0, 1, 1]]).u).toEqual([1, 0, 0]);
     expect(textureFrame(p, [[0, 0, 1], [1, 0, 1], [1, 3, 1], [0, 3, 1]]).u).toEqual([0, 1, 0]);
+  });
+});
+
+describe("Paint tool, lane 15", () => {
+  it("a group painted over parts with their own paint says so and points at Clear Paint", async () => {
+    const { h, tool } = setup();
+    // After the paint, solid 2's face 3 still shows its own material.
+    tool.onEvent(onFace(2, 2));
+    await new Promise((r) => setTimeout(r, 0));
+    const last = h.statuses.at(-1)?.text ?? "";
+    expect(last).toMatch(/Painted group 'Carcass' White oak; 1 face inside keeps paint of its own\. Edit > Clear Paint lets White oak show there\./);
   });
 });

@@ -18,4 +18,6 @@ export const events = api.events;
 export const storage = api.storage;
 export const file = api.file;
 export const net = api.net;
+/** What a refused call rejects with (lane 15): `e.code` is "permission", "invalid", "send_failed" ... */
+export const PluginApiError = api.PluginApiError;
 export default api;

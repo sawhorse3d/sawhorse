@@ -304,3 +304,18 @@ export function toneWeights(x: number, y: number, z: number): [number, number, n
   const front = xx + yy > 1e-12 ? (h * yy) / (xx + yy) : 0;
   return [top, front, h - front + bottom];
 }
+
+/** Lane 15: the grid's minor and major line colours on a style's background colour: drawn a
+ * little towards black on a light background and towards white on a dark one, so the grid
+ * reads on any background the Styles pane sets (the theme's own colours otherwise). */
+export function gridTones(background: readonly number[] | null | undefined, theme: { grid: string; gridMajor: string }): { minor: string; major: string } {
+  if (!background) return { minor: theme.grid, major: theme.gridMajor };
+  const [r, g, b] = background;
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const to = lum > 0.5 ? 0 : 255;
+  const mix = (k: number) => {
+    const c = [r, g, b].map((v) => Math.round(v + (to - v) * k));
+    return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  };
+  return { minor: mix(0.14), major: mix(0.32) };
+}

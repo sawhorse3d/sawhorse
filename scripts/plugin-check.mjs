@@ -10,7 +10,11 @@
 //   3. README.md and a licence file present (the samples' rule; a warning elsewhere);
 //   4. the JavaScript type-checked against packages/plugin-api/index.d.ts: under plugins/
 //      by plugins/tsconfig.json; a folder anywhere else by a throwaway tsconfig listing its
-//      `// @ts-check` modules (typeCheckOutside).
+//      `// @ts-check` modules (typeCheckOutside), which extends the plugin project's own
+//      tsconfig.json when there is one (in the folder or above it, up to its package.json),
+//      so the project's compiler options hold (lane 15).
+// Paths print relative to where you ran it (absolute when outside), never as ../../.. from
+// this repository (lane 15).
 // With no arguments it checks every folder under plugins/. Exit code 1 on any problem.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,22 +58,53 @@ export function checkFolder(dir, { strict = true } = {}) {
   return { problems, warnings, manifest: r.manifest, modules: pkg.order };
 }
 
+/** A path as a person reads it: relative to where the command ran, or absolute when it is
+ * not below it (lane 15: no "../../../.." from this repository). Forward slashes. */
+export function displayPath(p, cwd = process.cwd()) {
+  const rel = path.relative(cwd, p);
+  const out = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : rel === "" ? "." : p;
+  return out.replace(/\\/g, "/");
+}
+
+/** The plugin project's own tsconfig.json: in `dir` or a folder above it, stopping at the
+ * first folder with a package.json (the project's root). `null` when there is none. */
+export function projectTsconfig(dir) {
+  let at = path.resolve(dir);
+  for (;;) {
+    const t = path.join(at, "tsconfig.json");
+    if (existsSync(t)) return t;
+    if (existsSync(path.join(at, "package.json"))) return null;
+    const up = path.dirname(at);
+    if (up === at) return null;
+    at = up;
+  }
+}
+
 /**
  * Type-check a plugin folder outside plugins/: a throwaway tsconfig (in the system's temp
- * folder) lists its `// @ts-check` modules and the API's declarations, with the options of
- * plugins/tsconfig.json except that only the listed files are checked.
+ * folder) lists its `// @ts-check` modules and the API's declarations. With the project's
+ * own tsconfig.json it extends that one (its compiler options hold; only the files listed
+ * are checked, and nothing is emitted); without one it uses plugins/tsconfig.json's options.
  */
-export function typeCheckOutside(tsc, dir, modules) {
+export function typeCheckOutside(tsc, dir, modules, cwd = process.cwd()) {
   const tmp = mkdtempSync(path.join(tmpdir(), "sawhorse-plugin-check-"));
   try {
-    const config = {
-      compilerOptions: { allowJs: true, checkJs: false, noEmit: true, strict: true, noUnusedLocals: true, target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ES2022", "WebWorker"], types: [], skipLibCheck: true },
-      files: [...modules.map((m) => path.join(dir, m)), path.join(root, "packages", "plugin-api", "index.d.ts")].map((f) => f.replace(/\\/g, "/")),
-    };
+    const own = projectTsconfig(dir);
+    const files = [...modules.map((m) => path.join(dir, m)), path.join(root, "packages", "plugin-api", "index.d.ts")].map((f) => f.replace(/\\/g, "/"));
+    const config = own
+      ? { extends: own.replace(/\\/g, "/"), compilerOptions: { noEmit: true, allowJs: true }, files, include: [] }
+      : {
+          compilerOptions: { allowJs: true, checkJs: false, noEmit: true, strict: true, noUnusedLocals: true, target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ES2022", "WebWorker"], types: [], skipLibCheck: true },
+          files,
+        };
     const file = path.join(tmp, "tsconfig.json");
     writeFileSync(file, JSON.stringify(config, null, 2));
-    const r = spawnSync(process.execPath, [tsc, "-p", file], { cwd: root, encoding: "utf8" });
-    return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
+    // tsc prints file names relative to its working folder: run it where the person did.
+    const r = spawnSync(process.execPath, [tsc, "-p", file, "--pretty", "false"], { cwd, encoding: "utf8" });
+    // tsc names files relative to its working folder (a climb of ../ for a folder elsewhere
+    // on the disk): name them the way the rest of the report does.
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().replace(/^(.+?)(\(\d+,\d+\): )/gm, (_m, f, rest) => `${displayPath(path.resolve(cwd, f), cwd)}${rest}`);
+    return { ok: r.status === 0, out, tsconfig: own };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -82,8 +117,8 @@ async function main() {
   let bad = 0;
   const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
   for (const dir of dirs) {
-    const rel = path.relative(root, dir).replace(/\\/g, "/");
-    const inside = rel.startsWith("plugins/");
+    const inside = path.relative(root, dir).replace(/\\/g, "/").startsWith("plugins/");
+    const rel = displayPath(dir);
     const { problems, warnings, manifest, modules } = checkFolder(dir, { strict: inside });
     if (problems.length) bad++;
     console.log(`${problems.length ? "FAIL" : "ok  "} ${rel}${manifest ? `  ${manifest.id} ${manifest.version} (${manifest.permissions.join(", ") || "no permissions"}; ${modules.length} module${modules.length === 1 ? "" : "s"})` : ""}`);
@@ -98,10 +133,11 @@ async function main() {
         continue;
       }
       const r = typeCheckOutside(tsc, dir, checked);
-      if (r.ok) console.log(`ok   type check ${rel} (${checked.length} module${checked.length === 1 ? "" : "s"} against packages/plugin-api/index.d.ts)`);
+      const how = `against the Sawhorse plugin API${r.tsconfig ? `, with ${displayPath(r.tsconfig)}` : ""}`;
+      if (r.ok) console.log(`ok   type check ${rel} (${checked.length} module${checked.length === 1 ? "" : "s"} ${how})`);
       else {
         bad++;
-        console.log(`FAIL type check ${rel} (against packages/plugin-api/index.d.ts)\n${r.out}`);
+        console.log(`FAIL type check ${rel} (${how})\n${r.out}`);
       }
     }
   }

@@ -675,7 +675,7 @@ export function App() {
       if (!k) return;
       try {
         await queue.current;
-        const png = (await engineRef.current?.snapshotPng(512)) ?? new Uint8Array();
+        const png = (await engineRef.current?.snapshotThumbnail(512)) ?? new Uint8Array();
         // Plugins' document-scoped stores ride along as plugin-data.json (lane 11).
         const raw = await k.saveShz(live.current.units, png);
         const bytes = pluginsRef.current?.manager.doc.attach(raw) ?? raw;
@@ -2263,6 +2263,15 @@ export function App() {
           onSelect: () => selection[0]?.kind === "node" && void apply({ op: "make_unique", node: selection[0].node }, () => "Made unique: this copy has its own definition now."),
         },
         { label: "Explode", keys: "Ctrl+Shift+G", disabled: !selection.some((x) => x.kind === "node"), onSelect: () => void explode(selection.flatMap((x) => (x.kind === "node" ? [x.node] : []))) },
+        {
+          label: "Clear Paint",
+          title: "Take the paint off what the selection holds, so the group's (or the solid's container's) paint shows; one undo step",
+          disabled: !itemsOf(selection).length,
+          onSelect: () =>
+            void apply({ op: "clear_paint", items: itemsOf(selection) }, (r) =>
+              r.outcome.kind === "paint_cleared" ? `Paint cleared from ${plural(r.outcome.cleared_faces, "face")} and ${plural(r.outcome.cleared_items, "item")}: what holds them shows now.` : "Paint cleared.",
+            ),
+        },
         { label: "Hide", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_hidden", items: itemsOf(selection), hidden: true }, () => `Hid ${plural(itemsOf(selection).length, "item")} (the Outliner's eye shows them again).`) },
         { label: "Lock", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_locked", items: itemsOf(selection), locked: true }, () => `Locked ${plural(itemsOf(selection).length, "item")}.`) },
         {

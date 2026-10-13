@@ -148,6 +148,18 @@ The types, with every call's permission, are in [`packages/plugin-api/index.d.ts
 
 Calls that talk to the app return promises. `units` and `geometry` are local and synchronous. Values crossing to the app must be plain data: numbers, strings, booleans, `null`, lists, plain objects and `Uint8Array` (fields that are `undefined` are left out).
 
+**Errors.** A call that talks to the app never throws for a refusal: its promise **rejects with a `PluginApiError`** (import it from `"sawhorse"`), whose `code` says why: `"permission"` (plugin.json does not ask for what the call needs), `"invalid"` (a parameter the app cannot use, including one that is not plain data: it is refused before anything is sent), `"not_found"`, `"busy"`, `"unknown"` (no such call), `"send_failed"` (the message could not be sent at all, for instance after the plugin was stopped) and `"refused"` (anything else the app said no to). Building a batch step by step (`model.batch(...)`, `b.op(...)`) is local and throws at the line with the mistake; `commit()` rejects.
+
+```js
+import { storage, PluginApiError } from "sawhorse";
+try {
+  await storage.app.set("sizes", sizes);
+} catch (e) {
+  if (e instanceof PluginApiError && e.code === "permission") ui.notify("Turn on storage for this plugin to remember sizes.");
+  else throw e;
+}
+```
+
 ### sawhorse.model
 
 All need `model.read`. Every read waits for edits already on their way, so it sees the model as it is after them.
@@ -346,7 +358,10 @@ events.on("documentOpened", ({ name }) => {}); // model.read; New or Open
 events.on("toolChanged", ({ tool }) => {}); // ui
 events.on("unitsChanged", ({ units }) => {}); // no permission
 off(); // stop listening
+await off.ready; // resolves when the app has accepted the subscription
 ```
+
+`on()` returns at once; its `ready` promise rejects with a `PluginApiError` when the app refuses the subscription (`"permission"`: `selectionChanged` without `model.read`, say) or the name is not an event (`"invalid"`). A refused subscription keeps no listener and is also written to the plugin's console.
 
 ### sawhorse.storage
 
@@ -358,6 +373,8 @@ const sizes = await storage.app.get("sizes"); // null when missing
 await storage.document.set("cabinet", 12); // kept with the open document, saved in its .shz (64 KB per plugin), cleared by New
 await storage.document.keys(); await storage.document.delete("cabinet");
 ```
+
+Any string of 1 to 200 characters is a key, including `constructor`, `toString` and `__proto__`.
 
 ### sawhorse.file
 
@@ -420,7 +437,7 @@ npm run plugin:pack -- plugins/cabinet-generator   # -> dist-plugins/com.sawhors
 npm run plugin:pack -- my-plugin --out my-plugin.zip
 ```
 
-Under `plugins/` (the samples' rule) a missing `README.md` or `LICENSE` fails the check; anywhere else it is a warning. The type check covers the files that start with `// @ts-check`; a file without it is named in a warning and not checked. `plugin:pack` checks first and writes the same bytes for the same folder (files in a fixed order with a fixed date); without `--out` it writes into this repository's `dist-plugins/` (ignored by git), so pass `--out` to put the zip somewhere else.
+Under `plugins/` (the samples' rule) a missing `README.md` or `LICENSE` fails the check; anywhere else it is a warning. The type check covers the files that start with `// @ts-check`; a file without it is named in a warning and not checked. For a folder outside this repository the check uses **your project's own `tsconfig.json`** when there is one (in the plugin's folder or above it, up to the folder with your `package.json`; the report says "with <path>"), so your compiler options hold; without one it uses the samples' options (strict). Paths are printed relative to where you ran the command, or in full when the plugin is elsewhere. `plugin:pack` checks first and writes the same bytes for the same folder (files in a fixed order with a fixed date); without `--out` it writes into this repository's `dist-plugins/` (ignored by git), so pass `--out` to put the zip somewhere else.
 
 **Installing** (Plugins menu, or the buttons under the list in the Plugins pane):
 

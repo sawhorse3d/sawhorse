@@ -92,7 +92,9 @@ pub struct SaveOptions {
     /// The user's unit system, restored on open.
     #[serde(default)]
     pub display_units: Option<String>,
-    /// PNG bytes of a picture of the model.
+    /// A picture of the model: PNG, WebP or JPEG bytes (the name is older than WebP and
+    /// JPEG). Stored as `thumbnail.png` / `.webp` / `.jpg` by its bytes; one over
+    /// [`MAX_THUMBNAIL_BYTES`] or of another type is left out (lane 15).
     #[serde(skip)]
     pub thumbnail_png: Option<Vec<u8>>,
     /// e.g. `Sawhorse 0.1.0-alpha.1`.
@@ -100,8 +102,30 @@ pub struct SaveOptions {
     pub generator: Option<String>,
 }
 
+/// Largest thumbnail written into a `.shz` (lane 15): 100 KB.
+pub const MAX_THUMBNAIL_BYTES: usize = 100 * 1024;
+
+/// The thumbnail's entry name by its bytes: PNG, WebP or JPEG; `None` for anything else.
+pub fn thumbnail_entry(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG") {
+        Some("thumbnail.png")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("thumbnail.webp")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("thumbnail.jpg")
+    } else {
+        None
+    }
+}
+
 /// Write `model` as a `.shz`.
 pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
+    // Lane 15: a thumbnail of a known type and at most 100 KB, else none.
+    let thumb = opts
+        .thumbnail_png
+        .as_deref()
+        .filter(|b| b.len() <= MAX_THUMBNAIL_BYTES)
+        .and_then(|b| thumbnail_entry(b).map(|name| (name, b)));
     let w = |e: zip::result::ZipError| ShzError::Write(e.to_string());
     let io = |e: std::io::Error| ShzError::Write(e.to_string());
     let scene = Scene {
@@ -116,7 +140,7 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
             ..Units::default()
         },
         geometry: default_geometry(),
-        thumbnail: opts.thumbnail_png.as_ref().map(|_| "thumbnail.png".into()),
+        thumbnail: thumb.map(|(name, _)| name.into()),
         model: model.snapshot(),
     };
     // Texture images go into their own entries (`assets/...`), not into scene.json.
@@ -149,9 +173,9 @@ pub fn write(model: &Model, opts: &SaveOptions) -> Result<Vec<u8>, ShzError> {
     zw.write_all(&json).map_err(io)?;
     zw.start_file("geometry.glb", deflated).map_err(w)?;
     zw.write_all(&glb).map_err(io)?;
-    if let Some(png) = &opts.thumbnail_png {
-        zw.start_file("thumbnail.png", stored).map_err(w)?;
-        zw.write_all(png).map_err(io)?;
+    if let Some((name, bytes)) = thumb {
+        zw.start_file(name, stored).map_err(w)?;
+        zw.write_all(bytes).map_err(io)?;
     }
     zw.add_directory("assets/", stored).map_err(w)?;
     // Already compressed images are stored as they are.
@@ -370,6 +394,42 @@ mod tests {
             d.apply(&serde_json::from_str::<Op>(op).unwrap()).unwrap();
         }
         d
+    }
+
+    #[test]
+    fn thumbnails_are_png_webp_or_jpeg_at_most_100_kb() {
+        let d = sample();
+        let save = |t: Vec<u8>| {
+            write(
+                d.model(),
+                &SaveOptions {
+                    display_units: None,
+                    thumbnail_png: Some(t),
+                    generator: None,
+                },
+            )
+            .unwrap()
+        };
+        let webp = [b"RIFF".as_slice(), &[0, 0, 0, 0], b"WEBPVP8 ", &[1, 2, 3]].concat();
+        let o = read(&save(webp.clone())).unwrap();
+        assert_eq!(o.scene.thumbnail.as_deref(), Some("thumbnail.webp"));
+        assert_eq!(o.thumbnail.as_deref(), Some(webp.as_slice()));
+        let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2];
+        assert_eq!(
+            read(&save(jpeg)).unwrap().scene.thumbnail.as_deref(),
+            Some("thumbnail.jpg")
+        );
+        // Over 100 KB, or not a picture: left out, the model saved all the same.
+        let mut big = b"\x89PNG".to_vec();
+        big.resize(MAX_THUMBNAIL_BYTES + 1, 0);
+        let o = read(&save(big)).unwrap();
+        assert_eq!(o.scene.thumbnail, None);
+        assert_eq!(o.thumbnail, None);
+        assert_eq!(o.document.hash(), d.hash());
+        assert_eq!(
+            read(&save(b"GIF89a".to_vec())).unwrap().scene.thumbnail,
+            None
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or 
 | `mimetype` | yes (Sawhorse writes it first) | The ASCII text `application/vnd.sawhorse.shz`, **stored** (uncompressed) as the first entry, so a reader can identify the file from its first bytes without unzipping (the text starts at byte 38: a 30-byte local header, then the 8-byte name). Readers must not depend on it. |
 | `scene.json` | yes | Everything about the model: the header below and the model data. UTF-8 JSON. |
 | `geometry.glb` | yes (Sawhorse writes it) | Every solid and imported mesh as glTF 2.0 binary, so any glTF viewer can show a `.shz`. Also the fallback geometry for objects that `scene.json` lists without a `brep`. |
-| `thumbnail.png` | no | A picture of the model (Sawhorse: the view at save time, at most 512 px on the long side). Named by `scene.json`'s `thumbnail`. |
+| `thumbnail.webp` / `.jpg` / `.png` | no | A picture of the model (Sawhorse since lane 15: the view at save time as WebP, or JPEG where the browser cannot write WebP, at most 512 px on the long side and at most 100 KB; earlier files: PNG). Named by `scene.json`'s `thumbnail`; a reader takes any of the three. A writer leaves out a picture over 100 KB. |
 | `plugin-data.json` | no | Plugins' document-scoped stores (lane 11, ADR-0009): `{"version": 1, "plugins": {"<plugin id>": {"<key>": <JSON value>, ...}}}`, at most 64 KB per plugin. Written only when a plugin stored something in the document; readers that do not run plugins ignore it. Not part of the model hash. |
 | `assets/` | no | Texture images (PNG or JPEG), one entry per image, named by `scene.json`'s `textures[].path` and referenced from materials by that path. Stored, not compressed again. |
 

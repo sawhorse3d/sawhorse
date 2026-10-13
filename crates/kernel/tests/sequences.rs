@@ -173,6 +173,8 @@ enum Fuzz {
     /// Lane 15: the Eraser's flags on one edge of a solid (object pick, edge pick, set,
     /// clear; any bits, so refusals are exercised too).
     EdgeFlags(u8, u8, u8, u8),
+    /// Lane 15: Clear Paint on an item of the open context.
+    ClearPaint(u8),
     /// Move part of a solid: a face's vertices (which 0), an edge (1) or a vertex (2) of
     /// face `face`, by the pick, with or without autofold.
     MoveGeometry {
@@ -432,6 +434,7 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
         1 => prop::option::of(any::<u8>()).prop_map(Fuzz::GroupLoose),
         2 => (any::<u8>(), any::<u8>(), any::<bool>(), any::<bool>()).prop_map(|(o, a, s, m)| Fuzz::Soften(o, a, s, m)),
         2 => (any::<u8>(), any::<u8>(), 0u8..9, 0u8..9).prop_map(|(o, e, s, c)| Fuzz::EdgeFlags(o, e, s, c)),
+        1 => any::<u8>().prop_map(Fuzz::ClearPaint),
     ]
 }
 
@@ -1848,6 +1851,9 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 clear: *clear,
             }
         }
+        Fuzz::ClearPaint(k) => Op::ClearPaint {
+            items: vec![item(*k)],
+        },
         Fuzz::GroupLoose(k) => Op::GroupLoose {
             meshes: match k {
                 None => vec![],

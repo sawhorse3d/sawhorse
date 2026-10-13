@@ -107,6 +107,43 @@ await ui.registerCommand({
       expect(typo.status).toBe(1);
       expect(typo.stdout).toContain("FAIL type check");
       expect(typo.stdout).toContain("Type 'string' is not assignable to type 'Vec3'");
+      // Lane 15: paths print as given (absolute here, outside this repository), never as
+      // a climb of ../ from it.
+      expect(ok.stdout).toContain(path.join(dir, "hello-box").replace(/\\/g, "/"));
+      expect(ok.stdout).not.toMatch(/\.\.\//);
+      expect(typo.stdout).not.toMatch(/\.\.\/\.\.\//);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("respects the plugin project's own tsconfig.json (lane 15)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "sawhorse-plugin-project-"));
+    try {
+      const manifest = { id: "org.example.loose", name: "Loose", version: "1.0.0", api: 1, description: "", author: "You", license: "MIT", permissions: ["ui"], contributes: { commands: [{ id: "hi", title: "Hi" }] }, entry: "main.js" };
+      // An untyped parameter: an error under the samples' strict options, fine under the
+      // project's own (strict off).
+      const main = `// @ts-check
+import { ui } from "sawhorse";
+
+function shout(text) {
+  return String(text).toUpperCase();
+}
+
+await ui.registerCommand({ id: "hi", run: () => ui.notify(shout("hi")) });
+`;
+      const plugin = path.join(dir, "loose");
+      mkdirSync(plugin);
+      writeFileSync(path.join(plugin, "plugin.json"), JSON.stringify(manifest));
+      writeFileSync(path.join(plugin, "main.js"), main);
+      const strict = node(["scripts/plugin-check.mjs", plugin]);
+      expect(strict.status, strict.stdout).toBe(1);
+      expect(strict.stdout).toContain("implicitly has an 'any' type");
+      writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "my-plugins", private: true }));
+      writeFileSync(path.join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: false, target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ES2022", "WebWorker"], types: [], skipLibCheck: true } }));
+      const own = node(["scripts/plugin-check.mjs", plugin]);
+      expect(own.status, own.stdout + own.stderr).toBe(0);
+      expect(own.stdout).toContain(`with ${path.join(dir, "tsconfig.json").replace(/\\/g, "/")}`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

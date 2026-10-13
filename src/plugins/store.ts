@@ -101,6 +101,17 @@ const checkKey = (key: unknown): string => {
   return key;
 };
 
+/** Lane 15: a key read as the store's own entry only, so "constructor", "toString" or
+ * "__proto__" are keys like any other (not Object.prototype's members). */
+function own(rec: Record<string, unknown> | undefined, key: string): unknown {
+  return rec && Object.prototype.hasOwnProperty.call(rec, key) ? rec[key] : undefined;
+}
+
+/** Set an own entry, even for "__proto__" (a plain assignment would change the prototype). */
+function put(rec: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(rec, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 function sizeOf(v: unknown): number {
   return JSON.stringify(v ?? null).length;
 }
@@ -116,11 +127,11 @@ export class AppStore {
     return v && typeof v === "object" && !Array.isArray(v) ? v : {};
   }
   get(key: unknown): unknown {
-    return this.all()[checkKey(key)] ?? null;
+    return own(this.all(), checkKey(key)) ?? null;
   }
   set(key: unknown, value: unknown): void {
     const all = this.all();
-    all[checkKey(key)] = value;
+    put(all, checkKey(key), value);
     if (sizeOf(all) > APP_QUOTA) throw new RangeError(`the plugin's store would be over ${APP_QUOTA / 1024} KB`);
     if (!writeJson(this.key, all)) throw new Error("this browser is not keeping data for the app (private window or storage blocked)");
   }
@@ -146,12 +157,13 @@ export class DocStore {
   private data: Record<string, Record<string, unknown>> = {};
 
   get(plugin: string, key: unknown): unknown {
-    return this.data[plugin]?.[checkKey(key)] ?? null;
+    return own(own(this.data, plugin) as Record<string, unknown> | undefined, checkKey(key)) ?? null;
   }
   set(plugin: string, key: unknown, value: unknown): void {
-    const next = { ...(this.data[plugin] ?? {}), [checkKey(key)]: value };
+    const next: Record<string, unknown> = { ...((own(this.data, plugin) as Record<string, unknown> | undefined) ?? {}) };
+    put(next, checkKey(key), value);
     if (sizeOf(next) > DOC_QUOTA) throw new RangeError(`the plugin's document store would be over ${DOC_QUOTA / 1024} KB`);
-    this.data[plugin] = next;
+    put(this.data, plugin, next);
   }
   delete(plugin: string, key: unknown): void {
     if (this.data[plugin]) delete this.data[plugin][checkKey(key)];

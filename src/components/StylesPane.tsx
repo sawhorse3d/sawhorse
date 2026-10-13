@@ -5,9 +5,12 @@
 // off, the date, the time, the latitude, light and dark. Sliders show their effect live and
 // are one undo step when let go; styles and shadows are saved with the document and with
 // each scene.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FaceStyle, Shadows, Style } from "../kernel/types";
 import { DAYS_IN_MONTH, DEFAULT_SHADOWS, FACE_STYLES, MONTHS, STYLE_PRESETS, clock, compactStyle, fullStyle, hexRgb, rgbHex, type FullStyle } from "../lib/looks";
+
+/** How long after the last arrow-key step a slider commits (lane 15: one undo step). */
+export const SLIDER_KEY_COMMIT_MS = 700;
 
 export interface StylesPaneProps {
   style: Style | null;
@@ -57,17 +60,41 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
   // Slider values while dragging (committed when let go).
   const [draft, setDraft] = useState<Shadows>(doc);
   useEffect(() => setDraft(doc), [doc.on, doc.month, doc.day, doc.minutes, doc.latitude, doc.light, doc.dark, doc.ground, doc.faces]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The latest draft, for a commit made from a timer (lane 15).
+  const latest = useRef<Shadows>(draft);
+  latest.current = draft;
   const live = (next: Partial<Shadows>) => {
-    const d = { ...draft, ...next };
+    const d = { ...latest.current, ...next };
+    latest.current = d;
     setDraft(d);
     onPreviewShadows(d);
   };
   const commit = (next: Partial<Shadows> = {}) => {
-    const d = { ...draft, ...next };
+    if (keyTimer.current) {
+      clearTimeout(keyTimer.current);
+      keyTimer.current = null;
+    }
+    const d = { ...latest.current, ...next };
     if (d.day > DAYS_IN_MONTH[d.month - 1]) d.day = DAYS_IN_MONTH[d.month - 1];
+    latest.current = d;
     setDraft(d);
     onPreviewShadows(null);
+    // Nothing changed (a click on the thumb, a key that did not move it): no undo step.
+    if ((Object.keys(d) as (keyof Shadows)[]).every((k) => d[k] === doc[k])) return;
     onShadows(d);
+  };
+  // Lane 15: arrow keys on a slider move it at once and commit once they stop (0.7 s), so a
+  // run of steps is one undo step; leaving the slider commits straight away.
+  const keyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (keyTimer.current) clearTimeout(keyTimer.current);
+  }, []);
+  const commitSoon = () => {
+    if (keyTimer.current) clearTimeout(keyTimer.current);
+    keyTimer.current = setTimeout(() => {
+      keyTimer.current = null;
+      commit();
+    }, SLIDER_KEY_COMMIT_MS);
   };
   const slider = (key: "minutes" | "latitude" | "light" | "dark", min: number, max: number, step: number, label: string, shown: string) => (
     <label className="slider">
@@ -84,9 +111,9 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
         disabled={!draft.on}
         onChange={(e) => live({ [key]: Number(e.target.value) })}
         onPointerUp={() => commit()}
-        onKeyUp={() => commit()}
+        onKeyUp={() => commitSoon()}
         onBlur={() => {
-          if (draft[key] !== doc[key]) commit();
+          if (keyTimer.current || latest.current[key] !== doc[key]) commit();
         }}
       />
     </label>

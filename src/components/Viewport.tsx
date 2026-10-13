@@ -91,6 +91,8 @@ export interface SawhorseHooks {
   engineTriangles(): number;
   /** Lane 15: edge segments drawn as lines, soft, hidden; whether smooth normals came. */
   edgeCounts(): ReturnType<ViewportEngine["edgeCounts"]>;
+  /** Lane 15: the grid's line colours (they follow the style's background). */
+  gridColours(): ReturnType<ViewportEngine["gridColours"]>;
 }
 
 export function Viewport(props: ViewportProps) {
@@ -136,6 +138,7 @@ export function Viewport(props: ViewportProps) {
       frameTime: (n) => engine.benchmark(n),
       engineTriangles: () => (engine.captureSource().mesh?.indices.length ?? 0) / 3,
       edgeCounts: () => engine.edgeCounts(),
+      gridColours: () => engine.gridColours(),
     };
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), ...hooks };

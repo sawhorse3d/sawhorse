@@ -1008,3 +1008,79 @@ fn the_painted_golden_is_these_ops() {
         std::fs::write(&path, serde_json::to_string_pretty(&g).unwrap() + "\n").unwrap();
     }
 }
+
+/// Lane 15: Clear Paint takes the paint off what a group holds, so the group's shows; it
+/// is one undo step, refuses when nothing has paint of its own, and leaves component
+/// instances to be opened.
+#[test]
+fn clear_paint_lets_the_group_show() {
+    let mut d = Document::with_ground_sketch();
+    let b = board(&mut d, 0.0, 0.0, 0.0, 10.0, 4.0, 1.0);
+    ok(&mut d, define("Walnut", [90, 60, 40], None));
+    ok(&mut d, define("Paint", [240, 240, 236], None));
+    ok(&mut d, define("Red", [160, 40, 30], None));
+    ok(&mut d, paint_faces(b, &[2], Some("Walnut")));
+    ok(&mut d, paint_items(&[Item::Object(b)], Some("Paint")));
+    let OpOutcome::GroupCreated { group } = ok(
+        &mut d,
+        Op::MakeGroup {
+            items: vec![Item::Object(b)],
+            name: Some("Box".into()),
+        },
+    ) else {
+        panic!()
+    };
+    ok(&mut d, paint_items(&[Item::Node(group)], Some("Red")));
+    // The group's red shows nowhere: the faces and the solid keep their own.
+    assert_eq!(shows(&d, b, 2).as_deref(), Some("Walnut"));
+    assert_eq!(shows(&d, b, 3).as_deref(), Some("Paint"));
+    let out = ok(
+        &mut d,
+        Op::ClearPaint {
+            items: vec![Item::Node(group)],
+        },
+    );
+    assert_eq!(
+        out,
+        OpOutcome::PaintCleared {
+            cleared_faces: 1,
+            cleared_items: 1
+        }
+    );
+    for f in 1..=6 {
+        assert_eq!(shows(&d, b, f).as_deref(), Some("Red"), "face {f}");
+    }
+    assert!(d.model().object(b).unwrap().face_paint().is_empty());
+    // One undo step.
+    d.undo().unwrap();
+    assert_eq!(shows(&d, b, 2).as_deref(), Some("Walnut"));
+    assert_eq!(shows(&d, b, 3).as_deref(), Some("Paint"));
+    d.redo().unwrap();
+    // Nothing left to clear: refused, nothing changed.
+    let msg = refused(
+        &mut d,
+        Op::ClearPaint {
+            items: vec![Item::Node(group)],
+        },
+    );
+    assert!(msg.contains("nothing there has paint of its own"), "{msg}");
+    // A component's parts belong to its definition: open it first.
+    let c = board(&mut d, 20.0, 0.0, 0.0, 10.0, 4.0, 1.0);
+    let OpOutcome::ComponentCreated { instance, .. } = ok(
+        &mut d,
+        Op::MakeComponent {
+            items: vec![Item::Object(c)],
+            name: "Shelf".into(),
+        },
+    ) else {
+        panic!()
+    };
+    let msg = refused(
+        &mut d,
+        Op::ClearPaint {
+            items: vec![Item::Node(instance)],
+        },
+    );
+    assert!(msg.contains("open the component"), "{msg}");
+    assert!(refused(&mut d, Op::ClearPaint { items: vec![] }).contains("pick at least one"));
+}

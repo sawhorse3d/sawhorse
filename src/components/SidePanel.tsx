@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CutListPane, type CutListPaneProps } from "./CutListPane";
 import type { CreditsHandle } from "../credits/useCredits";
 import type { RenderPasses } from "../render/passes";
@@ -53,6 +53,8 @@ export interface SidePanelProps {
 
 export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, plugins, focusPlugins = 0, onPane }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
+  /** The select the pointer last went down on (lane 15). */
+  const pointerSelect = useRef<HTMLSelectElement | null>(null);
   useEffect(() => {
     onPane?.(pane);
   }, [pane, onPane]);
@@ -73,7 +75,29 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
   }, [focusPlugins]);
 
   return (
-    <aside className="side" aria-label="Panels">
+    <aside
+      className="side"
+      aria-label="Panels"
+      // Lane 15: a select picked with the mouse gives the keyboard back to the model, so the
+      // next "r" or "p" picks a tool instead of jumping the select to an option. (A select
+      // worked from the keyboard keeps focus: its arrows still move through the options.)
+      onPointerDownCapture={(e) => {
+        pointerSelect.current = e.target instanceof HTMLSelectElement ? e.target : null;
+      }}
+      onKeyDownCapture={() => {
+        pointerSelect.current = null;
+      }}
+      onChangeCapture={(e) => {
+        const t = e.target;
+        if (t instanceof HTMLSelectElement && t === pointerSelect.current) {
+          pointerSelect.current = null;
+          // After React has handled the change.
+          setTimeout(() => {
+            if (document.activeElement === t) t.blur();
+          }, 0);
+        }
+      }}
+    >
       <div className="tabs" role="tablist">
         {TABS.filter((t) => renderOn || t.id !== "render").map((t) => (
           <button

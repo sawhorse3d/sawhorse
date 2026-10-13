@@ -572,6 +572,12 @@ pub enum LooksError {
     NoSuchFace { object: u64, face: u64 },
     #[error("pick at least one face or item to paint")]
     NothingToPaint,
+    /// Lane 15: Clear Paint found no paint of its own on anything picked.
+    #[error("nothing there has paint of its own: it already shows what holds it")]
+    NothingToClear,
+    /// Lane 15: the parts of a component instance belong to its definition.
+    #[error("open the component to clear the paint of its parts (it reaches every copy)")]
+    InsideComponent,
     #[error("the model already holds {MAX_TEXTURES} texture images")]
     TooManyTextures,
     #[error("{0}")]
@@ -1179,6 +1185,84 @@ impl Model {
             }
         }
         Ok(OpOutcome::MaterialSet)
+    }
+
+    /// [`crate::model::Op::ClearPaint`] (lane 15).
+    pub(crate) fn clear_paint(
+        &mut self,
+        items: &[crate::nodes::Item],
+    ) -> Result<OpOutcome, KernelError> {
+        if items.is_empty() {
+            return Err(LooksError::NothingToPaint.into());
+        }
+        let things = self.things(items)?;
+        for &t in &things {
+            self.unlocked(t)?;
+        }
+        let kids = self.kids();
+        let mut all: Vec<Thing> = Vec::new();
+        for t in things {
+            match t {
+                Thing::Node(k) => {
+                    if matches!(self.nodes[k].kind, crate::nodes::NodeKind::Instance(_)) {
+                        return Err(LooksError::InsideComponent.into());
+                    }
+                    for x in self.subtree_things(&kids, k) {
+                        // Stop at component instances: what is inside them is the definition's.
+                        let parent = self.parent_of(x);
+                        let inside_instance = self
+                            .path_of(parent)
+                            .iter()
+                            .skip_while(|&&a| a != k)
+                            .skip(1)
+                            .any(|&a| {
+                                matches!(self.nodes[a].kind, crate::nodes::NodeKind::Instance(_))
+                            });
+                        if !inside_instance && !all.contains(&x) {
+                            all.push(x);
+                        }
+                    }
+                }
+                other => {
+                    if !all.contains(&other) {
+                        all.push(other);
+                    }
+                }
+            }
+        }
+        let (mut faces, mut cleared) = (0, 0);
+        for t in all {
+            let changed = match t {
+                Thing::Object(k) => {
+                    let o = &mut self.objects[k];
+                    for p in o.paint.values_mut() {
+                        if p.material.take().is_some() {
+                            faces += 1;
+                        }
+                    }
+                    o.paint.retain(|_, p| !p.is_default());
+                    o.material.take().is_some()
+                }
+                Thing::Mesh(k) => self.meshes[k].material.take().is_some(),
+                Thing::Node(k) => {
+                    // A nested group's own paint goes; an instance keeps its own (it is the
+                    // copy's paint, not its parts').
+                    matches!(self.nodes[k].kind, crate::nodes::NodeKind::Group)
+                        && self.nodes[k].material.take().is_some()
+                }
+            };
+            if changed {
+                cleared += 1;
+            }
+            self.mark(self.parent_of(t));
+        }
+        if faces + cleared == 0 {
+            return Err(LooksError::NothingToClear.into());
+        }
+        Ok(OpOutcome::PaintCleared {
+            cleared_faces: faces,
+            cleared_items: cleared,
+        })
     }
 
     /// [`crate::model::Op::SetFaceUv`]: how the texture sits on one face (`None`: the

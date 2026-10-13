@@ -254,8 +254,21 @@ export class PaintTool extends Tool {
           h.status("Choose a material in the Materials pane first (or Alt+click a face to pick one up).", true);
           return;
         }
+        // Lane 15: what already shows this material is not painted again (no undo step).
+        const mesh = h.mesh();
+        if (p.parts.length && p.parts.every((i) => mesh?.parts[i]?.material === m.name)) {
+          h.status(`${p.what.charAt(0).toUpperCase()}${p.what.slice(1)} already shows ${m.name}: nothing to paint.`);
+          return;
+        }
         this.ctx.preview(null);
-        void this.ctx.paint(p.target, p.what);
+        void this.ctx.paint(p.target, p.what).then((painted) => {
+          if (!painted || p.target.on !== "items") return;
+          // Lane 15: paint on a group or solid is its default; parts with paint of their own
+          // keep it. Say so, and how to let the new paint show.
+          const after = h.mesh();
+          const kept = p.parts.filter((i) => after?.parts[i] && after.parts[i].material !== m.name).length;
+          if (kept) h.status(`Painted ${p.what} ${m.name}; ${kept} face${kept === 1 ? "" : "s"} inside keep${kept === 1 ? "s" : ""} paint of ${kept === 1 ? "its" : "their"} own. Edit > Clear Paint lets ${m.name} show there.`);
+        });
         return;
       }
       case "dblclick": {
@@ -322,14 +335,31 @@ export class PaintTool extends Tool {
     return [dot(sub(hit, p.origin), p.u), dot(sub(hit, p.origin), p.v)];
   }
 
+  /** Screen pixels per frame unit (metre) at frame point `q`. */
+  private pxPerUnit(q: [number, number]): number {
+    const [ax, ay] = this.host.toScreen(this.world(q));
+    const [bx, by] = this.host.toScreen(this.world([q[0] + 1e-3, q[1]]));
+    return Math.hypot(bx - ax, by - ay) / 1e-3;
+  }
+
+  /** Half the size a handle is drawn at (frame units): 8% of the face's radius, but never
+   * under 7 px on screen (lane 15: a 14 px target at least, however far out the view is). */
+  private handleHalf(q: [number, number], radius: number): number {
+    const px = this.pxPerUnit(q);
+    const s = radius * 0.08;
+    return px > 0 && s * px < 7 ? 7 / px : s;
+  }
+
   private handleAt(x: number, y: number): Handle | null {
     const hs = this.handles();
     let best: Handle | null = null;
-    let bestD = 14;
+    let bestD = Infinity;
     for (const k of ["turn", "scale", "move"] as Handle[]) {
       const [sx, sy] = this.host.toScreen(this.world(hs[k]));
       const d = Math.hypot(sx - x, sy - y);
-      if (d < bestD) {
+      // Lane 15: a hit anywhere on the drawn handle, and never less than 14 px across.
+      const reach = Math.max(14, this.handleHalf(hs[k], this.pos?.radius ?? 0) * this.pxPerUnit(hs[k]) * Math.SQRT2 + 2);
+      if (d <= reach && d < bestD) {
         bestD = d;
         best = k;
       }
@@ -442,12 +472,12 @@ export class PaintTool extends Tool {
       this.world([q[0] - r, q[1] + r]),
     ];
     const ring = (q: [number, number], r: number): V3[] => Array.from({ length: 16 }, (_, k) => this.world([q[0] + r * Math.cos((k * Math.PI) / 8), q[1] + r * Math.sin((k * Math.PI) / 8)]));
-    const s = p.radius * 0.08;
+    const half = (q: [number, number]) => this.handleHalf(q, p.radius);
     const overlay: OverlayItem[] = [
       { kind: "segments", points: [this.world(hs.move), this.world(hs.turn), this.world(hs.move), this.world(hs.scale)], color: "--accent", width: 1.25, dashed: true },
-      { kind: "loop", points: square(hs.move, s), color: "--accent", width: 2.5 },
-      { kind: "loop", points: ring(hs.turn, s), color: "--inf-face", width: 2.5 },
-      { kind: "loop", points: square(hs.scale, s * 0.8), color: "--inf-end", width: 2.5 },
+      { kind: "loop", points: square(hs.move, half(hs.move)), color: "--accent", width: 2.5 },
+      { kind: "loop", points: ring(hs.turn, half(hs.turn)), color: "--inf-face", width: 2.5 },
+      { kind: "loop", points: square(hs.scale, half(hs.scale) * 0.8), color: "--inf-end", width: 2.5 },
     ];
     const rot = Math.round(((p.now.rotation ?? 0) % 360) * 10) / 10;
     const sc = Math.round((p.now.scale?.[0] ?? 1) * 100);

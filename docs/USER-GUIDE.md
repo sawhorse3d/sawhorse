@@ -202,6 +202,8 @@ The Materials pane (right panel, **Materials**) shows the active material at the
 - Ctrl+click a face: its whole solid. Select several faces, or several solids, groups and components, and click one of them: all of them, one undo step.
 - Hover shows what a click would paint, in the material's colour.
 - Alt+click a face to make the material it shows the active one (sampling).
+- Painting what already shows the material does nothing (no undo step), and says so.
+- Painting a group (or a solid) whose parts have paint of their own: those parts keep it, and the status line counts them. **Edit > Clear Paint** with the group selected takes the paint off everything inside it (faces, solids, nested groups), so the group's shows everywhere: one undo step. A component's parts belong to its definition: open it (double-click) and clear them there.
 - A face shows its own material, else its solid's, else the nearest group or component around it that has one. Back faces of open imported meshes show the default back-face colour. Faces that a push or a cut makes start unpainted; a face you split, or draw a shape on, keeps its paint on every piece.
 
 **Editing a material.** Click a material of your model to see its editor: rename it, change its colour, its texture's real size (type a width or a height in your units: the other follows, keeping the image's shape) and rotation, and what it is as stock. **Delete** takes it off everything (what was painted with it shows what is around it). **Import image...** makes a new material from a PNG or JPEG, one foot across until you give it its real size.

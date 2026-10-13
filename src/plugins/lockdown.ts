@@ -120,7 +120,23 @@ function removeOwn(at: object, name: string): void {
   }
 }
 
+/** Some property by this name anywhere on `obj`'s prototype chain (no getter is run). */
+export function hasAnywhere(obj: object, name: string): boolean {
+  let at: object | null = obj;
+  const seen = new Set<object>();
+  while (at && !seen.has(at)) {
+    seen.add(at);
+    if (Object.getOwnPropertyDescriptor(at, name)) return true;
+    at = Object.getPrototypeOf(at);
+  }
+  return false;
+}
+
 function reachable(obj: object, name: string): boolean {
+  // Lane 15: a name that is gone from the whole chain is never read, so a deprecated getter
+  // the lockdown removed (TEMPORARY, PERSISTENT, webkitRequestFileSystem ...) is not run and
+  // the browser logs no deprecation warning for it.
+  if (!hasAnywhere(obj, name)) return false;
   try {
     return (obj as Record<string, unknown>)[name] !== undefined;
   } catch {

@@ -46,3 +46,30 @@ describe("Styles pane, soft edges (lane 15)", () => {
     ).toEqual({ objects: [2, 7], label: "2 solids selected" });
   });
 });
+
+describe("Styles pane sliders (lane 15)", () => {
+  it("a run of arrow-key steps on a slider is one undo step", () => {
+    vi.useFakeTimers();
+    try {
+      const sun = { on: true, month: 6, day: 21, minutes: 13 * 60 + 30, latitude: 45, light: 80, dark: 45, ground: true, faces: true };
+      const p = props({ shadows: sun });
+      const { rerender } = render(<StylesPane {...p} />);
+      const s = screen.getByLabelText("Latitude");
+      for (const v of [46, 47, 48]) {
+        fireEvent.change(s, { target: { value: String(v) } });
+        fireEvent.keyUp(s, { key: "ArrowRight" });
+        vi.advanceTimersByTime(200);
+      }
+      expect(p.onShadows).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1000);
+      expect(p.onShadows).toHaveBeenCalledTimes(1);
+      expect(p.onShadows).toHaveBeenLastCalledWith(expect.objectContaining({ latitude: 48 }));
+      // The document now says 48; a pointer release with nothing moved is not an edit.
+      rerender(<StylesPane {...p} shadows={{ ...sun, latitude: 48 }} />);
+      fireEvent.pointerUp(s);
+      expect(p.onShadows).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

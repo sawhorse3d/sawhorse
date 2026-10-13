@@ -7,7 +7,13 @@
 // installs its `api` where the "sawhorse" module (sawhorse.js) picks it up. Unit tests
 // build it over a fake transport (test/runtime.test.ts).
 import { bbox, plane, transform, vec3, type Bounds, type Transform, type Vec3 } from "./geometry.ts";
-import { checkData, logText, type Data, type HostMessage, type LogLevel, type PluginInfo, type PluginMessage } from "./rpc.ts";
+import { checkData, EVENT_NAMES, logText, PluginApiError, type Data, type HostMessage, type LogLevel, type PluginInfo, type PluginMessage } from "./rpc.ts";
+
+export { PluginApiError };
+
+/** Lane 15: a call refused before it is sent rejects (never throws) with a typed error. */
+const refuse = (e: unknown, code = "invalid"): Promise<never> =>
+  Promise.reject(e instanceof PluginApiError ? e : new PluginApiError(e instanceof Error ? e.message : String(e), code));
 
 /** A value produced by an earlier op of the same batch, filled in by the kernel worker. */
 export interface Placeholder {
@@ -314,10 +320,23 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
   const send = (msg: PluginMessage) => opts.send(msg);
   const request = (method: string, params: unknown = null): Promise<Data> => {
     const id = nextId++;
-    const data = checkData(plain(params), `${method} params`);
+    // Lane 15: parameters that cannot cross reject the call (they used to throw at the caller).
+    let data: Data;
+    try {
+      data = checkData(plain(params), `${method} params`);
+    } catch (e) {
+      return refuse(e, "invalid");
+    }
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
-      send({ t: "req", id, method, params: data });
+      try {
+        send({ t: "req", id, method, params: data });
+      } catch (e) {
+        // The message could not be sent (the channel is gone, or the browser would not copy
+        // it): the call fails now instead of waiting for an answer that cannot come.
+        pending.delete(id);
+        reject(new PluginApiError(`${method}: the request could not be sent (${e instanceof Error ? e.message : String(e)})`, "send_failed"));
+      }
     });
   };
 
@@ -338,6 +357,8 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     materials: () => request("model.materials"),
     cutList: (options?: { rounding?: string; visibleOnly?: boolean }) => request("model.cutList", options ?? {}),
     batch: (name: string) => {
+      // A batch is built step by step before it is applied, so a bad name is a mistake in the
+      // plugin's code at that line: it throws (apply() rejects on anything the host refuses).
       if (typeof name !== "string" || !name.trim() || name.length > 80) throw new TypeError("a batch needs a name of 1 to 80 characters (it names the undo step)");
       return new Batch(name, async (n, ops) => (await request("model.batch", { name: n, ops: ops as Data[] })) as unknown[]);
     },
@@ -357,18 +378,18 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
 
   const ui = {
     registerCommand: (spec: { id: string; run: Handler }) => {
-      if (!spec || typeof spec.run !== "function") throw new TypeError("registerCommand needs { id, run }");
+      if (!spec || typeof spec.run !== "function") return refuse(new TypeError("registerCommand needs { id, run }"));
       commands.set(spec.id, spec.run);
       return request("ui.registerCommand", { id: spec.id });
     },
     registerPanel: (spec: { id: string; title?: string; body: unknown[]; onAction?: Handler; onChange?: Handler }) => {
-      if (!spec || !Array.isArray(spec.body)) throw new TypeError("registerPanel needs { id, body: [...] }");
+      if (!spec || !Array.isArray(spec.body)) return refuse(new TypeError("registerPanel needs { id, body: [...] }"));
       panels.set(spec.id, { onAction: spec.onAction, onChange: spec.onChange });
       const handle = panelHandle(spec.id);
       return request("ui.registerPanel", { id: spec.id, title: spec.title ?? null, body: spec.body as Data[] }).then(() => handle);
     },
     registerTool: (spec: { id: string } & ToolHandlers) => {
-      if (!spec || typeof spec.id !== "string") throw new TypeError("registerTool needs { id, onEvent, ... }");
+      if (!spec || typeof spec.id !== "string") return refuse(new TypeError("registerTool needs { id, onEvent, ... }"));
       const handle = toolHandle(spec.id);
       tools.set(spec.id, { handlers: spec, handle });
       return request("ui.registerTool", { id: spec.id }).then(() => handle);
@@ -392,17 +413,33 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     format: (metres: number) => opts.unitsImpl.format(metres, units),
   };
 
+  /** Each event's subscription with the host: resolves when the host accepts it, rejects
+   * when it refuses (an event the plugin has no permission for) or it is not an event. */
+  const subscriptions = new Map<string, Promise<void>>();
   const events = {
-    on: (name: string, fn: Handler): (() => void) => {
-      if (typeof fn !== "function") throw new TypeError("events.on needs a handler function");
-      let set = listeners.get(name);
-      if (!set) {
-        set = new Set();
-        listeners.set(name, set);
-        request("events.subscribe", { name }).catch((e) => log("error", [`events.on("${name}"): ${e instanceof Error ? e.message : String(e)}`]));
+    /** Listen. Returns a function that stops listening; its `ready` promise resolves when the
+     * host has accepted the subscription and rejects (PluginApiError) when it refuses it. */
+    on: (name: string, fn: Handler): (() => void) & { ready: Promise<void> } => {
+      let ready = subscriptions.get(name);
+      if (typeof fn !== "function") ready = refuse(new TypeError("events.on needs a handler function"));
+      else if (!(EVENT_NAMES as readonly string[]).includes(name)) ready = refuse(new PluginApiError(`events.on: no event "${String(name)}" (there are ${EVENT_NAMES.join(", ")})`, "invalid"));
+      else if (!ready) {
+        listeners.set(name, new Set());
+        ready = request("events.subscribe", { name }).then(() => undefined);
+        subscriptions.set(name, ready);
+        // Refused: no listener stays, and the refusal is in the plugin's console too.
+        ready.catch((e) => {
+          listeners.delete(name);
+          subscriptions.delete(name);
+          log("error", [`events.on("${name}"): ${e instanceof Error ? e.message : String(e)}`]);
+        });
       }
-      set.add(fn);
-      return () => set.delete(fn);
+      const set = typeof fn === "function" ? listeners.get(name) : undefined;
+      if (set) set.add(fn);
+      const off = Object.assign(() => void set?.delete(fn), { ready });
+      // Awaiting `ready` is optional: a refusal is logged either way, never unhandled.
+      ready.catch(() => {});
+      return off;
     },
   };
 
@@ -444,6 +481,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
     storage: Object.freeze({ app: Object.freeze(kv("app")), document: Object.freeze(kv("document")) }),
     file: Object.freeze(file),
     net: Object.freeze(net),
+    PluginApiError,
   });
 
   const run = async (fn: string, args: Data[]): Promise<unknown> => {
@@ -486,11 +524,7 @@ export function createRuntime(opts: RuntimeOptions): Runtime {
         if (!p) return;
         pending.delete(msg.id);
         if (msg.ok) p.resolve(msg.value);
-        else {
-          const e = new Error(msg.error);
-          if (msg.code) (e as Error & { code?: string }).code = msg.code;
-          p.reject(e);
-        }
+        else p.reject(new PluginApiError(msg.error, msg.code ?? "error"));
         return;
       }
       case "ping":

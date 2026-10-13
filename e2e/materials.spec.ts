@@ -98,7 +98,7 @@ test("paint a box from the library, sample it, position its texture, switch styl
   const time = page.getByLabel("Time");
   await time.fill("900");
   await time.blur();
-  await expect(page.locator(".slider").first()).toContainText("3:00 pm");
+  await expect(page.getByTestId("shadows").locator(".slider").first()).toContainText("3:00 pm");
   await expect.poll(async () => ((await looks(page)).sun ?? [0, 0, 0])[0]).toBeLessThan(0);
   expect(((await looks(page)).sun ?? [0, 0, 0])[2]).toBeGreaterThan(0);
 

@@ -407,6 +407,13 @@ pub enum Op {
         target: crate::looks::PaintTarget,
         material: Option<String>,
     },
+    /// Lane 15: take the paint off what is inside these items (and off solids named
+    /// directly), so the material of what holds them shows: every face's own material, every
+    /// solid's and mesh's, and nested groups' (not inside component instances, whose parts
+    /// belong to the definition: open the component). Texture positions stay. One undo step.
+    ClearPaint {
+        items: Vec<crate::nodes::Item>,
+    },
     /// How the texture sits on one face (`None`: the material's own placement).
     SetFaceUv {
         object: u64,
@@ -952,6 +959,11 @@ pub enum OpOutcome {
         notes: Vec<String>,
     },
     MaterialSet,
+    /// Lane 15: paint taken off `faces` faces and `items` solids, meshes and groups.
+    PaintCleared {
+        cleared_faces: usize,
+        cleared_items: usize,
+    },
     /// A texture image went into the model under `path`.
     TextureAdded {
         path: String,
@@ -1855,6 +1867,7 @@ impl Model {
             Op::DeleteMaterial { name } => self.delete_material(name),
             Op::AddTexture { path, mime, data } => self.add_texture(path, mime, data),
             Op::Paint { target, material } => self.paint(target, material.as_deref()),
+            Op::ClearPaint { items } => self.clear_paint(items),
             Op::SetFaceUv { object, face, uv } => self.set_face_uv(*object, *face, uv.as_ref()),
             Op::SetStyle { style } => self.set_style(style.as_ref()),
             Op::SetShadows { shadows } => self.set_shadows(shadows.as_ref()),

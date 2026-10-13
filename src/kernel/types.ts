@@ -85,6 +85,8 @@ export type KernelOp =
   | { op: "group_loose"; meshes: number[] }
   /** Lane 15: soft (1), smooth (2), hidden (4) on edges named by owner and end points. */
   | { op: "set_edge_flags"; edges: EdgeAt[]; set: number; clear: number }
+  /** Lane 15: take the paint off what the items hold (and off solids named), so what holds them shows. */
+  | { op: "clear_paint"; items: Item[] }
   /** Lane 15: soften by angle (degrees) every edge of these solids and meshes. */
   | { op: "soften_edges"; objects: number[]; meshes?: number[]; angle: number; soft: boolean; smooth: boolean }
   /** Nesting (lane 9): add a stock, or replace the stock named `replace` (a rename carries the defaults). */
@@ -338,6 +340,7 @@ export type OpOutcome =
   | { kind: "part_set" }
   | { kind: "loose_grouped"; groups: number[] }
   | { kind: "edges_set"; changed: number }
+  | { kind: "paint_cleared"; cleared_faces: number; cleared_items: number }
   | { kind: "stock_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "section_added"; section: number }

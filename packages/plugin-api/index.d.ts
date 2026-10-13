@@ -515,10 +515,26 @@ declare module "sawhorse" {
     unitsChanged: { units: string };
   }
 
+  /** Stops listening when called. `ready` resolves when the app has accepted the
+   * subscription and rejects with a PluginApiError ("permission" when plugin.json does not
+   * ask for what the event needs, "invalid" for an event that does not exist). */
+  export interface Unsubscribe {
+    (): void;
+    readonly ready: Promise<void>;
+  }
+
   export const events: {
-    /** Listen; returns a function that stops listening. */
-    on<K extends keyof EventPayloads>(name: K, handler: (payload: EventPayloads[K]) => unknown): () => void;
+    /** Listen; returns a function that stops listening (with `ready`, see Unsubscribe). */
+    on<K extends keyof EventPayloads>(name: K, handler: (payload: EventPayloads[K]) => unknown): Unsubscribe;
   };
+
+  /** What every refused call rejects with (lane 15). Calls never throw for a refusal: they
+   * reject. `code`: "permission" (plugin.json does not ask for it), "invalid" (a parameter
+   * the app cannot use), "not_found", "busy", "unknown" (no such call), "send_failed" (the
+   * message could not be sent), "refused" (anything else the app said no to). */
+  export class PluginApiError extends Error {
+    readonly code: string;
+  }
 
   /** A small key-value store of JSON values, for this plugin only. */
   export interface Store {
@@ -555,6 +571,7 @@ declare module "sawhorse" {
     storage: typeof storage;
     file: typeof file;
     net: typeof net;
+    PluginApiError: typeof PluginApiError;
   };
   export default sawhorse;
 }
