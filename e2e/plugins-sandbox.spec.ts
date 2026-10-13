@@ -158,8 +158,7 @@ test("a plugin without model.write cannot change the model; without net it has n
   // Lane 15 verifier: in a real worker the lockdown removed everything it should, and the
   // constants a browser will not let it delete (TEMPORARY, PERSISTENT) are not reported as
   // survivors, so the console does not open with a false "could not remove" warning.
-  const logs = (await entry(page, id)).logs.join("
-");
+  const logs = (await entry(page, id)).logs.join(" | ");
   expect(logs).not.toContain("could not remove");
   expect(logs).not.toContain("sandbox:");
 });
