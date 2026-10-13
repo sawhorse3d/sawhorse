@@ -398,3 +398,71 @@ describe("storage", () => {
     expect(type).toMatchObject({ extensions: [".md"], mime: "text/markdown" });
   });
 });
+
+describe("tool events carry the model only with model.read (lane 17, F1)", () => {
+  const tooled = (permissions: string[]) => ({ permissions, contributes: { tools: [{ id: "t", title: "Tool" }] } });
+  const KEY = "plugin:org.example.test/t";
+  // A resolved click on solid 7's face 3, as the PluginTool would send it with the model in it.
+  const event = {
+    type: "click",
+    x: 10,
+    y: 20,
+    shift: true,
+    ctrl: false,
+    alt: false,
+    ray: { origin: [1, -5, 2], dir: [0, 1, 0] },
+    snap: { point: [0.1, 0.05, 0.1], kind: "on-face", tip: "On Face", surface: { at: { kind: "face", solid: 7, face: 3 }, frame: { origin: [0, 0, 0.1], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }, point: [0.1, 0.05, 0.1] }, entity: { kind: "face", solid: 7, face: 3 } },
+    picked: { entity: { kind: "solid", id: 7 }, point: [0.1, 0.05, 0.1], surface: null },
+    // Anything the app might add later is not passed on by default either.
+    later: { solid: 7 },
+  };
+  const lastEvent = (c: FakeChannel) => c.posted.filter((p) => p.t === "call" && p.fn === "tool.event").pop() as Extract<HostMessage, { t: "call" }> | undefined;
+
+  it("a ui-only plugin's tool gets the pointer and the eye ray, never a snap or a pick from the model", async () => {
+    const { m, c, req } = await running(tooled(["ui"]));
+    expect(await req(c, "ui.registerTool", { id: "t" })).toMatchObject({ ok: true });
+    expect(m.toolSeesModel(KEY)).toBe(false);
+    void m.toolCall(KEY, "tool.event", event as never);
+    await flush();
+    const sent = lastEvent(c)!.args[1];
+    expect(sent).toEqual({ type: "click", x: 10, y: 20, shift: true, ctrl: false, alt: false, ray: { origin: [1, -5, 2], dir: [0, 1, 0] }, snap: null, picked: null });
+    expect(JSON.stringify(sent)).not.toMatch(/solid|face|"id"/);
+  });
+
+  it("with model.read the same event arrives whole", async () => {
+    const { m, c, req } = await running(tooled(["ui", "model.read"]));
+    await req(c, "ui.registerTool", { id: "t" });
+    expect(m.toolSeesModel(KEY)).toBe(true);
+    void m.toolCall(KEY, "tool.event", event as never);
+    await flush();
+    expect(lastEvent(c)!.args[1]).toMatchObject({ snap: { kind: "on-face", entity: { kind: "face", solid: 7, face: 3 } }, picked: { entity: { kind: "solid", id: 7 } } });
+  });
+
+  it("a ui-only tool's own inference constraints still give it a point, worked out from the ray and its own values only", async () => {
+    const { m, c, req } = await running(tooled(["ui"]));
+    await req(c, "ui.registerTool", { id: "t" });
+    // Its own plane: where the eye ray meets it, whatever the model holds there.
+    await req(c, "ui.toolView", { id: "t", view: { inference: { plane: { origin: [0, 3, 0], normal: [0, 1, 0] } } } });
+    void m.toolCall(KEY, "tool.event", event as never);
+    await flush();
+    expect(lastEvent(c)!.args[1]).toMatchObject({ snap: { point: [1, 3, 2], kind: "free", tip: "", surface: null, entity: null }, picked: null });
+    // Its own locked line: the line's point nearest the ray.
+    await req(c, "ui.toolView", { id: "t", view: { inference: { start: [1, 0, 0], lock: { dir: [0, 0, 1], kind: "axis-z" } } } });
+    void m.toolCall(KEY, "tool.event", event as never);
+    await flush();
+    expect(lastEvent(c)!.args[1]).toMatchObject({ snap: { point: [1, 0, 2], kind: "axis-z", tip: "On Blue Axis", surface: null, entity: null }, picked: null });
+    // A ray along the line, or one that misses the plane: no point.
+    await req(c, "ui.toolView", { id: "t", view: { inference: { plane: { origin: [0, -9, 0], normal: [0, 1, 0] } } } });
+    void m.toolCall(KEY, "tool.event", event as never);
+    await flush();
+    expect(lastEvent(c)!.args[1]).toMatchObject({ snap: null, picked: null });
+  });
+
+  it("other tool callbacks carry only what the person typed", async () => {
+    const { m, c, req } = await running(tooled(["ui"]));
+    await req(c, "ui.registerTool", { id: "t" });
+    void m.toolCall(KEY, "tool.value", "3/4");
+    await flush();
+    expect(c.posted.filter((p) => p.t === "call").pop()).toMatchObject({ fn: "tool.value", args: ["t", "3/4"] });
+  });
+});

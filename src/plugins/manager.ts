@@ -18,6 +18,7 @@ import { boundsOf, cutListOf, definitionsOf, entitiesOfTargets, nodesOf, selecti
 import { checkBody, patchFields, valuesOf, type FieldValue, type PanelField } from "./panel";
 import type { PluginPlatform } from "./platform";
 import { AppStore, DocStore, grantCovers, grantMatches, loadGrants, packageDigest, saveGrants, type Grant } from "./store";
+import { redactToolEvent } from "./toolEvent";
 import { checkToolView, type PluginToolView } from "./toolView";
 import { readPluginZip } from "./zip";
 
@@ -491,11 +492,20 @@ export class PluginManager {
     }
   }
 
-  /** Run a tool callback (the PluginTool in src/tools/plugin.ts calls this). */
+  /** Whether a plugin tool's events may carry the model (its plugin has `model.read`). */
+  toolSeesModel(key: string): boolean {
+    const t = this.tools.get(key);
+    return !!t && !!this.hosts.get(t.plugin)?.has("model.read");
+  }
+
+  /** Run a tool callback (the PluginTool in src/tools/plugin.ts calls this). Lane 17: a
+   * pointer event reaches a plugin without `model.read` with the model taken out (snap and
+   * pick: toolEvent.ts), whatever the caller passed. */
   toolCall(key: string, fn: "tool.activate" | "tool.deactivate" | "tool.event" | "tool.value" | "tool.cancel", arg?: Data): Promise<Data> {
     const t = this.tools.get(key);
     const h = t ? this.hosts.get(t.plugin) : undefined;
     if (!t || !h) return Promise.resolve(null);
+    if (fn === "tool.event" && !h.has("model.read")) arg = redactToolEvent(arg, this.toolView(key).inference);
     return h.call(fn, arg === undefined ? [t.id] : [t.id, arg], `${t.def.title}: ${fn.slice(5)}`);
   }
 

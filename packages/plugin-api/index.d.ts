@@ -368,7 +368,14 @@ declare module "sawhorse" {
     setBody(body: Field[]): Promise<void>;
   }
 
-  /** What a tool event carries: the same picture a built-in tool sees. */
+  /**
+   * What a tool event carries. With `model.read`: the same picture a built-in tool sees (the
+   * inference engine's snap and what is under the cursor). With `ui` alone the model is left
+   * out: `picked` is always null, and `snap` is null unless the tool has set inference
+   * constraints of its own (`ToolView.inference`), when it is the point those give for the
+   * eye ray (on its locked line, or on its plane), worked out from the ray and the tool's own
+   * values only (`surface` and `entity` null, `kind` the lock's kind or "free").
+   */
   export interface ToolEvent {
     type: "move" | "down" | "click" | "dblclick" | "drag" | "dragend" | "leave";
     /** Canvas pixels. */
@@ -379,9 +386,9 @@ declare module "sawhorse" {
     alt: boolean;
     /** The eye ray through the cursor. */
     ray: { origin: Vec3; dir: Vec3 };
-    /** Where the cursor snaps (the inference engine's answer), with its kind ("endpoint", "on-face" ...). */
+    /** Where the cursor snaps (the inference engine's answer), with its kind ("endpoint", "on-face" ...). Without model.read: null, or the point of the tool's own constraints. */
     snap: { point: Vec3; kind: string; tip: string; surface: SurfaceHit | null; entity: SelectionItem | null } | null;
-    /** What is directly under the cursor. */
+    /** What is directly under the cursor. Always null without model.read. */
     picked: { entity: SelectionItem | null; point: Vec3; surface: SurfaceHit | null } | null;
   }
 

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
-import { box, solids } from "./helpers";
+import { at, box, solids, type V3 } from "./helpers";
 
 // Lane 16: a hostile plugin, loaded from a .zip for this session through the real UI, in a
 // real Web Worker. Every message it sends is serialized once in its sandbox and measured by
@@ -161,4 +161,72 @@ test("a hostile plugin from a session zip cannot exhaust the app: every attack i
   const t0 = Date.now();
   await page.evaluate(() => 1);
   expect(Date.now() - t0).toBeLessThan(500);
+});
+
+// Lane 17 (F1): a plugin with only "ui" makes its own tool the active one and logs every
+// pointer event while the person works over a solid. It hears the pointer and the point of
+// its own plane, never a solid's id, a face or anything else of the model.
+const PEEK = "org.example.peek";
+const peekManifest = {
+  id: PEEK,
+  name: "Peek",
+  version: "1.0.0",
+  api: 1,
+  description: "A ui-only tool that logs what it is told about the pointer.",
+  author: "Sawhorse",
+  license: "MIT",
+  permissions: ["ui"],
+  contributes: { tools: [{ id: "peek", title: "Peek" }] },
+};
+const peekMain = `import { ui } from "sawhorse";
+const tool = await ui.registerTool({ id: "peek", onEvent(e) { console.log("event=" + JSON.stringify(e)); } });
+await tool.setView({ inference: { plane: { origin: [0, 0, 0], normal: [0, 0, 1] } } });
+await ui.activateTool("peek");
+console.log("peeking");
+`;
+
+test("a ui-only plugin's tool never sees a solid id: pointer events over a solid carry no snap or pick from the model", async ({ page }) => {
+  await page.goto("/?autosave=0&io=basic");
+  const vp = page.locator("main.vp");
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  if (!requireKernel && (await vp.getAttribute("data-kernel")) === "missing") test.skip(true, "kernel WASM not built");
+  await box(page);
+  const ids = (await solids(page)).map((s) => s.id);
+  expect(ids.length).toBe(1);
+
+  await page.getByRole("tab", { name: "Plugins" }).click();
+  const zip = zipSync({ "peek/plugin.json": strToU8(JSON.stringify(peekManifest)), "peek/main.js": strToU8(peekMain) });
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.locator('[data-do="load-session"]').click()]);
+  await chooser.setFiles({ name: "peek.zip", mimeType: "application/zip", buffer: Buffer.from(zip) });
+  await page.locator(`.plugin-row[data-plugin="${PEEK}"] [data-do="enable"]`).click();
+  await page.getByRole("dialog", { name: "Enable Peek" }).getByRole("button", { name: "Enable" }).click();
+  const logs = async () => (await page.evaluate((id) => (window as unknown as { __sawhorse: Hook }).__sawhorse.plugins.list().find((x) => x.id === id)?.logs ?? [], PEEK)) as string[];
+  await expect.poll(async () => (await logs()).some((l) => l.includes("peeking")), { timeout: 15_000 }).toBe(true);
+
+  // Over the box's top face, an edge and a corner, and a click on the face.
+  for (const p of [[6, 6, 6], [12, 6, 6], [12, 12, 6], [0, 0, 6], [6, 0, 3]] as V3[]) {
+    const [x, y] = await at(page, p);
+    await page.mouse.move(x, y, { steps: 3 });
+  }
+  const [cx, cy] = await at(page, [6, 6, 6]);
+  await page.mouse.click(cx, cy);
+  await expect.poll(async () => (await logs()).filter((l) => l.includes("event=")).length, { timeout: 15_000 }).toBeGreaterThan(3);
+
+  const events = (await logs()).filter((l) => l.includes("event=")).map((l) => l.slice(l.indexOf("event=") + 6));
+  let ownPoints = 0;
+  for (const raw of events) {
+    // Nothing of the model by name: no solid, face, object or region, no entity, no surface.
+    expect(raw).not.toMatch(/"(solid|face|object|region|sketch|owner|frame)"/);
+    const e = JSON.parse(raw) as { picked: unknown; snap: { point: V3; kind: string; surface: unknown; entity: unknown } | null; ray: { origin: V3; dir: V3 } };
+    expect(e.picked).toBeNull();
+    expect(Object.keys(e).sort()).toEqual(["alt", "ctrl", "picked", "ray", "shift", "snap", "type", "x", "y"]);
+    if (e.snap) {
+      expect(e.snap).toMatchObject({ kind: "free", surface: null, entity: null });
+      // The ground plane it set, not the box's top 6 inches up.
+      expect(Math.abs(e.snap.point[2])).toBeLessThan(1e-9);
+      ownPoints++;
+    }
+  }
+  expect(ownPoints).toBeGreaterThan(0);
+  expect(events.some((r) => r.includes('"type":"click"'))).toBe(true);
 });

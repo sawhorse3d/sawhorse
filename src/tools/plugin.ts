@@ -10,6 +10,7 @@ import type { Data } from "../../packages/plugin-api/src/rpc.ts";
 import type { PluginToolId } from "../lib/tools";
 import type { PluginManager } from "../plugins/manager";
 import { snapOfEvent } from "../plugins/model";
+import { ownMarkerSnap } from "../plugins/toolEvent";
 import { checkToolView, type PluginToolView } from "../plugins/toolView";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolHost, type ToolView } from "./tool";
 
@@ -97,12 +98,17 @@ export class PluginTool extends Tool {
   }
 
   private payload(e: ToolEvent): Data {
+    // Lane 17: the manager takes the model out for a plugin without model.read (toolEvent.ts);
+    // the pointer is all it builds here then.
+    if (!this.manager.toolSeesModel(this.id)) return { type: e.type, x: e.x, y: e.y, shift: e.shift, ctrl: e.ctrl, alt: e.alt, ray: { origin: e.ray.origin, dir: e.ray.dir }, snap: null, picked: null } as unknown as Data;
     const pick = snapOfEvent(e.snap, e.picked, this.host.state());
     return { type: e.type, x: e.x, y: e.y, shift: e.shift, ctrl: e.ctrl, alt: e.alt, ray: { origin: e.ray.origin, dir: e.ray.dir }, snap: pick.snap, picked: pick.picked } as unknown as Data;
   }
 
   onEvent(e: ToolEvent): void {
-    this.snap = e.snap;
+    // The marker shows what the plugin gets: the inference engine's snap, or for a plugin
+    // without model.read the point of its own constraints (lane 17).
+    this.snap = this.manager.toolSeesModel(this.id) ? e.snap : ownMarkerSnap(e.ray, this.view_.inference);
     this.host.changed();
     if (e.type === "move" || e.type === "drag") {
       if (this.moving) {

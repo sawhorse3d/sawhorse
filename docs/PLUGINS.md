@@ -116,9 +116,9 @@ Declared in `permissions`, listed in the dialog the person sees before enabling,
 
 | Permission | Lets the plugin | API |
 |---|---|---|
-| `model.read` | read solids, groups and components, faces, the tree, the selection (and set it), materials, the cut list; hear `selectionChanged`, `documentChanged`, `documentOpened` | `model.*` reads, `model.select`, those events |
+| `model.read` | read solids, groups and components, faces, the tree, the selection (and set it), materials, the cut list; hear `selectionChanged`, `documentChanged`, `documentOpened`; see the model under the pointer in its tools' events (`snap`, `picked`) | `model.*` reads, `model.select`, those events, tool events in full |
 | `model.write` | change the model, one named undo step per batch, validated by the kernel | `batch.commit()` |
-| `ui` | panels, commands, tools, menus, shortcuts, messages, prompts and confirms; hear `toolChanged` | `ui.*` |
+| `ui` | panels, commands, tools, menus, shortcuts, messages, prompts and confirms; hear `toolChanged`. A tool follows the pointer, but without `model.read` its events carry nothing of the model ([Tools](#tools)) | `ui.*` |
 | `storage` | a small store of its own: per app (256 KB) and inside the document (64 KB, saved in the `.shz`) | `storage.app`, `storage.document` |
 | `file` | save and open files, only through the app's save and open dialogs, where the person picks the file | `file.save`, `file.open` |
 | `net` | requests to the hosts in `net`, over https, without cookies or credentials, through the app | `net.fetch`, and a global `fetch` |
@@ -311,6 +311,14 @@ await panel.setBody([...]); // replace everything
 ### Tools
 
 A plugin tool is a tool like the built-in ones. It receives the same pointer events, already carrying the inference engine's answer (`snap`: the point, its kind, the face under it with its plane) and what is directly under the cursor (`picked`), and the Value Control Box's entries.
+
+**What a tool sees depends on `model.read`.** The snap and the pick are the model (a vertex's position, a solid's and a face's ids, an edge's ends), so only a plugin with `model.read` gets them. A plugin with `ui` alone gets the pointer: `type`, `x`, `y`, `shift`, `ctrl`, `alt` and the eye ray (`ray`), with `picked` always `null` and `snap` `null`, unless the tool has set inference constraints of its own (`setView({ inference })`): then `snap` is the point those give for the eye ray, worked out from the ray and the tool's own values and nothing else: the point of its locked line (`start` and `lock`) nearest the ray (`kind` the lock's kind), or where the ray meets its `plane` (`kind: "free"`), with `surface` and `entity` `null`. The marker under the cursor shows that same point, so the person sees what the tool gets.
+
+| Field | With `model.read` | With `ui` alone |
+|---|---|---|
+| `type`, `x`, `y`, `shift`, `ctrl`, `alt`, `ray` | yes | yes |
+| `snap` | the inference engine's answer | `null`, or the point of the tool's own `inference` (no `surface`, no `entity`) |
+| `picked` | what is under the cursor | `null` |
 
 ```js
 await ui.registerTool({
