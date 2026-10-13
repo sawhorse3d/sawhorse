@@ -125,3 +125,19 @@ footer p{margin:0}
 .fine{color:var(--muted);font-size:13px;margin:10px 0 0}
 .others{margin:26px 0 6px}
 .others-text{margin:0;max-width:820px}
+/* On a phone the comparison stacks: one card per row, each answer under its product's name,
+   so nothing hides behind a sideways scroll. */
+@media (max-width:640px){
+  .table-scroll{overflow:visible;border:0;background:none}
+  .compare{min-width:0;display:block}
+  .compare thead{display:none}
+  .compare tbody{display:block}
+  .compare tbody tr{display:block;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin:0 0 10px;overflow:hidden}
+  .compare tbody th{display:block;white-space:normal;color:var(--fg);font-weight:600;background:var(--rail)}
+  .compare td{display:block;border-bottom:1px solid var(--line)}
+  .compare tbody tr td:last-child{border-bottom:0}
+  .compare td::before{display:block;font-size:12px;letter-spacing:.03em;color:var(--muted);margin-bottom:2px}
+  .compare td:nth-child(2)::before{content:"Sawhorse 0.1 alpha";color:var(--accent)}
+  .compare td:nth-child(3)::before{content:"SketchUp Free"}
+  .compare td:nth-child(4)::before{content:"SketchUp with OpenCutList"}
+}

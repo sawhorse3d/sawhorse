@@ -165,8 +165,10 @@ try {
   if (ff.status === 0) {
     const webm = path.join(out, "demo.webm");
     const poster = path.join(out, "demo-poster.png");
-    // VP9, constant quality, no audio, 15 fps, the first second (the page loading) dropped.
-    const args = ["-y", "-f", "concat", "-safe", "0", "-i", list, "-an", "-vf", `setpts=PTS/${speed.toFixed(4)},fps=15,scale=${W}:${H}:flags=lanczos,format=yuv420p`, "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "42", "-row-mt", "1", "-deadline", "good", "-cpu-used", "2", webm];
+    // VP9, constant quality, no audio, 15 fps, limited (TV) range: the screencast's JPEGs are
+    // full range, and browsers refuse to decode a full-range VP9 stream (a decode error, a
+    // still poster).
+    const args = ["-y", "-f", "concat", "-safe", "0", "-i", list, "-an", "-vf", `setpts=PTS/${speed.toFixed(4)},fps=15,scale=${W}:${H}:flags=lanczos:out_range=tv,format=yuv420p`, "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "42", "-row-mt", "1", "-deadline", "good", "-cpu-used", "2", webm];
     const r = spawnSync("ffmpeg", args, { encoding: "utf8" });
     if (r.status !== 0) throw new Error(`ffmpeg: ${r.stderr.slice(-2000)}`);
     const p = spawnSync("ffmpeg", ["-y", "-i", frames[0] ?? kept[0].file, "-frames:v", "1", "-vf", "scale=960:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=none", poster], { encoding: "utf8" });

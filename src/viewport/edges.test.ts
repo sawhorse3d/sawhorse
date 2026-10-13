@@ -1,7 +1,7 @@
 // Soft, smooth and hidden edges on the drawing side (lane 15): which edges are lines, which
 // only silhouettes, which only dashed; and the smooth blend of the theme's three face tones.
 import { describe, expect, it } from "vitest";
-import { edgeSets, gridTones, toneWeights } from "./looks";
+import { edgeInk, edgeSets, gridTones, toneWeights } from "./looks";
 
 const seg = (k: number) => [k, 0, 0, k, 0, 1];
 const nrm = (k: number) => [1, 0, 0, 0, 1, k];
@@ -68,5 +68,17 @@ describe("grid tones (lane 15)", () => {
     expect(lum(light.minor)).toBeLessThan(250 + 248 + 241);
     expect(lum(light.major)).toBeLessThan(lum(light.minor));
     expect(light.minor).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+describe("edge ink (lane 15)", () => {
+  it("keeps the theme's edge colour where it reads, and inks it where it would vanish", () => {
+    expect(edgeInk(null, "#e8eae5")).toBe("#e8eae5");
+    // The dark theme's light edges on the Shop drawing's paper: dark ink.
+    expect(edgeInk([250, 248, 241], "#e8eae5")).toBe("#2b2e2b");
+    // The light theme's dark edges on paper: as they are.
+    expect(edgeInk([250, 248, 241], "#1d211f")).toBe("#1d211f");
+    // Dark edges on a dark background: light ink.
+    expect(edgeInk([20, 22, 24], "#1d211f")).toBe("#e8eae5");
   });
 });

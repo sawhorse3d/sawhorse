@@ -319,3 +319,16 @@ export function gridTones(background: readonly number[] | null | undefined, them
   };
   return { minor: mix(0.14), major: mix(0.32) };
 }
+
+/** Lane 15: the edge colour on a style's background: the theme's own when it reads there
+ * (or no background is set); otherwise a near-black ink on a light background and a
+ * near-white one on a dark background (a light theme's edges stay as they are on paper). */
+export function edgeInk(background: readonly number[] | null | undefined, themeEdge: string): string {
+  if (!background) return themeEdge;
+  const lum = (r: number, g: number, b: number) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const bg = lum(background[0], background[1], background[2]);
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(themeEdge.trim());
+  const edge = m ? lum(parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)) : bg > 0.5 ? 0 : 1;
+  if (Math.abs(edge - bg) >= 0.35) return themeEdge;
+  return bg > 0.5 ? "#2b2e2b" : "#e8eae5";
+}

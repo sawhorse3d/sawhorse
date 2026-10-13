@@ -19,11 +19,13 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ### Changed (lane 15, version 0.1.0-alpha.2 prepared, not tagged)
 
+- **The site's comparison on a phone** is a card per row with each answer under its product's name, instead of a table that scrolled sideways and hid the third column.
 - **Version 0.1.0-alpha.2** in `package.json` (and its lock), `src-tauri/tauri.conf.json` (MSI version 0.1.0.2), the `crates/` workspace and the desktop crates (with their lock files, checked `--locked`). The site names the v0.1.0-alpha.2 installers; `check-site --online --allow-missing-release` (used by the Pages workflow until the tag lands) lets links into an unpublished release through and still checks a published one. Release notes: `docs/releases/v0.1.0-alpha.2.md` (what is new since alpha.1, what is not yet, known limits, the click path past the unsigned-installer warnings on Windows and macOS). The maintainer tags the release.
 
 ### Fixed (lane 15, from the lane 10 and 11 verifications)
 
 - **The grid follows the style's background**: a dark Background in a light theme (or the other way round) no longer hides the grid; its lines are drawn a little towards black on a light background and towards white on a dark one.
+- **Edges follow the style's background too**: Shop drawing (white paper) on the dark theme drew the theme's light edges on white, so the model all but vanished; edges that would not read on the style's background are drawn in a near-black ink on a light one and a near-white one on a dark one.
 - **Painting what already shows the material is not an edit** (no undo step; the status line says so). **Painting a group over parts with paint of their own** says how many faces kept theirs and points at the new **Edit > Clear Paint** (kernel op `clear_paint`: paint off what the selection holds, so what holds it shows; one undo step; component parts are cleared from inside the component).
 - **Slider arrow keys are one undo step**: a run of steps on a Styles slider commits once the keys stop (0.7 s) or the slider is left; a click that does not move it is not an edit.
 - **The material editor stays in step**: Enter commits once (it used to commit, then commit again on the blur), an unchanged field commits nothing, and every field follows the material when it changes elsewhere (undo, a rename). **Position texture**'s tooltip says why it is off, or what it does.

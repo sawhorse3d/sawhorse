@@ -20,7 +20,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { GraphSection, MaterialInfo, MeshData, SectionView, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
 import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorners } from "../lib/sections";
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
-import { TextureCache, edgeSets, gridTones, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
+import { TextureCache, edgeInk, edgeSets, gridTones, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
 import type { UnitSystem } from "../lib/units";
 import {
   AXIS_COLORS,
@@ -335,7 +335,7 @@ export class ViewportEngine {
     this.theme = readTheme(this.themeRoot);
     this.renderer.setClearColor(new THREE.Color(this.theme.vp), 1);
     this.colourGrid();
-    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.theme.edge);
+    if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.ink());
     if (this.faces) this.colourFaces(this.faces.geometry);
     this.buildOverlays();
     this.styledEdgesKey = "";
@@ -485,6 +485,13 @@ export class ViewportEngine {
     this.colourGrid();
     this.buildFaces();
     this.requestRender();
+  }
+
+  /** The colour edges are drawn in (lane 15): the theme's, unless the style sets a
+   * background it would not show on (the Shop drawing's paper in the dark theme): then a
+   * dark ink on a light background, a light one on a dark background. */
+  private ink(): string {
+    return edgeInk(this.style.background, this.theme.edge);
   }
 
   /** The grid's colours follow the style's background when it sets one (lane 15). */
@@ -664,7 +671,7 @@ export class ViewportEngine {
       eg.setAttribute("position", new THREE.BufferAttribute(hard, 3));
       eg.computeBoundingBox();
       // Wireframe and X-ray show the edges behind faces too.
-      this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.theme.edge, depthTest: !mode.hiddenEdges, transparent: mode.hiddenEdges }));
+      this.edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: this.ink(), depthTest: !mode.hiddenEdges, transparent: mode.hiddenEdges }));
       this.edges.renderOrder = 3;
       this.edges.visible = this.style.edges.edges;
       this.scene.add(this.edges);
@@ -809,7 +816,7 @@ export class ViewportEngine {
     if (e.profiles) {
       const segs = profileSegments(hard ?? mesh.edges, sets ? sets.hardNormals : mesh.normals, this.camera);
       if (segs.length) {
-        const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
+        const l = this.fatLines(pairs(segs), this.ink(), 2.6, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
         this.styledEdges.add(l);
       }
@@ -819,7 +826,7 @@ export class ViewportEngine {
     if (softProfiles && sets) {
       const segs = profileSegments(sets.soft, sets.softNormals, this.camera);
       if (segs.length) {
-        const l = this.fatLines(pairs(segs), this.theme.edge, e.profiles ? 2.6 : 1.2, false, !mode.hiddenEdges);
+        const l = this.fatLines(pairs(segs), this.ink(), e.profiles ? 2.6 : 1.2, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
         this.styledEdges.add(l);
       }
@@ -828,7 +835,7 @@ export class ViewportEngine {
     if (showSoft && sets) {
       const flat = [...sets.soft, ...sets.hidden];
       if (flat.length) {
-        const l = this.fatLines(pairs(flat), this.theme.edge, 1, true, !mode.hiddenEdges, 0.55);
+        const l = this.fatLines(pairs(flat), this.ink(), 1, true, !mode.hiddenEdges, 0.55);
         l.renderOrder = 3.4;
         this.styledEdges.add(l);
       }
@@ -836,7 +843,7 @@ export class ViewportEngine {
     if (e.endpoints && hard) {
       const segs = endpointSegments(hard, (p) => 7 * px(p));
       if (segs.length) {
-        const l = this.fatLines(pairs(segs), this.theme.edge, 2.6, false, !mode.hiddenEdges);
+        const l = this.fatLines(pairs(segs), this.ink(), 2.6, false, !mode.hiddenEdges);
         l.renderOrder = 3.5;
         this.styledEdges.add(l);
       }
@@ -1010,7 +1017,7 @@ export class ViewportEngine {
           const pairs: Vec3[][] = [];
           const o = cut.outline;
           for (let i = 0; i + 5 < o.length; i += 6) pairs.push([[o[i], o[i + 1], o[i + 2]], [o[i + 3], o[i + 4], o[i + 5]]]);
-          const colour = st.section_line_color ? rgbCss(st.section_line_color) : this.theme.edge;
+          const colour = st.section_line_color ? rgbCss(st.section_line_color) : this.ink();
           const line = this.fatLines(pairs, colour, st.section_line_width, false, true);
           line.renderOrder = 3.6;
           this.sectionGroup.add(line);
