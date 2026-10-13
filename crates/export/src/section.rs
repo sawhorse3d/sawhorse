@@ -191,4 +191,66 @@ mod tests {
         assert_eq!(svg(&m, far), Err(ExportError::Empty));
         assert!(svg(&m, 999).is_err());
     }
+
+    /// The slice's DXF is closed shapes, never loose LINE entities (the 2026-10-12 verifier
+    /// looked for LINEs and found only polylines): one closed LWPOLYLINE per ring, outer
+    /// outlines and holes alike, so a CAM program sees a part with a hole, 1:1 in mm. The
+    /// rings' areas are the cap's: a 1 m square less its 0.5 m square hole.
+    #[test]
+    fn the_slice_dxf_is_one_closed_polyline_per_ring_and_no_lines() {
+        let mut m = tube();
+        let OpOutcome::SectionAdded { section } = m
+            .apply(&Op::AddSection {
+                origin: [1.0, 0.0, 0.0],
+                normal: [-1.0, 0.0, 0.0],
+                name: None,
+                active: true,
+                hidden: false,
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        let d = dxf(&m, section, OutlineFlavour::Lwpolyline).unwrap();
+        let p = crate::dxf::pairs(&d);
+        let at = p
+            .iter()
+            .position(|(c, v)| *c == 2 && v == "ENTITIES")
+            .unwrap();
+        let kinds: Vec<&str> = p[at..]
+            .iter()
+            .filter(|(c, v)| *c == 0 && v != "ENDSEC" && v != "EOF")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(kinds, ["LWPOLYLINE", "LWPOLYLINE"], "no LINE entities");
+        // Each polyline: closed (70 = 1), four vertices, its area by the shoelace.
+        let mut areas = Vec::new();
+        for chunk in p[at..].split(|(c, v)| *c == 0 && v == "LWPOLYLINE").skip(1) {
+            let flag = chunk.iter().find(|(c, _)| *c == 70).unwrap();
+            assert_eq!(flag.1, "1", "closed");
+            let n = chunk.iter().find(|(c, _)| *c == 90).unwrap();
+            assert_eq!(n.1, "4");
+            let xs: Vec<f64> = chunk
+                .iter()
+                .filter(|(c, _)| *c == 10)
+                .map(|(_, v)| v.parse().unwrap())
+                .collect();
+            let ys: Vec<f64> = chunk
+                .iter()
+                .filter(|(c, _)| *c == 20)
+                .map(|(_, v)| v.parse().unwrap())
+                .collect();
+            let a: f64 = (0..xs.len())
+                .map(|i| {
+                    let j = (i + 1) % xs.len();
+                    xs[i] * ys[j] - xs[j] * ys[i]
+                })
+                .sum::<f64>()
+                / 2.0;
+            areas.push(a.abs());
+        }
+        assert_eq!(areas.len(), 2);
+        assert!((areas[0] - 1.0e6).abs() < 1e-6, "outer, mm²: {areas:?}");
+        assert!((areas[1] - 0.25e6).abs() < 1e-6, "hole, mm²: {areas:?}");
+    }
 }

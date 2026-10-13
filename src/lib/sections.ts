@@ -128,6 +128,16 @@ export function describeSection(graph: SceneGraph | null | undefined, id: number
   return `section plane '${s.name}'${s.active ? " (active)" : ""}`;
 }
 
+/** What to say when exporting a plane's slice was refused (`error`: the kernel's words). A
+ * plane that cuts nothing (laid on a face, keeping the side the whole solid is on; or past
+ * every solid) leaves nothing to export: say why and what to do, never just nothing. */
+export function sliceExportRefused(error: string, name: string): string {
+  if (/nothing to export/i.test(error)) {
+    return `Nothing to export: ${name} cuts no solid. A plane laid on a face keeps the side it faces and cuts nothing until you move it into the solid (or Reverse it).`;
+  }
+  return `Export refused: ${error}`;
+}
+
 /** The planes directly in the open context (the ones tools may move, flip or delete). */
 export function contextSections(state: DocState | null | undefined): GraphSection[] {
   const g = state?.graph;

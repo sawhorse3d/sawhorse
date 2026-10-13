@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GraphSection, MeshData, SceneGraph, SectionView, V3 } from "../kernel/types";
-import { activeSectionHere, clipSegment, clippedEdges, pickSection, raySection, sceneSectionsOf, sectionArrows, sectionCorners } from "./sections";
+import { activeSectionHere, clipSegment, clippedEdges, pickSection, raySection, sceneSectionsOf, sectionArrows, sectionCorners, sliceExportRefused } from "./sections";
 import { EMPTY_GRAPH } from "./scope";
 import { objectsOp, subjectOf, translation } from "../tools/xform";
 import type { DocState } from "../kernel/types";
@@ -113,5 +113,18 @@ describe("moving section planes with Move and Rotate", () => {
     });
     // Parts of a solid do not move with a plane.
     expect(typeof subjectOf([{ kind: "face", object: 1, face: 2 }, { kind: "section", section: 3 }], null, new Map(), state)).toBe("string");
+  });
+});
+
+describe("exporting a slice that cuts nothing", () => {
+  // The 2026-10-12 verifier: a plane laid on a face, keeping the side the whole solid is on,
+  // has no cap, and the export just never produced a download.
+  it("says why and what to do", () => {
+    const m = sliceExportRefused("nothing to export", "'Section 1'");
+    expect(m).toContain("Nothing to export: 'Section 1' cuts no solid");
+    expect(m).toContain("move it into the solid");
+  });
+  it("passes any other refusal through", () => {
+    expect(sliceExportRefused("that section plane no longer exists", "'S'")).toBe("Export refused: that section plane no longer exists");
   });
 });

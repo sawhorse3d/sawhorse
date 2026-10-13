@@ -76,7 +76,7 @@ import { pickFile as pickAnyFile } from "./io/files";
 import type { AppBridge } from "./plugins/manager";
 // Lane 12: section planes.
 import { SectionTool } from "./tools/section";
-import { activeSectionHere, describeSection, sceneSectionsOf, sectionById } from "./lib/sections";
+import { activeSectionHere, describeSection, sceneSectionsOf, sectionById, sliceExportRefused } from "./lib/sections";
 
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
@@ -1414,7 +1414,7 @@ export function App() {
         const res = await saveFile(`${docName ? stem(docName) : "Untitled"} ${name}${svg ? ".svg" : ".dxf"}`, bytes, type);
         if (res) setMessage({ text: `Exported ${res.name}: the slice of ${quoted(name)}, 1:1 in millimetres${svg ? ", filled" : ", closed polylines"}.`, error: false });
       } catch (e) {
-        setMessage({ text: `Export refused: ${friendlyError(e instanceof Error ? e.message : String(e))}`, error: true });
+        setMessage({ text: sliceExportRefused(friendlyError(e instanceof Error ? e.message : String(e)), quoted(name)), error: true });
       }
     },
     [docName],
