@@ -55,7 +55,8 @@ describe("Sheets pane", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Paper size" }), { target: { value: "tabloid" } });
     expect(p.onSetup).toHaveBeenLastCalledWith(1, { ...setupOf(sheet()), paper: { kind: "tabloid" } });
     fireEvent.click(screen.getByRole("radio", { name: "Portrait" }));
-    expect(p.onSetup).toHaveBeenLastCalledWith(1, { ...setupOf(sheet()), landscape: false });
+    // No new state came back in between, so the second edit builds on the first.
+    expect(p.onSetup).toHaveBeenLastCalledWith(1, { ...setupOf(sheet()), paper: { kind: "tabloid" }, landscape: false });
     // A margin typed as a fraction, committed on Enter (not per letter).
     const top = screen.getByRole("textbox", { name: "Top margin" });
     fireEvent.change(top, { target: { value: "3/4" } });
@@ -72,6 +73,52 @@ describe("Sheets pane", () => {
     fireEvent.blur(title);
     expect((p.onSetup as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1].title).toEqual({ show: true, title: "Shelf" });
     expect(screen.getByText(/Print at 100%/).textContent).toContain('11" x 8.5"');
+  });
+
+  it("builds each edit on the one still on its way, and on the kernel's state once it answers", async () => {
+    // Enter in Title, then Project at once: the kernel has not answered the first yet.
+    const pending = () => new Promise<never>(() => {});
+    const p = props({ onSetup: vi.fn(pending), onSetItem: vi.fn(pending), selection: [1] });
+    const { rerender } = render(<SheetsPane {...p} />);
+    const field = (name: string, value: string) => {
+      const f = screen.getByRole("textbox", { name });
+      fireEvent.change(f, { target: { value } });
+      fireEvent.keyDown(f, { key: "Enter" });
+    };
+    field("Title", "Bookshelf");
+    field("Project", "Shop drawings");
+    const calls = () => (p.onSetup as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls().at(-1)![1].title).toEqual({ show: true, title: "Bookshelf", project: "Shop drawings" });
+    // Two margins in a row keep each other.
+    field("Top margin", "3/4");
+    field("Left margin", "1");
+    const m = calls().at(-1)![1].margins;
+    expect(m[0]).toBeCloseTo(0.75 * IN, 12);
+    expect(m[3]).toBeCloseTo(1 * IN, 12);
+    expect(calls().at(-1)![1].title.project).toBe("Shop drawings");
+
+    // The kernel's answer arrives (here: it says the title is "Kept"): the next edit builds on it.
+    const answered = sheet();
+    answered.sheet.title = { show: true, title: "Kept" };
+    rerender(<SheetsPane {...p} sheets={[answered]} />);
+    field("Revision", "A");
+    expect(calls().at(-1)![1].title).toEqual({ show: true, title: "Kept", revision: "A" });
+
+    // A refused edit leaves nothing behind: the next one starts from the state shown.
+    (p.onSetup as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve(null));
+    field("Drawn by", "nobody");
+    await Promise.resolve();
+    await Promise.resolve();
+    field("Date", "2026-10-12");
+    expect(calls().at(-1)![1].title).toEqual({ show: true, title: "Kept", date: "2026-10-12" });
+
+    // The same for an item: a scale, then a caption typed by hand, both kept.
+    const item = screen.getByTestId("item-props");
+    fireEvent.change(within(item).getByRole("combobox", { name: "Scale" }), { target: { value: "1:8" } });
+    const cap = within(item).getByRole("textbox", { name: "Caption" });
+    fireEvent.change(cap, { target: { value: "ELEVATION" } });
+    fireEvent.keyDown(cap, { key: "Enter" });
+    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ scale: { kind: "ratio", paper: 1, model: 8 }, caption: "ELEVATION" }));
   });
 
   it("edits the selected viewport: scale, source, caption, order", () => {

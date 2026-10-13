@@ -147,7 +147,7 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheets, apply, props.metric]);
 
-  const setSetup = (id: number, setup: SheetSetup) => void apply({ op: "set_sheet", sheet: id, setup }, () => `${setup.name} changed.`);
+  const setSetup = (id: number, setup: SheetSetup) => apply({ op: "set_sheet", sheet: id, setup }, () => `${setup.name} changed.`);
   const sheetName = (id: number) => sheets.find((s) => s.id === id)?.sheet.name ?? "The sheet";
 
   const addItem = useCallback(
@@ -167,8 +167,8 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
 
   const setItem = useCallback(
     (id: number, kind: ItemKind, describe?: string) => {
-      if (activeId === null) return;
-      void apply({ op: "set_sheet_item", sheet: activeId, item: id, kind: bare(kind) }, () => describe ?? `${ITEM_NAMES[kind.kind]} changed.`);
+      if (activeId === null) return null;
+      return apply({ op: "set_sheet_item", sheet: activeId, item: id, kind: bare(kind) }, () => describe ?? `${ITEM_NAMES[kind.kind]} changed.`);
     },
     [activeId, apply],
   );

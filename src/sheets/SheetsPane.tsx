@@ -3,7 +3,7 @@
 // properties, the paper (size, orientation, margins, units, grid, how dimensions write
 // lengths), the title block, and printing and exporting. Text fields change the sheet when
 // they are left or Enter is pressed, so one edit is one undo step, not one per letter.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CutColumn, DimKind, DimStyle, ItemKind, LengthFormat, PaperSizeKind, Scale, SheetRow, SheetSetup, TitleBlock, ViewportSource } from "../kernel/sheetTypes";
 import type { SceneDef } from "../kernel/types";
 import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, canBeToScale, captionFor, formatKey, localDate, paperSize, paperText, parsePaper, scaleKey, scaleLabel, sourceLabel } from "./paper";
@@ -35,8 +35,10 @@ export interface SheetsPaneProps {
   onNewSource: (s: ViewportSource) => void;
   dimKind: DimKind;
   onDimKind: (k: DimKind) => void;
-  onSetup: (id: number, setup: SheetSetup) => void;
-  onSetItem: (id: number, kind: ItemKind) => void;
+  /** Resolves to something truthy when the kernel took the edit (null or false: refused). */
+  onSetup: (id: number, setup: SheetSetup) => unknown;
+  /** Resolves to something truthy when the kernel took the edit (null or false: refused). */
+  onSetItem: (id: number, kind: ItemKind) => unknown;
   onDeleteItems: (ids: number[]) => void;
   onOrder: (id: number, to: number) => void;
   /** Set a viewport to the largest standard scale its drawing fits at. */
@@ -202,6 +204,44 @@ function ScaleSelect({ value, toScale, onChange }: { value: Scale; toScale: bool
   );
 }
 
+/**
+ * Edits on their way to the kernel. Each commit sends a whole value (a sheet's setup, an
+ * item), built from what the pane shows; the pane shows the kernel's state, which arrives a
+ * moment after the edit. Two fields committed within that moment (Enter in Title, then
+ * Project) would each send the old value of the other, and the second would undo the
+ * first. So the value last sent is kept, with the state it was built from (`from`, compared
+ * by identity): until a new state arrives, the next commit builds on the value sent, not on
+ * the props. A refusal changes no state, so it ends the edit at once.
+ */
+export function useInFlight<K, T>() {
+  const sent = useRef<{ from: K; value: T } | null>(null);
+  return {
+    /** The value to build the next edit on: the one sent, while `from` is still current. */
+    base: (from: K, shown: T): T => (sent.current && sent.current.from === from ? sent.current.value : shown),
+    send: (from: K, value: T, go: (v: T) => unknown) => {
+      const token = { from, value };
+      sent.current = token;
+      void Promise.resolve(go(value)).then(
+        (ok) => {
+          if (!ok && sent.current === token) sent.current = null;
+        },
+        () => {
+          if (sent.current === token) sent.current = null;
+        },
+      );
+    },
+  };
+}
+
+/** The top-level fields `next` changes relative to `shown`, laid over `base`. */
+function rebase<T extends object>(base: T, shown: T, next: T): T {
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+  const n = next as Record<string, unknown>;
+  const was = shown as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(n), ...Object.keys(was)])) if (n[key] !== was[key]) out[key] = n[key];
+  return out as T;
+}
+
 const DIM_KINDS: { kind: DimKind; label: string }[] = [
   { kind: "horizontal", label: "Horizontal" },
   { kind: "vertical", label: "Vertical" },
@@ -212,7 +252,10 @@ const DIM_KINDS: { kind: DimKind; label: string }[] = [
 ];
 
 function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; props: SheetsPaneProps; render: SheetRender | null }) {
-  const set = (k: ItemKind) => props.onSetItem(id, k);
+  // `kind` is what the props hold; a commit lays the fields it changes over any edit of this
+  // item still on its way (see useInFlight).
+  const flight = useInFlight<ItemKind, ItemKind>();
+  const set = (k: ItemKind) => flight.send(kind, rebase(flight.base(kind, kind), kind, k), (v) => props.onSetItem(id, v));
   const sheet = props.sheets.find((s) => s.id === props.active)?.sheet;
   const units = sheet?.units ?? "inches";
   const count = sheet?.items.length ?? 0;
@@ -375,8 +418,14 @@ export function SheetsPane(props: SheetsPaneProps) {
   const { sheets, active, render, selection, scenes, tool } = props;
   const row = sheets.find((s) => s.id === active) ?? null;
   const setup = row ? setupOf(row) : null;
-  const put = (next: Partial<SheetSetup>) => row && setup && props.onSetup(row.id, { ...setup, ...next });
-  const title = (next: Partial<TitleBlock>) => setup && put({ title: { ...(setup.title ?? {}), ...next } });
+  // A change of the setup builds on any change still on its way (see useInFlight).
+  const flight = useInFlight<SheetRow, SheetSetup>();
+  const put = (next: Partial<SheetSetup> | ((s: SheetSetup) => Partial<SheetSetup>)) => {
+    if (!row || !setup) return;
+    const base = flight.base(row, setup);
+    flight.send(row, { ...base, ...(typeof next === "function" ? next(base) : next) }, (v) => props.onSetup(row.id, v));
+  };
+  const title = (next: Partial<TitleBlock>) => put((s) => ({ title: { ...(s.title ?? {}), ...next } }));
   const selected = row && selection.length === 1 ? row.sheet.items.find((i) => i.id === selection[0]) : undefined;
   const units = setup?.units ?? "inches";
 
@@ -480,11 +529,13 @@ export function SheetsPane(props: SheetsPaneProps) {
                     label={`${side} margin`}
                     value={(setup.margins ?? [0.0127, 0.0127, 0.0127, 0.0127])[i]}
                     units={units}
-                    onCommit={(m) => {
-                      const margins = [...(setup.margins ?? [0.0127, 0.0127, 0.0127, 0.0127])] as [number, number, number, number];
-                      margins[i] = m;
-                      put({ margins });
-                    }}
+                    onCommit={(m) =>
+                      put((s) => {
+                        const margins = [...(s.margins ?? [0.0127, 0.0127, 0.0127, 0.0127])] as [number, number, number, number];
+                        margins[i] = m;
+                        return { margins };
+                      })
+                    }
                   />
                 ))}
               </div>
