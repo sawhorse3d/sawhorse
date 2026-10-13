@@ -28,6 +28,7 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 - A click on a dimension with the Select tool (no drag) changed its stand-off when the click was off its line; it now only selects it.
 - A dimension that measures nothing in its view said `?` in a standard view but `0"` in a scene with the same camera (float noise); lengths under the kernel's merge distance (10 µm) now read `?` everywhere.
 - Exporting the slice of a plane that cuts nothing (laid on a face, keeping the side the whole solid is on) now says why and what to do, instead of only "Export refused: nothing to export".
+- A section plane a hair off a solid's face (1e-13, after a copy with a squashing scale) cut it inconsistently: the cap skipped the face as parallel while the kept volume split it. A face the cut treats as parallel is now wholly on the plane or on one side (found by the long fuzz run; repro committed).
 - The slice's DXF is documented and tested as what it is: one closed LWPOLYLINE per outline and per hole, never loose LINE entities, so a CAM program sees closed parts.
 
 ### Security (lane 11, after its independent verification, 2026-10-12)
