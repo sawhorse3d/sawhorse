@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkToolView } from "../tools/plugin";
 import { loadPackage } from "./loader";
 import { sandboxBootstrap } from "./host";
-import { ALLOWED_GLOBALS, ALLOWED_NAVIGATOR, BLOCKED_GLOBALS, BLOCKED_NAVIGATOR, removeEverywhere, stripToAllowlist } from "./lockdown";
+import { ALLOWED_GLOBALS, ALLOWED_NAVIGATOR, BLOCKED_GLOBALS, BLOCKED_NAVIGATOR, isInertConstant, removeEverywhere, stripToAllowlist } from "./lockdown";
 import { checkBody, patchFields, valuesOf } from "./panel";
 import { readPluginZip, writePluginZip } from "./zip";
 
@@ -126,6 +126,33 @@ describe("lockdown", () => {
     expect(survivors).toEqual([]);
     for (const gone of ["FontFace", "webkitRequestFileSystemSync", "webkitRequestFileSystem", "TEMPORARY", "SomeNewNetworkApi", "fetch", "fonts", "importScripts"]) expect(gone in scope, gone).toBe(false);
     for (const kept of ["TextEncoder", "Math", "JSON", "console", "setTimeout", "addEventListener", "dispatchEvent", "constructor"]) expect(kept in scope, kept).toBe(true);
+  });
+  // Lane 15 verifier: in Edge and Chrome the worker's global prototype carries the WebIDL
+  // constants TEMPORARY (0) and PERSISTENT (1), non-configurable, so they cannot be deleted
+  // or shadowed. They are numbers and reach nothing; reporting them put "sandbox: could not
+  // remove TEMPORARY, PERSISTENT" at the top of every plugin's console.
+  it("does not report an undeletable constant as a survivor, but still reports undeletable reach", () => {
+    const workerScopeProto = {};
+    Object.defineProperty(workerScopeProto, "TEMPORARY", { value: 0, enumerable: true, writable: false, configurable: false });
+    Object.defineProperty(workerScopeProto, "PERSISTENT", { value: 1, enumerable: true, writable: false, configurable: false });
+    Object.defineProperty(workerScopeProto, "stuckName", { value: "x", writable: false, configurable: false });
+    Object.defineProperty(workerScopeProto, "stuckApi", { value: () => 1, writable: false, configurable: false });
+    Object.defineProperty(workerScopeProto, "stuckObject", { value: {}, writable: false, configurable: false });
+    const scope = Object.create(workerScopeProto) as Record<string, unknown>;
+    Object.assign(scope, { Math, JSON });
+    // (lockdown() itself also poisons Function.prototype.constructor for the whole process,
+    // so the test drives its two removal passes directly; e2e/plugins-sandbox.spec.ts checks
+    // the real worker's console.)
+    expect(stripToAllowlist(scope, ALLOWED_GLOBALS).sort()).toEqual(["stuckApi", "stuckObject"]);
+    expect(removeEverywhere(scope, "TEMPORARY")).toBe(false);
+    expect(removeEverywhere(scope, "PERSISTENT")).toBe(false);
+    expect(removeEverywhere(scope, "stuckApi")).toBe(true);
+    expect(isInertConstant({ value: 0 })).toBe(true);
+    expect(isInertConstant({ value: null })).toBe(true);
+    expect(isInertConstant({ value: 10n })).toBe(true);
+    expect(isInertConstant({ value: () => 1 })).toBe(false);
+    expect(isInertConstant({ value: Symbol("s") })).toBe(false);
+    expect(isInertConstant({ get: () => 0 })).toBe(false);
   });
   it("reports what it cannot remove", () => {
     const scope = {} as Record<string, unknown>;

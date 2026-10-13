@@ -155,6 +155,13 @@ test("a plugin without model.write cannot change the model; without net it has n
   // The model is exactly as it was.
   expect(await solids(page)).toEqual(before);
   await expect(page.locator("main.vp")).toHaveAttribute("data-volume", hash!);
+  // Lane 15 verifier: in a real worker the lockdown removed everything it should, and the
+  // constants a browser will not let it delete (TEMPORARY, PERSISTENT) are not reported as
+  // survivors, so the console does not open with a false "could not remove" warning.
+  const logs = (await entry(page, id)).logs.join("
+");
+  expect(logs).not.toContain("could not remove");
+  expect(logs).not.toContain("sandbox:");
 });
 
 test("code that would load from outside is refused before it runs", async ({ page }) => {

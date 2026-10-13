@@ -22,6 +22,10 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 - **The site's comparison on a phone** is a card per row with each answer under its product's name, instead of a table that scrolled sideways and hid the third column.
 - **Version 0.1.0-alpha.2** in `package.json` (and its lock), `src-tauri/tauri.conf.json` (MSI version 0.1.0.2), the `crates/` workspace and the desktop crates (with their lock files, checked `--locked`). The site names the v0.1.0-alpha.2 installers; `check-site --online --allow-missing-release` (used by the Pages workflow until the tag lands) lets links into an unpublished release through and still checks a published one. Release notes: `docs/releases/v0.1.0-alpha.2.md` (what is new since alpha.1, what is not yet, known limits, the click path past the unsigned-installer warnings on Windows and macOS). The maintainer tags the release.
 
+### Fixed (lane 15 fixes, from the lane 15 verification)
+
+- **A plugin's console no longer opens with a false warning.** In Edge and Chrome a worker's global object carries the constants `TEMPORARY` (0) and `PERSISTENT` (1), which no script can delete; the sandbox reported them as globals it "could not remove", so every plugin's Developer console began with `sandbox: could not remove TEMPORARY, PERSISTENT`. A plain number, string or boolean held as data reaches nothing and is no longer reported; anything callable or an object that survives still is. The sandbox spec now checks the real worker's console is clean.
+
 ### Fixed (lane 15, from the lane 10 and 11 verifications)
 
 - **The grid follows the style's background**: a dark Background in a light theme (or the other way round) no longer hides the grid; its lines are drawn a little towards black on a light background and towards white on a dark one.

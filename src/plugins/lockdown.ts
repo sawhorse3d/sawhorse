@@ -132,11 +132,41 @@ export function hasAnywhere(obj: object, name: string): boolean {
   return false;
 }
 
+/** The descriptor a read of `name` on `obj` resolves to (no getter is run). */
+function resolve(obj: object, name: string): PropertyDescriptor | undefined {
+  let at: object | null = obj;
+  const seen = new Set<object>();
+  while (at && !seen.has(at)) {
+    seen.add(at);
+    const d = Object.getOwnPropertyDescriptor(at, name);
+    if (d) return d;
+    at = Object.getPrototypeOf(at);
+  }
+  return undefined;
+}
+
+/**
+ * A plain value that reaches nothing: a number, string, boolean, bigint, null or undefined,
+ * held as data (not behind a getter). WebIDL constants such as WorkerGlobalScope's TEMPORARY
+ * (0) and PERSISTENT (1) are like this: non-configurable, so no lockdown can delete them, and
+ * harmless, because a plugin that reads one gets a number and nothing else.
+ */
+export function isInertConstant(d: PropertyDescriptor | undefined): boolean {
+  if (!d || !("value" in d)) return false;
+  const v: unknown = d.value;
+  return v === null || (typeof v !== "object" && typeof v !== "function" && typeof v !== "symbol");
+}
+
 function reachable(obj: object, name: string): boolean {
   // Lane 15: a name that is gone from the whole chain is never read, so a deprecated getter
   // the lockdown removed (TEMPORARY, PERSISTENT, webkitRequestFileSystem ...) is not run and
   // the browser logs no deprecation warning for it.
-  if (!hasAnywhere(obj, name)) return false;
+  const d = resolve(obj, name);
+  if (!d) return false;
+  // Lane 15 fixes: the constants a browser will not let anyone delete (TEMPORARY and
+  // PERSISTENT in Edge and Chrome) are numbers, not reach; reporting them as survivors put a
+  // false "could not remove" warning at the top of every plugin's console.
+  if (isInertConstant(d)) return false;
   try {
     return (obj as Record<string, unknown>)[name] !== undefined;
   } catch {
