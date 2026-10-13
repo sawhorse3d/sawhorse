@@ -400,7 +400,9 @@ fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
 fn cap_is_the_cross_section(m: &Model, section: u64) -> Result<(), String> {
     let cut = m.section_cut(section).map_err(|e| e.to_string())?;
     let (indep, slack) = independent_cross_section(m, section);
-    // A cap below the size the cut keeps (AREA_EPS * 1e-6 each) is dropped from it.
+    // A ring the cut does not count as a cap (section.rs cap_ring_counts: an area of at most
+    // AREA_EPS per metre of the solid's size, 1e-10 m2 for these solids under a metre and a
+    // half) is dropped from it, well within the 1e-9 allowance.
     if (cut.area - indep).abs() > slack + 1e-15 {
         return Err(format!(
             "the caps cover {} m2, the faces clipped to the plane {indep} m2 (allowed {slack})",
@@ -1077,7 +1079,7 @@ fn the_section_finds_cut_cleanly() {
         });
         seen += 1;
     }
-    assert!(seen >= 19, "{seen} section repros");
+    assert!(seen >= 21, "{seen} section repros");
 }
 
 /// The two lane-12c verification finds, exactly: the frame's cut-away half has its notch
@@ -1144,5 +1146,85 @@ fn a_face_within_its_bend_of_the_plane_lies_on_it() {
         .unwrap();
         let section = add_section(&mut d, [0.3125, 0.25, 0.125], [0.0, 0.0, -1.0]);
         cut_cleanly(&mut d, section).unwrap();
+    });
+}
+
+/// The two lane-12d verification finds (`PROPTEST_CASES=50000`, run 1 of 2; lane 17):
+/// Create Group from Slice and the cut disagreed on what a cap is.
+///
+/// - A folded box cut where one vertex pokes 4 micrometres through the plane: the cut showed
+///   a 4.8e-12 m2 ring, every edge shorter than POINT_MERGE, and the slice, skipping those
+///   edges, refused. The ring is not a cap: the cut drops it, and the slice says there is
+///   nothing to slice, on both sides.
+/// - A folded box cut through a vertex: one hexagonal cap of 0.0221 m2 whose tip has three
+///   points within ten micrometres. The slice skipped the two short edges and left the loop
+///   open (no face) while saying its faces were ready to push. It now closes, covering the cap.
+#[test]
+fn the_lane_12d_verification_finds() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/repro");
+    let load = |n: &str| -> Document {
+        let r: Repro =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(n)).unwrap()).unwrap();
+        snapping(r.plane_snap.unwrap_or(true), || {
+            let mut d = Document::new();
+            for op in &r.ops {
+                d.apply(op).unwrap();
+            }
+            d
+        })
+    };
+    snapping_off(|| {
+        // The speck: no cap shown, nothing to slice, either way round.
+        let mut d = load("2026-10-13-section-slice-refused-a-speck-of-cap.json");
+        let s = d.model().sections()[0].0;
+        for _ in 0..2 {
+            let cut = d.model().section_cut(s).unwrap();
+            assert!(cut.caps.is_empty() == cut.outline.is_empty(), "{cut:?}");
+            if cut.caps.is_empty() {
+                let e = d
+                    .clone()
+                    .apply(&Op::SliceToGroup {
+                        section: s,
+                        name: None,
+                    })
+                    .unwrap_err();
+                assert!(e.to_string().contains("cuts nothing here"), "{e}");
+            }
+            cut_cleanly(&mut d.clone(), s).unwrap();
+            d.apply(&Op::FlipSection { section: s }).unwrap();
+        }
+        let cut = d.model().section_cut(s).unwrap();
+        assert!(
+            cut.caps
+                .iter()
+                .all(|c| c.area > sawhorse_kernel::tolerance::AREA_EPS),
+            "{cut:?}"
+        );
+
+        // The tip: one cap, and the slice's face covers it.
+        let mut d = load("2026-10-13-section-slice-left-open-at-a-tip.json");
+        let s = d.model().sections()[0].0;
+        let cut = d.model().section_cut(s).unwrap();
+        assert_eq!(cut.caps.len(), 1, "{cut:?}");
+        assert!(
+            (cut.area - 0.022092796851717753).abs() < 1e-9,
+            "{}",
+            cut.area
+        );
+        let mut sliced = d.clone();
+        let sketch = match sliced
+            .apply(&Op::SliceToGroup {
+                section: s,
+                name: None,
+            })
+            .unwrap()
+        {
+            OpOutcome::Sliced { sketch, .. } => sketch,
+            o => panic!("{o:?}"),
+        };
+        let sk = sliced.model().sketch(sketch).unwrap();
+        assert_eq!(sk.regions().count(), 1, "the slice's loop is closed");
+        slice_is_closed(&d, s).unwrap();
+        cut_cleanly(&mut d, s).unwrap();
     });
 }

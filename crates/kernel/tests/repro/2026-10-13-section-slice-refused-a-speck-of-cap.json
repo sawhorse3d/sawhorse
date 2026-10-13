@@ -1,0 +1,93 @@
+{
+  "name": "2026-10-13-section-slice-refused-a-speck-of-cap",
+  "error": "lane 12d verification, PROPTEST_CASES=50000 tests/section_props.rs folded_solids_cut_into_halves_that_make_the_whole (shrunk): slice refused: the section plane cuts nothing here, so there is no slice to make -- the cut showed a cap of one 5-point ring, 4.8e-12 m2 (a vertex poking 4 micrometres through the plane), every edge shorter than POINT_MERGE, which Create Group from Slice skipped edge by edge and then refused. Fixed in lane 17: one rule for what a cap is (section.rs cap_ring_counts), so the cut drops it and the slice refuses with nothing shown.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.125,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.625
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          0.25,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.625
+        ],
+        [
+          0.0,
+          0.25,
+          0.625
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            6.123233995736766e-17,
+            0.6408578736652343,
+            -0.7676595506872007
+          ],
+          [
+            -0.6408578736652343,
+            0.5893011857612749,
+            0.4919606673522085
+          ],
+          [
+            0.7676595506872007,
+            0.4919606673522085,
+            0.4106988142387254
+          ]
+        ],
+        "translation": [
+          0.22228637538159596,
+          -0.06234673966364737,
+          -0.3003171847865778
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.382496864672925,
+        0.0,
+        -0.17732701794852568
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

@@ -18,8 +18,12 @@
 //!   counts as kept: a plane laid on a face, facing into the solid, cuts nothing), so it
 //!   never depends on floating-point luck at the boundary;
 //!   other active sections that reach the same solids clip it. Deterministic and hashed.
-//! - **Create Group from Slice** ([`Model::slice_to_group`]) draws the outline into a
-//!   sketch on the plane inside a new group: closed loops become faces, ready to push.
+//! - **Create Group from Slice** ([`Model::slice_to_group`]) draws the caps into a sketch
+//!   on the plane inside a new group: closed loops become faces, ready to push.
+//! - **What a cap is** (lane 17) is one rule, [`cap_ring_counts`], used by both: a ring of
+//!   the cut is shown, and drawn by the slice, only when it is more than the kernel can tell
+//!   from nothing. So the slice never refuses a cap the cut shows, and never draws one the
+//!   cut dropped.
 //!
 //! Hashing: everything here is hashed only when a section exists or a scene stores
 //! section state, so every older document keeps its hash.
@@ -468,10 +472,7 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
     if cut.pieces.is_empty() {
         return Vec::new();
     }
-    let scale = b
-        .vertices()
-        .map(|(_, v)| v.pos.abs().max_element())
-        .fold(1.0, f64::max);
+    let scale = solid_scale(o);
     let mut arr = crate::arrangement::Arrangement::new(ARRANGE_TOL * scale);
     let at2d = |k: &Node| plane.to_local(cut.points[k]);
     for (i, p) in cut.pieces.iter().enumerate() {
@@ -488,6 +489,68 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
         }
     }
     rings
+}
+
+/// The size a solid's coordinates reach, at least 1 (metres): what the cut's tolerances are
+/// scaled by (the arrangement's [`ARRANGE_TOL`], the caps' [`cap_area_floor`]).
+fn solid_scale(o: &Object) -> f64 {
+    o.brep()
+        .vertices()
+        .map(|(_, v)| v.pos.abs().max_element())
+        .fold(1.0, f64::max)
+}
+
+/// The smallest area a cap ring may have, for a solid of `scale` ([`solid_scale`]): the
+/// kernel's area epsilon (`AREA_EPS`, POINT_MERGE squared) per metre of the solid's size.
+/// Below it a ring is rounding, not material.
+pub(crate) fn cap_area_floor(scale: f64) -> f64 {
+    crate::tolerance::AREA_EPS * scale.max(1.0)
+}
+
+/// A ring as the slice draws it: walking round, a point within POINT_MERGE of the last one
+/// kept is dropped (and the last when it is within POINT_MERGE of the first), so every edge
+/// left is longer than POINT_MERGE, the distance the sketch merges points at. Three points of
+/// a cap's tip within ten micrometres of each other become two, and the loop still closes
+/// (2026-10-13, lane 12d verification: the sketch had skipped the two short edges and the
+/// ends it was left with were 11 micrometres apart, so the loop stayed open).
+pub(crate) fn weld_ring(ring: &[DVec2]) -> Vec<DVec2> {
+    let mut out: Vec<DVec2> = Vec::with_capacity(ring.len());
+    for &p in ring {
+        if out
+            .last()
+            .is_none_or(|q| q.distance(p) > crate::tolerance::POINT_MERGE)
+        {
+            out.push(p);
+        }
+    }
+    while out.len() > 1 && out[out.len() - 1].distance(out[0]) <= crate::tolerance::POINT_MERGE {
+        out.pop();
+    }
+    out
+}
+
+/// Lane 17: whether a ring of the cut is a cap's ring (an outer ring or a hole), the one rule
+/// [`Model::section_cut`] shows by and [`Model::slice_to_group`] draws by. It is not when
+/// every one of its edges is shorter than POINT_MERGE (it is a speck the model cannot hold
+/// apart), when welded ([`weld_ring`]) it has fewer than three corners (the slice could not
+/// draw it), or when its area, welded or not, is at most [`cap_area_floor`] for the solid
+/// (2026-10-13, lane 12d verification: a 4.8e-12 m2 ring of a vertex poking 4 micrometres
+/// through the plane was shown as a cap and the slice, rightly, had nothing to draw).
+pub(crate) fn cap_ring_counts(ring: &[DVec2], scale: f64) -> bool {
+    let n = ring.len();
+    if n < 3 {
+        return false;
+    }
+    let short =
+        (0..n).all(|i| ring[i].distance(ring[(i + 1) % n]) <= crate::tolerance::POINT_MERGE);
+    if short {
+        return false;
+    }
+    let welded = weld_ring(ring);
+    let floor = cap_area_floor(scale);
+    welded.len() >= 3
+        && sawhorse_tessellate::signed_area(ring).abs() > floor
+        && sawhorse_tessellate::signed_area(&welded).abs() > floor
 }
 
 /// Directions (off `-normal`, along `u` and `v`) of the rays [`inside_below`] casts, tried in
@@ -789,6 +852,7 @@ impl Model {
                 .filter(|&x| x != id)
                 .map(|x| HalfPlane::of(&frame, &self.sections[from_public::<SectionId>(x)]))
                 .collect();
+            let scale = solid_scale(obj);
             for (outer, holes) in assemble(solid_rings(obj, &frame)) {
                 let mut outer = outer;
                 let mut holes = holes;
@@ -796,21 +860,22 @@ impl Model {
                     outer = clip(&outer, h);
                     holes = holes.iter().map(|r| clip(r, h)).collect();
                 }
+                // Lane 17: one rule for what a cap is, the slice's too (cap_ring_counts).
                 let outer = tidy_ring(outer);
+                if !cap_ring_counts(&outer, scale) {
+                    continue;
+                }
                 let holes: Vec<Vec<DVec2>> = holes
                     .into_iter()
                     .map(tidy_ring)
-                    .filter(|r| r.len() >= 3)
+                    .filter(|r| cap_ring_counts(r, scale))
                     .collect();
-                if outer.len() < 3 {
-                    continue;
-                }
                 let area = sawhorse_tessellate::signed_area(&outer)
                     + holes
                         .iter()
                         .map(|r| sawhorse_tessellate::signed_area(r))
                         .sum::<f64>();
-                if area <= crate::tolerance::AREA_EPS * 1e-6 {
+                if area <= cap_area_floor(scale) {
                     continue;
                 }
                 // The outline, without edges that only lie along another plane's cut.
@@ -1275,17 +1340,25 @@ impl Model {
             ),
         };
         let cut = self.section_cut(id)?;
-        if cut.outline.is_empty() {
+        if cut.caps.is_empty() {
             return Err(SectionError::NothingToSlice.into());
         }
         let frame = self.sections[k].plane();
         let mut sketch = crate::sketch::Sketch::new(frame);
-        for [a, b] in &cut.outline {
-            let (a, b) = (DVec2::from_array(*a), DVec2::from_array(*b));
-            if a.distance(b) <= crate::tolerance::POINT_MERGE {
-                continue;
+        // Lane 17: the caps the cut shows, every ring of them, welded the way the cut's rule
+        // reads them (cap_ring_counts): each has three corners or more, every edge longer than
+        // the sketch merges, so each closes into a face. (It drew the outline, edge by edge,
+        // skipping edges of POINT_MERGE or less: a cap with a tip of tiny edges was left open,
+        // and edges along another active plane, which the outline leaves out, never closed.)
+        for c in &cut.caps {
+            for r in std::iter::once(&c.outer).chain(&c.holes) {
+                let ring: Vec<DVec2> = r.iter().map(|p| DVec2::from_array(*p)).collect();
+                let w = weld_ring(&ring);
+                debug_assert!(w.len() >= 3, "the cut showed a ring the slice cannot draw");
+                for i in 0..w.len() {
+                    sketch.insert_segment(w[i], w[(i + 1) % w.len()])?;
+                }
             }
-            sketch.insert_segment(a, b)?;
         }
         if sketch.edge_count() == 0 {
             return Err(SectionError::NothingToSlice.into());

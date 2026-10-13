@@ -1,0 +1,98 @@
+{
+  "name": "2026-10-13-section-slice-left-open-at-a-tip",
+  "error": "lane 12d verification, PROPTEST_CASES=50000 tests/section_props.rs planes_through_one_to_four_vertices (shrunk): the slice's faces cover -0 m2 of the caps' outer rings' 0.022092796851717753 m2 -- the cap is one simple hexagon whose far tip has three points within about 1e-5 m of each other; the slice skipped the two edges of POINT_MERGE or less and the ends left were 1.1e-5 m apart, so the loop stayed open (4 edges, no face) while the app said its faces were ready to push. Fixed in lane 17: the slice draws the caps' rings welded (section.rs weld_ring), every edge longer than POINT_MERGE, so it closes.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.125,
+      "h": 0.625
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.75
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.75
+        ],
+        [
+          0.125,
+          0.0,
+          0.75
+        ],
+        [
+          0.0,
+          0.625,
+          0.75
+        ],
+        [
+          0.125,
+          0.625,
+          0.75
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            0.9919801802816174,
+            -0.12369736295680005,
+            -0.025966985307951964
+          ],
+          [
+            0.12296059301971009,
+            0.9920085137973634,
+            -0.02828075525489553
+          ],
+          [
+            0.029257725350596658,
+            0.02486103278385168,
+            0.9992626854617505
+          ]
+        ],
+        "translation": [
+          0.5753190332216571,
+          0.0054175855951779095,
+          -0.3843211876275224
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.4785329423926931,
+        0.6042123402773584,
+        0.3806639719586978
+      ],
+      "normal": [
+        0.6724141096511329,
+        0.20990364443579454,
+        0.7097885073700796
+      ]
+    }
+  ]
+}
