@@ -201,6 +201,43 @@ fn split_at_repeats(c: &[SVertexId]) -> Vec<Vec<SVertexId>> {
     pieces
 }
 
+/// The faces of a planar embedding as closed circuits of vertices, each with its face on the
+/// left. `adj` lists every vertex's neighbours sorted counter-clockwise around it (each edge
+/// once from each end). The next edge after `u -> v` is the one leaving `v` just clockwise of
+/// `v -> u`, so a walk turns as far left as it can and traces one face. Shared by the
+/// sketch's region detection and the section cap's arrangement ([`crate::arrangement`]).
+pub(crate) fn walk_circuits<V: Ord + Copy>(adj: &BTreeMap<V, Vec<V>>) -> Vec<Vec<V>> {
+    // next(u->v) = the edge leaving v just clockwise of (v->u): keeps the face on the left.
+    let next = |u: V, v: V| -> V {
+        let nbrs = &adj[&v];
+        let i = nbrs.iter().position(|&w| w == u).expect("twin exists");
+        nbrs[(i + nbrs.len() - 1) % nbrs.len()]
+    };
+    let mut visited: BTreeSet<(V, V)> = BTreeSet::new();
+    let mut circuits = Vec::new();
+    let limit = adj.values().map(Vec::len).sum::<usize>() + 2;
+    for (&u0, ns) in adj {
+        for &v0 in ns {
+            if visited.contains(&(u0, v0)) {
+                continue;
+            }
+            let mut cycle = Vec::new();
+            let (mut u, mut v) = (u0, v0);
+            loop {
+                visited.insert((u, v));
+                cycle.push(u);
+                let w = next(u, v);
+                (u, v) = (v, w);
+                if (u, v) == (u0, v0) || cycle.len() > limit {
+                    break;
+                }
+            }
+            circuits.push(cycle);
+        }
+    }
+    circuits
+}
+
 /// A sketch's graph: plane, vertices, edges and regions (see [`Sketch`]).
 #[derive(Debug, Clone)]
 pub struct SketchData {
@@ -1384,35 +1421,7 @@ impl Sketch {
                 dp.y.atan2(dp.x).total_cmp(&dq.y.atan2(dq.x)).then(p.cmp(q))
             });
         }
-        // next(u->v) = the edge leaving v just clockwise of (v->u): keeps the face on the left.
-        let next = |u: SVertexId, v: SVertexId| -> SVertexId {
-            let nbrs = &out[&v];
-            let i = nbrs.iter().position(|&w| w == u).expect("twin exists");
-            nbrs[(i + nbrs.len() - 1) % nbrs.len()]
-        };
-        let mut visited: BTreeSet<(SVertexId, SVertexId)> = BTreeSet::new();
-        let mut circuits = Vec::new();
-        let limit = 2 * self.edges.len() + 2;
-        for (&u0, ns) in &out {
-            for &v0 in ns {
-                if visited.contains(&(u0, v0)) {
-                    continue;
-                }
-                let mut cycle = Vec::new();
-                let (mut u, mut v) = (u0, v0);
-                loop {
-                    visited.insert((u, v));
-                    cycle.push(u);
-                    let w = next(u, v);
-                    (u, v) = (v, w);
-                    if (u, v) == (u0, v0) || cycle.len() > limit {
-                        break;
-                    }
-                }
-                circuits.push(cycle);
-            }
-        }
-        circuits
+        walk_circuits(&out)
     }
 
     /// Edges with the same face on both sides: dangling strokes and bridges.
