@@ -21,6 +21,15 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 - Two fields of the Sheet pane committed in quick succession (Enter in Title, then Project) no longer undo each other: an edit still on its way to the kernel is the base for the next one.
 - A viewport's caption follows its view and scale when Sawhorse wrote it; a caption you typed stays.
 
+### Fixed (lane 12, after its independent verification, 2026-10-12)
+
+- **Dimensions went stale when the model changed**: widening a 30 in cabinet to 36 in left its sheet dimension saying 30", its line 3 3/4 in beside a 4 1/2 in outline. A dimension placed on a solid's corners, edge midpoints or edges now follows the solid through push/pull, Move, Rotate and Scale (ADR-0010, amended): each end keeps an anchor naming the solid and the faces that meet at the corner, found again on every layout. Leaders on a solid follow it too. An end on a sketch, a mesh or a section cut, or whose corner an edit took away, stays where it was placed, and the Sheet pane says which. Saved as optional `anchors` (`docs/format.md`); older sheets keep their hashes.
+- **A stale kernel from a shared cargo target dir**: two checkouts sharing one could hand one the other's wasm kernel ("Finished" in two seconds, then `golden:wasm` failing with "unknown variant `add_section`", and a build that would have shipped the older kernel). Every checkout now gets its own target dir (`scripts/env.sh`, the `justfile`), and the kernel carries a stamp of the checkout that built it: `npm run wasm` rebuilds once by itself on a mismatch, `npm run golden:wasm` and `npm run build` refuse another checkout's kernel (`scripts/wasm-checkout.mjs`, `npm run check:wasm`).
+- A click on a dimension with the Select tool (no drag) changed its stand-off when the click was off its line; it now only selects it.
+- A dimension that measures nothing in its view said `?` in a standard view but `0"` in a scene with the same camera (float noise); lengths under the kernel's merge distance (10 µm) now read `?` everywhere.
+- Exporting the slice of a plane that cuts nothing (laid on a face, keeping the side the whole solid is on) now says why and what to do, instead of only "Export refused: nothing to export".
+- The slice's DXF is documented and tested as what it is: one closed LWPOLYLINE per outline and per hole, never loose LINE entities, so a CAM program sees closed parts.
+
 ### Security (lane 11, after its independent verification, 2026-10-12)
 
 - **A plugin without `net` could reach the network**: `FontFace(...).load()` inside its worker fetched any URL (the verifier sent the model's labels, volumes and bounds to a local listener), and `webkitRequestFileSystemSync` gave every plugin an origin-wide file system to write to. The sandbox now cuts the worker's global object to an **allowlist** (the language's built-ins and web APIs that reach nothing) instead of removing a list of known names, so these and any API a later browser adds are gone; `navigator` keeps only facts, and `URL.createObjectURL` is removed.
