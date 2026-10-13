@@ -1,0 +1,205 @@
+{
+  "name": "2026-10-13-section-slice-two-caps-a-micrometre-apart",
+  "error": "op 13 Extrude { sketch: 1, region: 4294967297, distance: 0.25 }: section 1: Create Group from Slice gave Err(Sketch(Degenerate)) for 2 caps, 2 representable",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 1e-6,
+      "y": 0.5,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.75
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "undo"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          -0.25
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          -0.25
+        ],
+        [
+          0.0,
+          -0.25,
+          -0.25
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 3
+      },
+      "points": [
+        [
+          1.000000000001e-6,
+          0.5,
+          0.0
+        ],
+        [
+          0.01875099999999999,
+          0.5,
+          0.0
+        ],
+        [
+          0.01875099999999999,
+          0.5,
+          0.05625000000000002
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 2
+      },
+      "points": [
+        [
+          1.000000000001e-6,
+          0.5,
+          0.75
+        ],
+        [
+          0.01875099999999999,
+          0.5,
+          0.75
+        ],
+        [
+          0.01875099999999999,
+          0.51875,
+          0.75
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "active": false
+    },
+    {
+      "op": "place_section",
+      "section": 1,
+      "origin": [
+        0.0,
+        0.75,
+        0.250004
+      ],
+      "normal": [
+        0.0,
+        1.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.75,
+      "y": 0.25,
+      "w": -0.5,
+      "h": 0.250004
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 4294967297,
+      "distance": 0.25
+    }
+  ]
+}

@@ -517,7 +517,7 @@ pub(crate) fn cap_area_floor(scale: f64) -> f64 {
     crate::tolerance::AREA_EPS * scale.max(1.0)
 }
 
-/// Points this close are one point to the slice ([`merge_ring`]). The sketch merges points
+/// Points this close are one point to the slice ([`weld`]). The sketch merges points
 /// within POINT_MERGE (10 micrometres) of a point or an edge, measured with its own rounding;
 /// merging a part per million further keeps every corner the slice draws clear of the
 /// sketch's merging, so the sketch takes each loop exactly as merged here (2026-10-13, lane
@@ -526,113 +526,192 @@ pub(crate) fn cap_area_floor(scale: f64) -> f64 {
 /// edge between them as "too small").
 const WELD: f64 = crate::tolerance::POINT_MERGE * (1.0 + 1e-6);
 
-/// A ring of the cut with its points closer than [`WELD`] merged, as the sketch would merge
-/// them, split into the loops that remain (lane 18). The closest merge first, and again
-/// until none is left:
+/// Loops with their points closer than [`WELD`] merged, as the sketch would merge them (lane
+/// 18): the closest merge of the most local kind first, again until none is left.
 ///
-/// 1. two neighbours within WELD become one point, their midpoint;
-/// 2. a corner so sharp that one of its neighbours lies within WELD of its other edge is a
-///    spike the sketch folds flat: it goes;
-/// 3. a corner within WELD of an edge that is neither its own nor next to it pinches the ring:
-///    the ring is split into the loops either side, which share that corner.
+/// 1. Two neighbours on a loop within WELD become one point, their midpoint.
+/// 2. A corner so sharp that one of its neighbours lies within WELD of its other edge is a
+///    spike the sketch folds flat: it goes.
+/// 3. A corner within WELD of a corner of another loop moves onto it (the later loop's onto
+///    the earlier's): the sketch makes them one point.
+/// 4. A corner within WELD of an edge of another loop is put into that edge: the sketch
+///    splits the edge there, so the loops share the point.
+/// 5. A corner within WELD of an edge of its own loop that is neither its own nor next to it
+///    pinches the loop: it is split into the loops either side, which share that corner.
 ///
-/// Then every corner is more than WELD from every other corner and from every edge it is not
-/// on, so the sketch, whose snapping and repair look only within POINT_MERGE, merges and
-/// splits nothing: it takes each loop as drawn. Which merge comes first is decided by the
-/// distances alone, never by where the ring starts or which way round it runs, so a plane and
-/// its flip merge a cap alike (2026-10-13: walking round and dropping a point near the last
-/// one kept welded the same cap's tip two ways, and the slice drew it on one side only). A
-/// loop left with fewer than three points is gone.
-fn merge_ring(ring: &[DVec2]) -> Vec<Vec<DVec2>> {
-    use crate::sketch::point_segment_distance as seg;
-    let closest = |a: &(f64, usize), b: &(f64, usize)| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1));
-    let mut work = vec![ring.to_vec()];
-    let mut out = Vec::new();
-    'loops: while let Some(mut r) = work.pop() {
-        loop {
-            let n = r.len();
-            if n < 3 {
-                continue 'loops;
-            }
-            // 1. The closest neighbours within WELD.
-            let pair = (0..n)
-                .map(|i| (r[i].distance(r[(i + 1) % n]), i))
-                .filter(|(d, _)| *d <= WELD)
-                .min_by(closest);
-            if let Some((_, i)) = pair {
-                let j = (i + 1) % n;
+/// Then every point is more than WELD from every other point and from every edge it is not
+/// an end of (points at exactly the same place are one point, as in the sketch), so the
+/// sketch, whose snapping and repair look only within POINT_MERGE, merges and splits nothing
+/// but proper crossings: it takes each loop as drawn. Which merge comes first is decided by
+/// the distances and the loops' order alone, never by where a loop starts or which way round
+/// it runs, so a plane and its flip merge a cap alike (2026-10-13: walking round and dropping
+/// a point near the last one kept welded the same cap's tip two ways, and the slice drew it on
+/// one side only). A loop left with fewer than three points is gone. One ring alone is
+/// [`representable`]'s merge; the slice welds all the loops it draws together (lane 18's fuzz,
+/// seed 20263608: two boxes a micrometre apart, each cap fine alone, and the sketch merged
+/// one's corner into the other's edge and refused what was left of an edge).
+fn weld(mut loops: Vec<Vec<DVec2>>) -> Vec<Vec<DVec2>> {
+    let budget = 64 * (16 + loops.iter().map(Vec::len).sum::<usize>());
+    for _ in 0..budget {
+        loops.retain(|l| l.len() >= 3);
+        let Some(fix) = worst(&loops) else {
+            return loops;
+        };
+        match fix {
+            Fix::Merge(l, i) => {
+                let r = &mut loops[l];
+                let j = (i + 1) % r.len();
                 r[i] = (r[i] + r[j]) * 0.5;
                 r.remove(j);
-                continue;
             }
-            // 2. The sharpest spike: a neighbour of corner t within WELD of t's other edge.
-            let tip = (0..n)
-                .map(|t| {
-                    let (p, c, q) = (r[(t + n - 1) % n], r[t], r[(t + 1) % n]);
-                    (seg(p, c, q).min(seg(q, p, c)), t)
-                })
-                .filter(|(d, _)| *d <= WELD)
-                .min_by(closest);
-            if let Some((_, t)) = tip {
-                r.remove(t);
-                continue;
+            Fix::Spike(l, t) => {
+                loops[l].remove(t);
             }
-            // 3. The closest pinch: corner j within WELD of edge i -> i + 1.
-            if let Some((i, j)) = pinch(&r) {
-                let a: Vec<DVec2> = (i + 1..=i + (j + n - i) % n).map(|k| r[k % n]).collect();
-                let b: Vec<DVec2> = (j..=j + (i + n - j) % n).map(|k| r[k % n]).collect();
-                work.push(b);
-                work.push(a);
-                continue 'loops;
+            Fix::Move(l, i, to) => loops[l][i] = to,
+            Fix::Insert(l, i, p) => loops[l].insert(i + 1, p),
+            Fix::Pinch(l, i, j) => {
+                let r = std::mem::take(&mut loops[l]);
+                let n = r.len();
+                loops[l] = (i + 1..=i + (j + n - i) % n).map(|k| r[k % n]).collect();
+                loops.insert(l + 1, (j..=j + (i + n - j) % n).map(|k| r[k % n]).collect());
             }
-            out.push(r);
-            continue 'loops;
         }
     }
-    out
+    // Never reached in practice (every merge removes a point, makes two the same, or splits
+    // a loop in two smaller ones); what is left is still drawn, and the sketch has its say.
+    loops.retain(|l| l.len() >= 3);
+    loops
 }
 
-/// The closest corner `j` within [`WELD`] of an edge `i -> i + 1` of `r` that it is neither on
-/// nor next to (`j` not `i - 1` to `i + 2`): `(i, j)`. Corners are swept in order along x, so
-/// each edge looks only at the corners near it.
-fn pinch(r: &[DVec2]) -> Option<(usize, usize)> {
-    use crate::sketch::point_segment_distance as seg;
-    let n = r.len();
-    if n < 5 {
-        return None;
+/// One merge of [`weld`]: loop, index, and what to do there.
+#[derive(Debug, Clone, Copy)]
+enum Fix {
+    /// Points `i` and `i + 1` become their midpoint.
+    Merge(usize, usize),
+    /// Point `t`, a spike's tip, goes.
+    Spike(usize, usize),
+    /// Point `i` moves onto another loop's point.
+    Move(usize, usize, DVec2),
+    /// Another loop's point goes into edge `i -> i + 1`.
+    Insert(usize, usize, DVec2),
+    /// Point `j` pinches edge `i -> i + 1` of its own loop.
+    Pinch(usize, usize, usize),
+}
+
+/// A merge [`worst`] may pick: (kind, distance, loop, two indices, the merge).
+type Candidate = (u8, f64, usize, usize, usize, Fix);
+
+/// Keep `fix` in `best` when it is within [`WELD`] and comes before it: the lowest kind, then
+/// the closest, then the first in the loops' order.
+fn offer(best: &mut Option<Candidate>, kind: u8, d: f64, l: usize, a: usize, b: usize, fix: Fix) {
+    if d <= WELD
+        && best.is_none_or(|(k, bd, bl, ba, bb, _)| {
+            (kind.cmp(&k))
+                .then(d.total_cmp(&bd))
+                .then(l.cmp(&bl))
+                .then(a.cmp(&ba))
+                .then(b.cmp(&bb))
+                .is_lt()
+        })
+    {
+        *best = Some((kind, d, l, a, b, fix));
     }
-    let mut by_x: Vec<usize> = (0..n).collect();
-    by_x.sort_by(|&a, &b| r[a].x.total_cmp(&r[b].x).then(a.cmp(&b)));
-    let mut best: Option<(f64, usize, usize)> = None;
-    for i in 0..n {
-        let (a, b) = (r[i], r[(i + 1) % n]);
-        let (lo, hi) = (a.min(b) - DVec2::splat(WELD), a.max(b) + DVec2::splat(WELD));
-        let from = by_x.partition_point(|&k| r[k].x < lo.x);
-        for &j in &by_x[from..] {
-            let p = r[j];
-            if p.x > hi.x {
-                break;
-            }
-            let off = (j + n - i) % n;
-            if off <= 2 || off == n - 1 || p.y < lo.y || p.y > hi.y {
-                continue;
-            }
-            let d = seg(p, a, b);
-            if d <= WELD
-                && best.is_none_or(|(bd, bi, bj)| {
-                    d.total_cmp(&bd).then(i.cmp(&bi)).then(j.cmp(&bj)).is_lt()
-                })
-            {
-                best = Some((d, i, j));
+}
+
+/// The merge [`weld`] makes next, or `None` when every point is clear: the lowest kind, then
+/// the closest, then the first in the loops' order.
+fn worst(loops: &[Vec<DVec2>]) -> Option<Fix> {
+    use crate::sketch::point_segment_distance as seg;
+    let mut best: Option<Candidate> = None;
+    for (l, r) in loops.iter().enumerate() {
+        let n = r.len();
+        for i in 0..n {
+            offer(
+                &mut best,
+                0,
+                r[i].distance(r[(i + 1) % n]),
+                l,
+                i,
+                0,
+                Fix::Merge(l, i),
+            );
+        }
+        for t in 0..n {
+            let (p, c, q) = (r[(t + n - 1) % n], r[t], r[(t + 1) % n]);
+            offer(
+                &mut best,
+                1,
+                seg(p, c, q).min(seg(q, p, c)),
+                l,
+                t,
+                0,
+                Fix::Spike(l, t),
+            );
+        }
+    }
+    if best.is_some() {
+        return best.map(|b| b.5);
+    }
+    // Every point near every edge, swept along x: each edge looks only at the points near it.
+    let mut pts: Vec<(DVec2, usize, usize)> = loops
+        .iter()
+        .enumerate()
+        .flat_map(|(l, r)| r.iter().enumerate().map(move |(i, p)| (*p, l, i)))
+        .collect();
+    pts.sort_by(|a, b| {
+        a.0.x
+            .total_cmp(&b.0.x)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.cmp(&b.2))
+    });
+    for (l, r) in loops.iter().enumerate() {
+        let n = r.len();
+        for i in 0..n {
+            let (a, b) = (r[i], r[(i + 1) % n]);
+            let (lo, hi) = (a.min(b) - DVec2::splat(WELD), a.max(b) + DVec2::splat(WELD));
+            let from = pts.partition_point(|q| q.0.x < lo.x);
+            for &(p, m, j) in &pts[from..] {
+                if p.x > hi.x {
+                    break;
+                }
+                if p.y < lo.y || p.y > hi.y || p == a || p == b {
+                    continue;
+                }
+                let d = seg(p, a, b);
+                if m == l {
+                    let off = (j + n - i) % n;
+                    if off > 2 && off != n - 1 {
+                        offer(&mut best, 4, d, l, i, j, Fix::Pinch(l, i, j));
+                    }
+                    continue;
+                }
+                // Another loop's point near this edge: near one of its ends, the later loop's
+                // point moves onto the earlier's; otherwise it goes into the edge.
+                let (end, k) = if p.distance(a) <= p.distance(b) {
+                    (a, i)
+                } else {
+                    (b, (i + 1) % n)
+                };
+                let near = p.distance(end);
+                if near <= WELD {
+                    let fix = if m > l {
+                        Fix::Move(m, j, end)
+                    } else {
+                        Fix::Move(l, k, p)
+                    };
+                    offer(&mut best, 2, near, l.min(m), l.max(m), 0, fix);
+                } else {
+                    offer(&mut best, 3, d, l, i, m, Fix::Insert(l, i, p));
+                }
             }
         }
     }
-    best.map(|(_, i, j)| (i, j))
+    best.map(|b| b.5)
 }
 
 /// Lane 18: **the one rule for what Create Group from Slice can draw** of a ring of the cut
 /// (an outer ring or a hole): its loops after merging points closer than POINT_MERGE
-/// ([`merge_ring`]) that keep three corners or more and an area above [`cap_area_floor`],
+/// ([`weld`], the ring alone) that keep three corners or more and an area above [`cap_area_floor`],
 /// turning the ring's own way. The ring is *representable* when there is one; those loops are
 /// what the slice draws, and the sketch takes every one of them. A cap is representable by its
 /// outer ring ([`Cap::representable`]), and that flag is all the slice and every oracle read.
@@ -643,7 +722,7 @@ fn pinch(r: &[DVec2]) -> Option<(usize, usize)> {
 pub(crate) fn representable(ring: &[DVec2], scale: f64) -> Vec<Vec<DVec2>> {
     let turn = sawhorse_tessellate::signed_area(ring).signum();
     let floor = cap_area_floor(scale);
-    merge_ring(ring)
+    weld(vec![ring.to_vec()])
         .into_iter()
         .filter(|l| l.len() >= 3 && sawhorse_tessellate::signed_area(l) * turn > floor)
         .collect()
@@ -1451,20 +1530,25 @@ impl Model {
         let frame = self.sections[k].plane();
         let mut sketch = crate::sketch::Sketch::new(frame);
         // Lane 18: every representable cap, each of its rings as the one rule merges it
-        // (`representable`): loops of three corners or more whose every corner is clear of
-        // the sketch's merging, so the sketch takes each as drawn and it closes into a face.
-        // A hole thinner than that is not drawn (the face covers the slit). (Lane 17 welded
-        // a ring by walking round it, which left a tip corner within the merge distance of
-        // the next edge in one of the plane's two orientations; the sketch refused it.)
+        // (`representable`), and then all those loops welded together (`weld`): a corner of
+        // one cap within the merge distance of another cap's corner or edge is merged as the
+        // sketch would, so every corner is clear of the sketch's merging and the sketch takes
+        // each loop as drawn; each closes into a face. A hole thinner than that is not drawn
+        // (the face covers the slit). (Lane 17 welded a ring by walking round it, which left a
+        // tip corner within the merge distance of the next edge in one of the plane's two
+        // orientations, and drew each ring alone, so a corner of one cap a micrometre from
+        // another's edge was merged into it: the sketch refused both.)
+        let mut loops = Vec::new();
         for c in cut.caps.iter().filter(|c| c.representable) {
             let scale = solid_scale(&self.objects[from_public::<ObjectId>(c.object)]);
             for r in std::iter::once(&c.outer).chain(&c.holes) {
                 let ring: Vec<DVec2> = r.iter().map(|p| DVec2::from_array(*p)).collect();
-                for l in representable(&ring, scale) {
-                    for i in 0..l.len() {
-                        sketch.insert_segment(l[i], l[(i + 1) % l.len()])?;
-                    }
-                }
+                loops.extend(representable(&ring, scale));
+            }
+        }
+        for l in weld(loops) {
+            for i in 0..l.len() {
+                sketch.insert_segment(l[i], l[(i + 1) % l.len()])?;
             }
         }
         debug_assert!(sketch.edge_count() > 0, "a representable cap drew nothing");
