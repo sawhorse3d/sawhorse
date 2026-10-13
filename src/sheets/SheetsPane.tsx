@@ -6,7 +6,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { CutColumn, DimKind, DimStyle, ItemKind, LengthFormat, PaperSizeKind, Scale, SheetRow, SheetSetup, TitleBlock, ViewportSource } from "../kernel/sheetTypes";
 import type { SceneDef } from "../kernel/types";
-import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, canBeToScale, formatKey, paperSize, paperText, parsePaper, scaleKey, scaleLabel, sourceLabel } from "./paper";
+import { CUT_COLUMNS, FORMATS, ITEM_NAMES, PAPERS, STANDARD_SCALES, STD_VIEWS, canBeToScale, captionFor, formatKey, paperSize, paperText, parsePaper, scaleKey, scaleLabel, sourceLabel } from "./paper";
 import type { SheetRender } from "./render";
 import type { SheetToolId } from "./SheetCanvas";
 
@@ -222,6 +222,10 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
     switch (kind.kind) {
       case "viewport": {
         const toScale = canBeToScale(kind.source, props.scenes);
+        // A caption Sawhorse wrote ("FRONT ELEVATION 1:12") follows the view and the scale;
+        // one typed by hand stays.
+        const auto = !kind.caption || kind.caption === captionFor(kind.source, kind.scale);
+        const caption = (source: ViewportSource, scale: Scale) => (auto ? captionFor(source, scale) : kind.caption);
         return (
           <>
             <SourceSelect
@@ -229,9 +233,12 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
               value={kind.source}
               scenes={props.scenes}
               allowCamera
-              onChange={(source) => set({ ...kind, source, centre: null, scale: canBeToScale(source, props.scenes) ? kind.scale : { kind: "nts" } })}
+              onChange={(source) => {
+                const scale: Scale = canBeToScale(source, props.scenes) ? kind.scale : { kind: "nts" };
+                set({ ...kind, source, centre: null, scale, caption: caption(source, scale) });
+              }}
             />
-            <ScaleSelect value={kind.scale} toScale={toScale} onChange={(scale) => set({ ...kind, scale })} />
+            <ScaleSelect value={kind.scale} toScale={toScale} onChange={(scale) => set({ ...kind, scale, caption: caption(kind.source, scale) })} />
             {!toScale ? <p className="note">An isometric or perspective view is never to scale: it fits its frame.</p> : null}
             {info?.problem ? <p className="note err">Cannot draw: {info.problem}</p> : null}
             <Field label="Caption" value={kind.caption ?? ""} placeholder="No caption" onCommit={(c) => set({ ...kind, caption: c.trim() ? c : null })} />

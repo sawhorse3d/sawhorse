@@ -278,7 +278,7 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
     const source: ViewportSource = { from: "camera", camera: cam };
     let scale: Scale = { kind: "nts" };
     if (cam.parallel) scale = (await fitScale({ ...item, source, scale, centre: null })) ?? scale;
-    setItem(id, { ...item, source, scale, centre: null, caption: item.caption === captionFor(item.source, item.scale) ? captionFor(source, scale) : item.caption }, `Viewport shows the 3D view${cam.parallel ? ` at ${scaleLabel(scale)}` : " (perspective: not to scale)"}.`);
+    setItem(id, { ...item, source, scale, centre: null, caption: !item.caption || item.caption === captionFor(item.source, item.scale) ? captionFor(source, scale) : item.caption }, `Viewport shows the 3D view${cam.parallel ? ` at ${scaleLabel(scale)}` : " (perspective: not to scale)"}.`);
   };
 
   // ---- exports ------------------------------------------------------------------------

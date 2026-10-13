@@ -81,10 +81,11 @@ describe("Sheets pane", () => {
     const scale = within(item).getByRole("combobox", { name: "Scale" });
     expect((scale as HTMLSelectElement).value).toBe("1:12");
     fireEvent.change(scale, { target: { value: "1:8" } });
-    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ scale: { kind: "ratio", paper: 1, model: 8 } }));
+    // The caption Sawhorse wrote follows the scale.
+    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ scale: { kind: "ratio", paper: 1, model: 8 }, caption: "FRONT ELEVATION 1:8" }));
     // An isometric view is never to scale: NTS comes with it.
     fireEvent.change(within(item).getByRole("combobox", { name: "Shows" }), { target: { value: "std:iso" } });
-    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ source: { from: "standard", view: "iso" }, scale: { kind: "nts" } }));
+    expect(p.onSetItem).toHaveBeenLastCalledWith(1, expect.objectContaining({ source: { from: "standard", view: "iso" }, scale: { kind: "nts" }, caption: "ISOMETRIC NTS" }));
     fireEvent.click(within(item).getByRole("button", { name: "Fit scale" }));
     expect(p.onFitScale).toHaveBeenCalledWith(1);
     fireEvent.click(within(item).getByRole("button", { name: "Bring to front" }));
