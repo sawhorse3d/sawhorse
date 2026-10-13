@@ -18,7 +18,9 @@ interface Part {
 test("shell matches the approved mock's structure", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".app > header.top")).toBeVisible();
-  await expect(page.locator(".tool")).toHaveCount(15);
+  // The mock's fifteen tools plus Section (lane 12) at the end of the rail.
+  await expect(page.locator(".tool")).toHaveCount(16);
+  await expect(page.locator(".tool").last()).toHaveAttribute("data-tool", "section");
   // The mock's four tabs, plus Materials and Styles (lane 10) and the Plugins glyph tab (lane 11).
   await expect(page.getByRole("tab")).toHaveText(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render", ""]);
   await expect(page.getByRole("tab", { name: "Plugins" })).toBeVisible();
