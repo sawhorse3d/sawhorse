@@ -85,11 +85,20 @@ try {
     await page.keyboard.type(text);
     await page.keyboard.press("Enter");
   };
-  await page.keyboard.press("r");
-  await typeLine("36,12");
-  await page.keyboard.press("p");
-  await typeLine("3/4");
-  await page.locator("#hint").filter({ hasText: "Extruded" }).waitFor();
+  // A typed box, as the e2e shell spec makes it. The pointer goes off the model first: a typed
+  // rectangle and a typed push follow what is under the pointer, and after the click on "Try it
+  // in your browser" it rests wherever that link was, which depends on the fonts (a different
+  // place on the CI runner than on Windows). The push waits for the rectangle.
+  const box = async () => {
+    await page.mouse.move(1, 1);
+    await page.keyboard.press("r");
+    await typeLine("36,12");
+    await page.waitForSelector('main.vp[data-triangles="2"]');
+    await page.keyboard.press("p");
+    await typeLine("3/4");
+    await page.locator("#hint").filter({ hasText: "Extruded" }).waitFor();
+  };
+  await box();
   const solids = async () => page.evaluate(() => window.__sawhorse.solids());
   let s = await solids();
   const volume = (x) => x.volume / IN ** 3;
@@ -102,11 +111,7 @@ try {
   // 4. save, new, open (download and file-input path; same handlers as the pickers)
   await page.goto(`${server.url}app/?io=basic&autosave=0`);
   await page.waitForSelector('main.vp[data-kernel="ready"]', { timeout: 30_000 });
-  await page.keyboard.press("r");
-  await typeLine("36,12");
-  await page.keyboard.press("p");
-  await typeLine("3/4");
-  await page.locator("#hint").filter({ hasText: "Extruded" }).waitFor();
+  await box();
   // Menu items' names include their shortcut ("Open… Ctrl+O"), so match the start.
   const menu = async (top, item) => {
     await page.getByRole("button", { name: top, exact: true }).click();
