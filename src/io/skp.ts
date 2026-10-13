@@ -30,7 +30,7 @@
 // mapping it gives in world metres, which the kernel fits to a scale, a rotation and an
 // offset (skew and projected textures are dropped, with a note).
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
-import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, SceneDef, V3, Xform } from "../kernel/types";
+import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, OpOutcome, SceneDef, V3, Xform } from "../kernel/types";
 import type { UnitSystem } from "../lib/units";
 
 export const M_PER_IN = 0.0254;
@@ -679,6 +679,15 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
 }
 
 /** Parse a .skp file's bytes and map them onto one kernel import op. */
+/** The import's own outcome out of what applying a {@link skpToOp} op returned: the op is a
+ * batch when texture images go in before the import or section planes after it, and the
+ * report describes the import, not the last plane added (lane 15: a file with a section
+ * plane was reported as "Imported x.skp." with nothing counted). */
+export function importOutcomeOf(applied: OpOutcome): OpOutcome {
+  if (applied.kind !== "batch") return applied;
+  return applied.outcomes.find((o) => o.kind === "imported") ?? applied.outcomes[applied.outcomes.length - 1] ?? applied;
+}
+
 export function skpToOp(bytes: ArrayBuffer | Uint8Array, fileName: string): SkpImport {
   const buf = bytes instanceof Uint8Array ? bytes.slice().buffer : bytes;
   let model: SkpModel;

@@ -25,6 +25,7 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 ### Fixed (lane 15, from the lane 10 and 11 verifications)
 
 - **The grid follows the style's background**: a dark Background in a light theme (or the other way round) no longer hides the grid; its lines are drawn a little towards black on a light background and towards white on a dark one.
+- **A SketchUp file with a section plane says what came in**: the planes go in after the import, in the same step, and the report described the last plane added ("Imported x.skp.", nothing counted); it describes the import again.
 - **Edges follow the style's background too**: Shop drawing (white paper) on the dark theme drew the theme's light edges on white, so the model all but vanished; edges that would not read on the style's background are drawn in a near-black ink on a light one and a near-white one on a dark one.
 - **Painting what already shows the material is not an edit** (no undo step; the status line says so). **Painting a group over parts with paint of their own** says how many faces kept theirs and points at the new **Edit > Clear Paint** (kernel op `clear_paint`: paint off what the selection holds, so what holds it shows; one undo step; component parts are cleared from inside the component).
 - **Slider arrow keys are one undo step**: a run of steps on a Styles slider commits once the keys stop (0.7 s) or the slider is left; a click that does not move it is not an edit.

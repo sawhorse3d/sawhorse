@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
 import { FAMILIES, corpus, rng } from "./corpus/models";
-import { apply, compose, faceOfStyle, isComponent, modelToOp, placementXform, skpToOp, unitsOf } from "./skp";
+import { apply, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, unitsOf } from "./skp";
 import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
@@ -221,6 +221,25 @@ describe("skp mapping", () => {
 });
 
 describe.skipIf(!built)("skp files through the kernel", () => {
+  it("a file with section planes reports its import, not the last plane added (lane 15)", async () => {
+    const mod = await kernel();
+    const r = skpToOp(bytesOf("table"), "Table.skp");
+    if (r.op?.op !== "import") throw new Error(`an import, not ${r.op?.op}`);
+    // What modelToOp makes of a file with a top-level section plane: the planes after the import.
+    const plane = { op: "add_section", origin: [0.3, 0, 0], normal: [-1, 0, 0], name: "Side cut", active: false };
+    const d = mod.document_new();
+    const applied = JSON.parse(d.apply_op(JSON.stringify({ op: "batch", ops: [r.op, plane] })));
+    expect(applied.kind).toBe("batch");
+    expect(applied.outcomes.at(-1).kind).toBe("section_added");
+    const out = importOutcomeOf(applied);
+    expect(out.kind).toBe("imported");
+    if (out.kind !== "imported") throw new Error();
+    expect(out.objects.length).toBeGreaterThan(0);
+    // Not a batch: as it came.
+    expect(importOutcomeOf(out)).toBe(out);
+    d.free();
+  });
+
   it("every corpus family imports; solids where SketchUp had solids, a noted mesh where not", async () => {
     const mod = await kernel();
     const seen: Record<string, { objects: number; meshes: number; notes: string[] }> = {};

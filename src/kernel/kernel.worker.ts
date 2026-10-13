@@ -150,7 +150,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
       case "importSkp": {
         // openskp (MIT) parses SketchUp files here, off the UI thread, loaded on first use.
-        const { skpToOp } = await import("../io/skp");
+        const { skpToOp, importOutcomeOf } = await import("../io/skp");
         const r = skpToOp(req.bytes, req.name);
         if (!r.op) {
           // Lane 15: an empty file changes nothing here; the app opens it as an empty model.
@@ -159,8 +159,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         }
         const d = document(mod);
         const applied = JSON.parse(d.apply_op(JSON.stringify(r.op))) as OpOutcome;
-        // Texture images go in first, batched with the import: report the import itself.
-        const outcome = applied.kind === "batch" ? applied.outcomes[applied.outcomes.length - 1] : applied;
+        // Texture images go in first and section planes after, batched with the import:
+        // report the import itself.
+        const outcome = importOutcomeOf(applied);
         res = { id: req.id, ok: true, outcome, notes: r.notes, scene: scene(d) };
         break;
       }
