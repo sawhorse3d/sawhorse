@@ -225,6 +225,8 @@ export class PluginHost {
   private inFlight = 0;
   private pingN = 0;
   private lastPong = 0;
+  /** When the watchdog last ran (to tell the app's own pauses from the plugin's). */
+  private lastTick = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private ready: { resolve: () => void; reject: (e: Error) => void } | null = null;
   private logWindow = { start: 0, count: 0, dropped: 0 };
@@ -556,6 +558,7 @@ export class PluginHost {
 
   private startWatchdog(): void {
     this.stopWatchdog();
+    this.lastTick = Date.now();
     this.pingTimer = setInterval(() => this.tick(), this.opts.pingMs);
   }
 
@@ -567,6 +570,13 @@ export class PluginHost {
   private tick(): void {
     if (!this.alive) return this.stopWatchdog();
     const now = Date.now();
+    // Lane 16 fixes: the app's own thread was held up for longer than a few pings (the
+    // verifier's plugin at the model's 100,000 solids held it 48 s, and the plugin was then
+    // stopped for not answering): no pong could be read in that time, so the plugin is not
+    // blamed for it. Its budget starts again from now; a plugin that is really stuck is still
+    // stopped `killMs` later.
+    if (now - this.lastTick > 3 * this.opts.pingMs) this.lastPong = Math.max(this.lastPong, now - this.opts.pingMs);
+    this.lastTick = now;
     const silent = now - this.lastPong;
     const running = this.busyCalls();
     const doing = running.length ? ` (running ${running.map((r) => `"${r}"`).join(", ")})` : this.status === "starting" ? " (while loading)" : "";

@@ -232,6 +232,29 @@ describe("the watchdog", () => {
     await pending; // the command's promise settled (failed), nothing hangs
   });
 
+  it("lane 16 fixes: a pause of the app's own thread is not the plugin's; a plugin still stuck after it is stopped", async () => {
+    vi.useFakeTimers();
+    const { m, c, id } = await running();
+    c.alive = false;
+    // The app's thread is held for 48 s (no timer runs, no pong is read), then runs again.
+    vi.setSystemTime(Date.now() + 48_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(m.get(id)!.status).toBe("running");
+    expect(c.terminated).toBe(false);
+    // The plugin answers again: nothing happened to it.
+    c.alive = true;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(m.get(id)!.status).toBe("running");
+    // A plugin that is really stuck through a pause is still stopped, a budget after it.
+    c.alive = false;
+    vi.setSystemTime(Date.now() + 48_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(c.terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(3200);
+    expect(c.terminated).toBe(true);
+    expect(m.get(id)!.lastError).toContain("did not respond for 3 s");
+  });
+
   it("a plugin that answers again is running again", async () => {
     vi.useFakeTimers();
     const { m, c, id } = await running();
