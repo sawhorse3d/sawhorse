@@ -21,6 +21,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::document::Document;
+use crate::error::{KernelError, SectionError};
 use crate::mesh::view_mesh;
 use crate::model::{Model, Op};
 
@@ -139,6 +140,26 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             .sum();
         if cut.outline.len() > ring_edges {
             return Err(format!("section {id}: more outline edges than ring edges"));
+        }
+        // Lane 18: Create Group from Slice draws every representable cap and refuses none
+        // (`section::representable`, the one rule); it says the cut is too thin only when
+        // there are caps and none is representable, and that the plane cuts nothing only
+        // when there are none. Sliced from the model's own context, as the app offers it.
+        let mut sliced = m.clone();
+        sliced.context = None;
+        let slice = sliced.slice_to_group(id, None);
+        let thin = !cut.caps.is_empty() && cut.caps.iter().all(|c| !c.representable);
+        match (&slice, cut.caps.is_empty(), thin) {
+            (Ok(_), false, false) => {}
+            (Err(KernelError::Section(SectionError::NothingToSlice)), true, _) => {}
+            (Err(KernelError::Section(SectionError::SliceTooThin)), false, true) => {}
+            _ => {
+                return Err(format!(
+                    "section {id}: Create Group from Slice gave {slice:?} for {} caps, {} representable",
+                    cut.caps.len(),
+                    cut.caps.iter().filter(|c| c.representable).count()
+                ));
+            }
         }
         // The two halves: kept(plane) + kept(flipped) = the volume of what it reaches.
         let mut flipped = m.clone();

@@ -302,6 +302,10 @@ pub enum SectionError {
     BadPlane,
     #[error("the section plane cuts nothing here, so there is no slice to make")]
     NothingToSlice,
+    /// Lane 18: the plane cuts material, but every cap is thinner than the model can draw
+    /// (with points closer than 0.01 mm merged, none keeps three corners and some area).
+    #[error("the section cut here is thinner than 0.01 mm; nothing to slice")]
+    SliceTooThin,
     #[error(
         "a slice cannot be made inside a component (it would not reach the other copies): close the component first"
     )]

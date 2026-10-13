@@ -20,10 +20,11 @@
 //!   other active sections that reach the same solids clip it. Deterministic and hashed.
 //! - **Create Group from Slice** ([`Model::slice_to_group`]) draws the caps into a sketch
 //!   on the plane inside a new group: closed loops become faces, ready to push.
-//! - **What a cap is** (lane 17) is one rule, [`cap_ring_counts`], used by both: a ring of
-//!   the cut is shown, and drawn by the slice, only when it is more than the kernel can tell
-//!   from nothing. So the slice never refuses a cap the cut shows, and never draws one the
-//!   cut dropped.
+//! - **The cut keeps every cap exactly** (lane 18); what the slice can draw of one is one
+//!   rule, [`representable`]: its rings with points closer than POINT_MERGE merged, as the
+//!   sketch merges them, keeping three corners and some area. Every cap carries that as
+//!   [`Cap::representable`]; the slice draws every representable cap and refuses none, and a
+//!   section whose caps are all thinner than that says so in its own words.
 //!
 //! Hashing: everything here is hashed only when a section exists or a scene stores
 //! section state, so every older document keeps its hash.
@@ -159,6 +160,11 @@ pub struct Cap {
     pub holes: Vec<Vec<[f64; 2]>>,
     /// Area, square metres (holes taken off).
     pub area: f64,
+    /// Whether Create Group from Slice can draw this cap (lane 18, [`representable`]): with its
+    /// points closer than POINT_MERGE merged, its outer ring keeps three corners and an area
+    /// above AREA_EPS per metre of the solid's size. A cap that is not is thinner than the
+    /// model can draw (a sliver under 10 micrometres wide), and is still part of the cut.
+    pub representable: bool,
 }
 
 /// A section's cut (see [`Model::section_cut`]).
@@ -482,9 +488,7 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
     let mut rings = Vec::new();
     for r in arr.material_rings(|q| inside_below(b, plane, &dist, q, scale)) {
         let pts = tidy_ring(r);
-        if pts.len() >= 3
-            && sawhorse_tessellate::signed_area(&pts).abs() > crate::tolerance::AREA_EPS * 1e-6
-        {
+        if pts.len() >= 3 && sawhorse_tessellate::signed_area(&pts).abs() > RING_FLOOR {
             rings.push(pts);
         }
     }
@@ -500,57 +504,149 @@ fn solid_scale(o: &Object) -> f64 {
         .fold(1.0, f64::max)
 }
 
-/// The smallest area a cap ring may have, for a solid of `scale` ([`solid_scale`]): the
-/// kernel's area epsilon (`AREA_EPS`, POINT_MERGE squared) per metre of the solid's size.
-/// Below it a ring is rounding, not material.
+/// Below this a ring of the cut has no area at all (`AREA_EPS * 1e-6`, 1e-16 m2): it is the
+/// arrangement's rounding, not material. [`solid_rings`] leaves such rings out and
+/// [`Model::section_cut`] drops a cap whose area is no more; nothing else is ever dropped, so
+/// the cut, the kept halves and the fill all read the same exact caps.
+const RING_FLOOR: f64 = crate::tolerance::AREA_EPS * 1e-6;
+
+/// The smallest area a merged loop may have for the slice to draw it, for a solid of `scale`
+/// ([`solid_scale`]): the kernel's area epsilon (`AREA_EPS`, POINT_MERGE squared) per metre of
+/// the solid's size.
 pub(crate) fn cap_area_floor(scale: f64) -> f64 {
     crate::tolerance::AREA_EPS * scale.max(1.0)
 }
 
-/// A ring as the slice draws it: walking round, a point within POINT_MERGE of the last one
-/// kept is dropped (and the last when it is within POINT_MERGE of the first), so every edge
-/// left is longer than POINT_MERGE, the distance the sketch merges points at. Three points of
-/// a cap's tip within ten micrometres of each other become two, and the loop still closes
-/// (2026-10-13, lane 12d verification: the sketch had skipped the two short edges and the
-/// ends it was left with were 11 micrometres apart, so the loop stayed open).
-pub(crate) fn weld_ring(ring: &[DVec2]) -> Vec<DVec2> {
-    let mut out: Vec<DVec2> = Vec::with_capacity(ring.len());
-    for &p in ring {
-        if out
-            .last()
-            .is_none_or(|q| q.distance(p) > crate::tolerance::POINT_MERGE)
-        {
-            out.push(p);
+/// Points this close are one point to the slice ([`merge_ring`]). The sketch merges points
+/// within POINT_MERGE (10 micrometres) of a point or an edge, measured with its own rounding;
+/// merging a part per million further keeps every corner the slice draws clear of the
+/// sketch's merging, so the sketch takes each loop exactly as merged here (2026-10-13, lane
+/// 18: merging only neighbours closer than POINT_MERGE left a cap's tip corner 9.9 micrometres
+/// from the next edge, which the sketch folded into the corner before it, so it refused the
+/// edge between them as "too small").
+const WELD: f64 = crate::tolerance::POINT_MERGE * (1.0 + 1e-6);
+
+/// A ring of the cut with its points closer than [`WELD`] merged, as the sketch would merge
+/// them, split into the loops that remain (lane 18). The closest merge first, and again
+/// until none is left:
+///
+/// 1. two neighbours within WELD become one point, their midpoint;
+/// 2. a corner so sharp that one of its neighbours lies within WELD of its other edge is a
+///    spike the sketch folds flat: it goes;
+/// 3. a corner within WELD of an edge that is neither its own nor next to it pinches the ring:
+///    the ring is split into the loops either side, which share that corner.
+///
+/// Then every corner is more than WELD from every other corner and from every edge it is not
+/// on, so the sketch, whose snapping and repair look only within POINT_MERGE, merges and
+/// splits nothing: it takes each loop as drawn. Which merge comes first is decided by the
+/// distances alone, never by where the ring starts or which way round it runs, so a plane and
+/// its flip merge a cap alike (2026-10-13: walking round and dropping a point near the last
+/// one kept welded the same cap's tip two ways, and the slice drew it on one side only). A
+/// loop left with fewer than three points is gone.
+fn merge_ring(ring: &[DVec2]) -> Vec<Vec<DVec2>> {
+    use crate::sketch::point_segment_distance as seg;
+    let closest = |a: &(f64, usize), b: &(f64, usize)| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1));
+    let mut work = vec![ring.to_vec()];
+    let mut out = Vec::new();
+    'loops: while let Some(mut r) = work.pop() {
+        loop {
+            let n = r.len();
+            if n < 3 {
+                continue 'loops;
+            }
+            // 1. The closest neighbours within WELD.
+            let pair = (0..n)
+                .map(|i| (r[i].distance(r[(i + 1) % n]), i))
+                .filter(|(d, _)| *d <= WELD)
+                .min_by(closest);
+            if let Some((_, i)) = pair {
+                let j = (i + 1) % n;
+                r[i] = (r[i] + r[j]) * 0.5;
+                r.remove(j);
+                continue;
+            }
+            // 2. The sharpest spike: a neighbour of corner t within WELD of t's other edge.
+            let tip = (0..n)
+                .map(|t| {
+                    let (p, c, q) = (r[(t + n - 1) % n], r[t], r[(t + 1) % n]);
+                    (seg(p, c, q).min(seg(q, p, c)), t)
+                })
+                .filter(|(d, _)| *d <= WELD)
+                .min_by(closest);
+            if let Some((_, t)) = tip {
+                r.remove(t);
+                continue;
+            }
+            // 3. The closest pinch: corner j within WELD of edge i -> i + 1.
+            if let Some((i, j)) = pinch(&r) {
+                let a: Vec<DVec2> = (i + 1..=i + (j + n - i) % n).map(|k| r[k % n]).collect();
+                let b: Vec<DVec2> = (j..=j + (i + n - j) % n).map(|k| r[k % n]).collect();
+                work.push(b);
+                work.push(a);
+                continue 'loops;
+            }
+            out.push(r);
+            continue 'loops;
         }
-    }
-    while out.len() > 1 && out[out.len() - 1].distance(out[0]) <= crate::tolerance::POINT_MERGE {
-        out.pop();
     }
     out
 }
 
-/// Lane 17: whether a ring of the cut is a cap's ring (an outer ring or a hole), the one rule
-/// [`Model::section_cut`] shows by and [`Model::slice_to_group`] draws by. It is not when
-/// every one of its edges is shorter than POINT_MERGE (it is a speck the model cannot hold
-/// apart), when welded ([`weld_ring`]) it has fewer than three corners (the slice could not
-/// draw it), or when its area, welded or not, is at most [`cap_area_floor`] for the solid
-/// (2026-10-13, lane 12d verification: a 4.8e-12 m2 ring of a vertex poking 4 micrometres
-/// through the plane was shown as a cap and the slice, rightly, had nothing to draw).
-pub(crate) fn cap_ring_counts(ring: &[DVec2], scale: f64) -> bool {
-    let n = ring.len();
-    if n < 3 {
-        return false;
+/// The closest corner `j` within [`WELD`] of an edge `i -> i + 1` of `r` that it is neither on
+/// nor next to (`j` not `i - 1` to `i + 2`): `(i, j)`. Corners are swept in order along x, so
+/// each edge looks only at the corners near it.
+fn pinch(r: &[DVec2]) -> Option<(usize, usize)> {
+    use crate::sketch::point_segment_distance as seg;
+    let n = r.len();
+    if n < 5 {
+        return None;
     }
-    let short =
-        (0..n).all(|i| ring[i].distance(ring[(i + 1) % n]) <= crate::tolerance::POINT_MERGE);
-    if short {
-        return false;
+    let mut by_x: Vec<usize> = (0..n).collect();
+    by_x.sort_by(|&a, &b| r[a].x.total_cmp(&r[b].x).then(a.cmp(&b)));
+    let mut best: Option<(f64, usize, usize)> = None;
+    for i in 0..n {
+        let (a, b) = (r[i], r[(i + 1) % n]);
+        let (lo, hi) = (a.min(b) - DVec2::splat(WELD), a.max(b) + DVec2::splat(WELD));
+        let from = by_x.partition_point(|&k| r[k].x < lo.x);
+        for &j in &by_x[from..] {
+            let p = r[j];
+            if p.x > hi.x {
+                break;
+            }
+            let off = (j + n - i) % n;
+            if off <= 2 || off == n - 1 || p.y < lo.y || p.y > hi.y {
+                continue;
+            }
+            let d = seg(p, a, b);
+            if d <= WELD
+                && best.is_none_or(|(bd, bi, bj)| {
+                    d.total_cmp(&bd).then(i.cmp(&bi)).then(j.cmp(&bj)).is_lt()
+                })
+            {
+                best = Some((d, i, j));
+            }
+        }
     }
-    let welded = weld_ring(ring);
+    best.map(|(_, i, j)| (i, j))
+}
+
+/// Lane 18: **the one rule for what Create Group from Slice can draw** of a ring of the cut
+/// (an outer ring or a hole): its loops after merging points closer than POINT_MERGE
+/// ([`merge_ring`]) that keep three corners or more and an area above [`cap_area_floor`],
+/// turning the ring's own way. The ring is *representable* when there is one; those loops are
+/// what the slice draws, and the sketch takes every one of them. A cap is representable by its
+/// outer ring ([`Cap::representable`]), and that flag is all the slice and every oracle read.
+/// The cut never asks this to decide what it shows: a cap thinner than the sketch can hold is
+/// still material, and the halves, the fill and the cross-section need it (2026-10-13, lane
+/// 18: lane 17 dropped rings that welded to fewer than three corners, and with them slivers
+/// 0.125 to 0.5 m long and a few micrometres wide, 5.5e-7 to 2.4e-6 m2 of cap).
+pub(crate) fn representable(ring: &[DVec2], scale: f64) -> Vec<Vec<DVec2>> {
+    let turn = sawhorse_tessellate::signed_area(ring).signum();
     let floor = cap_area_floor(scale);
-    welded.len() >= 3
-        && sawhorse_tessellate::signed_area(ring).abs() > floor
-        && sawhorse_tessellate::signed_area(&welded).abs() > floor
+    merge_ring(ring)
+        .into_iter()
+        .filter(|l| l.len() >= 3 && sawhorse_tessellate::signed_area(l) * turn > floor)
+        .collect()
 }
 
 /// Directions (off `-normal`, along `u` and `v`) of the rays [`inside_below`] casts, tried in
@@ -860,22 +956,25 @@ impl Model {
                     outer = clip(&outer, h);
                     holes = holes.iter().map(|r| clip(r, h)).collect();
                 }
-                // Lane 17: one rule for what a cap is, the slice's too (cap_ring_counts).
+                // Lane 18: every cap exactly as the plane cuts it, never thinned out for the
+                // slice (the halves, the fill and the cross-section read these rings); only
+                // what other planes clip away to nothing goes. Whether the slice can draw it
+                // is the cap's flag (`representable`).
                 let outer = tidy_ring(outer);
-                if !cap_ring_counts(&outer, scale) {
+                if outer.len() < 3 {
                     continue;
                 }
                 let holes: Vec<Vec<DVec2>> = holes
                     .into_iter()
                     .map(tidy_ring)
-                    .filter(|r| cap_ring_counts(r, scale))
+                    .filter(|r| r.len() >= 3)
                     .collect();
                 let area = sawhorse_tessellate::signed_area(&outer)
                     + holes
                         .iter()
                         .map(|r| sawhorse_tessellate::signed_area(r))
                         .sum::<f64>();
-                if area <= cap_area_floor(scale) {
+                if area <= RING_FLOOR {
                     continue;
                 }
                 // The outline, without edges that only lie along another plane's cut.
@@ -899,6 +998,7 @@ impl Model {
                         .map(|r| r.iter().map(|p| p.to_array()).collect())
                         .collect(),
                     area,
+                    representable: !representable(&outer, scale).is_empty(),
                 });
             }
         }
@@ -1313,8 +1413,10 @@ impl Model {
     }
 
     /// [`crate::model::Op::SliceToGroup`] (SketchUp's "Create Group from Slice"): the cut's
-    /// outline drawn into a sketch on the plane, inside a new group in the open context.
-    /// Closed loops become faces of the sketch, ready to push.
+    /// caps drawn into a sketch on the plane, inside a new group in the open context. Closed
+    /// loops become faces of the sketch, ready to push. Every representable cap is drawn
+    /// ([`representable`]); a plane that cuts nothing, and one whose every cap is thinner than
+    /// the model can draw, are refused, each in its own words.
     pub(crate) fn slice_to_group(
         &mut self,
         id: u64,
@@ -1343,26 +1445,29 @@ impl Model {
         if cut.caps.is_empty() {
             return Err(SectionError::NothingToSlice.into());
         }
+        if !cut.caps.iter().any(|c| c.representable) {
+            return Err(SectionError::SliceTooThin.into());
+        }
         let frame = self.sections[k].plane();
         let mut sketch = crate::sketch::Sketch::new(frame);
-        // Lane 17: the caps the cut shows, every ring of them, welded the way the cut's rule
-        // reads them (cap_ring_counts): each has three corners or more, every edge longer than
-        // the sketch merges, so each closes into a face. (It drew the outline, edge by edge,
-        // skipping edges of POINT_MERGE or less: a cap with a tip of tiny edges was left open,
-        // and edges along another active plane, which the outline leaves out, never closed.)
-        for c in &cut.caps {
+        // Lane 18: every representable cap, each of its rings as the one rule merges it
+        // (`representable`): loops of three corners or more whose every corner is clear of
+        // the sketch's merging, so the sketch takes each as drawn and it closes into a face.
+        // A hole thinner than that is not drawn (the face covers the slit). (Lane 17 welded
+        // a ring by walking round it, which left a tip corner within the merge distance of
+        // the next edge in one of the plane's two orientations; the sketch refused it.)
+        for c in cut.caps.iter().filter(|c| c.representable) {
+            let scale = solid_scale(&self.objects[from_public::<ObjectId>(c.object)]);
             for r in std::iter::once(&c.outer).chain(&c.holes) {
                 let ring: Vec<DVec2> = r.iter().map(|p| DVec2::from_array(*p)).collect();
-                let w = weld_ring(&ring);
-                debug_assert!(w.len() >= 3, "the cut showed a ring the slice cannot draw");
-                for i in 0..w.len() {
-                    sketch.insert_segment(w[i], w[(i + 1) % w.len()])?;
+                for l in representable(&ring, scale) {
+                    for i in 0..l.len() {
+                        sketch.insert_segment(l[i], l[(i + 1) % l.len()])?;
+                    }
                 }
             }
         }
-        if sketch.edge_count() == 0 {
-            return Err(SectionError::NothingToSlice.into());
-        }
+        debug_assert!(sketch.edge_count() > 0, "a representable cap drew nothing");
         let group = self.nodes.insert(crate::nodes::Node {
             name: Some(name),
             kind: NodeKind::Group,

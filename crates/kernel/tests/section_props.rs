@@ -27,10 +27,12 @@
 //!   invariant, `testing::check_sections`);
 //! - every cap ring is simple (no point twice, no two edges crossing), outer rings
 //!   counter-clockwise, holes clockwise;
-//! - the caps' area is the plane's cross-section of the solids worked out independently:
-//!   every face clipped to the kept side, its vector area along the normal, summed;
-//! - Create Group from Slice draws closed loops: the sketch's faces cover exactly the caps'
-//!   outer rings.
+//! - the caps' area (every cap: the cut keeps them all, lane 18) is the plane's cross-section
+//!   of the solids worked out independently: every face clipped to the kept side, its vector
+//!   area along the normal, summed;
+//! - Create Group from Slice draws closed loops: the sketch's faces cover every representable
+//!   cap's outer ring (`Cap::representable`, the kernel's one rule for what the slice can
+//!   draw), and a section whose caps are all thinner than that is refused in its own words.
 
 use glam::{DVec2, DVec3};
 use proptest::prelude::*;
@@ -400,9 +402,10 @@ fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
 fn cap_is_the_cross_section(m: &Model, section: u64) -> Result<(), String> {
     let cut = m.section_cut(section).map_err(|e| e.to_string())?;
     let (indep, slack) = independent_cross_section(m, section);
-    // A ring the cut does not count as a cap (section.rs cap_ring_counts: an area of at most
-    // AREA_EPS per metre of the solid's size, 1e-10 m2 for these solids under a metre and a
-    // half) is dropped from it, well within the 1e-9 allowance.
+    // Every cap counts, representable or not: the cut keeps each exactly as the plane cuts
+    // it (lane 18; it drops only a cap of no area at all, under 1e-16 m2, the arrangement's
+    // rounding). Lane 17 dropped rings that welded to fewer than three corners, so slivers of
+    // up to 2.4e-6 m2 went missing here, 2,000 times this allowance.
     if (cut.area - indep).abs() > slack + 1e-15 {
         return Err(format!(
             "the caps cover {} m2, the faces clipped to the plane {indep} m2 (allowed {slack})",
@@ -413,17 +416,33 @@ fn cap_is_the_cross_section(m: &Model, section: u64) -> Result<(), String> {
 }
 
 /// Create Group from Slice on `section` (when it cuts anything) draws closed loops: its
-/// sketch's faces cover every cap's outer ring (the union of them: an island in a hole is
-/// inside its outer ring, and two solids that overlap overlap here too). The sketch may hold
-/// more: a region every edge of which is a cap's edge but which no cap holds (a face lying
-/// on the plane, facing away from what it keeps, between two caps that touch at its
-/// corners) closes into a face of the sketch like any other loop.
+/// sketch's faces cover every representable cap's outer ring (the union of them: an island in
+/// a hole is inside its outer ring, and two solids that overlap overlap here too). The sketch
+/// may hold more: a region every edge of which is a cap's edge but which no cap holds (a face
+/// lying on the plane, facing away from what it keeps, between two caps that touch at its
+/// corners) closes into a face of the sketch like any other loop. When the plane cuts caps
+/// but none is representable, the slice says so ("thinner than 0.01 mm"), and only then.
 fn slice_is_closed(d: &Document, section: u64) -> Result<(), String> {
     let cut = d.model().section_cut(section).map_err(|e| e.to_string())?;
     if cut.caps.is_empty() {
         return Ok(());
     }
+    let shown: Vec<&sawhorse_kernel::section::Cap> =
+        cut.caps.iter().filter(|c| c.representable).collect();
     let mut d = d.clone();
+    if shown.is_empty() {
+        return match d.apply(&Op::SliceToGroup {
+            section,
+            name: None,
+        }) {
+            Err(e) if e.to_string() == THIN => Ok(()),
+            Err(e) if e.to_string().contains("inside a component") => Ok(()),
+            other => Err(format!(
+                "no cap is representable, yet the slice gave {other:?} ({:?})",
+                cut.caps
+            )),
+        };
+    }
     // Slicing is for the model's own context; a plane inside a component is refused there.
     let sketch = match d.apply(&Op::SliceToGroup {
         section,
@@ -450,14 +469,15 @@ fn slice_is_closed(d: &Document, section: u64) -> Result<(), String> {
             .map(|(_, r)| sk.region_rings(r).0.iter().map(|p| p.to_array()).collect())
             .collect(),
     );
-    let caps = union(cut.caps.iter().map(|c| c.outer.clone()).collect());
+    let caps = union(shown.iter().map(|c| c.outer.clone()).collect());
     let outers = sawhorse_tessellate::overlay::area(&caps);
     let flat = |s: &Vec<Vec<Vec<[f64; 2]>>>| s.iter().flatten().cloned().collect::<Vec<_>>();
     let covered = sawhorse_tessellate::overlay::area(&sawhorse_tessellate::overlay::intersection(
         &flat(&faces),
         &flat(&caps),
     ));
-    // The sketch merges points within POINT_MERGE, so a sliver of a cap may close up.
+    // The slice merges points within POINT_MERGE (`section::representable`), so a spike of a
+    // cap thinner than that folds flat: at most POINT_MERGE along its edges.
     let perimeter: f64 = cut
         .outline
         .iter()
@@ -471,6 +491,9 @@ fn slice_is_closed(d: &Document, section: u64) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// What Create Group from Slice says when every cap is thinner than the model can draw.
+const THIN: &str = "the section cut here is thinner than 0.01 mm; nothing to slice";
 
 /// Every property, for the plane and for its flip.
 fn cut_cleanly(d: &mut Document, section: u64) -> Result<(), TestCaseError> {
@@ -1154,8 +1177,9 @@ fn a_face_within_its_bend_of_the_plane_lies_on_it() {
 ///
 /// - A folded box cut where one vertex pokes 4 micrometres through the plane: the cut showed
 ///   a 4.8e-12 m2 ring, every edge shorter than POINT_MERGE, and the slice, skipping those
-///   edges, refused. The ring is not a cap: the cut drops it, and the slice says there is
-///   nothing to slice, on both sides.
+///   edges, refused with "too small". Since lane 18 the cut keeps that speck (it is material)
+///   and flags it not representable, and the slice says the cut is thinner than 0.01 mm,
+///   on both sides.
 /// - A folded box cut through a vertex: one hexagonal cap of 0.0221 m2 whose tip has three
 ///   points within ten micrometres. The slice skipped the two short edges and left the loop
 ///   open (no face) while saying its faces were ready to push. It now closes, covering the cap.
@@ -1174,31 +1198,36 @@ fn the_lane_12d_verification_finds() {
         })
     };
     snapping_off(|| {
-        // The speck: no cap shown, nothing to slice, either way round.
+        // The speck: kept by the cut where the plane cuts it, never representable; the slice
+        // says why it draws nothing, either way round.
         let mut d = load("2026-10-13-section-slice-refused-a-speck-of-cap.json");
         let s = d.model().sections()[0].0;
+        let mut specks = 0;
         for _ in 0..2 {
             let cut = d.model().section_cut(s).unwrap();
             assert!(cut.caps.is_empty() == cut.outline.is_empty(), "{cut:?}");
+            assert!(cut.caps.iter().all(|c| !c.representable), "{cut:?}");
+            assert!(cut.area < 1e-11, "{cut:?}");
+            specks += cut.caps.len();
+            let e = d
+                .clone()
+                .apply(&Op::SliceToGroup {
+                    section: s,
+                    name: None,
+                })
+                .unwrap_err()
+                .to_string();
             if cut.caps.is_empty() {
-                let e = d
-                    .clone()
-                    .apply(&Op::SliceToGroup {
-                        section: s,
-                        name: None,
-                    })
-                    .unwrap_err();
-                assert!(e.to_string().contains("cuts nothing here"), "{e}");
+                assert!(e.contains("cuts nothing here"), "{e}");
+            } else {
+                assert_eq!(e, THIN);
             }
             cut_cleanly(&mut d.clone(), s).unwrap();
             d.apply(&Op::FlipSection { section: s }).unwrap();
         }
-        let cut = d.model().section_cut(s).unwrap();
         assert!(
-            cut.caps
-                .iter()
-                .all(|c| c.area > sawhorse_kernel::tolerance::AREA_EPS),
-            "{cut:?}"
+            specks > 0,
+            "the cut keeps the speck on the side it pokes through"
         );
 
         // The tip: one cap, and the slice's face covers it.
@@ -1206,6 +1235,7 @@ fn the_lane_12d_verification_finds() {
         let s = d.model().sections()[0].0;
         let cut = d.model().section_cut(s).unwrap();
         assert_eq!(cut.caps.len(), 1, "{cut:?}");
+        assert!(cut.caps[0].representable);
         assert!(
             (cut.area - 0.022092796851717753).abs() < 1e-9,
             "{}",
@@ -1226,5 +1256,149 @@ fn the_lane_12d_verification_finds() {
         assert_eq!(sk.regions().count(), 1, "the slice's loop is closed");
         slice_is_closed(&d, s).unwrap();
         cut_cleanly(&mut d, s).unwrap();
+    });
+}
+
+/// A folded box as the property tests build it, cut by the plane `at` picks from its vertices
+/// (a point and a direction).
+fn folded_cut(
+    size: [f64; 3],
+    fold: &Fold,
+    at: impl FnOnce(&[DVec3]) -> (DVec3, DVec3),
+) -> (Document, u64) {
+    let (mut d, object) = folded_box(size, fold);
+    let (origin, normal) = at(&vertices(d.model(), object));
+    let section = add_section(&mut d, origin.to_array(), unit(normal, DVec3::Z));
+    (d, section)
+}
+
+/// The lane-17 verification's finds (lane 18), each failing on the lane-17 kernel; their seeds
+/// are in `section_props.proptest-regressions` too.
+///
+/// - Seeds c7f65cce... (`folded_solids_cut_into_halves_that_make_the_whole`) and 8248c33f...
+///   (`planes_through_one_to_four_vertices`, through three vertices), shrunk: a folded box
+///   whose cap is a sliver 0.125 m long and a few micrometres wide (1.6e-7 and 2.8e-7 m2).
+///   Lane 17 welded it to two corners and dropped it from the cut, so the caps covered 0 m2 of
+///   what the faces clipped to the plane close. The cut keeps it on both sides (the halves and
+///   the cross-section agree); it is not representable, so the slice says the cut is thinner
+///   than 0.01 mm.
+/// - Seed 5daea986... (the lane-12d verification's unshrunk `planes_through_one_to_four_vertices`
+///   find): a 0.0226 m2 cap whose tip has edges of 1.0e-5 and 1.5e-6 m. Welded by walking round,
+///   one orientation kept a tip corner 9.9 micrometres from the next edge, which the sketch
+///   folded into the corner before it, and the slice refused the cap as "too small"; flipped,
+///   it inserted. Merged closest first, both orientations draw one face over the cap.
+#[test]
+fn the_lane_17_verification_finds() {
+    snapping_off(|| {
+        let slivers = [
+            folded_cut(
+                [0.125, 0.25, 0.125],
+                &Fold {
+                    corners: vec![false, false, true, true, false, false, true, true],
+                    axis: [
+                        0.5497345837255317,
+                        -0.035317182389666704,
+                        -0.38523898792518585,
+                    ],
+                    angle: -0.22254184501039867,
+                    shift: [-0.1297484878255267, -0.125, 0.375],
+                },
+                |vs| (vs[47 % vs.len()], DVec3::X),
+            ),
+            folded_cut(
+                [0.5, 0.5, 0.375],
+                &Fold {
+                    corners: vec![true, true, false, false, true, true, false, false],
+                    axis: [
+                        -0.19647241414043448,
+                        0.33371854514174387,
+                        0.8702247505221652,
+                    ],
+                    angle: -3.6236766389715407e-6,
+                    shift: [0.25, -0.15449051954020962, 0.375],
+                },
+                |vs| {
+                    let p: Vec<DVec3> = [44, 10, 58].iter().map(|i| vs[i % vs.len()]).collect();
+                    (p[0], (p[1] - p[0]).cross(p[2] - p[0]))
+                },
+            ),
+        ];
+        for (k, (mut d, s)) in slivers.into_iter().enumerate() {
+            for side in 0..2 {
+                let cut = d.model().section_cut(s).unwrap();
+                assert!(
+                    !cut.caps.is_empty(),
+                    "sliver {k}, side {side}: the cut keeps it"
+                );
+                assert!(
+                    cut.area > 1e-7 && cut.area < 1e-6,
+                    "sliver {k}, side {side}: {}",
+                    cut.area
+                );
+                assert!(
+                    cut.caps.iter().all(|c| !c.representable),
+                    "sliver {k}, side {side}: {cut:?}"
+                );
+                let e = d
+                    .clone()
+                    .apply(&Op::SliceToGroup {
+                        section: s,
+                        name: None,
+                    })
+                    .unwrap_err();
+                assert_eq!(e.to_string(), THIN, "sliver {k}, side {side}");
+                cut_cleanly(&mut d.clone(), s).unwrap();
+                d.apply(&Op::FlipSection { section: s }).unwrap();
+            }
+        }
+
+        let (mut d, s) = folded_cut(
+            [0.125, 0.625, 0.75],
+            &Fold {
+                corners: vec![false, false, false, false, true, true, true, true],
+                axis: [
+                    -0.16232463536875708,
+                    0.16868704181458602,
+                    -0.7534308543682535,
+                ],
+                angle: -0.129506946378861,
+                shift: [
+                    0.5264247490747762,
+                    -0.10203994915735608,
+                    -0.3875842074233285,
+                ],
+            },
+            |vs| {
+                (
+                    vs[31 % vs.len()],
+                    DVec3::new(0.6938111313663581, 0.21658302961471027, 0.732374827150452),
+                )
+            },
+        );
+        for side in 0..2 {
+            let cut = d.model().section_cut(s).unwrap();
+            assert_eq!(cut.caps.len(), 1, "side {side}: {cut:?}");
+            assert!(cut.caps[0].representable, "side {side}");
+            assert!(
+                (cut.area - 0.022570250455469235).abs() < 1e-9,
+                "side {side}: {}",
+                cut.area
+            );
+            let mut sliced = d.clone();
+            let sketch = match sliced
+                .apply(&Op::SliceToGroup {
+                    section: s,
+                    name: None,
+                })
+                .unwrap_or_else(|e| panic!("side {side}: {e}"))
+            {
+                OpOutcome::Sliced { sketch, .. } => sketch,
+                o => panic!("{o:?}"),
+            };
+            let sk = sliced.model().sketch(sketch).unwrap();
+            assert_eq!(sk.regions().count(), 1, "side {side}: one closed face");
+            cut_cleanly(&mut d.clone(), s).unwrap();
+            d.apply(&Op::FlipSection { section: s }).unwrap();
+        }
     });
 }
