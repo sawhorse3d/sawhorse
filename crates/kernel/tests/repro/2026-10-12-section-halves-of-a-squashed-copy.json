@@ -1,0 +1,144 @@
+{
+  "name": "2026-10-12-section-halves-of-a-squashed-copy",
+  "error": "op 10 AddSection { origin: [0.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0], name: None, active: false, hidden: false }: section 1: the halves kept 0.22045599183417022 + 0.2569555153661241 do not make the whole 0.4774131173337546",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 1e-06,
+      "w": 0.75,
+      "h": 0.75
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 1.46886758614567
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            0.25,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        ],
+        "translation": [
+          0.375,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 3
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 3,
+      "face": 3,
+      "distance": -0.7337081955980581
+    },
+    {
+      "op": "transform_geometry",
+      "object": 3,
+      "points": [
+        [
+          0.46875,
+          0.7337091955980581,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            -0.5600425633207763,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.5,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.5
+          ]
+        ],
+        "translation": [
+          0.0,
+          -0.625,
+          5e-07
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "push_pull",
+      "object": 3,
+      "face": 1,
+      "distance": 1.0
+    },
+    {
+      "op": "set_context",
+      "node": null
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "active": false
+    }
+  ]
+}

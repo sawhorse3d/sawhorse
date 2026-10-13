@@ -146,35 +146,59 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             })
             .collect();
         let reached: f64 = reached_objects.iter().map(|(_, x)| x.volume()).sum();
+        // The kept volume integrates every face over its STORED plane (the divergence
+        // theorem on the face's 2D polygon), while an object's volume sums the triangles of
+        // its tessellation through the actual vertices. A face's vertices may sit up to
+        // PLANARITY off its stored plane, so the two measures of the same solid differ by up
+        // to that times the face's area (fuzz seed 20261802, 2026-10-12: a copy squashed to a
+        // quarter and stretched to 12 m had faces 5e-7 off their planes, and the halves made
+        // the plane-integrated whole exactly but missed the tessellated one by 3.4 ppm). So
+        // the halves are held to the whole measured their own way, and that whole is
+        // held to the tessellated volume within the planarity the validator allows.
+        let mut area = 0.0;
+        let mut by_planes = 0.0;
+        // The same two measures over the objects that tessellate as closed solids (an open
+        // mesh has no tessellated volume to hold its plane integral to).
+        let (mut solid_area, mut solid_planes, mut solid_tess) = (0.0, 0.0, 0.0);
+        for (_, x) in &reached_objects {
+            let b = x.brep();
+            let (area0, planes0) = (area, by_planes);
+            let pos: std::collections::BTreeMap<_, _> =
+                b.vertices().map(|(k, v)| (k, v.pos)).collect();
+            for (_, f) in b.faces() {
+                let mut signed = 0.0;
+                for l in f.loops() {
+                    let ring: Vec<_> = b
+                        .loop_vertices(l)
+                        .iter()
+                        .map(|v| f.plane.to_local(pos[v]))
+                        .collect();
+                    signed += sawhorse_tessellate::signed_area(&ring);
+                }
+                area += signed.abs();
+                by_planes += f.plane.normal.dot(f.plane.origin) * signed / 3.0;
+            }
+            if let Ok(t) = x.tri_solid() {
+                solid_area += area - area0;
+                solid_planes += by_planes - planes0;
+                solid_tess += t.volume();
+            }
+        }
         // A face lying in the plane to within the merge distance but not exactly (a tilt
         // of a micrometre) is kept by the tie rule while the cap is exactly in the plane:
         // the two then differ by up to its area times that distance. So a half may come out
         // a little below zero, never by more than the solids' area times POINT_MERGE.
-        let area: f64 = reached_objects
-            .iter()
-            .map(|(_, x)| {
-                let b = x.brep();
-                b.faces()
-                    .map(|(_, f)| {
-                        f.loops()
-                            .map(|l| {
-                                let ring: Vec<_> = b
-                                    .loop_points(l)
-                                    .iter()
-                                    .map(|p| f.plane.to_local(*p))
-                                    .collect();
-                                sawhorse_tessellate::signed_area(&ring)
-                            })
-                            .sum::<f64>()
-                            .abs()
-                    })
-                    .sum::<f64>()
-            })
-            .sum();
         let slack = crate::tolerance::POINT_MERGE * area + 1e-12;
-        if (a + b - reached).abs() > 1e-6 * (1.0 + reached) || a < -slack || b < -slack {
+        if (a + b - by_planes).abs() > 1e-6 * (1.0 + by_planes.abs()) || a < -slack || b < -slack {
             return Err(format!(
-                "section {id}: the halves kept {a} + {b} do not make the whole {reached}"
+                "section {id}: the halves kept {a} + {b} do not make the whole {by_planes} (tessellated {reached})"
+            ));
+        }
+        if (solid_planes - solid_tess).abs()
+            > 1e-6 * (1.0 + solid_tess) + crate::tolerance::PLANARITY * solid_area
+        {
+            return Err(format!(
+                "section {id}: the solids it reaches measure {solid_planes} over their faces' planes but {solid_tess} tessellated"
             ));
         }
     }
