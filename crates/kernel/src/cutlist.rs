@@ -501,6 +501,20 @@ fn meshes_heal(meshes: &[&LooseMesh]) -> bool {
         .all(|m| crate::meshbuild::heal_check(&m.positions, &m.faces).closed)
 }
 
+/// Whether a placement keeps every distance (a rotation, a mirror, a move): its columns are
+/// orthonormal.
+fn rigid(x: &Xform) -> bool {
+    let m = x.to_affine().matrix3;
+    let (c0, c1, c2) = (m.x_axis, m.y_axis, m.z_axis);
+    const EPS: f64 = 1e-9;
+    (c0.length_squared() - 1.0).abs() <= EPS
+        && (c1.length_squared() - 1.0).abs() <= EPS
+        && (c2.length_squared() - 1.0).abs() <= EPS
+        && c0.dot(c1).abs() <= EPS
+        && c0.dot(c2).abs() <= EPS
+        && c1.dot(c2).abs() <= EPS
+}
+
 /// `v` or `-v`, whichever has its largest component positive (first of x, y, z on a tie).
 fn canonical(v: DVec3) -> DVec3 {
     let a = v.abs();
@@ -1136,7 +1150,16 @@ impl Model {
                     )
                     .map(|b| (b, meshes_heal(&meshes)))
                 });
-                let (local, solid) = local?;
+                let (local, template_heals) = local?;
+                // The heal is a distance (HEAL_GAP), so it is decided on the definition once
+                // only for a placement that keeps distances; a stretched or squashed copy
+                // has gaps of its own and is checked where it is (lane 15: a 0.05 mm gap
+                // in the definition is 0.11 mm in a copy stretched 2.25 times).
+                let solid = if rigid(&node.xform) {
+                    template_heals
+                } else {
+                    template_heals && meshes_heal(&self.meshes_in(kids, n))
+                };
                 let bbox = place(&local, &node.xform, &solids, &meshes)?;
                 Some(Piece {
                     key,
