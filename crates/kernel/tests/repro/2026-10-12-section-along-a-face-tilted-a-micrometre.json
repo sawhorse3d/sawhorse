@@ -1,0 +1,109 @@
+{
+  "name": "2026-10-12-section-along-a-face-tilted-a-micrometre (fixed)",
+  "error": "(fixed: the check now allows the solids area times POINT_MERGE) op 6 AddSection { origin: [0.0, 0.25, 0.5], normal: [1.0, 0.0, 0.0], name: None, active: true, hidden: false }: section 1: the halves kept 0.0302734296875 + -0.000000003472222222214507 do not make the whole 0.030273421875",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.5
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.25,
+          0.0,
+          0.25
+        ],
+        [
+          0.0,
+          0.0,
+          0.25
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            0.25,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.5,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.25
+          ]
+        ],
+        "translation": [
+          7.5e-07,
+          0.0,
+          0.0
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.03125,
+          0.5,
+          0.0
+        ],
+        [
+          0.25,
+          0.4375,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "create_group",
+      "name": "Fuzz",
+      "objects": []
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

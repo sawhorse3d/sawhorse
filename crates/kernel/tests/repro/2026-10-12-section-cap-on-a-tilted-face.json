@@ -1,0 +1,102 @@
+{
+  "name": "2026-10-12-section-cap-on-a-tilted-face (fixed)",
+  "error": "(fixed) op 6 Transform { objects: [4294967297, 4294967297], xform: Xform { linear: [[1.0, 0.0, 0.0], [0.0, 1.0, -2.4492935982947064e-16], [0.0, 2.4492935982947064e-16, 1.0]], translation: [0.0, 0.0, 0.0] }, nodes: [] }: section 1: the halves kept 0.026041666666666664 + -0.005208333333333328 do not make the whole 0.031249999999999997",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.5,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "batch",
+      "ops": [
+        {
+          "op": "add_rectangle",
+          "sketch": 1,
+          "x": 0.0,
+          "y": 0.0,
+          "w": 0.25,
+          "h": 0.25
+        },
+        {
+          "op": "extrude",
+          "sketch": 1,
+          "region": 4294967297,
+          "distance": 0.5
+        }
+      ]
+    },
+    {
+      "op": "transform",
+      "objects": [
+        4294967297,
+        4294967297
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            -2.4492935982947064e-16
+          ],
+          [
+            0.0,
+            2.4492935982947064e-16,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ]
+}

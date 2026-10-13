@@ -460,3 +460,189 @@ fn the_sheet_golden_as_dxf() {
         "{short}"
     );
 }
+
+/// Random sheets on the section golden (both planes, scenes with and without them): every
+/// item the kernel accepts lays out with finite primitives, deterministically, and goes
+/// out as DXF. A small seeded generator, no dependencies.
+#[test]
+fn random_sheets_lay_out() {
+    use sawhorse_export::sheet::{Prim, RenderOptions, render};
+    use sawhorse_export::sheet_dxf::dxf;
+    use sawhorse_kernel::paper::{CameraSpec, DimKind, Scale, StdView};
+    use sawhorse_kernel::sheets::{ItemKind, LeaderEnd, PaperUnits, SheetSetup, ViewportSource};
+    let base = golden("section");
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut laid = 0;
+    for round in 0..40 {
+        let mut m = base.clone();
+        m.apply(&Op::AddSheet {
+            setup: Box::new(SheetSetup::named(&format!("S{round}"))),
+        })
+        .unwrap();
+        let sheet = m.sheets()[0].0;
+        let scenes: Vec<String> = m.scenes().iter().map(|s| s.name.clone()).collect();
+        for _ in 0..12 {
+            let r = next();
+            let f = |k: u64| (k % 1000) as f64 / 1000.0;
+            let at = [0.01 + 0.25 * f(r >> 8), 0.01 + 0.19 * f(r >> 20)];
+            let rect = [
+                at[0],
+                at[1],
+                0.02 + 0.1 * f(r >> 32),
+                0.02 + 0.08 * f(r >> 44),
+            ];
+            let viewports: Vec<u64> = m
+                .sheet(sheet)
+                .unwrap()
+                .items
+                .iter()
+                .filter(|i| matches!(i.kind, ItemKind::Viewport { .. }))
+                .map(|i| i.id)
+                .collect();
+            let kind = match r % 6 {
+                0 | 1 => {
+                    let views = [
+                        StdView::Front,
+                        StdView::Top,
+                        StdView::Left,
+                        StdView::Right,
+                        StdView::Back,
+                        StdView::Iso,
+                    ];
+                    let source = match (r >> 4) % 3 {
+                        0 if !scenes.is_empty() => ViewportSource::Scene {
+                            name: scenes[(r >> 5) as usize % scenes.len()].clone(),
+                        },
+                        1 => ViewportSource::Camera {
+                            camera: CameraSpec {
+                                eye: [2.0, -3.0, 1.5],
+                                target: [0.4, 0.1, 0.8],
+                                up: [0.0, 0.0, 1.0],
+                                parallel: r & 64 == 0,
+                                fov: 35.0,
+                            },
+                        },
+                        _ => ViewportSource::Standard {
+                            view: views[(r >> 6) as usize % 6],
+                        },
+                    };
+                    let scale = if r & 128 == 0 {
+                        Scale::Nts
+                    } else {
+                        Scale::Ratio {
+                            paper: 1.0,
+                            model: [4.0, 8.0, 12.0, 24.0][(r >> 9) as usize % 4],
+                        }
+                    };
+                    ItemKind::Viewport {
+                        rect,
+                        source,
+                        scale,
+                        centre: (r & 256 != 0).then_some([0.3, 0.5]),
+                        hidden_lines: r & 512 != 0,
+                        caption: Some("VIEW".into()),
+                        border: r & 1024 != 0,
+                    }
+                }
+                2 if !viewports.is_empty() => {
+                    let dims = [
+                        DimKind::Horizontal,
+                        DimKind::Vertical,
+                        DimKind::Aligned,
+                        DimKind::Angular,
+                        DimKind::Radius,
+                        DimKind::Diameter,
+                    ];
+                    let dim = dims[(r >> 3) as usize % 6];
+                    let p = |k: u64| {
+                        [
+                            0.9144 * f(r >> k),
+                            0.28 * f(r >> (k + 7)),
+                            1.83 * f(r >> (k + 14)),
+                        ]
+                    };
+                    ItemKind::Dimension {
+                        viewport: viewports[(r >> 2) as usize % viewports.len()],
+                        dim,
+                        points: [p(5), p(17), p(29)][..dim.points()].to_vec(),
+                        offset: 0.02 * (f(r >> 40) - 0.5),
+                        style: Default::default(),
+                        text: None,
+                    }
+                }
+                3 => ItemKind::Label {
+                    at,
+                    text: "Back \u{d8} 1/4\" at 45\u{b0}\nsecond line".into(),
+                    size: 0.003,
+                    leader: viewports.first().map(|v| LeaderEnd::Model {
+                        viewport: *v,
+                        point: [0.45, 0.1, 0.9],
+                    }),
+                },
+                4 => ItemKind::Table {
+                    rect,
+                    columns: sawhorse_kernel::paper::CutColumn::default_set(),
+                    decimal: r & 8 != 0,
+                    visible_only: r & 16 != 0,
+                    title: Some("CUT LIST".into()),
+                },
+                _ => ItemKind::Line {
+                    a: at,
+                    b: [rect[0] + rect[2], rect[1] + rect[3]],
+                    width: 0.0005,
+                    dashed: r & 4 != 0,
+                },
+            };
+            let _ = m.apply(&Op::AddSheetItem {
+                sheet,
+                item: Box::new(kind),
+            });
+        }
+        let r = render(
+            &m,
+            sheet,
+            &RenderOptions {
+                number: 1,
+                count: 1,
+            },
+        )
+        .unwrap();
+        let finite = |v: &[f64]| v.iter().all(|x| x.is_finite());
+        for p in &r.prims {
+            let ok = match p {
+                Prim::Line { a, b, width, .. } => finite(a) && finite(b) && width.is_finite(),
+                Prim::Fill { rings, .. } => rings.iter().flatten().all(|q| finite(q)),
+                Prim::Rect { rect, .. } | Prim::Image { rect, .. } => finite(rect),
+                Prim::Text { at, size, .. } => finite(at) && size.is_finite(),
+            };
+            assert!(ok, "round {round}: {p:?}");
+        }
+        for it in &r.items {
+            assert!(
+                finite(&it.bounds) && it.prims[0] <= it.prims[1] && it.prims[1] <= r.prims.len(),
+                "{it:?}"
+            );
+        }
+        assert_eq!(
+            render(
+                &m,
+                sheet,
+                &RenderOptions {
+                    number: 1,
+                    count: 1
+                }
+            )
+            .unwrap(),
+            r
+        );
+        assert!(dxf(&r, PaperUnits::Millimetres).ends_with("EOF\n"));
+        laid += r.items.len();
+    }
+    assert!(laid > 200, "{laid}");
+}

@@ -255,12 +255,24 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
                 if kept(p) == kept(q) {
                     continue;
                 }
-                let node = if p < q { (p, q) } else { (q, p) };
-                let x = *points.entry(node).or_insert_with(|| {
-                    let (lo, hi) = node;
-                    let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
-                    let (dl, dh) = (dist[&lo], dist[&hi]);
-                    pl + (ph - pl) * (dl / (dl - dh))
+                // A crossing at a vertex on the plane is that vertex, whichever edge
+                // reaches it (node (v, v)): faces that touch the plane at a vertex must
+                // chain through one node, or coincident crossings pair up differently on
+                // two faces and the ring folds over itself.
+                let on = [p, q].into_iter().find(|v| dist[v] == 0.0);
+                let node = match on {
+                    Some(v) => (v, v),
+                    None if p < q => (p, q),
+                    None => (q, p),
+                };
+                let x = *points.entry(node).or_insert_with(|| match on {
+                    Some(v) => b.vertices[v].pos,
+                    None => {
+                        let (lo, hi) = node;
+                        let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
+                        let (dl, dh) = (dist[&lo], dist[&hi]);
+                        pl + (ph - pl) * (dl / (dl - dh))
+                    }
                 });
                 xs.push(((x - plane.origin).dot(t), node));
             }
@@ -322,7 +334,9 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
     rings
 }
 
-/// Drop repeated points and points exactly between their neighbours on one line.
+/// Drop repeated points and points on one line with their neighbours: between them, or
+/// the tip of a zero-width spike (a ring that runs out along a line and back, as one
+/// through a vertex touching the plane can).
 fn tidy_ring(mut pts: Vec<DVec2>) -> Vec<DVec2> {
     let mut changed = true;
     while changed && pts.len() >= 3 {
@@ -331,9 +345,9 @@ fn tidy_ring(mut pts: Vec<DVec2>) -> Vec<DVec2> {
         for i in 0..n {
             let (a, p, c) = (pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]);
             let same = p.distance(a) <= 1e-12;
-            let between = (p - a).perp_dot(c - p).abs() <= 1e-18 * (1.0 + a.distance(c))
-                && (p - a).dot(c - p) > 0.0;
-            if same || between {
+            let in_line =
+                (p - a).perp_dot(c - p).abs() <= 1e-18 * (1.0 + a.distance(p) + p.distance(c));
+            if same || in_line {
                 pts.remove(i);
                 changed = true;
                 break;
@@ -630,18 +644,37 @@ impl Model {
         for o in self.section_solids(s) {
             let obj = &self.objects[o];
             let b = obj.brep();
+            // Which side each vertex is on, with the same tie rule and the same crossing
+            // points as the cap (`solid_rings`): a face lying on the plane to within
+            // ON_PLANE is kept whole exactly when the cap leaves it out, so the two halves
+            // always add up to the whole.
+            let dist: BTreeMap<VertexId, f64> = b
+                .vertices()
+                .map(|(k, vx)| {
+                    let d = frame.signed_distance(vx.pos);
+                    (k, if d.abs() < ON_PLANE { 0.0 } else { d })
+                })
+                .collect();
             for (_, f) in b.faces() {
                 let fp = &f.plane;
-                let side = HalfPlane([
-                    s.distance(fp.origin),
-                    fp.u.dot(s.normal),
-                    fp.v.dot(s.normal),
-                ]);
                 let mut area = 0.0;
                 for l in f.loops() {
-                    let ring: Vec<DVec2> =
-                        b.loop_points(l).iter().map(|p| fp.to_local(*p)).collect();
-                    area += sawhorse_tessellate::signed_area(&clip(&ring, &side));
+                    let vs = b.loop_vertices(l);
+                    let mut ring: Vec<DVec2> = Vec::with_capacity(vs.len() + 2);
+                    for i in 0..vs.len() {
+                        let (p, q) = (vs[i], vs[(i + 1) % vs.len()]);
+                        let (kp, kq) = (dist[&p] >= 0.0, dist[&q] >= 0.0);
+                        if kp {
+                            ring.push(fp.to_local(b.vertices[p].pos));
+                        }
+                        if kp != kq && dist[&p] != 0.0 && dist[&q] != 0.0 {
+                            let (lo, hi) = if p < q { (p, q) } else { (q, p) };
+                            let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
+                            let (dl, dh) = (dist[&lo], dist[&hi]);
+                            ring.push(fp.to_local(pl + (ph - pl) * (dl / (dl - dh))));
+                        }
+                    }
+                    area += sawhorse_tessellate::signed_area(&ring);
                 }
                 v += fp.normal.dot(fp.origin) * area / 3.0;
             }

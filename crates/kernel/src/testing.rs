@@ -135,7 +135,7 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             m.kept_volume(id).map_err(|e| e.to_string())?,
             flipped.kept_volume(id).map_err(|e| e.to_string())?,
         );
-        let reached: f64 = m
+        let reached_objects: Vec<_> = m
             .objects()
             .into_iter()
             .filter(|(o, x)| {
@@ -143,9 +143,35 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
                     && s.parent
                         .is_none_or(|p| m.path_of(x.member.parent).contains(&p))
             })
-            .map(|(_, x)| x.volume())
+            .collect();
+        let reached: f64 = reached_objects.iter().map(|(_, x)| x.volume()).sum();
+        // A face lying in the plane to within the merge distance but not exactly (a tilt
+        // of a micrometre) is kept by the tie rule while the cap is exactly in the plane:
+        // the two then differ by up to its area times that distance. So a half may come out
+        // a little below zero, never by more than the solids' area times POINT_MERGE.
+        let area: f64 = reached_objects
+            .iter()
+            .map(|(_, x)| {
+                let b = x.brep();
+                b.faces()
+                    .map(|(_, f)| {
+                        f.loops()
+                            .map(|l| {
+                                let ring: Vec<_> = b
+                                    .loop_points(l)
+                                    .iter()
+                                    .map(|p| f.plane.to_local(*p))
+                                    .collect();
+                                sawhorse_tessellate::signed_area(&ring)
+                            })
+                            .sum::<f64>()
+                            .abs()
+                    })
+                    .sum::<f64>()
+            })
             .sum();
-        if (a + b - reached).abs() > 1e-6 * (1.0 + reached) || a < -1e-9 || b < -1e-9 {
+        let slack = crate::tolerance::POINT_MERGE * area + 1e-12;
+        if (a + b - reached).abs() > 1e-6 * (1.0 + reached) || a < -slack || b < -slack {
             return Err(format!(
                 "section {id}: the halves kept {a} + {b} do not make the whole {reached}"
             ));

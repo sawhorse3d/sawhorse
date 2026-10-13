@@ -1,0 +1,74 @@
+{
+  "name": "2026-10-12-section-through-a-reflex-vertex (fixed)",
+  "error": "(fixed) op 3 AddSection { origin: [0.25, 0.25, 0.5], normal: [1.0, 0.0, 0.0], name: None, active: true, hidden: false }: section 1: the halves kept 0.05322764316286282 + 0.006848533496708699 do not make the whole 0.05551048766176574",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          0.0,
+          0.5
+        ],
+        [
+          2.0263640270009353,
+          0.0
+        ],
+        [
+          0.0,
+          0.250004
+        ],
+        [
+          0.25,
+          0.25
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.25,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}

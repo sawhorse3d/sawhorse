@@ -241,6 +241,42 @@ enum Fuzz {
     /// Lane 11: a plugin's named batch with placeholders (resolved by `refbatch`, not by
     /// `resolve`).
     PluginBatch(Vec<PluginStep>),
+    /// Lane 12: a section plane (origin, normal, active).
+    AddSection([f64; 3], [f64; 3], bool),
+    /// Put plane k elsewhere.
+    PlaceSection(u8, [f64; 3], [f64; 3]),
+    /// Plane k: 0 flip, 1 (de)activate, 2 hide / show, 3 rename, 4 delete, 5 slice to a group.
+    SectionAct(u8, u8, bool),
+    MoveSections(Vec<u8>, XformPick),
+    CopySections(Vec<u8>, XformPick, u8),
+    /// Lane 12: a sheet with setup variant k.
+    AddSheet(u8),
+    SetSheet(u8, u8),
+    DeleteSheet(u8),
+    MoveSheet(u8, u8),
+    AddSheetItem(u8, SheetPick),
+    SetSheetItem(u8, u8, SheetPick),
+    MoveSheetItems(u8, Vec<u8>, [f64; 2]),
+    DeleteSheetItems(u8, Vec<u8>),
+    OrderSheetItem(u8, u8, u8),
+}
+
+/// A sheet item, as an intent (lane 12): `pick` fields choose among what exists.
+#[derive(Debug, Clone)]
+enum SheetPick {
+    /// Source (0 a scene, 1 a standard view, 2 a parallel camera, 3 a perspective one, 4 a
+    /// scene that does not exist), scale (0 NTS, 1-4 standard, 5 out of range), rect.
+    Viewport(u8, u8, u8, [f64; 4], bool),
+    /// Viewport pick, kind, model points, offset.
+    Dimension(u8, u8, [[f64; 3]; 3], f64),
+    /// Where, text variant, size, leader (0 none, 1 paper, 2 a viewport's model point).
+    Label([f64; 2], u8, f64, u8),
+    /// Rect, columns (bits), decimal, visible only.
+    Table([f64; 4], u16, bool, bool),
+    /// Rect, an image the model holds or not.
+    Image([f64; 4], u8),
+    Line([f64; 2], [f64; 2], f64, bool),
+    Rect([f64; 4], f64, bool),
 }
 
 /// One step of a plugin batch (lane 11). Steps that name "what step k made" use a
@@ -398,6 +434,104 @@ fn lane10_op() -> impl Strategy<Value = Fuzz> {
     ]
 }
 
+/// Paper coordinates: mostly on a page, sometimes off it or garbage.
+fn paper() -> impl Strategy<Value = f64> {
+    prop_oneof![
+        14 => (0i32..40).prop_map(|k| f64::from(k) * 0.00635),
+        3 => -0.05..0.5f64,
+        1 => Just(3.0),
+        1 => Just(f64::NAN),
+    ]
+}
+
+fn paper_rect() -> impl Strategy<Value = [f64; 4]> {
+    let size = || prop_oneof![14 => (1i32..30).prop_map(|k| f64::from(k) * 0.00635), 1 => Just(0.0), 1 => Just(-0.01), 1 => Just(5.0)];
+    (paper(), paper(), size(), size()).prop_map(|(x, y, w, h)| [x, y, w, h])
+}
+
+fn sheet_pick() -> impl Strategy<Value = SheetPick> {
+    let p3 = || (grid(), grid(), grid()).prop_map(|(x, y, z)| [x, y, z]);
+    prop_oneof![
+        5 => (0u8..5, 0u8..6, any::<u8>(), paper_rect(), any::<bool>()).prop_map(|(s, k, v, r, h)| SheetPick::Viewport(s, k, v, r, h)),
+        5 => (any::<u8>(), 0u8..7, (p3(), p3(), p3()), prop_oneof![4 => -0.03..0.03f64, 1 => Just(f64::NAN)])
+            .prop_map(|(v, k, (a, b, c), o)| SheetPick::Dimension(v, k, [a, b, c], o)),
+        3 => ((paper(), paper()), 0u8..4, prop_oneof![4 => Just(0.003), 1 => Just(0.0), 1 => Just(0.5)], 0u8..3)
+            .prop_map(|((x, y), t, z, l)| SheetPick::Label([x, y], t, z, l)),
+        2 => (paper_rect(), any::<u16>(), any::<bool>(), any::<bool>()).prop_map(|(r, c, d, v)| SheetPick::Table(r, c, d, v)),
+        1 => (paper_rect(), 0u8..3).prop_map(|(r, k)| SheetPick::Image(r, k)),
+        2 => ((paper(), paper()), (paper(), paper()), prop_oneof![3 => Just(0.00035), 1 => Just(0.0), 1 => Just(0.02)], any::<bool>())
+            .prop_map(|((ax, ay), (bx, by), w, d)| SheetPick::Line([ax, ay], [bx, by], w, d)),
+        2 => (paper_rect(), prop_oneof![3 => Just(0.00035), 1 => Just(-1.0)], any::<bool>()).prop_map(|(r, w, f)| SheetPick::Rect(r, w, f)),
+    ]
+}
+
+/// Lane-12 intents: section planes and drawing sheets.
+fn lane12_op() -> impl Strategy<Value = Fuzz> {
+    let p3 = || (grid(), grid(), grid()).prop_map(|(x, y, z)| [x, y, z]);
+    let picks = || prop::collection::vec(any::<u8>(), 0..3);
+    prop_oneof![
+        4 => (p3(), normal(), any::<bool>()).prop_map(|(o, n, a)| Fuzz::AddSection(o, n, a)),
+        2 => (any::<u8>(), p3(), normal()).prop_map(|(k, o, n)| Fuzz::PlaceSection(k, o, n)),
+        4 => (any::<u8>(), 0u8..6, any::<bool>()).prop_map(|(k, a, b)| Fuzz::SectionAct(k, a, b)),
+        2 => (picks(), xform_pick()).prop_map(|(k, x)| Fuzz::MoveSections(k, x)),
+        1 => (picks(), xform_pick(), 0u8..4).prop_map(|(k, x, n)| Fuzz::CopySections(k, x, n)),
+        3 => any::<u8>().prop_map(Fuzz::AddSheet),
+        2 => (any::<u8>(), any::<u8>()).prop_map(|(k, v)| Fuzz::SetSheet(k, v)),
+        1 => any::<u8>().prop_map(Fuzz::DeleteSheet),
+        1 => (any::<u8>(), 0u8..5).prop_map(|(k, t)| Fuzz::MoveSheet(k, t)),
+        8 => (any::<u8>(), sheet_pick()).prop_map(|(k, i)| Fuzz::AddSheetItem(k, i)),
+        3 => (any::<u8>(), any::<u8>(), sheet_pick()).prop_map(|(k, i, p)| Fuzz::SetSheetItem(k, i, p)),
+        2 => (any::<u8>(), picks(), (paper(), paper())).prop_map(|(k, i, (x, y))| Fuzz::MoveSheetItems(k, i, [x - 0.1, y - 0.1])),
+        1 => (any::<u8>(), picks()).prop_map(|(k, i)| Fuzz::DeleteSheetItems(k, i)),
+        1 => (any::<u8>(), any::<u8>(), 0u8..9).prop_map(|(k, i, t)| Fuzz::OrderSheetItem(k, i, t)),
+    ]
+}
+
+/// A sheet setup from a variant: every paper, both orientations and units, every length
+/// format; some refused (no name, margins that leave no room, a grid too coarse, a title
+/// block field too long, a custom paper too small, a fraction that is not a power of two).
+fn setup_of(k: u8) -> sawhorse_kernel::sheets::SheetSetup {
+    use sawhorse_kernel::paper::LengthFormat;
+    use sawhorse_kernel::sheets::{PaperSize, PaperUnits, SheetSetup};
+    let mut s = SheetSetup::named(&format!("Sheet {}", k % 5));
+    s.paper = match k % 7 {
+        0 => PaperSize::Letter,
+        1 => PaperSize::Legal,
+        2 => PaperSize::Tabloid,
+        3 => PaperSize::A4,
+        4 => PaperSize::A3,
+        5 => PaperSize::A2,
+        _ => PaperSize::Custom {
+            width: if k.is_multiple_of(3) { 0.01 } else { 0.3 },
+            height: 0.2,
+        },
+    };
+    s.landscape = k & 8 != 0;
+    if k & 16 != 0 {
+        s.units = PaperUnits::Millimetres;
+    }
+    s.format = [
+        LengthFormat::Fraction { den: 16 },
+        LengthFormat::Decimal { places: 2 },
+        LengthFormat::FeetInches { den: 8 },
+        LengthFormat::Millimetres { places: 1 },
+    ][(k / 7) as usize % 4];
+    if k == 97 {
+        s.format = LengthFormat::Fraction { den: 3 };
+    }
+    match k % 23 {
+        0 => s.name = String::new(),
+        1 => s.margins = [0.5; 4],
+        2 => s.grid = 0.2,
+        3 => s.title.project = "x".repeat(600),
+        4 => s.title.show = false,
+        5 => s.grid = 0.0,
+        _ => {}
+    }
+    s.title.title = format!("Title {}", k % 3);
+    s
+}
+
 fn fuzz_op() -> impl Strategy<Value = Fuzz> {
     let pt = || (grid(), grid()).prop_map(|(x, y)| [x, y]);
     prop_oneof![
@@ -445,6 +579,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         8 => lane5_op(),
         6 => lane10_op(),
         3 => prop::collection::vec(plugin_step(), 1..6).prop_map(Fuzz::PluginBatch),
+        16 => lane12_op(),
     ]
 }
 
@@ -470,6 +605,197 @@ fn plugin_step() -> impl Strategy<Value = PluginStep> {
         .prop_map(|f| PluginStep::Plain(Box::new(f))),
         1 => (0u8..6).prop_map(PluginStep::Garbage),
     ]
+}
+
+/// An item of sheet `sheet` by pick (an id that is not there now and then).
+fn sheet_item_id(m: &sawhorse_kernel::Model, sheet: u64, k: u8) -> u64 {
+    let ids: Vec<u64> = m
+        .sheet(sheet)
+        .map(|s| s.items.iter().map(|i| i.id).collect())
+        .unwrap_or_default();
+    match pick(&ids, k) {
+        Some(id) if k % 16 != 15 => id,
+        _ => 500 + u64::from(k % 3),
+    }
+}
+
+/// A sheet item from an intent, against what sheet `sheet` and the model hold now.
+fn sheet_item(
+    m: &sawhorse_kernel::Model,
+    sheet: u64,
+    p: &SheetPick,
+) -> sawhorse_kernel::sheets::ItemKind {
+    use sawhorse_kernel::paper::{CameraSpec, CutColumn, DimKind, Scale, StdView};
+    use sawhorse_kernel::sheets::{DimStyle, ItemKind, LeaderEnd, ViewportSource};
+    let viewports: Vec<u64> = m
+        .sheet(sheet)
+        .map(|s| {
+            s.items
+                .iter()
+                .filter(|i| matches!(i.kind, ItemKind::Viewport { .. }))
+                .map(|i| i.id)
+                .collect()
+        })
+        .unwrap_or_default();
+    let viewport = |k: u8| match pick(&viewports, k) {
+        Some(id) if k % 16 != 15 => id,
+        _ => 700,
+    };
+    match p {
+        SheetPick::Viewport(src, scale, v, rect, hidden) => {
+            let scenes: Vec<String> = m.scenes().iter().map(|s| s.name.clone()).collect();
+            let views = [
+                StdView::Top,
+                StdView::Bottom,
+                StdView::Front,
+                StdView::Back,
+                StdView::Left,
+                StdView::Right,
+                StdView::Iso,
+            ];
+            let source = match src {
+                0 => match pick_ref(&scenes, *v) {
+                    Some(name) => ViewportSource::Scene { name: name.clone() },
+                    None => ViewportSource::Standard {
+                        view: views[*v as usize % 7],
+                    },
+                },
+                1 => ViewportSource::Standard {
+                    view: views[*v as usize % 7],
+                },
+                2 | 3 => ViewportSource::Camera {
+                    camera: CameraSpec {
+                        eye: [2.0, -3.0, 1.0 + f64::from(*v % 4)],
+                        target: [0.0, 0.0, 0.0],
+                        up: [0.0, 0.0, 1.0],
+                        parallel: *src == 2,
+                        fov: 35.0,
+                    },
+                },
+                _ => ViewportSource::Scene {
+                    name: "Nowhere".into(),
+                },
+            };
+            let scale = match scale {
+                0 => Scale::Nts,
+                1 => Scale::Ratio {
+                    paper: 1.0,
+                    model: 8.0,
+                },
+                2 => Scale::Ratio {
+                    paper: 1.0,
+                    model: 1.0,
+                },
+                3 => Scale::Architect {
+                    inches_per_foot: 0.25,
+                },
+                4 => Scale::Architect {
+                    inches_per_foot: 3.0,
+                },
+                _ => Scale::Ratio {
+                    paper: 1.0,
+                    model: 0.0,
+                },
+            };
+            ItemKind::Viewport {
+                rect: *rect,
+                source,
+                scale,
+                centre: (v % 5 == 1).then_some([0.1, -0.2]),
+                hidden_lines: *hidden,
+                caption: (v % 3 == 0).then(|| format!("VIEW {v}")),
+                border: v % 2 == 0,
+            }
+        }
+        SheetPick::Dimension(v, k, pts, offset) => {
+            let dim = [
+                DimKind::Horizontal,
+                DimKind::Vertical,
+                DimKind::Aligned,
+                DimKind::Angular,
+                DimKind::Radius,
+                DimKind::Diameter,
+            ][*k as usize % 6];
+            // Kind 6: too few points (refused).
+            let n = if *k == 6 { 1 } else { dim.points() };
+            ItemKind::Dimension {
+                viewport: viewport(*v),
+                dim,
+                points: pts[..n].to_vec(),
+                offset: *offset,
+                style: [DimStyle::Arrows, DimStyle::Ticks, DimStyle::Dots][*v as usize % 3],
+                text: (v % 6 == 5).then(|| "36 (overall)".to_string()),
+            }
+        }
+        SheetPick::Label(at, t, size, leader) => ItemKind::Label {
+            at: *at,
+            text: [
+                "Walnut",
+                "Two lines\nof text",
+                "",
+                "\u{d8} 1 1/2\" at 45\u{b0}",
+            ][*t as usize % 4]
+                .to_string(),
+            size: *size,
+            leader: match leader {
+                0 => None,
+                1 => Some(LeaderEnd::Paper {
+                    at: [at[0] + 0.02, at[1] - 0.01],
+                }),
+                _ => Some(LeaderEnd::Model {
+                    viewport: viewport(*t),
+                    point: [0.25, 0.0, 0.5],
+                }),
+            },
+        },
+        SheetPick::Table(rect, cols, decimal, visible_only) => {
+            let all = [
+                CutColumn::Part,
+                CutColumn::Qty,
+                CutColumn::Thickness,
+                CutColumn::Width,
+                CutColumn::Length,
+                CutColumn::Size,
+                CutColumn::Material,
+                CutColumn::Grain,
+                CutColumn::Amount,
+                CutColumn::Notes,
+            ];
+            ItemKind::Table {
+                rect: *rect,
+                columns: all
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| cols & (1 << i) != 0)
+                    .map(|(_, c)| *c)
+                    .collect(),
+                decimal: *decimal,
+                visible_only: *visible_only,
+                title: (cols % 2 == 0).then(|| "CUT LIST".to_string()),
+            }
+        }
+        SheetPick::Image(rect, k) => {
+            let held: Vec<String> = m.textures().keys().cloned().collect();
+            ItemKind::Image {
+                rect: *rect,
+                path: match pick_ref(&held, *k) {
+                    Some(p) if *k != 2 => p.clone(),
+                    _ => "assets/missing.png".into(),
+                },
+            }
+        }
+        SheetPick::Line(a, b, width, dashed) => ItemKind::Line {
+            a: *a,
+            b: *b,
+            width: *width,
+            dashed: *dashed,
+        },
+        SheetPick::Rect(rect, width, fill) => ItemKind::Rect {
+            rect: *rect,
+            width: *width,
+            fill: fill.then_some([235, 235, 230]),
+        },
+    }
 }
 
 /// A placeholder: the value at `path` in the outcome of op `at` of the batch.
@@ -681,6 +1007,77 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         .chain(m.context_nodes().into_iter().map(Item::Node))
         .collect();
     let item = |k: u8| pick(&ctx_items, k).unwrap_or(Item::Object(1));
+    // Lane 12: section planes and sheets by pick (an id that does not exist now and then).
+    let section_ids: Vec<u64> = m.sections().iter().map(|(id, _)| *id).collect();
+    let section = |k: u8| match pick(&section_ids, k) {
+        Some(id) if k % 16 != 15 => id,
+        _ => 90 + u64::from(k % 3),
+    };
+    let sheet_ids: Vec<u64> = m.sheets().iter().map(|(id, _)| *id).collect();
+    let sheet = |k: u8| match pick(&sheet_ids, k) {
+        Some(id) if k % 16 != 15 => id,
+        _ => 90 + u64::from(k % 3),
+    };
+    // An edit of a section plane, a sheet or a sheet's item when there is none makes one
+    // first (so those edits run often), except now and then (to keep the refusals).
+    let needs = match f {
+        Fuzz::PlaceSection(k, ..) | Fuzz::SectionAct(k, ..) => Some((0, *k)),
+        Fuzz::MoveSections(k, _) | Fuzz::CopySections(k, ..) => {
+            Some((0, k.first().copied().unwrap_or(0)))
+        }
+        Fuzz::SetSheet(k, _)
+        | Fuzz::DeleteSheet(k)
+        | Fuzz::MoveSheet(k, _)
+        | Fuzz::AddSheetItem(k, _) => Some((1, *k)),
+        Fuzz::SetSheetItem(k, ..)
+        | Fuzz::MoveSheetItems(k, ..)
+        | Fuzz::DeleteSheetItems(k, _)
+        | Fuzz::OrderSheetItem(k, ..) => Some((2, *k)),
+        _ => None,
+    };
+    if let Some((what, k)) = needs
+        && k % 16 != 15
+    {
+        if what == 0 && section_ids.is_empty() {
+            return Op::AddSection {
+                origin: [0.25 * f64::from(k % 5), 0.25, 0.5],
+                normal: [[0.0, 0.0, -1.0], [1.0, 0.0, 0.0], [0.0, -1.0, 0.0]][k as usize % 3],
+                name: None,
+                active: true,
+                hidden: false,
+            };
+        }
+        if what > 0 && sheet_ids.is_empty() {
+            return Op::AddSheet {
+                setup: Box::new(sawhorse_kernel::sheets::SheetSetup::named("Sheet")),
+            };
+        }
+        // A dimension or a label on a model point wants a viewport to be on.
+        let wants_viewport = matches!(
+            f,
+            Fuzz::AddSheetItem(_, SheetPick::Dimension(..))
+                | Fuzz::AddSheetItem(_, SheetPick::Label(_, _, _, 2))
+        );
+        let no_viewport = |id: u64| {
+            m.sheet(id).is_some_and(|s| {
+                !s.items
+                    .iter()
+                    .any(|i| matches!(i.kind, sawhorse_kernel::sheets::ItemKind::Viewport { .. }))
+            })
+        };
+        if (what == 2 && m.sheet(sheet(k)).is_some_and(|s| s.items.is_empty()))
+            || (wants_viewport && no_viewport(sheet(k)))
+        {
+            return Op::AddSheetItem {
+                sheet: sheet(k),
+                item: Box::new(sheet_item(
+                    m,
+                    sheet(k),
+                    &SheetPick::Viewport(1, 0, 2, [0.02, 0.02, 0.1, 0.08], false),
+                )),
+            };
+        }
+    }
     // A tag the model has (mostly), else one of the fuzzer's names.
     let tag_names: Vec<String> = m.tags().keys().cloned().collect();
     let existing_tag = |k: u8| match pick_ref(&tag_names, k) {
@@ -1106,6 +1503,124 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
         },
         // Resolved in `concrete` through refbatch; never reaches here in a run.
         Fuzz::PluginBatch(_) => Op::Batch { ops: Vec::new() },
+        Fuzz::AddSection(origin, normal, active) => Op::AddSection {
+            origin: *origin,
+            normal: *normal,
+            name: None,
+            active: *active,
+            hidden: false,
+        },
+        Fuzz::PlaceSection(k, origin, normal) => Op::PlaceSection {
+            section: section(*k),
+            origin: *origin,
+            normal: *normal,
+        },
+        Fuzz::SectionAct(k, act, b) => {
+            let section = section(*k);
+            match act {
+                0 => Op::FlipSection { section },
+                1 => Op::SetSectionActive {
+                    section,
+                    active: *b,
+                },
+                2 => Op::SetSectionHidden {
+                    section,
+                    hidden: *b,
+                },
+                3 => Op::RenameSection {
+                    section,
+                    name: if *b {
+                        format!("Section {k}")
+                    } else {
+                        String::new()
+                    },
+                },
+                4 => Op::DeleteSection { section },
+                _ => Op::SliceToGroup {
+                    section,
+                    name: b.then(|| "Slice".to_string()),
+                },
+            }
+        }
+        Fuzz::MoveSections(k, x) => Op::MoveSections {
+            sections: k.iter().map(|k| section(*k)).collect(),
+            xform: xform_of(x),
+        },
+        Fuzz::CopySections(k, x, n) => Op::CopySections {
+            sections: k.iter().map(|k| section(*k)).collect(),
+            xform: xform_of(x),
+            count: u32::from(*n),
+        },
+        Fuzz::AddSheet(k) => Op::AddSheet {
+            setup: Box::new(setup_of(*k)),
+        },
+        Fuzz::SetSheet(k, v) => Op::SetSheet {
+            sheet: sheet(*k),
+            setup: Box::new(setup_of(*v)),
+        },
+        Fuzz::DeleteSheet(k) => Op::DeleteSheet { sheet: sheet(*k) },
+        Fuzz::MoveSheet(k, to) => Op::MoveSheet {
+            sheet: sheet(*k),
+            to: u32::from(*to),
+        },
+        Fuzz::AddSheetItem(k, pick) => {
+            let sheet = sheet(*k);
+            Op::AddSheetItem {
+                sheet,
+                item: Box::new(sheet_item(m, sheet, pick)),
+            }
+        }
+        Fuzz::SetSheetItem(k, i, pick) => {
+            use sawhorse_kernel::sheets::ItemKind;
+            let sheet = sheet(*k);
+            let item = sheet_item_id(m, sheet, *i);
+            let mut kind = sheet_item(m, sheet, pick);
+            // Mostly a change of the same kind of item (a kind never changes: that is
+            // refused), else the intent as it is.
+            if let Some(old) = m.sheet(sheet).and_then(|s| s.item(item))
+                && std::mem::discriminant(&old.kind) != std::mem::discriminant(&kind)
+                && i % 4 != 3
+            {
+                kind = match &old.kind {
+                    ItemKind::Dimension { .. } => {
+                        let mut d = old.kind.clone();
+                        if let ItemKind::Dimension { offset, .. } = &mut d {
+                            *offset += 0.005;
+                        }
+                        d
+                    }
+                    other => other.moved([0.0127, -0.00635]),
+                };
+            }
+            Op::SetSheetItem {
+                sheet,
+                item,
+                kind: Box::new(kind),
+            }
+        }
+        Fuzz::MoveSheetItems(k, items, by) => {
+            let sheet = sheet(*k);
+            Op::MoveSheetItems {
+                sheet,
+                items: items.iter().map(|i| sheet_item_id(m, sheet, *i)).collect(),
+                by: *by,
+            }
+        }
+        Fuzz::DeleteSheetItems(k, items) => {
+            let sheet = sheet(*k);
+            Op::DeleteSheetItems {
+                sheet,
+                items: items.iter().map(|i| sheet_item_id(m, sheet, *i)).collect(),
+            }
+        }
+        Fuzz::OrderSheetItem(k, i, to) => {
+            let sheet = sheet(*k);
+            Op::OrderSheetItem {
+                sheet,
+                item: sheet_item_id(m, sheet, *i),
+                to: u32::from(*to),
+            }
+        }
         Fuzz::Stock(k, t, sheet) => Op::SetStock {
             part: part(*k),
             stock: t.map(|i| STOCKS[i as usize % STOCKS.len()].to_string()),
@@ -1776,6 +2291,33 @@ impl Tally {
                 "off (FUZZ_PLANE_SNAP=0)"
             }
         );
+        // Lane 12: why section and sheet edits were refused.
+        let lane12 = [
+            "add_section",
+            "place_section",
+            "flip_section",
+            "set_section",
+            "rename_section",
+            "delete_section",
+            "move_sections",
+            "copy_sections",
+            "slice_to_group",
+            "add_sheet",
+            "set_sheet",
+            "delete_sheet",
+            "move_sheet",
+            "order_sheet",
+        ];
+        let mut l12: Vec<(&String, &usize)> = self
+            .reasons
+            .iter()
+            .filter(|(r, _)| lane12.iter().any(|k| r.starts_with(k)))
+            .collect();
+        l12.sort_by(|a, b| b.1.cmp(a.1));
+        out += "  section and sheet refusals (lane 12):\n";
+        for (reason, n) in l12.into_iter().take(24) {
+            out += &format!("  {n:>7}  {reason}\n");
+        }
         // What the boolean refusals were (FUZZ_REASON_LEN=200 shows the validator's words).
         let mut bools: Vec<(&String, &usize)> = self
             .reasons
