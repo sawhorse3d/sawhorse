@@ -396,6 +396,39 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     d.free();
   });
 
+  it("lane 16 fixes: texture images past 128 million pixels in all are left out with a note, so the import still comes in", async () => {
+    const { create } = await import("openskp");
+    // A PNG that is only its header (read for its size; nothing decodes it): 4096 x 4096.
+    const header = (n: number) => {
+      const b = new Uint8Array(34);
+      b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+      new DataView(b.buffer).setUint32(16, 4096);
+      new DataView(b.buffer).setUint32(20, 4096);
+      b[24] = 8;
+      b[25] = 6;
+      b[33] = n;
+      return b;
+    };
+    const b = create();
+    const mats = Array.from({ length: 12 }, (_, n) => b.addTextureMaterial(`Wood ${n}`, header(n), `wood${n}.png`, 12, 12));
+    b.addGroup((g) => {
+      mats.forEach((m, n) => g.addFace([[n * 2, 0, 0], [n * 2 + 1, 0, 0], [n * 2 + 1, 1, 0], [n * 2, 1, 0]], { material: m }));
+    }, { name: "Swatches" });
+    const r = skpToOp(b.toBytes(), "swatches.skp");
+    if (r.op?.op !== "batch") throw new Error(`expected the images batched first, got ${r.op?.op}`);
+    const textures = r.op.ops.filter((o) => o.op === "add_texture");
+    // Eight 4096 x 4096 images are the kernel's 128 million pixels.
+    expect(textures).toHaveLength(8);
+    expect(r.notes.join(" ")).toMatch(/4 texture images left out .*128 million pixels in all/);
+    if (!built) return;
+    const mod = await kernel();
+    const d = mod.document_new();
+    d.apply_op(JSON.stringify(r.op));
+    const st = JSON.parse(d.state_json());
+    expect(st.textures).toHaveLength(8);
+    d.free();
+  });
+
   it("lane 16: groups placed inside groups placed many times are counted, not expanded forever", () => {
     // 40 "Group#i" definitions, each placing the next twice: 2^40 group copies.
     const empty = { guid: "", vertices: [], edges: [], faces: [], sectionPlanes: [], texts: [], dimensions: [], constructionLines: [], constructionPoints: [], isImage: false, alwaysFacesCamera: false, shadowsFaceSun: false };

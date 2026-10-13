@@ -1065,6 +1065,59 @@ mod tests {
         );
     }
 
+    /// The lane 16 verifier's F10, from a file: sixteen 4096 x 4096 images of one colour
+    /// are a few hundred kilobytes of .shz and a gigabyte decoded. Eight (128 million
+    /// pixels) open; one more image is refused before anything is drawn.
+    #[test]
+    fn texture_images_are_held_to_their_pixels_in_all_when_a_file_opens() {
+        let header = |n: u8| {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            png.extend_from_slice(&4096u32.to_be_bytes());
+            png.extend_from_slice(&4096u32.to_be_bytes());
+            png.extend_from_slice(&[8, 6, 0, 0, 0, n]);
+            png
+        };
+        let mut d = sample();
+        for n in 0..8u8 {
+            d.apply(&Op::AddTexture {
+                path: format!("assets/t{n}.png"),
+                mime: "image/png".into(),
+                data: header(n),
+            })
+            .unwrap();
+        }
+        let bytes = write(d.model(), &SaveOptions::default()).unwrap();
+        assert_eq!(read(&bytes).unwrap().document.hash(), d.hash());
+        // The same file with a ninth image listed and present.
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes[..])).unwrap();
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&entry(&mut zip, "scene.json").unwrap().unwrap()).unwrap();
+        v["textures"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "path": "assets/t8.png", "mime": "image/png" }));
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for i in 0..zip.len() {
+            let name = zip.by_index(i).unwrap().name().to_string();
+            zw.start_file(name.as_str(), SimpleFileOptions::default())
+                .unwrap();
+            if name == "scene.json" {
+                zw.write_all(&serde_json::to_vec(&v).unwrap()).unwrap();
+            } else {
+                zw.write_all(&entry(&mut zip, &name).unwrap().unwrap())
+                    .unwrap();
+            }
+        }
+        zw.start_file("assets/t8.png", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(&header(8)).unwrap();
+        let over = zw.finish().unwrap().into_inner();
+        let t = std::time::Instant::now();
+        let e = read(&over).unwrap_err();
+        assert!(t.elapsed().as_millis() < 2000, "{:?}", t.elapsed());
+        assert!(e.to_string().contains("million pixels"), "{e}");
+    }
+
     #[test]
     fn plugin_data_is_written_and_read_by_the_kernel_capped() {
         let d = sample();

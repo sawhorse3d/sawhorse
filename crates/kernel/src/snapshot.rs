@@ -1246,6 +1246,8 @@ impl Model {
         if m.textures.len() > crate::looks::MAX_TEXTURES {
             return Err(crate::looks::LooksError::TooManyTextures.into());
         }
+        // Lane 16: the bytes and pixels of all of them, before any is drawn.
+        crate::limits::check_textures(m.textures.values())?;
         if let Some(st) = &s.style {
             m.set_style(Some(st))?;
         }

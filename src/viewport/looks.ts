@@ -3,6 +3,7 @@
 // geometry from the kernel's edge normals, texture images decoded once per digest, and
 // which faces a style draws how.
 import * as THREE from "three";
+import { imageSize } from "../lib/imageSize";
 import type { FullStyle } from "../lib/looks";
 
 /** A full-screen backdrop: background colour, a sky above the horizon and a ground below it.
@@ -170,75 +171,230 @@ export function faceMode(style: FullStyle): FaceMode {
   }
 }
 
+/** Longest side of a texture image as the viewport draws it (lane 16): a texture tiles
+ * over a face, and a view of a whole model does not show more than this. */
+export const VIEW_TEXTURE_SIDE = 2048;
+/** Pixels the viewport decodes for all of a model's texture images together (lane 16):
+ * 32 million, 128 MB at 4 bytes a pixel (with mipmaps a third more), however many images
+ * the model holds. The browser decodes an image to 4 bytes a pixel: sixteen 4096 x 4096
+ * images of a few kilobytes each used to take a gigabyte. */
+export const VIEW_TEXEL_BUDGET = 32 * 1024 * 1024;
+
+/** The share of each side every texture is drawn at, so that all of `images` (each first
+ * brought to `VIEW_TEXTURE_SIDE`) fit `VIEW_TEXEL_BUDGET` together (1: all at full size). */
+export function viewFactor(images: Iterable<{ width: number; height: number }>): number {
+  let total = 0;
+  for (const t of images) {
+    const s = sideScale(t.width, t.height);
+    total += t.width * s * (t.height * s);
+  }
+  return total > VIEW_TEXEL_BUDGET ? Math.sqrt(VIEW_TEXEL_BUDGET / total) : 1;
+}
+
+function sideScale(width: number, height: number): number {
+  const side = Math.max(width, height, 1);
+  return side > VIEW_TEXTURE_SIDE ? VIEW_TEXTURE_SIDE / side : 1;
+}
+
+/** The size an image of `width` x `height` is decoded at in the viewport, with `factor`
+ * from `viewFactor` (at least 1 x 1). */
+export function viewSize(width: number, height: number, factor: number): { width: number; height: number } {
+  const s = sideScale(width, height) * Math.min(1, factor);
+  return { width: Math.max(1, Math.floor(width * s)), height: Math.max(1, Math.floor(height * s)) };
+}
+
+interface CachedImage {
+  blob: Blob;
+  /** Its size from its header (0 when it could not be read: decoded as it is). */
+  width: number;
+  height: number;
+  texture: THREE.Texture | null;
+  /** The size it was decoded at. */
+  drawn: { width: number; height: number } | null;
+  /** In the model now (an image let go keeps its bytes, not its pixels). */
+  live: boolean;
+}
+
 /**
  * Texture images by content digest, decoded once and shared by every material that names
  * them (the worker sends each image's bytes once). Colour space sRGB, repeat wrapping,
  * mipmaps and the renderer's best anisotropy.
+ *
+ * Lane 16: images are decoded one at a time, each at most `VIEW_TEXTURE_SIDE` on a side and
+ * all of them together within `VIEW_TEXEL_BUDGET` (a model with many large images draws each
+ * a little coarser), and an image drawn larger than its share now allows (more images came
+ * in) is decoded again, smaller. The compressed bytes are kept for that.
  */
 export class TextureCache {
-  private byDigest = new Map<string, THREE.Texture>();
-  private pending = new Set<string>();
+  private images = new Map<string, CachedImage>();
+  private queue: string[] = [];
+  private busy = false;
+  private factor = 1;
+  private disposed = false;
   constructor(
     private anisotropy: number,
     private onReady: () => void,
   ) {}
 
   has(digest: string): boolean {
-    return this.byDigest.has(digest);
+    return !!this.images.get(digest)?.texture;
   }
 
   get(digest: string | undefined): THREE.Texture | null {
-    return digest ? (this.byDigest.get(digest) ?? null) : null;
+    return digest ? (this.images.get(digest)?.texture ?? null) : null;
   }
 
   add(digest: string, mime: string, bytes: Uint8Array): void {
-    if (this.byDigest.has(digest) || this.pending.has(digest)) return;
-    this.pending.add(digest);
-    const blob = new Blob([bytes as BlobPart], { type: mime });
-    const done = (img: TexImageSource | null) => {
-      this.pending.delete(digest);
-      if (!img) return;
-      const t = new THREE.Texture(img as THREE.Texture["image"]);
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.wrapS = THREE.RepeatWrapping;
-      t.wrapT = THREE.RepeatWrapping;
-      t.anisotropy = this.anisotropy;
-      t.generateMipmaps = true;
-      t.minFilter = THREE.LinearMipmapLinearFilter;
-      t.magFilter = THREE.LinearFilter;
-      // Our coordinates run y up the image's height from its first row.
-      t.flipY = false;
-      t.needsUpdate = true;
-      this.byDigest.set(digest, t);
-      this.onReady();
-    };
-    if (typeof createImageBitmap === "function") {
-      createImageBitmap(blob).then(done, () => done(null));
-    } else if (typeof Image !== "undefined" && typeof URL !== "undefined" && URL.createObjectURL) {
-      const img = new Image();
-      const url = URL.createObjectURL(blob);
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        done(img);
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        done(null);
-      };
-      img.src = url;
-    } else {
-      this.pending.delete(digest);
+    if (this.images.has(digest) || this.disposed) return;
+    const px = imageSize(bytes);
+    this.images.set(digest, { blob: new Blob([bytes as BlobPart], { type: mime }), width: px?.width ?? 0, height: px?.height ?? 0, texture: null, drawn: null, live: true });
+    this.plan();
+    this.enqueue(digest);
+  }
+
+  /** The images the model holds now: the others' pixels are let go (they no longer count
+   * against the rest); their compressed bytes are kept, since the worker sends an image
+   * once and an undo can bring it back. */
+  keep(digests: Iterable<string>): void {
+    const live = new Set(digests);
+    let changed = false;
+    for (const [digest, x] of this.images) {
+      const on = live.has(digest);
+      if (on === x.live) continue;
+      changed = true;
+      x.live = on;
+      if (!on) {
+        x.texture?.dispose();
+        closeImage(x.texture?.image);
+        x.texture = null;
+        x.drawn = null;
+      }
+    }
+    if (!changed) return;
+    this.plan();
+    for (const [digest, x] of this.images) if (x.live && !x.texture) this.enqueue(digest);
+  }
+
+  /** Work out every image's share again, and queue the ones drawn larger than it. */
+  private plan(): void {
+    this.factor = viewFactor([...this.images.values()].filter((x) => x.live && x.width > 0 && x.height > 0));
+    for (const [digest, x] of this.images) {
+      if (!x.live || !x.drawn || !x.width || !x.height) continue;
+      const want = viewSize(x.width, x.height, this.factor);
+      if (x.drawn.width * x.drawn.height > want.width * want.height) this.enqueue(digest);
+    }
+  }
+
+  private enqueue(digest: string): void {
+    if (!this.queue.includes(digest)) this.queue.push(digest);
+    // After the images that arrive together are all planned (they come in one loop).
+    queueMicrotask(() => void this.pump());
+  }
+
+  private async pump(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      for (let digest = this.queue.shift(); digest !== undefined; digest = this.queue.shift()) {
+        const x = this.images.get(digest);
+        if (!x || !x.live || this.disposed) continue;
+        const size = x.width && x.height ? viewSize(x.width, x.height, this.factor) : null;
+        if (x.drawn && size && x.drawn.width === size.width && x.drawn.height === size.height) continue;
+        const img = await decode(x.blob, size && (size.width < x.width || size.height < x.height) ? size : null);
+        if (!img) continue;
+        // Let go or disposed while it decoded.
+        if (this.disposed || !x.live || this.images.get(digest) !== x) {
+          closeImage(img);
+          continue;
+        }
+        const t = new THREE.Texture(img as THREE.Texture["image"]);
+        t.colorSpace = THREE.SRGBColorSpace;
+        t.wrapS = THREE.RepeatWrapping;
+        t.wrapT = THREE.RepeatWrapping;
+        t.anisotropy = this.anisotropy;
+        t.generateMipmaps = true;
+        t.minFilter = THREE.LinearMipmapLinearFilter;
+        t.magFilter = THREE.LinearFilter;
+        // Our coordinates run y up the image's height from its first row.
+        t.flipY = false;
+        t.needsUpdate = true;
+        const old = x.texture;
+        x.texture = t;
+        const dims = img as unknown as { width?: number; height?: number };
+        x.drawn = size ?? { width: dims.width ?? 0, height: dims.height ?? 0 };
+        if (old) {
+          old.dispose();
+          closeImage(old.image);
+        }
+        this.onReady();
+      }
+    } finally {
+      this.busy = false;
     }
   }
 
   size(): number {
-    return this.byDigest.size;
+    let n = 0;
+    for (const x of this.images.values()) if (x.texture) n++;
+    return n;
+  }
+
+  /** What is decoded (tests): the images, their pixels together, the largest, and how many
+   * are still waiting to be decoded. */
+  stats(): { images: number; texels: number; largest: [number, number]; pending: number } {
+    let images = 0;
+    let texels = 0;
+    let largest: [number, number] = [0, 0];
+    for (const x of this.images.values()) {
+      if (!x.texture || !x.drawn) continue;
+      images++;
+      texels += x.drawn.width * x.drawn.height;
+      if (x.drawn.width * x.drawn.height > largest[0] * largest[1]) largest = [x.drawn.width, x.drawn.height];
+    }
+    return { images, texels, largest, pending: this.queue.length + (this.busy ? 1 : 0) };
   }
 
   dispose(): void {
-    for (const t of this.byDigest.values()) t.dispose();
-    this.byDigest.clear();
+    this.disposed = true;
+    this.queue = [];
+    for (const x of this.images.values()) {
+      x.texture?.dispose();
+      closeImage(x.texture?.image);
+    }
+    this.images.clear();
   }
+}
+
+/** Free a decoded image's pixels now (an ImageBitmap), not when it is collected. */
+function closeImage(img: unknown): void {
+  if (img && typeof (img as { close?: unknown }).close === "function") (img as { close: () => void }).close();
+}
+
+/** Decode an image, at `to` when given (smaller than it is). */
+function decode(blob: Blob, to: { width: number; height: number } | null): Promise<TexImageSource | null> {
+  if (typeof createImageBitmap === "function") {
+    const made = to ? createImageBitmap(blob, { resizeWidth: to.width, resizeHeight: to.height, resizeQuality: "high" }) : createImageBitmap(blob);
+    return made.then(
+      (b) => b,
+      () => null,
+    );
+  }
+  if (typeof Image !== "undefined" && typeof URL !== "undefined" && URL.createObjectURL) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  }
+  return Promise.resolve(null);
 }
 
 /** Soft (1), smooth (2) and hidden (4) edge flags (crates/kernel/src/edges.rs). */

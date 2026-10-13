@@ -28,6 +28,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, partsOf, selectionHighlight, withHover } from "./lib/entities";
+import { thumbnailUrl } from "./lib/thumbnail";
 import { contextTrail, describeNode, entityShown, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
@@ -1282,7 +1283,8 @@ export function App() {
       if (s.library) return swatches[`lib:${s.library}`] ?? null;
       if (!s.texture) return null;
       const digest = live.current.scene?.state.textures?.find((t) => t.path === s.texture)?.digest;
-      return digest ? (swatches[`tex:${digest}`] ?? null) : null;
+      // A small copy (lane 16): a swatch of the image itself is decoded whole.
+      return digest ? (swatches[`thumb:${digest}`] ?? null) : null;
     },
     [swatches],
   );
@@ -1399,6 +1401,12 @@ export function App() {
       const add: Record<string, string> = {};
       for (const b of fresh) add[`tex:${b.digest}`] = URL.createObjectURL(new Blob([b.bytes as BlobPart], { type: b.mime }));
       setSwatches((s) => ({ ...s, ...add }));
+      // The swatches show small copies, made one image at a time (lane 16); where this
+      // browser cannot make one, the image itself.
+      for (const b of fresh) {
+        const full = add[`tex:${b.digest}`];
+        void thumbnailUrl(b.bytes, b.mime).then((url) => setSwatches((s) => ({ ...s, [`thumb:${b.digest}`]: url ?? full })));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene, shadowPreview, engineObj]);

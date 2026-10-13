@@ -94,6 +94,67 @@ fn a_texture_whose_header_says_too_many_pixels_is_refused() {
     assert!(e.to_string().contains("4096 x 4096"), "{e}");
 }
 
+/// A PNG that is only its header (the kernel reads no more): `w` x `h` pixels, made distinct
+/// by `n` (a byte after the header).
+fn png_header(w: u32, h: u32, n: u8) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    png.extend_from_slice(&w.to_be_bytes());
+    png.extend_from_slice(&h.to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0, n]);
+    png
+}
+
+/// The lane 16 verifier's F10: sixteen legal 4096 x 4096 images (a few kilobytes each as
+/// PNGs of one colour) were a gigabyte decoded in the browser, and the 512-image limit
+/// allowed tens of gigabytes. The pixels of all images together are held to 128 million.
+#[test]
+fn texture_images_are_held_to_their_pixels_in_all() {
+    let mut d = boxed();
+    let side = 4096u32;
+    let per = u64::from(side) * u64::from(side);
+    let fit = (sawhorse_kernel::limits::MAX_TEXTURE_PIXELS_TOTAL / per) as u8;
+    assert_eq!(fit, 8);
+    for n in 0..fit {
+        d.apply(&Op::AddTexture {
+            path: format!("assets/t{n}.png"),
+            mime: "image/png".into(),
+            data: png_header(side, side, n),
+        })
+        .unwrap();
+    }
+    let h = d.hash();
+    let t = Instant::now();
+    let e = d
+        .apply(&Op::AddTexture {
+            path: "assets/t-over.png".into(),
+            mime: "image/png".into(),
+            data: png_header(side, side, 99),
+        })
+        .unwrap_err();
+    assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
+    assert!(e.to_string().contains("million pixels"), "{e}");
+    assert_eq!(d.hash(), h, "nothing changed");
+    // A small image still fits beside them: the limit is the pixels, not the count.
+    let e = d
+        .apply(&Op::AddTexture {
+            path: "assets/small.png".into(),
+            mime: "image/png".into(),
+            data: png_header(64, 64, 7),
+        })
+        .unwrap_err();
+    assert!(
+        e.to_string().contains("million pixels"),
+        "exactly at the limit: {e}"
+    );
+    d.undo().unwrap();
+    d.apply(&Op::AddTexture {
+        path: "assets/small.png".into(),
+        mime: "image/png".into(),
+        data: png_header(64, 64, 7),
+    })
+    .unwrap();
+}
+
 #[test]
 fn a_batch_is_held_to_its_op_count_and_its_work_budget() {
     let mut d = Document::with_ground_sketch();

@@ -57,6 +57,10 @@ export const SKP_LIMITS = {
   textureBytes: 16 * 1024 * 1024,
   texturePixels: 4096 * 4096,
   textures: 512,
+  /** All texture images together (the kernel's `MAX_TEXTURE_TOTAL` and
+   * `MAX_TEXTURE_PIXELS_TOTAL`): what the browser decodes is counted in pixels. */
+  textureBytesTotal: 256 * 1024 * 1024,
+  texturePixelsTotal: 128 * 1024 * 1024,
 };
 
 /** A file that expands past SKP_LIMITS. */
@@ -669,18 +673,30 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   };
   // Texture images: PNG and JPEG come in, one per material, under a path the kernel takes.
   // Lane 16: one the kernel would refuse (over 16 MB, over 4096 x 4096 pixels, past the
-  // 512th) is left out with a note, so the rest of the model still comes in.
+  // 512th, past 256 MB or 128 million pixels in all) is left out with a note, so the rest of
+  // the model still comes in.
   const takenPaths = new Set<string>();
   let tooBig = 0;
+  let bytesIn = 0;
+  let pixelsIn = 0;
   for (const m of model.materials) {
     const data = m.texture?.data;
     const mime = data ? sniff(data) : null;
     if (!data || !mime) continue;
     const px = imageSize(data);
-    if (data.length > SKP_LIMITS.textureBytes || !px || px.width * px.height > SKP_LIMITS.texturePixels || ctx.textures.size >= SKP_LIMITS.textures) {
+    if (
+      data.length > SKP_LIMITS.textureBytes ||
+      !px ||
+      px.width * px.height > SKP_LIMITS.texturePixels ||
+      ctx.textures.size >= SKP_LIMITS.textures ||
+      bytesIn + data.length > SKP_LIMITS.textureBytesTotal ||
+      pixelsIn + px.width * px.height > SKP_LIMITS.texturePixelsTotal
+    ) {
       tooBig++;
       continue;
     }
+    bytesIn += data.length;
+    pixelsIn += px.width * px.height;
     const slug =
       `skp-${m.name}`
         .toLowerCase()
@@ -694,7 +710,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   }
   if (tooBig)
     ctx.notes.add(
-      `${tooBig} texture image${tooBig === 1 ? "" : "s"} left out (over ${SKP_LIMITS.textureBytes / 1024 / 1024} MB, over 4096 x 4096 pixels, or past ${SKP_LIMITS.textures}): their materials show their colours`,
+      `${tooBig} texture image${tooBig === 1 ? "" : "s"} left out (over ${SKP_LIMITS.textureBytes / 1024 / 1024} MB, over 4096 x 4096 pixels, past ${SKP_LIMITS.textures}, or past 256 MB or 128 million pixels in all): their materials show their colours`,
     );
   // Loose geometry drawn at the top level of the model.
   const root = itemOf(ctx, model.root, IDENTITY, stem, {});

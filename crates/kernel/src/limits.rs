@@ -39,6 +39,11 @@ pub const MAX_SKETCH_EDGES: usize = 20_000;
 pub const MAX_TEXTURE_PIXELS: u64 = 4096 * 4096;
 /// Bytes of all texture images in one model together.
 pub const MAX_TEXTURE_TOTAL: usize = 256 * 1024 * 1024;
+/// Pixels of all texture images in one model together (128 million: eight images of
+/// 4096 x 4096). A PNG of one colour is a few kilobytes at any size, so the bytes do not
+/// bound what the browser decodes (4 bytes a pixel, and mipmaps): sixteen legal 4096 x 4096
+/// images in a file of a few hundred kilobytes were a gigabyte decoded.
+pub const MAX_TEXTURE_PIXELS_TOTAL: u64 = 128 * 1024 * 1024;
 /// Faces one solid may have: a solid is checked whole (self-intersection) whenever it
 /// changes; a shell with more faces stays a mesh, with a note.
 pub const MAX_SOLID_FACES: usize = 250_000;
@@ -65,6 +70,8 @@ pub enum LimitError {
     },
     #[error("the model's texture images would take {0} MB; at most {max} MB", max = MAX_TEXTURE_TOTAL / 1024 / 1024)]
     TextureBytes(usize),
+    #[error("the model's texture images would hold {0} million pixels; at most {max} million (eight images of 4096 x 4096)", max = MAX_TEXTURE_PIXELS_TOTAL / 1024 / 1024)]
+    TexturePixels(u64),
     #[error("{0}")]
     Other(String),
 }
@@ -123,9 +130,23 @@ pub fn check_model(m: &Model) -> Result<(), LimitError> {
             return Err(LimitError::SketchEdges(s.edge_count()));
         }
     }
-    let tex: usize = m.textures.values().map(|t| t.data.len()).sum();
-    if tex > MAX_TEXTURE_TOTAL {
-        return Err(LimitError::TextureBytes(tex / 1024 / 1024));
+    check_textures(m.textures.values())
+}
+
+/// Refuse texture images over the model's limits on bytes and pixels in all.
+pub fn check_textures<'a>(
+    images: impl IntoIterator<Item = &'a crate::looks::TextureImage>,
+) -> Result<(), LimitError> {
+    let (mut bytes, mut pixels) = (0usize, 0u64);
+    for t in images {
+        bytes += t.data.len();
+        pixels += u64::from(t.width) * u64::from(t.height);
+    }
+    if bytes > MAX_TEXTURE_TOTAL {
+        return Err(LimitError::TextureBytes(bytes / 1024 / 1024));
+    }
+    if pixels > MAX_TEXTURE_PIXELS_TOTAL {
+        return Err(LimitError::TexturePixels(pixels.div_ceil(1024 * 1024)));
     }
     Ok(())
 }

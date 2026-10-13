@@ -472,6 +472,9 @@ export class ViewportEngine {
    * from the document state; `blobs` are images new to this UI (decoded once, by digest).
    */
   setLooks(looks: { materials?: MaterialInfo[]; textures?: TextureInfo[]; style?: Style | null; shadows?: Shadows | null; blobs?: TextureBlob[] }): void {
+    // Images the model no longer holds are let go first, so their pixels do not count
+    // against the ones that come in (lane 16).
+    if (looks.textures) this.textures.keep(looks.textures.map((t) => t.digest));
     for (const b of looks.blobs ?? []) this.textures.add(b.digest, b.mime, b.bytes);
     this.materials = new Map((looks.materials ?? []).map((m) => [m.name, m]));
     this.texDigest = new Map((looks.textures ?? []).map((t) => [t.path, t.digest]));
@@ -508,12 +511,13 @@ export class ViewportEngine {
   }
 
   /** What the style says right now (tests and captures). */
-  looksState(): { face: string; profiles: boolean; shadows: boolean; textures: number; texturedParts: number; sun: Vec3 | null } {
+  looksState(): { face: string; profiles: boolean; shadows: boolean; textures: number; decoded: ReturnType<TextureCache["stats"]>; texturedParts: number; sun: Vec3 | null } {
     return {
       face: this.style.face,
       profiles: this.style.edges.profiles,
       shadows: this.lit(),
       textures: this.textures.size(),
+      decoded: this.textures.stats(),
       texturedParts: this.texturedParts,
       sun: this.lit() && this.shadows ? sunDirection(this.shadows) : null,
     };
