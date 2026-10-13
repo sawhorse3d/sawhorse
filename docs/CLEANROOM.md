@@ -129,3 +129,9 @@ Lane 1 (foundations, 2026-10-11): nothing from either project was opened or read
 - **Position:** we only READ `.skp` through the MIT reader; no template, no SketchUp-authored bytes and no SDK are shipped. The reader itself is openskp's clean-room-claimed code (see ADR-0002); the attorney read on `.skp` interop stays open, and `.skp` export stays unbuilt until it closes and the maintainer's own blank template exists.
 - **Corpus:** the 200 generated `.skp` files are never committed (only the generator and the SHA manifest are); they exist on disk only in test runs.
 
+### 2026-10-12 — public CI fixtures: five CC BY 4.0 SketchUp files (lane 15)
+- **What:** `tests/fixtures/skp-ccby/` holds five furniture models (`benches.skp`, `coffee tables.skp`, `cupboard.skp`, `desk.skp`, `side table.skp`) by **Corynth**, from https://corynth.itch.io/free-assets-sketchup-3d-assets, under Creative Commons Attribution 4.0 as stated on that page; unmodified, SHA-256 listed in `ATTRIBUTION.md` and checked by `e2e/skp-ccby.spec.ts` before use. They are the only SketchUp-authored files in the repository.
+- **Why:** real hand-made furniture (open faces, not watertight) is what the cut list from non-solid parts (lane 15) is for; CI needs it without the maintainer's private fixtures, which stay outside the repository.
+- **Where they never go:** they are test inputs only. They are not imported by the app's code, so the build never bundles them; `npm run build` ends with `scripts/check-provenance.mjs dist` and the Pages workflow runs it on the assembled site, both refusing any SketchUp document bytes, so neither the installers nor the site can carry them.
+- **Credit:** README's Credits and the attribution file name the author, the source and the licence.
+
