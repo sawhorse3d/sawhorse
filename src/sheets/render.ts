@@ -3,7 +3,7 @@
 // DXF and the PNG all draw exactly these, so what you see is what prints. This module turns
 // them into SVG (the canvas and the SVG file share it) and holds the pure geometry the
 // canvas needs (viewport mapping, hit tests, grid snapping).
-import { fit } from "../cutlist/pdf";
+import { fit, textWidth } from "../cutlist/pdf";
 import type { DimKind, ModelAnchor } from "../kernel/sheetTypes";
 import type { V3 } from "../kernel/types";
 
@@ -126,22 +126,95 @@ export function snapPoint(p: [number, number], grid: number): [number, number] {
   return [snapToGrid(p[0], grid), snapToGrid(p[1], grid)];
 }
 
-/** The topmost item whose bounds hold `p` (within `slack` metres), preferring the smallest
- * when several do (a dimension over a viewport). */
-export function hitItem(items: ItemInfo[], p: [number, number], slack = 0): ItemInfo | null {
-  let best: ItemInfo | null = null;
-  let bestArea = Infinity;
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i];
-    const [x, y, w, h] = it.bounds;
-    if (p[0] < x - slack || p[0] > x + w + slack || p[1] < y - slack || p[1] > y + h + slack) continue;
-    const area = Math.max(w, 1e-6) * Math.max(h, 1e-6);
-    if (area < bestArea) {
-      best = it;
-      bestArea = area;
+/** Distance from `p` to the segment `a`-`b`. */
+export function segmentDistance(p: [number, number], a: [number, number], b: [number, number]): number {
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/** Even-odd: `p` inside `rings`. */
+function insideRings(p: [number, number], rings: [number, number][][]): boolean {
+  let c = false;
+  for (const r of rings) {
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [a, b] = [r[i], r[j]];
+      if (a[1] > p[1] !== b[1] > p[1] && p[0] < a[0] + ((p[1] - a[1]) / (b[1] - a[1])) * (b[0] - a[0])) c = !c;
     }
   }
-  return best;
+  return c;
+}
+
+/** The box a text primitive covers, in its own frame (x along the text from its anchor, y
+ * down from the baseline): Helvetica's advance widths, ascent 0.8 and descent 0.25 of
+ * the size. */
+export function textBox(t: Extract<Prim, { p: "text" }>): [number, number, number, number] {
+  const w = textWidth(shownText(t), t.size, !!t.bold);
+  const x0 = t.anchor === "start" ? 0 : t.anchor === "middle" ? -w / 2 : -w;
+  return [x0, -0.8 * t.size, w, 1.05 * t.size];
+}
+
+/** `p` on what primitive `pr` draws, within `slack` paper metres: on a line (half its pen
+ * wider), in a text's box, in a filled ring, on a rectangle's outline or in its fill. */
+export function primHit(pr: Prim, p: [number, number], slack: number): boolean {
+  switch (pr.p) {
+    case "line":
+      return segmentDistance(p, pr.a, pr.b) <= slack + pr.width / 2;
+    case "text": {
+      // Into the text's frame: the SVG turns it by -angle (degrees, y down).
+      const a = ((pr.angle ?? 0) * Math.PI) / 180;
+      const [dx, dy] = [p[0] - pr.at[0], p[1] - pr.at[1]];
+      const [x, y] = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)];
+      const [bx, by, bw, bh] = textBox(pr);
+      return x >= bx - slack && x <= bx + bw + slack && y >= by - slack && y <= by + bh + slack;
+    }
+    case "fill":
+      return insideRings(p, pr.rings) || pr.rings.some((r) => r.some((q, i) => segmentDistance(p, q, r[(i + 1) % r.length]) <= slack));
+    case "rect": {
+      const [x, y, w, h] = pr.rect;
+      const c: [number, number][] = [
+        [x, y],
+        [x + w, y],
+        [x + w, y + h],
+        [x, y + h],
+      ];
+      const onEdge = c.some((q, i) => segmentDistance(p, q, c[(i + 1) % 4]) <= slack + pr.width / 2);
+      return onEdge || (!!pr.fill && p[0] >= x && p[0] <= x + w && p[1] >= y && p[1] <= y + h);
+    }
+    case "image": {
+      const [x, y, w, h] = pr.rect;
+      return p[0] >= x - slack && p[0] <= x + w + slack && p[1] >= y - slack && p[1] <= y + h + slack;
+    }
+  }
+}
+
+/** Items picked as a whole box (their frame): a viewport, a table, an image. Everything
+ * else is picked only on what it draws. */
+const BOXED: ReadonlySet<ItemInfo["kind"]> = new Set(["viewport", "table", "image"]);
+
+/** `p` on item `it` within `slack`: inside the frame of a viewport, a table or an image;
+ * on the drawn geometry (lines, text boxes, arrowheads) of anything else. */
+export function itemHit(it: ItemInfo, prims: Prim[], p: [number, number], slack = 0): boolean {
+  const [x, y, w, h] = it.bounds;
+  if (p[0] < x - slack || p[0] > x + w + slack || p[1] < y - slack || p[1] > y + h + slack) return false;
+  if (BOXED.has(it.kind)) return true;
+  for (let i = it.prims[0]; i < it.prims[1]; i++) {
+    const pr = prims[i];
+    if (pr && primHit(pr, p, slack)) return true;
+  }
+  return false;
+}
+
+/** The item under `p` (within `slack` paper metres): the topmost (drawn last) whose drawn
+ * geometry it is on. A dimension's lines and text, a label's text and leader, a line or a
+ * rectangle's outline take a click only on themselves, so a click in a viewport between a
+ * dimension's lines picks the viewport (lane 12c; it used to pick by bounding box). */
+export function hitItem(r: Pick<SheetRender, "items" | "prims">, p: [number, number], slack = 0): ItemInfo | null {
+  for (let i = r.items.length - 1; i >= 0; i--) {
+    if (itemHit(r.items[i], r.prims, p, slack)) return r.items[i];
+  }
+  return null;
 }
 
 /** The viewport under paper point `p`, if any (topmost). */

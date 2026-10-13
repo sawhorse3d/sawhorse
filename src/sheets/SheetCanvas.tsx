@@ -342,7 +342,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
             }
           }
         }
-        const hit = hitItem(render.items, p, px(4));
+        const hit = hitItem(render, p, px(4));
         if (!hit) {
           setG({ t: "box", start: p, cur: p, add: e.shiftKey });
           if (!e.shiftKey && selection.length) onSelection([]);
@@ -584,7 +584,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
       return <rect key={key} className={cls} x={a[0]} y={a[1]} width={Math.max(1, b[0] - a[0])} height={Math.max(1, b[1] - a[1])} />;
     };
     if (tool === "select" && hover && !gesture) {
-      const h = hitItem(render.items, hover, px(4));
+      const h = hitItem(render, hover, px(4));
       if (h && !selection.includes(h.id)) overlay.push(box(h.bounds, "sh-hover", `hover-${h.id}`));
     }
     for (const id of selection) {
@@ -672,7 +672,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     }
   }
 
-  const cursor = gesture?.t === "pan" || spaceDown.current ? "grabbing" : tool === "select" ? (hover && render && hitItem(render.items, hover, px(4)) ? "move" : "default") : "crosshair";
+  const cursor = gesture?.t === "pan" || spaceDown.current ? "grabbing" : tool === "select" ? (hover && render && hitItem(render, hover, px(4)) ? "move" : "default") : "crosshair";
   const textAt = pending?.t === "label-text" && view ? toScreen(pending.at) : null;
 
   return (

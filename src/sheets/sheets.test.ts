@@ -120,15 +120,58 @@ describe("render geometry", () => {
     expect(modelToPaper(persp, [0, 0, 0])).not.toBeNull();
   });
 
-  it("snaps to the grid and hits the smallest item under the cursor", () => {
+  it("snaps to the grid and hits the item drawn under the cursor", () => {
     const s = snapPoint([0.0031, 0.0099], IN / 8);
     expect(s[0]).toBeCloseTo(IN / 8, 12);
     expect(s[1]).toBeCloseTo((3 * IN) / 8, 12);
     expect(snapPoint([0.0031, 0.0099], 0)).toEqual([0.0031, 0.0099]);
-    expect(hitItem(render.items, [0.05, 0.04])?.id).toBe(2);
-    expect(hitItem(render.items, [0.025, 0.09])?.id).toBe(1);
-    expect(hitItem(render.items, [0.2, 0.2])).toBeNull();
-    expect(hitItem(render.items, [0.125, 0.05], 0.01)?.id).toBe(1);
+    expect(hitItem(render, [0.05, 0.04])?.id).toBe(2);
+    expect(hitItem(render, [0.025, 0.09])?.id).toBe(1);
+    expect(hitItem(render, [0.2, 0.2])).toBeNull();
+    expect(hitItem(render, [0.125, 0.05], 0.01)?.id).toBe(1);
+    // Lane 12c: inside the dimension's bounding box but off what it draws (its text), the
+    // click goes through to the viewport underneath.
+    expect(hitItem(render, [0.035, 0.048])?.id).toBe(1);
+    expect(hitItem(render, [0.08, 0.05])?.id).toBe(1);
+  });
+
+  it("picks drawn items by what they draw, viewports by their frame, the topmost first (lane 12c)", () => {
+    const ink: [number, number, number] = [24, 26, 25];
+    const r: Pick<SheetRender, "items" | "prims"> = {
+      prims: [
+        { p: "rect", rect: [0.02, 0.02, 0.2, 0.15], width: 0.00035, stroke: ink },
+        // A dimension across the viewport: its line, two arrowheads and its text.
+        { p: "line", a: [0.04, 0.1], b: [0.18, 0.1], width: 0.00025, color: ink },
+        { p: "fill", rings: [[[0.04, 0.1], [0.044, 0.099], [0.044, 0.101]]], color: ink },
+        { p: "fill", rings: [[[0.18, 0.1], [0.176, 0.099], [0.176, 0.101]]], color: ink },
+        { p: "text", at: [0.11, 0.098], text: '30"', size: 0.0024, anchor: "middle", color: ink },
+        // A vertical label, turned 90 degrees.
+        { p: "text", at: [0.2, 0.15], text: "SHELF", size: 0.003, anchor: "start", angle: 90, color: ink },
+        // An outline rectangle item on top of everything.
+        { p: "rect", rect: [0.05, 0.03, 0.04, 0.03], width: 0.0003, stroke: ink },
+      ],
+      items: [
+        { id: 1, kind: "viewport", bounds: [0.02, 0.02, 0.2, 0.15], prims: [0, 1] },
+        { id: 2, kind: "dimension", bounds: [0.04, 0.09, 0.14, 0.02], text: '30"', prims: [1, 5] },
+        { id: 3, kind: "label", bounds: [0.195, 0.12, 0.01, 0.04], text: "SHELF", prims: [5, 6] },
+        { id: 4, kind: "rect", bounds: [0.05, 0.03, 0.04, 0.03], prims: [6, 7] },
+      ],
+    };
+    const slack = 0.0005;
+    // On the dimension line, on an arrowhead, on its text: the dimension.
+    expect(hitItem(r, [0.07, 0.1002], slack)?.id).toBe(2);
+    expect(hitItem(r, [0.0425, 0.1], slack)?.id).toBe(2);
+    expect(hitItem(r, [0.11, 0.097], slack)?.id).toBe(2);
+    // In its bounding box, 6 mm off its line: the viewport it sits on.
+    expect(hitItem(r, [0.07, 0.106], slack)?.id).toBe(1);
+    // The turned label: along its run upwards from the anchor, not beside it.
+    expect(hitItem(r, [0.199, 0.14], slack)?.id).toBe(3);
+    expect(hitItem(r, [0.21, 0.155], slack)?.id).toBe(1);
+    // An outline rectangle takes clicks on its outline, not inside it.
+    expect(hitItem(r, [0.05, 0.045], slack)?.id).toBe(4);
+    expect(hitItem(r, [0.07, 0.045], slack)?.id).toBe(1);
+    // Outside everything.
+    expect(hitItem(r, [0.3, 0.3], slack)).toBeNull();
   });
 
   it("stands a dimension off where the cursor is", () => {
