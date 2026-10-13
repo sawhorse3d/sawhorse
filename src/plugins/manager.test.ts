@@ -6,7 +6,7 @@ import type { HostMessage } from "../../packages/plugin-api/src/rpc.ts";
 import type { DocState, SceneData } from "../kernel/types";
 import { NeedsUserActivation, pickFile, saveFile } from "../io/files";
 import { fakeChannel, type FakeChannel } from "./fakeChannel";
-import { PluginManager, type AppBridge } from "./manager";
+import { permissionLines, PluginManager, type AppBridge } from "./manager";
 import { grantMatches, packageDigest } from "./store";
 
 const flush = async () => {
@@ -579,5 +579,38 @@ describe("the browser's file paths (lane 17, F2)", () => {
     } finally {
       delete (nav as { userActivation?: unknown }).userActivation;
     }
+  });
+});
+
+describe("the network allowlist is by origin (lane 17, F3)", () => {
+  it("checks the scheme, the host and the port, not the host alone", async () => {
+    const { c, req, bridge } = await running({ permissions: ["net"], net: ["api.example.com", "http://localhost:3000"] });
+    for (const url of ["https://api.example.com:8443/", "http://localhost:5432/", "http://localhost/", "https://localhost:3000/", "http://127.0.0.1:3000/"]) {
+      const r = await req(c, "net.fetch", { url, method: "POST", body: "x" });
+      expect(r, url).toMatchObject({ ok: false, code: "permission" });
+    }
+    expect(bridge.fetch).not.toHaveBeenCalled();
+    expect(await req(c, "net.fetch", { url: "https://api.example.com/v1" })).toMatchObject({ ok: true });
+    expect(await req(c, "net.fetch", { url: "http://localhost:3000/v1" })).toMatchObject({ ok: true });
+    expect(bridge.fetch).toHaveBeenCalledTimes(2);
+    const refused = await req(c, "net.fetch", { url: "https://api.example.com:8443/" });
+    expect(refused.ok === false && refused.error).toContain("may not reach https://api.example.com:8443: plugin.json lists https://api.example.com, http://localhost:3000");
+  });
+
+  it("the enable dialog says what each entry reaches, \"any port on localhost\" among them", () => {
+    const m = { ...JSON.parse(manifest({ permissions: ["net"], net: ["localhost", "*.example.org", "https://api.example.com:8443"] })), contributes: { commands: [], panels: [], tools: [], menus: [], shortcuts: [] }, entry: "main.js" };
+    const net = permissionLines(m).find((l) => l.permission === "net")!;
+    expect(net.detail).toBe("only the sites listed here: any port on localhost (http or https), https://*.example.org (any subdomain of example.org), https://api.example.com:8443");
+  });
+
+  it("an answer over 10 MB is refused even when it comes without a stream to cap", async () => {
+    const { c, req, bridge } = await running({ permissions: ["net"], net: ["api.example.com"] });
+    const big = { status: 200, statusText: "OK", headers: new Headers(), body: null, arrayBuffer: async () => new ArrayBuffer(10 * 1024 * 1024 + 1) };
+    bridge.fetch.mockResolvedValueOnce(big as unknown as Response);
+    expect(await req(c, "net.fetch", { url: "https://api.example.com/big" })).toMatchObject({ ok: false, code: "too_large" });
+    const small = { ...big, arrayBuffer: async () => new ArrayBuffer(5) };
+    bridge.fetch.mockResolvedValueOnce(small as unknown as Response);
+    const r = await req(c, "net.fetch", { url: "https://api.example.com/small" });
+    expect(r.ok && (r.value as { body: Uint8Array }).body.byteLength).toBe(5);
   });
 });

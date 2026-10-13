@@ -76,7 +76,9 @@ export interface Manifest {
   author: string;
   license: string;
   permissions: Permission[];
-  /** Hosts the `net` permission reaches ("api.example.com", "*.example.org"). */
+  /** What the `net` permission reaches: hosts over https on the default port
+   * ("api.example.com", "*.example.org"), origins ("https://api.example.com:8443",
+   * "http://localhost:3000") or "localhost" (any port). See `parseNetEntry`. */
   net: string[];
   contributes: Contributions;
   entry: string;
@@ -88,7 +90,83 @@ export type ManifestResult = { ok: true; manifest: Manifest } | { ok: false; err
 export const ID_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 export const CONTRIBUTION_ID = /^[a-z][a-z0-9-]{0,39}$/;
 export const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
-export const HOST_PATTERN = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$|^localhost$/;
+/** A host name: lower-case labels and a top-level domain of letters ("api.example.com"). */
+export const HOST_PATTERN = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+/**
+ * One `net` entry (lane 17): `[scheme://][*.]host[:port]` or `localhost`. The validator adds
+ * what a pattern cannot say: a port only with a scheme, http only for localhost, no wildcard
+ * on localhost or on a public suffix.
+ */
+export const NET_ENTRY_PATTERN = /^(?:(https?):\/\/)?(\*\.)?(localhost|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})(?::(\d{1,5}))?$/;
+
+/**
+ * Domains under which anyone can have a name of their own (a public suffix): a wildcard on
+ * one (`*.vercel.app`, `*.github.io`, `*.co.uk`) would reach every tenant, so the validator
+ * refuses it and asks for the plugin's own host (`my-app.vercel.app`). Every plain top-level
+ * domain (`*.com`, `*.dev`, `*.uk`) is one too. This is a short list of the common hosting
+ * platforms and country second levels, not the whole Public Suffix List
+ * (https://publicsuffix.org/list/): to refuse another, add it here, lower case and without
+ * the leading dot, with a case in packages/plugin-api/test/manifest.test.ts ("refuses
+ * wildcards on public suffixes"). A host under a suffix (`my-app.vercel.app`, or
+ * `*.my-app.vercel.app` for its own subdomains) is always fine.
+ */
+export const PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
+  // Hosting platforms: every subdomain is someone else's site.
+  "vercel.app", "now.sh", "github.io", "githubusercontent.com", "gitlab.io", "netlify.app", "netlify.com", "pages.dev", "workers.dev", "herokuapp.com", "herokussl.com",
+  "web.app", "firebaseapp.com", "appspot.com", "run.app", "cloudfunctions.net", "azurewebsites.net", "azurestaticapps.net", "cloudapp.net", "blob.core.windows.net",
+  "cloudfront.net", "amazonaws.com", "s3.amazonaws.com", "elasticbeanstalk.com", "onrender.com", "fly.dev", "railway.app", "up.railway.app", "deno.dev", "glitch.me",
+  "repl.co", "replit.app", "replit.dev", "surge.sh", "ngrok.io", "ngrok-free.app", "ngrok.app", "trycloudflare.com", "blogspot.com", "wordpress.com", "neocities.org",
+  "readthedocs.io", "bitbucket.io", "codeberg.page", "sourceforge.io", "stackblitz.io", "webcontainer.io", "csb.app", "pythonanywhere.com", "duckdns.org", "dyndns.org", "no-ip.org",
+  // Country second levels: co.uk is a suffix as much as uk.
+  "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "ac.uk", "gov.uk", "nhs.uk", "sch.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
+  "co.nz", "net.nz", "org.nz", "govt.nz", "ac.nz", "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+  "co.kr", "or.kr", "com.cn", "net.cn", "org.cn", "com.hk", "com.tw", "com.sg", "com.my", "co.in", "net.in", "org.in", "co.id", "co.th", "com.ph", "com.vn",
+  "co.za", "org.za", "com.ng", "co.ke", "com.eg", "com.tr", "com.br", "net.br", "org.br", "com.mx", "com.ar", "com.co", "com.pe", "co.il", "org.il", "com.sa", "com.ua", "com.pl",
+]);
+
+/** Whether `domain` is a public suffix: on the list, or a plain top-level domain. */
+export function isPublicSuffix(domain: string): boolean {
+  const d = domain.toLowerCase().replace(/\.$/, "");
+  return !d.includes(".") || PUBLIC_SUFFIXES.has(d);
+}
+
+/** One `net` entry, read: what it lets the plugin reach. */
+export interface NetEntry {
+  /** "https", "http" (localhost only) or "any" (plain "localhost": http or https). */
+  scheme: "https" | "http" | "any";
+  host: string;
+  /** `*.host`: the host's subdomains (not the host itself). */
+  wildcard: boolean;
+  /** A port, the scheme's default ("default") or, for plain "localhost", "any". */
+  port: number | "default" | "any";
+}
+
+/** Read one `net` entry, or say why it is not one. */
+export function parseNetEntry(raw: string): NetEntry | string {
+  const m = NET_ENTRY_PATTERN.exec(raw);
+  if (!m) return `must be a host like "api.example.com" or "*.example.com", an origin like "https://api.example.com:8443" or "http://localhost:3000", or "localhost" (lower case; no path)`;
+  const [, scheme, star, host, port] = m;
+  const local = host === "localhost";
+  if (star && local) return '"*.localhost" is not a host: list "localhost"';
+  if (port !== undefined && scheme === undefined) return `a port needs the scheme too, like "https://${star ?? ""}${host}:${port}"`;
+  if (scheme === "http" && !local) return `plugins reach the network over https only (http is for localhost): "https://${star ?? ""}${host}${port ? `:${port}` : ""}"`;
+  const n = port === undefined ? undefined : Number(port);
+  if (n !== undefined && (n < 1 || n > 65535)) return `port ${port} is not a port (1 to 65535)`;
+  if (star && isPublicSuffix(host)) return `"*.${host}" would reach every site under ${host}, where anyone can have a name of their own (a public suffix): list your own host, like "my-app.${host}"`;
+  if (local && scheme === undefined) return { scheme: "any", host, wildcard: false, port: "any" };
+  const s = (scheme ?? "https") as "https" | "http";
+  return { scheme: s, host, wildcard: !!star, port: n === undefined || n === (s === "https" ? 443 : 80) ? "default" : n };
+}
+
+/** What a `net` entry reaches, in the words the enable dialog shows. */
+export function describeNetEntry(raw: string): string {
+  const e = parseNetEntry(raw);
+  if (typeof e === "string") return raw;
+  if (e.port === "any") return "any port on localhost (http or https)";
+  const origin = `${e.scheme}://${e.wildcard ? "*." : ""}${e.host}${e.port === "default" ? "" : `:${e.port}`}`;
+  return e.wildcard ? `${origin} (any subdomain of ${e.host})` : origin;
+}
 export const KEY_PATTERN = /^((Ctrl|Alt|Shift|Meta)\+)+([A-Z0-9]|F([1-9]|1[0-2]))$/;
 /** A relative path inside the plugin folder: no "..", no leading "/", no backslashes. */
 export const ENTRY_PATTERN = /^(?!\/)(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9_\-./]+\.m?js$/;
@@ -179,12 +257,14 @@ export function validateManifest(raw: unknown): ManifestResult {
   if (new Set(permissions).size !== permissions.length) errors.push("permissions lists one permission twice");
 
   const net = list(errors, "net", raw.net, (x, at) => {
-    if (typeof x !== "string" || !HOST_PATTERN.test(x)) {
-      errors.push(`${at} must be a host name like "api.example.com" or "*.example.com" (no scheme, port or path)`);
+    const e = typeof x === "string" ? parseNetEntry(x) : "must be a string";
+    if (typeof e === "string") {
+      errors.push(`${at} ${JSON.stringify(typeof x === "string" ? x.slice(0, 100) : x)}: ${e}`);
       return null;
     }
-    return x;
+    return x as string;
   }, 20);
+  if (new Set(net).size !== net.length) errors.push("net lists one entry twice");
   if (permissions.includes("net") && net.length === 0) errors.push('the "net" permission needs "net": a list of the hosts it reaches');
   if (!permissions.includes("net") && net.length > 0) errors.push('"net" lists hosts but "permissions" does not ask for "net"');
 
@@ -266,8 +346,29 @@ export function parseManifest(json: string): ManifestResult {
   return validateManifest(raw);
 }
 
-/** Whether `host` (a URL's host name) is on the manifest's `net` list. */
-export function hostAllowed(net: string[], host: string): boolean {
-  const h = host.toLowerCase().replace(/\.$/, "");
-  return net.some((p) => (p.startsWith("*.") ? h.endsWith(p.slice(1)) && h.length > p.length - 1 : h === p));
+/**
+ * Whether `url` is on the manifest's `net` list, by its whole origin (lane 17: the host
+ * alone let "localhost" reach every port, and "api.example.com" any port of it). A host
+ * entry is https on the default port; an origin entry is that scheme, host and port; plain
+ * "localhost" is any port of it over http or https; `*.host` is the host's subdomains.
+ */
+export function originAllowed(net: string[], url: string | URL): boolean {
+  let u: URL;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return false;
+  }
+  const scheme = u.protocol === "https:" ? "https" : u.protocol === "http:" ? "http" : null;
+  if (!scheme || u.username || u.password) return false;
+  const h = u.hostname.toLowerCase().replace(/\.$/, "");
+  const port = u.port === "" ? (scheme === "https" ? 443 : 80) : Number(u.port);
+  return net.some((raw) => {
+    const e = parseNetEntry(raw);
+    if (typeof e === "string") return false;
+    if (e.scheme !== "any" && e.scheme !== scheme) return false;
+    if (e.wildcard ? !(h.endsWith(`.${e.host}`) && h.length > e.host.length + 1) : h !== e.host) return false;
+    if (e.port === "any") return true;
+    return port === (e.port === "default" ? (e.scheme === "http" ? 80 : 443) : e.port);
+  });
 }

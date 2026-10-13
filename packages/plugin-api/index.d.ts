@@ -567,7 +567,7 @@ declare module "sawhorse" {
   };
 
   export const net: {
-    /** net. A request to a host on the manifest's "net" list (https only; no cookies). Also available as the global `fetch` for plugins with "net". */
+    /** net. A request to an origin on the manifest's "net" list, checked by scheme, host and port (https only, http for localhost; no cookies; at most 10 MB back). Also available as the global `fetch` for plugins with "net". */
     fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array }): Promise<Response>;
   };
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schemaJson from "../manifest.schema.json";
-import { hostAllowed, parseManifest, PERMISSIONS, validateManifest } from "../src/manifest.ts";
+import { describeNetEntry, isPublicSuffix, originAllowed, parseManifest, PERMISSIONS, validateManifest } from "../src/manifest.ts";
 
 const good = {
   id: "org.example.cabinet-generator",
@@ -75,8 +75,43 @@ describe("validateManifest", () => {
   it("ties net hosts to the net permission", () => {
     expect(errorsOf({ ...good, permissions: ["net"], contributes: {} }).join()).toContain("needs \"net\": a list of the hosts");
     expect(errorsOf({ ...good, net: ["api.example.com"] }).join()).toContain('does not ask for "net"');
-    expect(errorsOf({ ...good, permissions: ["ui", "net"], net: ["https://api.example.com/x"] }).join()).toContain("no scheme, port or path");
-    expect(errorsOf({ ...good, permissions: ["ui", "net"], net: ["api.example.com", "*.example.org"] })).toEqual([]);
+    expect(errorsOf({ ...good, permissions: ["ui", "net"], net: ["https://api.example.com/x"] }).join()).toContain("no path");
+    expect(errorsOf({ ...good, permissions: ["ui", "net"], net: ["api.example.com", "*.example.org", "https://api.example.com:8443", "http://localhost:3000", "localhost"] })).toEqual([]);
+  });
+
+  it("refuses net entries that are not one origin (lane 17, F3)", () => {
+    const net = (entry: string) => errorsOf({ ...good, permissions: ["ui", "net"], net: [entry] }).join("\n");
+    expect(net("api.example.com:8443")).toContain("a port needs the scheme too");
+    expect(net("http://api.example.com")).toContain("https only");
+    expect(net("*.localhost")).toContain("not a host");
+    expect(net("https://api.example.com:99999")).toContain("not a port");
+    expect(net("ftp://api.example.com")).toContain("must be a host");
+    expect(net("API.example.com")).toContain("lower case");
+    expect(errorsOf({ ...good, permissions: ["ui", "net"], net: ["a.example.com", "a.example.com"] }).join()).toContain("one entry twice");
+  });
+
+  it("refuses wildcards on public suffixes: every tenant of a host would be reachable (lane 17, F3)", () => {
+    const net = (entry: string) => errorsOf({ ...good, permissions: ["ui", "net"], net: [entry] }).join("\n");
+    for (const s of ["vercel.app", "github.io", "netlify.app", "pages.dev", "herokuapp.com", "co.uk", "com.au", "workers.dev", "web.app"]) {
+      expect(net(`*.${s}`), s).toContain("public suffix");
+      expect(net(`https://*.${s}:8443`), s).toContain("public suffix");
+      // A host of one's own under it is fine, and so are its own subdomains.
+      expect(net(`my-app.${s}`), s).toBe("");
+      expect(net(`*.my-app.${s}`), s).toBe("");
+    }
+    // Every plain top-level domain is one too.
+    for (const tld of ["com", "org", "dev", "app", "io", "uk"]) expect(isPublicSuffix(tld)).toBe(true);
+    expect(isPublicSuffix("example.com")).toBe(false);
+    expect(isPublicSuffix("CO.UK.")).toBe(true);
+  });
+
+  it("describes each entry as what it reaches", () => {
+    expect(describeNetEntry("api.example.com")).toBe("https://api.example.com");
+    expect(describeNetEntry("*.example.org")).toBe("https://*.example.org (any subdomain of example.org)");
+    expect(describeNetEntry("https://api.example.com:8443")).toBe("https://api.example.com:8443");
+    expect(describeNetEntry("https://api.example.com:443")).toBe("https://api.example.com");
+    expect(describeNetEntry("http://localhost:3000")).toBe("http://localhost:3000");
+    expect(describeNetEntry("localhost")).toBe("any port on localhost (http or https)");
   });
 
   it("reports bad JSON", () => {
@@ -86,15 +121,36 @@ describe("validateManifest", () => {
   });
 });
 
-describe("hostAllowed", () => {
-  it("matches exact hosts and subdomain wildcards only", () => {
+describe("originAllowed (lane 17, F3: the whole origin, not the host)", () => {
+  it("matches exact hosts and subdomain wildcards only, over https on the default port", () => {
     const net = ["api.example.com", "*.example.org"];
-    expect(hostAllowed(net, "api.example.com")).toBe(true);
-    expect(hostAllowed(net, "API.EXAMPLE.COM.")).toBe(true);
-    expect(hostAllowed(net, "evil.api.example.com")).toBe(false);
-    expect(hostAllowed(net, "a.example.org")).toBe(true);
-    expect(hostAllowed(net, "example.org")).toBe(false);
-    expect(hostAllowed(net, "badexample.org")).toBe(false);
+    expect(originAllowed(net, "https://api.example.com/v1")).toBe(true);
+    expect(originAllowed(net, "https://API.EXAMPLE.COM./v1")).toBe(true);
+    expect(originAllowed(net, "https://api.example.com:443/")).toBe(true);
+    expect(originAllowed(net, "https://evil.api.example.com/")).toBe(false);
+    expect(originAllowed(net, "https://a.example.org/")).toBe(true);
+    expect(originAllowed(net, "https://example.org/")).toBe(false);
+    expect(originAllowed(net, "https://badexample.org/")).toBe(false);
+    // The port and the scheme count.
+    expect(originAllowed(net, "https://api.example.com:8443/")).toBe(false);
+    expect(originAllowed(net, "https://a.example.org:8080/")).toBe(false);
+    expect(originAllowed(net, "http://api.example.com/")).toBe(false);
+    expect(originAllowed(net, "https://user:pw@api.example.com/")).toBe(false);
+    expect(originAllowed(net, "not a url")).toBe(false);
+  });
+
+  it("an origin entry is that scheme, host and port; plain localhost is any port of it", () => {
+    expect(originAllowed(["https://api.example.com:8443"], "https://api.example.com:8443/x")).toBe(true);
+    expect(originAllowed(["https://api.example.com:8443"], "https://api.example.com/x")).toBe(false);
+    expect(originAllowed(["http://localhost:3000"], "http://localhost:3000/x")).toBe(true);
+    expect(originAllowed(["http://localhost:3000"], "http://localhost:3001/x")).toBe(false);
+    expect(originAllowed(["http://localhost:3000"], "https://localhost:3000/x")).toBe(false);
+    expect(originAllowed(["http://localhost"], "http://localhost/x")).toBe(true);
+    expect(originAllowed(["http://localhost"], "http://localhost:8080/x")).toBe(false);
+    expect(originAllowed(["localhost"], "http://localhost:5432/x")).toBe(true);
+    expect(originAllowed(["localhost"], "https://localhost/x")).toBe(true);
+    expect(originAllowed(["localhost"], "http://127.0.0.1:5432/x")).toBe(false);
+    expect(originAllowed(["localhost"], "http://localhost.example.com/")).toBe(false);
   });
 });
 
@@ -110,5 +166,16 @@ describe("manifest.schema.json", () => {
     expect(new RegExp(schema.properties.version.pattern).test("1.2.0-beta.1")).toBe(true);
     expect(new RegExp(schema.properties.entry.pattern).test("lib/main.mjs")).toBe(true);
     expect(new RegExp(schema.properties.entry.pattern).test("../x.js")).toBe(false);
+    // The net entries the validator takes, the schema takes; what the pattern alone can
+    // refuse, it refuses.
+    const net = new RegExp(schema.properties.net.items.pattern);
+    for (const ok of ["api.example.com", "*.example.org", "https://api.example.com:8443", "https://*.example.org", "http://localhost:3000", "https://localhost", "localhost"]) {
+      expect(net.test(ok), ok).toBe(true);
+      expect(errorsOf({ ...good, permissions: ["ui", "net"], net: [ok] }), ok).toEqual([]);
+    }
+    for (const bad of ["http://api.example.com", "api.example.com:8443", "*.localhost", "https://api.example.com/x", "ftp://a.example.com"]) {
+      expect(net.test(bad), bad).toBe(false);
+      expect(errorsOf({ ...good, permissions: ["ui", "net"], net: [bad] }).length, bad).toBeGreaterThan(0);
+    }
   });
 });

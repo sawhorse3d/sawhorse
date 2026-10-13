@@ -293,3 +293,39 @@ postMessage(out);`;
     await l.close();
   }
 });
+
+// Lane 17 (F3): "net" is checked against the whole origin. A plugin granted one port of
+// localhost reaches that port and no other (the host alone used to let "localhost" reach
+// every local service, with POST, PUT and DELETE).
+test("net reaches the listed origin only: another port on the same host is refused before any request", async ({ page }) => {
+  const a = await listener();
+  const b = await listener();
+  try {
+    await ready(page);
+    const portA = new URL(a.url).port;
+    const portB = new URL(b.url).port;
+    const id = await load(
+      page,
+      plugin(
+        "org.example.oneport",
+        ["net"],
+        `import { net } from "sawhorse";
+const report = (k, v) => console.log(k + "=" + JSON.stringify(v));
+for (const [k, u] of [["a", "http://localhost:${portA}/allowed"], ["b", "http://localhost:${portB}/denied"], ["b2", "https://localhost:${portA}/denied"]]) {
+  try { const r = await net.fetch(u, { method: "POST", body: "x" }); report(k, { ok: true, status: r.status }); }
+  catch (e) { report(k, { ok: false, code: e.code }); }
+}`,
+        { net: [`http://localhost:${portA}`] },
+      ),
+    );
+    expect(JSON.parse(await logged(page, id, "a="))).toEqual({ ok: true, status: 404 });
+    expect(JSON.parse(await logged(page, id, "b="))).toEqual({ ok: false, code: "permission" });
+    expect(JSON.parse(await logged(page, id, "b2="))).toEqual({ ok: false, code: "permission" });
+    expect(a.hits).toEqual(["/allowed"]);
+    await control(page, b);
+    expect(b.hits).toEqual(["/control"]);
+  } finally {
+    await a.close();
+    await b.close();
+  }
+});

@@ -3,7 +3,7 @@
 // PluginHost per running plugin, what each has added (commands, panels, tools), and the
 // answers to their requests (the model, the window, storage, files, the network). React
 // reads it through `subscribe` / `version` (usePlugins.ts); the app gives it an AppBridge.
-import { hostAllowed, PERMISSION_TEXT, type Manifest, type Permission, type ToolContribution } from "../../packages/plugin-api/src/manifest.ts";
+import { describeNetEntry, originAllowed, PERMISSION_TEXT, type Manifest, type Permission, type ToolContribution } from "../../packages/plugin-api/src/manifest.ts";
 import type { Data } from "../../packages/plugin-api/src/rpc.ts";
 import type { KernelClient } from "../kernel/client";
 import type { CutList, Entity, OpOutcome, Rounding, SceneData } from "../kernel/types";
@@ -69,7 +69,13 @@ async function readCapped(res: Response, max: number): Promise<Uint8Array> {
     void res.body?.cancel().catch(() => undefined);
     throw new PluginRefusal(`the answer is larger than ${Math.round(max / 1024 / 1024)} MB (it says ${declared} bytes)`, "too_large");
   }
-  if (!res.body) return new Uint8Array(await res.arrayBuffer()).slice(0, max + 1);
+  if (!res.body) {
+    // No stream to cap as it comes (a stand-in Response): measured whole, refused all the same
+    // (lane 17: it used to be cut to max + 1 bytes and passed on).
+    const all = new Uint8Array(await res.arrayBuffer());
+    if (all.byteLength > max) throw new PluginRefusal(`the answer is larger than ${Math.round(max / 1024 / 1024)} MB`, "too_large");
+    return all;
+  }
   const reader = res.body.getReader();
   const parts: Uint8Array[] = [];
   let n = 0;
@@ -180,7 +186,9 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 
 /** What the permission dialog lists for a manifest. */
 export function permissionLines(m: Manifest): { permission: Permission; title: string; detail: string }[] {
-  return m.permissions.map((p) => ({ permission: p, ...PERMISSION_TEXT[p], detail: p === "net" ? `${PERMISSION_TEXT.net.detail}: ${m.net.join(", ")}` : PERMISSION_TEXT[p].detail }));
+  // Lane 17: each net entry as what it reaches ("https://api.example.com", "any port on
+  // localhost (http or https)"), not as written.
+  return m.permissions.map((p) => ({ permission: p, ...PERMISSION_TEXT[p], detail: p === "net" ? `${PERMISSION_TEXT.net.detail}: ${m.net.map(describeNetEntry).join(", ")}` : PERMISSION_TEXT[p].detail }));
 }
 
 export class PluginManager {
@@ -802,9 +810,10 @@ export class PluginManager {
         } catch {
           throw new PluginRefusal(`not an address: ${String(p.url)}`, "invalid");
         }
-        const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+        const local = url.hostname === "localhost";
         if (url.protocol !== "https:" && !(local && url.protocol === "http:")) throw new PluginRefusal("plugins reach the network over https only", "permission");
-        if (!hostAllowed(m.net, url.hostname)) throw new PluginRefusal(`${m.name} may not reach ${url.hostname}: plugin.json lists ${m.net.join(", ")}`, "permission");
+        // Lane 17: the whole origin (scheme, host and port) is checked, not the host alone.
+        if (!originAllowed(m.net, url)) throw new PluginRefusal(`${m.name} may not reach ${url.origin}: plugin.json lists ${m.net.map(describeNetEntry).join(", ")}`, "permission");
         const method = typeof p.method === "string" ? p.method.toUpperCase() : "GET";
         if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new PluginRefusal(`method ${method} is not allowed`, "invalid");
         const headers: Record<string, string> = {};

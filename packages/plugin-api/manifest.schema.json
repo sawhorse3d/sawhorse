@@ -31,10 +31,11 @@
       "items": { "enum": ["model.read", "model.write", "ui", "storage", "file", "net"] }
     },
     "net": {
-      "description": "Hosts the net permission reaches (no scheme, port or path); *.example.com for subdomains",
+      "description": "What the net permission reaches: a host over https on the default port (api.example.com; *.example.com for its subdomains), an origin with its scheme and port (https://api.example.com:8443, http://localhost:3000), or localhost (any port). http only for localhost; no path. The validator also refuses a wildcard on a public suffix (*.vercel.app, *.github.io, *.co.uk, *.com).",
       "type": "array",
       "maxItems": 20,
-      "items": { "type": "string", "pattern": "^(\\*\\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$|^localhost$" }
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^(?:https://(?:\\*\\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}(?::\\d{1,5})?|(?:\\*\\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}|localhost|https?://localhost(?::\\d{1,5})?)$" }
     },
     "entry": {
       "description": "The ES module the app loads, relative to the plugin folder",

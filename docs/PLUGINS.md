@@ -88,7 +88,7 @@ Everything is in metres, Z up, like the kernel. Show and read lengths with [`uni
 | `description` | yes | Up to 500 characters (may be empty). Shown in the Plugins pane and the enable dialog. |
 | `author`, `license` | yes | Shown in the pane. |
 | `permissions` | yes | What it may do (below). An empty list is fine. |
-| `net` | with `net` | The hosts it may reach: `"api.example.com"`, `"*.example.org"` (subdomains only). No scheme, port or path. |
+| `net` | with `net` | What it may reach, each entry one origin: a host over https on the default port (`"api.example.com"`; `"*.example.org"` for its subdomains only), an origin with its scheme and port (`"https://api.example.com:8443"`, `"http://localhost:3000"`), or `"localhost"` for any port of it. No path; http only for localhost; no wildcard on a public suffix ([sawhorse.net](#sawhorsenet)). |
 | `contributes` | no | What it adds: `commands`, `panels`, `tools`, `menus`, `shortcuts` (below). Anything here needs the `ui` permission. |
 | `entry` | no | The module the app loads. Default `main.js`. |
 | `homepage` | no | An `https://` address. |
@@ -413,7 +413,19 @@ const picked = await file.open({ extensions: [".csv"], description: "CSV" }); //
 
 ### sawhorse.net
 
-Needs `net` and only reaches the hosts listed in the manifest's `net`, over https (http only for `localhost`), with no cookies or credentials and no redirects. The app makes the request; the plugin gets the answer (at most 10 MB, 30 s). An answer that says it is larger (`Content-Length`) is refused before it is read, and one that turns out larger is cut off at 10 MB and refused (`"too_large"`). At most 4 requests wait at once and 50 MB a minute come in per plugin (`"busy"` past that).
+Needs `net` and only reaches the origins listed in the manifest's `net`, over https (http only for `localhost`), with no cookies or credentials and no redirects.
+
+**Each entry is checked against the whole origin**: the scheme, the host and the port.
+
+| Entry | Reaches |
+|---|---|
+| `"api.example.com"` | `https://api.example.com` (port 443) only |
+| `"*.example.org"` | `https://<any subdomain>.example.org` (port 443), not `example.org` itself |
+| `"https://api.example.com:8443"` | that origin only |
+| `"http://localhost:3000"` | that origin only (http is for localhost) |
+| `"localhost"` | any port on localhost, http or https; the enable dialog says so |
+
+A wildcard on a **public suffix**, a domain under which anyone can have a name of their own, is refused by the validator: `*.vercel.app`, `*.github.io`, `*.netlify.app`, `*.pages.dev`, `*.herokuapp.com`, `*.co.uk`, `*.com.au`, every plain top-level domain (`*.com`) and the rest of `PUBLIC_SUFFIXES` in [`packages/plugin-api/src/manifest.ts`](../packages/plugin-api/src/manifest.ts). List your own host instead (`my-app.vercel.app`, or `*.my-app.vercel.app` for its subdomains). The list is short on purpose (the common hosting platforms and country second levels, not the whole [Public Suffix List](https://publicsuffix.org/list/)); to add a suffix, add it there with a case in `packages/plugin-api/test/manifest.test.ts`. The app makes the request; the plugin gets the answer (at most 10 MB, 30 s). An answer that says it is larger (`Content-Length`) is refused before it is read, and one that turns out larger is read as a stream, cut off at 10 MB and refused (`"too_large"`); nothing over 10 MB is ever held whole. At most 4 requests wait at once and 50 MB a minute come in per plugin (`"busy"` past that).
 
 ```js
 const res = await net.fetch("https://api.example.com/prices?wood=oak"); // a Response
