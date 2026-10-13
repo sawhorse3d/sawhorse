@@ -1,0 +1,153 @@
+{
+  "name": "2026-10-13-section-closure-on-a-bent-face-1",
+  "error": "(not a kernel bug; the check fixed 2026-10-13, lane 12c) lane 12c long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261401: op 10 PushPull { object: 4294967297, face: 3, distance: 0.25 }: section 1: the kept half is not closed (vector area 0.00000003964524646020185 of 1.249999935897442 m2) -- The new watertight check was too strict: faces planar only to within PLANARITY (here up to a micrometre off, left by Move with autofold and pushes with snapping off) meet the plane in a slightly bent line, so a half's clipped faces and its cap join along chords up to that bend apart. The halves still made the whole; the check now allows the largest corner-to-face-plane distance times the cut's length.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "insert_segment",
+      "sketch": 1,
+      "a": [
+        0.0,
+        1e-06
+      ],
+      "b": [
+        0.0,
+        0.250004
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.25,
+      "y": 1e-06,
+      "w": -0.5,
+      "h": 0.5
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "active": false
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 4294967297,
+      "distance": -3.0
+    },
+    {
+      "op": "push_pull",
+      "object": 4294967297,
+      "face": 6,
+      "distance": -0.25
+    },
+    {
+      "op": "transform_geometry",
+      "object": 4294967297,
+      "points": [
+        [
+          0.25,
+          1e-06,
+          0.0
+        ],
+        [
+          0.25,
+          0.500001,
+          0.0
+        ],
+        [
+          -0.25,
+          0.500001,
+          0.0
+        ],
+        [
+          -0.25,
+          0.250001,
+          0.0
+        ],
+        [
+          0.0,
+          0.250001,
+          0.0
+        ],
+        [
+          0.0,
+          1e-06,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          1e-06,
+          0.0,
+          0.25
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "push_pull",
+      "object": 4294967297,
+      "face": 3,
+      "distance": 0.25
+    }
+  ]
+}

@@ -226,9 +226,12 @@ pub struct KeptPart {
     pub volume: f64,
     /// The surface's vector area, square metres: every clipped face ring's own (Newell's
     /// sum over its 3D corners and crossings) plus the cap's (its area along -normal).
-    /// Every edge of a closed surface is walked once each way, so the sum cancels to
-    /// rounding whatever the faces' planarity: a cap missing, folded or facing the wrong
-    /// way leaves its area here. It measures how far the cut is from watertight.
+    /// Every edge of a closed surface is walked once each way, so the sum cancels: to
+    /// rounding for planar faces, and to about a face's bend times the cut's length for
+    /// faces planar only to within PLANARITY (where a face meets the plane in a slightly
+    /// bent line, its kept part and the cap join along chords up to that bend apart). A
+    /// cap missing, folded or facing the wrong way leaves its area here. It measures how
+    /// far the cut is from watertight.
     pub vector_area: DVec3,
     /// The surface's total (unsigned) area, square metres: the scale to compare against.
     pub area: f64,

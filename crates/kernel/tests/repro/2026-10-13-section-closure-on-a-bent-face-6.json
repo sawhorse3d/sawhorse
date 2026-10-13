@@ -1,0 +1,144 @@
+{
+  "name": "2026-10-13-section-closure-on-a-bent-face-6",
+  "error": "(not a kernel bug; the check fixed 2026-10-13, lane 12c) lane 12c long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261408: op 7 PushPullNewFace { object: 1, face: 8, distance: 0.75 }: section 1: the cut-away half is not closed (vector area 0.000000006290966729972318 of 0.5118724112586193 m2) -- The new watertight check was too strict: faces planar only to within PLANARITY (here up to a micrometre off, left by Move with autofold and pushes with snapping off) meet the plane in a slightly bent line, so a half's clipped faces and its cap join along chords up to that bend apart. The halves still made the whole; the check now allows the largest corner-to-face-plane distance times the cut's length.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "batch",
+      "ops": [
+        {
+          "op": "add_rectangle",
+          "sketch": 1,
+          "x": 0.0,
+          "y": 0.0,
+          "w": 0.5,
+          "h": 1.0
+        },
+        {
+          "op": "extrude",
+          "sketch": 1,
+          "region": 1,
+          "distance": -0.5
+        }
+      ]
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.5,
+          1.0,
+          -0.5
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          1.5,
+          1e-06,
+          0.25
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          0.07499999999999998,
+          0.14999999999999997,
+          0.0
+        ],
+        [
+          0.09999999999999998,
+          0.14999999999999997,
+          0.0
+        ],
+        [
+          0.09999999999999998,
+          0.25,
+          0.0
+        ],
+        [
+          0.07499999999999998,
+          0.25,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "make_unique",
+      "node": 1
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 5,
+      "distance": 0.5
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 1,
+      "face": 8,
+      "distance": 0.75
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}

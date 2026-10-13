@@ -1,0 +1,185 @@
+{
+  "name": "2026-10-13-section-closure-on-a-bent-face-2",
+  "error": "(not a kernel bug; the check fixed 2026-10-13, lane 12c) lane 12c long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261403: op 9 PlaceSection { section: 1, origin: [0.0, 0.0, 0.75], normal: [0.0, 0.0, 1.0] }: section 1: the kept half is not closed (vector area 0.0000002250000000203478 of 3.5828880144546593 m2) -- The new watertight check was too strict: faces planar only to within PLANARITY (here up to a micrometre off, left by Move with autofold and pushes with snapping off) meet the plane in a slightly bent line, so a half's clipped faces and its cap join along chords up to that bend apart. The halves still made the whole; the check now allows the largest corner-to-face-plane distance times the cut's length.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.75,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 2.353943894726258
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 3,
+      "points": [
+        [
+          0.4125,
+          0.0,
+          0.7147682079685241
+        ],
+        [
+          0.45,
+          0.0,
+          0.7147682079685241
+        ],
+        [
+          0.45,
+          0.0,
+          0.8703173950973182
+        ],
+        [
+          0.4125,
+          0.0,
+          0.8703173950973182
+        ]
+      ]
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.75,
+          0.0,
+          0.0
+        ],
+        [
+          0.75,
+          0.25,
+          0.0
+        ],
+        [
+          0.75,
+          0.25,
+          2.353943894726258
+        ],
+        [
+          0.75,
+          0.0,
+          2.353943894726258
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          1e-06,
+          0.0
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        0.9489411450878493
+      ],
+      "active": false
+    },
+    {
+      "op": "place_section",
+      "section": 1,
+      "origin": [
+        0.0,
+        0.0,
+        0.75
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}

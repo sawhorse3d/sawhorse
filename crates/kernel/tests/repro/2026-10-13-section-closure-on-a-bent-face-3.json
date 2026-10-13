@@ -1,0 +1,165 @@
+{
+  "name": "2026-10-13-section-closure-on-a-bent-face-3",
+  "error": "(not a kernel bug; the check fixed 2026-10-13, lane 12c) lane 12c long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261404: op 10 PushPull { object: 1, face: 5, distance: 0.25 }: section 1: the kept half is not closed (vector area 0.00000003749999217401214 of 0.750000231249959 m2) -- The new watertight check was too strict: faces planar only to within PLANARITY (here up to a micrometre off, left by Move with autofold and pushes with snapping off) meet the plane in a slightly bent line, so a half's clipped faces and its cap join along chords up to that bend apart. The halves still made the whole; the check now allows the largest corner-to-face-plane distance times the cut's length.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 1.75
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": -0.25
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "active": false
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.21875,
+          1.75,
+          0.0
+        ],
+        [
+          0.25,
+          1.3731407413947565,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 1,
+      "face": 5,
+      "distance": -0.5
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 5,
+      "points": [
+        [
+          0.03749999999999999,
+          1.25,
+          -0.03749999999999999
+        ],
+        [
+          0.04999999999999999,
+          1.25,
+          -0.03749999999999999
+        ],
+        [
+          0.04999999999999999,
+          1.25,
+          -0.04999999999999999
+        ],
+        [
+          0.03749999999999999,
+          1.25,
+          -0.04999999999999999
+        ]
+      ]
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          1.25,
+          -0.25
+        ],
+        [
+          0.0,
+          0.0,
+          -0.25
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          1e-06,
+          -0.75
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.25,
+          0.15625,
+          0.0
+        ],
+        [
+          0.0,
+          1.09375,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 5,
+      "distance": 0.25
+    }
+  ]
+}

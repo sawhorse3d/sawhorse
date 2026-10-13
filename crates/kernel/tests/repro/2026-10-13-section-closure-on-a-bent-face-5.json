@@ -1,0 +1,194 @@
+{
+  "name": "2026-10-13-section-closure-on-a-bent-face-5",
+  "error": "(not a kernel bug; the check fixed 2026-10-13, lane 12c) lane 12c long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20261407: op 7 TransformGeometry { object: 2, points: [[0.2500026580601742, 0.7500000000047558, -2.0], [0.10058056349766523, 0.7500000000019134, -2.0], [0.25, 2.2355696896774853, -2.0]], xform: Xform { linear: [[1.0, 0.0, 0.0], [0.0, 0.7071067811865476, -0.7071067811865475], [0.0, 0.7071067811865475, 0.7071067811865476]], translation: [0.0, -0.23743686707645817, -0.9267766952966368] }, autofold: true }: section 1: the kept half is not closed (vector area 0.0000004423430944033857 of 2.2196465273446124 m2) -- The new watertight check was too strict: faces planar only to within PLANARITY (here up to a micrometre off, left by Move with autofold and pushes with snapping off) meet the plane in a slightly bent line, so a half's clipped faces and its cap join along chords up to that bend apart. The halves still made the whole; the check now allows the largest corner-to-face-plane distance times the cut's length.",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "batch",
+      "ops": [
+        {
+          "op": "add_rectangle",
+          "sketch": 1,
+          "x": 0.0,
+          "y": 0.0,
+          "w": 0.25,
+          "h": 0.25
+        },
+        {
+          "op": "extrude",
+          "sketch": 1,
+          "region": 1,
+          "distance": 0.25
+        }
+      ]
+    },
+    {
+      "op": "add_polyline",
+      "sketch": 1,
+      "points": [
+        [
+          0.250004,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.25
+        ],
+        [
+          0.25,
+          2.2355696896774853
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "batch",
+      "ops": [
+        {
+          "op": "make_group",
+          "items": [
+            {
+              "object": 1
+            }
+          ],
+          "name": "Fuzz group"
+        },
+        {
+          "op": "add_rectangle",
+          "sketch": 1,
+          "x": 0.0,
+          "y": 0.75,
+          "w": 0.25,
+          "h": 1.5
+        },
+        {
+          "op": "extrude",
+          "sketch": 1,
+          "region": 4294967297,
+          "distance": -2.0
+        }
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 2,
+      "face": 5,
+      "points": [
+        [
+          0.25000093032106097,
+          1.7156202982920299,
+          -0.9
+        ],
+        [
+          0.25000079741805226,
+          1.7898987827756665,
+          -0.9
+        ],
+        [
+          0.25000079741805226,
+          1.7898987827756665,
+          -0.5
+        ],
+        [
+          0.25000093032106097,
+          1.7156202982920299,
+          -0.5
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 1,
+      "path": [
+        [
+          0.03125,
+          0.25,
+          0.0
+        ],
+        [
+          0.25,
+          0.21875,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        -0.5
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "active": false
+    },
+    {
+      "op": "transform_geometry",
+      "object": 2,
+      "points": [
+        [
+          0.2500026580601742,
+          0.7500000000047558,
+          -2.0
+        ],
+        [
+          0.10058056349766523,
+          0.7500000000019134,
+          -2.0
+        ],
+        [
+          0.25,
+          2.2355696896774853,
+          -2.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.7071067811865476,
+            -0.7071067811865475
+          ],
+          [
+            0.0,
+            0.7071067811865475,
+            0.7071067811865476
+          ]
+        ],
+        "translation": [
+          0.0,
+          -0.23743686707645817,
+          -0.9267766952966368
+        ]
+      },
+      "autofold": true
+    }
+  ]
+}

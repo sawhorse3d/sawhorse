@@ -149,18 +149,6 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             flipped.kept_part(id).map_err(|e| e.to_string())?,
         );
         let (a, b) = (pa.volume, pb.volume);
-        // Watertight: each kept half (its faces clipped to the kept side, and its cap) is
-        // a closed surface, so its vector area cancels to rounding (see KeptPart). A cap
-        // that is missing, folded or turned the wrong way leaves its whole area here.
-        for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
-            let open = p.vector_area.length();
-            if open > 1e-9 * (1.0 + p.area) {
-                return Err(format!(
-                    "section {id}: the {half} half is not closed (vector area {open} of {} m2)",
-                    p.area
-                ));
-            }
-        }
         let reached_objects: Vec<_> = m
             .objects()
             .into_iter()
@@ -207,6 +195,47 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
                 solid_area += area - area0;
                 solid_planes += by_planes - planes0;
                 solid_tess += t.volume();
+            }
+        }
+        // Watertight: each kept half (its faces clipped to the kept side, and its cap) is
+        // a closed surface, so its vector area cancels (see KeptPart). A cap that is
+        // missing, folded or turned the wrong way leaves its whole area here. Faces are
+        // planar only to within PLANARITY, so where a face meets the plane in a slightly bent
+        // line its kept part and the cap may join along chords up to its bend apart: allow
+        // the farthest any corner sits off its face's plane times the cut's length.
+        let bend = reached_objects
+            .iter()
+            .flat_map(|(_, x)| {
+                let b = x.brep();
+                b.faces()
+                    .flat_map(move |(_, f)| {
+                        f.loops()
+                            .flat_map(move |l| b.loop_points(l))
+                            .map(move |p| f.plane.signed_distance(p).abs())
+                    })
+                    .collect::<Vec<f64>>()
+            })
+            .fold(0.0, f64::max);
+        let cut_length: f64 = cut
+            .caps
+            .iter()
+            .flat_map(|c| std::iter::once(&c.outer).chain(&c.holes))
+            .map(|r| {
+                (0..r.len())
+                    .map(|i| {
+                        let (a, b) = (r[i], r[(i + 1) % r.len()]);
+                        (a[0] - b[0]).hypot(a[1] - b[1])
+                    })
+                    .sum::<f64>()
+            })
+            .sum();
+        for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
+            let open = p.vector_area.length();
+            if open > 1e-9 * (1.0 + p.area) + 2.0 * bend * cut_length {
+                return Err(format!(
+                    "section {id}: the {half} half is not closed (vector area {open} of {} m2; faces bend {bend}, cut {cut_length} m long)",
+                    p.area
+                ));
             }
         }
         // A face lying in the plane to within the merge distance but not exactly (a tilt
