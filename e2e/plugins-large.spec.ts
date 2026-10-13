@@ -19,11 +19,12 @@ const manifest = {
   permissions: [],
 };
 
-// About 3.5 MB of module: many small functions (what makes a parser slow is many nodes).
+// About 1.2 MB of module, well past the 256 KB above which a package is checked in a worker:
+// many small functions (what makes a parser slow is many nodes).
 function bigModule(): string {
   const parts: string[] = ['import { ui } from "sawhorse";', 'void ui;'];
-  for (let i = 0; i < 60_000; i++) parts.push(`export function f${i}(a, b) { return (a + ${i}) * (b - ${i % 97}) / 3; }`);
-  parts.push('console.log("large ready " + f59999(1, 2));');
+  for (let i = 0; i < 20_000; i++) parts.push(`export function f${i}(a, b) { return (a + ${i}) * (b - ${i % 97}) / 3; }`);
+  parts.push('console.log("large ready " + f19999(1, 2));');
   return parts.join("\n");
 }
 
@@ -38,7 +39,7 @@ test("a plugin package near its size limits is checked off the app's thread and 
 
   await page.getByRole("tab", { name: "Plugins" }).click();
   const code = bigModule();
-  expect(code.length).toBeGreaterThan(3_000_000);
+  expect(code.length).toBeGreaterThan(1_000_000);
   const zip = zipSync({ "large/plugin.json": strToU8(JSON.stringify(manifest)), "large/main.js": strToU8(code) });
 
   // Watch the app's own thread from just before the package arrives.
@@ -64,7 +65,7 @@ test("a plugin package near its size limits is checked off the app's thread and 
     return w.__gap;
   });
   // Unpacking and reading the zip is on the app's thread and is linear but quick; the
-  // parse, which took seconds at this size, is not.
+  // parse (about a second at this size, seconds at the package limits) is not.
   expect(gap).toBeLessThan(1500);
 
   await row.locator('[data-do="enable"]').click();

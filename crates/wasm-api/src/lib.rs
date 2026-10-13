@@ -1085,15 +1085,20 @@ impl Doc {
     }
 
     /// The document as a `.shz` file (scene.json + geometry.glb + thumbnail.png, and
-    /// `plugin_data` as plugin-data.json when not empty).
+    /// `plugin_data` as plugin-data.json when given and not empty; callers that pass two
+    /// arguments, as before lane 16, write none).
     pub fn save_shz(
         &self,
         display_units: &str,
         thumbnail_png: &[u8],
-        plugin_data: &str,
+        plugin_data: Option<String>,
     ) -> Result<Vec<u8>, JsError> {
         self.core
-            .save_shz(display_units, thumbnail_png, plugin_data)
+            .save_shz(
+                display_units,
+                thumbnail_png,
+                plugin_data.as_deref().unwrap_or(""),
+            )
             .map_err(js)
     }
 

@@ -2676,6 +2676,12 @@ impl Model {
         self.mark(ctx);
         let mut sketches = Vec::new();
         let mut skipped = 0usize;
+        // Lane 16 (C3): the strokes are sorted into their sketches first, then each sketch
+        // takes all of its strokes at once (one repair, one region pass); only a sketch that
+        // refuses that takes them one at a time, skipping the ones it refuses.
+        // (sketch, made for these strokes, its strokes in its own coordinates and closed)
+        type Strokes = Vec<(Vec<DVec2>, bool)>;
+        let mut by_sketch: Vec<(SketchId, bool, Strokes)> = Vec::new();
         for st in strokes {
             let pts: Vec<DVec3> = st.points.iter().map(|p| DVec3::from_array(*p)).collect();
             if pts.len() < 2 || pts.iter().any(|p| !p.is_finite()) {
@@ -2704,20 +2710,44 @@ impl Model {
             };
             let existed = self.sketch_order.len();
             let sid = self.sketch_on(&plane);
-            match self.draw_in_sketch(sid, &pts, st.closed && pts.len() > 2) {
-                Ok(_) => {
-                    let p = to_public(sid);
-                    if !sketches.contains(&p) {
-                        sketches.push(p);
+            let sp = *self.sketches[sid].plane();
+            // On the sketch's own plane, as a drawn stroke must be (its plane may sit up to
+            // the tolerance off the stroke's).
+            if pts.iter().any(|p| sp.signed_distance(*p).abs() > PLANARITY) {
+                skipped += 1;
+                if self.sketch_order.len() > existed {
+                    self.sketches.remove(sid);
+                    self.sketch_order.retain(|&k| k != sid);
+                }
+                continue;
+            }
+            let local: Vec<DVec2> = pts.iter().map(|&p| sp.to_local(p)).collect();
+            let stroke = (local, st.closed && pts.len() > 2);
+            match by_sketch.iter_mut().find(|(k, _, _)| *k == sid) {
+                Some((_, _, list)) => list.push(stroke),
+                None => by_sketch.push((sid, self.sketch_order.len() > existed, vec![stroke])),
+            }
+        }
+        for (sid, created, list) in by_sketch {
+            let s = &mut self.sketches[sid];
+            let mut taken = list.len();
+            if s.insert_polylines(&list).is_err() {
+                taken = 0;
+                for (pts, closed) in &list {
+                    match s.insert_polyline(pts, *closed) {
+                        Ok(_) => taken += 1,
+                        Err(_) => skipped += 1,
                     }
                 }
-                Err(_) => {
-                    skipped += 1;
-                    if self.sketch_order.len() > existed && self.sketches[sid].edge_count() == 0 {
-                        self.sketches.remove(sid);
-                        self.sketch_order.retain(|&k| k != sid);
-                    }
+            }
+            if taken > 0 {
+                let p = to_public(sid);
+                if !sketches.contains(&p) {
+                    sketches.push(p);
                 }
+            } else if created && self.sketches[sid].edge_count() == 0 {
+                self.sketches.remove(sid);
+                self.sketch_order.retain(|&k| k != sid);
             }
         }
         if skipped > 0 {

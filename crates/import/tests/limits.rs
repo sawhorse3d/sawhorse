@@ -291,3 +291,39 @@ fn dxf_and_svg_strokes_are_held_to_the_import_limits() {
     let e = read(None, svg.as_bytes(), &opts("curves.svg")).unwrap_err();
     assert!(e.to_string().contains("points"), "{e}");
 }
+
+#[test]
+fn the_most_strokes_one_import_takes_come_in_without_trying_every_pair() {
+    // C3: 5,000 lines (the import limit) in one sketch. Each repair and edge check looks
+    // only near where it looks (a sweep and grids), not at every pair of 5,000 edges.
+    let n = sawhorse_kernel::limits::MAX_IMPORT_STROKES;
+    let mut dxf = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..n {
+        let (x, y) = ((i % 100) as f64 * 3.0, (i / 100) as f64 * 3.0);
+        dxf.push_str(&format!(
+            "0\nLINE\n8\n0\n10\n{x}\n20\n{y}\n30\n0\n11\n{}\n21\n{}\n31\n0\n",
+            x + 1.0,
+            y + 1.0
+        ));
+    }
+    dxf.push_str("0\nENDSEC\n0\nEOF\n");
+    let parsed = read(None, dxf.as_bytes(), &opts("lines.dxf")).unwrap();
+    let (op, _) = parsed.into_op();
+    let mut d = sawhorse_kernel::document::Document::with_ground_sketch();
+    let t = Instant::now();
+    d.apply_owned(op).unwrap();
+    let took = t.elapsed();
+    eprintln!("5,000 strokes: {took:?}");
+    // About 0.5 s in a debug build (35 s before, one sketch copy, repair and region pass
+    // per line); the bound leaves room for a loaded machine.
+    assert!(took.as_secs() < 10, "{took:?}");
+    // And the next edit of that sketch costs one pass over it, not a pass per pair.
+    let t = Instant::now();
+    d.apply(&sawhorse_kernel::Op::InsertSegment {
+        sketch: d.model().sketch_ids()[0],
+        a: [-1.0, -1.0],
+        b: [-1.0, 290.0],
+    })
+    .unwrap();
+    assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+}

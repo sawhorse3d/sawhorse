@@ -763,7 +763,7 @@ export interface WasmDoc {
   /** Lane 11: a named batch whose ops may hold placeholders ({"$ref": i, "path": "..."}), applied as one op (crates/kernel/src/refbatch.rs). */
   apply_named_batch(json: string): string;
   /** Lane 16: `pluginData` is written as plugin-data.json when not empty. */
-  save_shz(displayUnits: string, thumbnail: Uint8Array, pluginData: string): Uint8Array;
+  save_shz(displayUnits: string, thumbnail: Uint8Array, pluginData?: string): Uint8Array;
   open_shz(bytes: Uint8Array): string;
   /** Lane 16: entries in the op log, and the log from `from` on, one JSON text per op. */
   op_log_len(): number;

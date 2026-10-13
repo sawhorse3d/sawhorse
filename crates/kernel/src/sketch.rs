@@ -789,11 +789,8 @@ impl Sketch {
     }
 
     /// Clone, insert, re-detect regions. Returns the new sketch and the new edges.
-    fn with_polyline(
-        &self,
-        points: &[DVec2],
-        closed: bool,
-    ) -> Result<(Sketch, Vec<(SVertexId, SVertexId)>), SketchError> {
+    /// The number of segments of a polyline the sketch would take, or why not.
+    fn polyline_segments(points: &[DVec2], closed: bool) -> Result<usize, SketchError> {
         if points.len() < 2 {
             return Err(SketchError::Degenerate);
         }
@@ -801,10 +798,39 @@ impl Sketch {
             return Err(SketchError::OutOfBounds);
         }
         let n = points.len();
-        let segs = if closed { n } else { n - 1 };
         if closed && n < 3 {
             return Err(SketchError::Degenerate);
         }
+        Ok(if closed { n } else { n - 1 })
+    }
+
+    /// Lane 16 (C3): insert many polylines as one transaction. The graph is built, repaired
+    /// once and its regions detected once; an import of 5,000 lines used to copy the sketch,
+    /// repair it and detect every region once per line. All or nothing: the first stroke the
+    /// sketch refuses refuses them all (the caller then inserts them one at a time).
+    pub fn insert_polylines(&mut self, strokes: &[(Vec<DVec2>, bool)]) -> Result<(), SketchError> {
+        let mut next = self.clone();
+        for (points, closed) in strokes {
+            let segs = Self::polyline_segments(points, *closed)?;
+            let n = points.len();
+            for i in 0..segs {
+                next.add_segment(points[i], points[(i + 1) % n])?;
+            }
+        }
+        next.repair()?;
+        next.recompute_regions();
+        next.debug_check("insert");
+        *self = next;
+        Ok(())
+    }
+
+    fn with_polyline(
+        &self,
+        points: &[DVec2],
+        closed: bool,
+    ) -> Result<(Sketch, Vec<(SVertexId, SVertexId)>), SketchError> {
+        let segs = Self::polyline_segments(points, closed)?;
+        let n = points.len();
         let mut next = self.clone();
         let mut new_edges = Vec::new();
         for i in 0..segs {
