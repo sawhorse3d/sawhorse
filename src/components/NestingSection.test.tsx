@@ -179,6 +179,22 @@ describe("Stock dialog", () => {
     expect(p.onDefine).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "sheet", thickness: (15 / 32) * IN, nominal: "1/2" }), null);
   });
 
+  // Lane 15 verifier: the list rounded actual thicknesses to the cut list's 1/16 in, so
+  // 23/32, 15/32 and 7/32 plywood read "3/4 in actual", "1/2 in actual", "1/4 in actual".
+  it("lists each stock's actual thickness at the saw's precision, not the cut list's rounding", () => {
+    const sheet = (nominal: string, t: number) => ({ name: `4 x 8 ply, ${nominal}`, kind: "sheet" as const, width: 48 * IN, length: 96 * IN, thickness: t * IN, nominal, grain: "length" as const });
+    const library = { ...smallNesting().library, stocks: [sheet("3/4", 23 / 32), sheet("1/2", 15 / 32), sheet("1/4", 7 / 32)] };
+    render(<StockDialog {...dprops({ library })} />);
+    const list = screen.getByRole("table", { name: "Stock library" }).textContent ?? "";
+    expect(list).toContain("sheet 3/4 nominal · 48 × 96 × 23/32 in actual");
+    expect(list).toContain("sheet 1/2 nominal · 48 × 96 × 15/32 in actual");
+    expect(list).toContain("sheet 1/4 nominal · 48 × 96 × 7/32 in actual");
+    expect(list).not.toContain("× 3/4 in actual");
+    cleanup();
+    render(<StockDialog {...dprops({ library, rounding: "half_mm" })} />);
+    expect(screen.getByRole("table", { name: "Stock library" }).textContent).toContain("1219 × 2438.5 × 18.26 mm actual");
+  });
+
   it("refuses stock nobody can cut from, and says why", () => {
     const p = dprops();
     render(<StockDialog {...p} />);

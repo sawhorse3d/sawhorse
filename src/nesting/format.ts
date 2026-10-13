@@ -99,9 +99,12 @@ export function pieceYield(p: StockPiece, r: Units): string {
   return `${pct(p.efficiency)} used · ${area(p.waste_area, r)} waste`;
 }
 
-/** A stock's size as a shop writes it: "48 × 96 × 3/4 in" (width × length × thickness). */
+/** A stock's size as a shop writes it: "48 × 96 × 23/32 in" (width × length × thickness).
+ * The thickness is the actual one at the saw's precision ([`fineU`]), not the cut list's
+ * rounding: rounded to 1/16 in, 23/32, 15/32 and 7/32 plywood all read as 3/4, 1/2 and 1/4,
+ * and the difference between nominal and actual is the whole point (lane 15 verifier). */
 export function stockSize(s: Pick<StockDef, "width" | "length" | "thickness">, r: Units): string {
-  return `${len(s.width, r)} × ${len(s.length, r)} × ${len(s.thickness, r)} ${sizeUnit(r)}`;
+  return `${len(s.width, r)} × ${len(s.length, r)} × ${fineU(s.thickness, r)}`;
 }
 
 /** One step of the cut sequence: "Rip to 11 1/4 in (96 in long)". */
