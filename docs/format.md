@@ -298,7 +298,7 @@ A reader may refuse a file that would take unreasonable memory or time to read; 
 
 - an archive of more than 2,048 entries, a name listed twice, or two entries sharing compressed bytes;
 - an entry whose declared uncompressed size is over its cap (`scene.json` 256 MB, `geometry.glb` 512 MB, a texture 16 MB, the thumbnail 100 KB, `plugin-data.json` 4 MB), whose declared size implies better than 1,100 to 1 compression (over 1 MB), or whose inflated bytes are not exactly its declared size; more than 1 GB in all;
-- more than 512 `textures` rows, or one path listed twice (checked before any image is read);
+- more than 512 `textures` rows, or one path listed twice (checked before any image is read); images over 4096 x 4096 pixels, or over 256 MB or 128 million pixels together (read from their headers, before any is drawn);
 - a name over 64 characters, a mesh note over 1,000, a material texture reference over 1,024; a mesh point, guide or dimension more than 10 km from the origin or not a number; a scene camera more than 1,000 km away;
 - components nested more than 64 deep, a definition that contains itself, or a model whose components would derive more than the model limits (100,000 solids and meshes, 100,000 groups and instances, 20,000 definitions, 5,000,000 faces, 10,000,000 points), counted along the definitions before anything is derived.
 

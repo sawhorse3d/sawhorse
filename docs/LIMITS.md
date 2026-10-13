@@ -14,6 +14,17 @@ Measured on the development machine (a desktop PC: 24-thread x86-64 CPU, 32 GB o
 
 An earlier run on the same machine (2026-10-12, before named single placements came in as components) measured 1.9k faces in 0.5 s and 13.5k faces with 352 instances in 3.8 s. Treat these as orders of magnitude: a model of a few thousand faces is quick; tens of thousands of faces take seconds to import and the view stays usable; a whole building of hundreds of thousands of faces is beyond what this alpha has been tried on. Every edit re-validates the solids it touches, so editing inside a large component is slower than editing a single board.
 
+### At the model's limit
+
+The model may hold 100,000 solids (below), and the window stays responsive at that size (lane 16 fixes, measured on the same machine, the production build in Edge, `e2e/model-cap.spec.ts`). A plugin made two ordinary array ops land exactly at the limit (a box, 999 copies of it, then 99 copies of all 1,000): the window's longest pause while the 99,000 copies came in was 0.55 s, switching to the Outliner, the Cut list, Materials or Tags and selecting all 100,000 solids each paused it under half a second, and the browser held about 2.2 GB in all (the kernel's share about 0.5 GB). Before the fix the same two ops froze the window for 46 to 54 seconds and took the browser to about 7 GB, and the plugin was stopped for not answering while it was the app that was busy. What made the difference:
+
+- The **Outliner** lists every row but draws only the rows in view and a screenful either side (above 300 rows; the scroll bar is the whole list's). Its rows are worked out in one pass over the model.
+- The **Cut list** draws its first 500 rows and 500 more each time you ask; the totals, CSV, PDF, labels, Print and picking rows always cover every row. The print report is built only when you print.
+- **Selecting** many solids or groups finds their faces and edges in one pass over the view, not one pass per solid.
+- The **plugin watchdog** does not count a pause of the app itself against a plugin: its budget starts again when the app's thread runs again.
+
+A model that large is still slow to work in where every solid is involved: the cut list of 100,000 loose solids is 100,000 rows, and a plugin cannot read the list of all its solids in one message (`model.solids` is refused as `too_large` past the 4 MB message budget; `model.stats` counts them).
+
 ## Hard limits (refused with a message)
 
 | What | Limit |
@@ -22,7 +33,7 @@ An earlier run on the same machine (2026-10-12, before named single placements c
 | Smallest feature | 0.01 mm (points closer than that are one point) |
 | One imported item | 4,000,000 points or faces |
 | One import (a whole file) | 1,500,000 faces, 3,000,000 points, 50,000 objects |
-| Texture images | 512 per model, 16 MB and 4096 x 4096 pixels each, 256 MB in all |
+| Texture images | 512 per model, 16 MB and 4096 x 4096 pixels each, 256 MB and 128 million pixels in all |
 | An array | 1,000 copies |
 | A plugin batch | 2,000 ops (and a work budget, below) |
 | Stock library | 200 stocks; kerf up to 1/2 in, trim up to 4 in; stock 1 mm to 10 m |
@@ -47,7 +58,7 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | `.shz` components | nested at most 64 deep; no definition inside itself; what they derive held to the model limits below | Counted along the definitions before anything is derived: 30 definitions each holding two copies of the next are a billion solids from a few kilobytes. |
 | `.3mf` | 4,096 entries; a model part 256 MB; 512 MB in all; model parts named by the package's relationships | Same checks as `.shz`; each part inflated once. What the build expands to through components is counted per object, once, before anything is built. |
 | `.skp` (SketchUp 2021 and later are zips) | 512 MB declared and 5,000 entries; 100,000 groups and copies, 3,000,000 points, 1,500,000 faces mapped | Checked from the archive's directory before openskp inflates anything; groups (expanded per placement, unlike components) are counted as they are expanded. |
-| `.skp` texture images | 16 MB, 4096 x 4096 pixels, 512 | One the kernel would refuse is left out with a note, so the rest of the model still comes in. |
+| `.skp` texture images | 16 MB, 4096 x 4096 pixels, 512; 256 MB and 128 million pixels in all | One the kernel would refuse is left out with a note, so the rest of the model still comes in. |
 | One import, any format | 1,500,000 faces; 3,000,000 points; 50,000 objects; 5,000 lines and curves with 250,000 points; component copies counted | Building a solid takes about 2 KB per triangle at its peak, and WebAssembly has 4 GB. Checked by the reader as it reads and by the kernel again before it builds. A sketch takes all of an import's lines in one pass (5,000 lines: half a second). |
 | A glTF accessor | its count and stride must fit its buffer (checked in 64-bit arithmetic); 4,000,000 values without a buffer | Checked before anything is allocated: a count of 2^31 is refused at once. |
 | A glTF node tree | each node reached once; 64 deep | glTF nodes form a tree; a node listed twice would be walked again for every path to it. |
@@ -66,7 +77,8 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | Faces | 5,000,000 | About 0.5 KB each with their edges. |
 | Points | 10,000,000 | |
 | One sketch | 20,000 edges | A sketch's edges are checked against each other whenever it changes. |
-| Texture images | 512; 16 MB, 4096 x 4096 pixels each; 256 MB in all | The browser decodes an image to 4 bytes a pixel and keeps mipmaps: a 300 KB PNG can say 16384 x 16384, which is 1 GB decoded. |
+| Texture images | 512; 16 MB, 4096 x 4096 pixels each; 256 MB and 128 million pixels in all | The browser decodes an image to 4 bytes a pixel and keeps mipmaps: a 300 KB PNG can say 16384 x 16384, which is 1 GB decoded; sixteen legal 4096 x 4096 images of one colour (a few hundred kilobytes of `.shz`) were a gigabyte, and 512 of them would have been tens. The pixels of all of them together are counted, from their headers, before any is drawn. |
+| What the view decodes of them | each at most 2048 x 2048, all together within 32 million pixels (128 MB), one image at a time; the swatches in the Materials pane are small copies (96 pixels a side) | A texture tiles over a face, and a view of the whole model does not show more. A model with many large images draws each a little coarser; the file keeps them at full size. |
 | An array or copy | refused before any copy is made when the copies (and everything inside copied groups and components) would pass the limits above | |
 | A section cap | a ring of a section cut is shown, and drawn by Create Group from Slice, only when some edge is longer than 10 micrometres (POINT_MERGE), it keeps three corners with points closer than that welded, and its area is over 1e-10 m2 per metre of the solid's size | Lane 17: below that it is rounding, not material; the cut and the slice use the one rule, so the slice never refuses a cap the section shows (ADR-0010). |
 | An op sent to the kernel | 256 MB of JSON; a plugin batch 32 MB; a replayed history 1 GB | Refused before it is parsed. |
