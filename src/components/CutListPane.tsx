@@ -8,7 +8,7 @@
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
-import { formatSteps, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
+import { formatSteps, geometryNote, listStyle, materialText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
 
 export interface CutListPaneProps {
   list: CutList | null;
@@ -33,6 +33,10 @@ export interface CutListPaneProps {
   /** Set the stock of these parts (one undo step): text, null for the material's name, or
    * "keep" for each part's own; `sheet` null means decide from the name and thickness. */
   onStock: (rows: CutRow[], stock: string | null | "keep", sheet: boolean | null) => void;
+  /** Lane 15: count these parts, or drop them from the totals and the nesting (one undo step). */
+  onInclude?: (rows: CutRow[], include: boolean) => void;
+  /** Lane 15: make each piece of the loose faces in the open context a part (Group loose faces). */
+  onGroupLoose?: () => void;
   onCsv: () => void;
   onPdf: () => void;
   onPrint: () => void;
@@ -183,6 +187,16 @@ export function CutListPane(p: CutListPaneProps) {
         </label>
       </div>
       {p.problem ? <p className="note err">{p.problem}</p> : null}
+      {list && geometryNote(list) ? (
+        <p className="note geom" data-testid="cutlist-geometry">
+          <span>{geometryNote(list)}.</span>
+          {list.totals.loose_faces && p.onGroupLoose ? (
+            <button type="button" className="link" onClick={p.onGroupLoose} title="Put each connected piece of the loose faces into a group of its own, so each becomes a part (one undo step; nothing moves)">
+              Make parts from loose faces
+            </button>
+          ) : null}
+        </p>
+      ) : null}
       {!list ? (
         p.problem ? null : <p className="note">Working out the cut list…</p>
       ) : empty ? (
@@ -223,13 +237,25 @@ export function CutListPane(p: CutListPaneProps) {
                       data-row={k}
                       data-part={row.name}
                       aria-selected={sel}
-                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${menuKeys.has(k) ? " menu" : ""}`}
+                      data-not-solid={row.not_solid ? "true" : undefined}
+                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`}
                       onMouseDown={(e) => e.shiftKey && e.preventDefault()}
                       onClick={(e) => clickRow(e, row)}
                       onContextMenu={(e) => openMenu(e, row)}
                       title="Click to select its pieces in the model (Shift: a range of rows, Ctrl: one more). Right-click to set the grain or the stock of the picked rows."
                     >
                       <td className="part" title={notes.length ? `${row.name} (${notes.join(", ")})` : row.name}>
+                        {p.onInclude ? (
+                          <input
+                            type="checkbox"
+                            className="inc"
+                            checked={row.included !== false}
+                            aria-label={`Include ${row.name}`}
+                            title={row.included === false ? "Left out of the totals and the nesting. Tick to count it again." : "Counted. Untick to leave it out of the totals and the nesting (it stays listed)."}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => p.onInclude?.([row], e.currentTarget.checked)}
+                          />
+                        ) : null}
                         <span className="name">{row.name}</span>
                         {notes.length ? <small>{notes.join(" · ")}</small> : null}
                       </td>
@@ -337,6 +363,18 @@ export function CutListPane(p: CutListPaneProps) {
           >
             {menu.rows.every((r) => r.sheet) ? "Mark as solid lumber" : "Mark as sheet goods"}
           </button>
+          {p.onInclude ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenu(null);
+                p.onInclude?.(menu.rows, menu.rows.some((r) => r.included === false));
+              }}
+            >
+              {menu.rows.some((r) => r.included === false) ? "Count in the totals" : "Leave out of the totals"}
+            </button>
+          ) : null}
           <button
             type="button"
             role="menuitem"

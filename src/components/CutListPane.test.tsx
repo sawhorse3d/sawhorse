@@ -298,3 +298,59 @@ describe("Report consistency", () => {
   });
 });
 
+
+describe("Parts that are not solids (lane 15)", () => {
+  /** The bookshelf with an imported bench seat that is not a solid, a dropped part, and loose faces. */
+  function mixed(): CutList {
+    const list = bookshelf();
+    list.rows[0] = { ...list.rows[0], name: "Bench seat", not_solid: true };
+    list.rows[3] = { ...list.rows[3], included: false };
+    list.totals = { ...list.totals, not_solid: 1, excluded: 1, loose_faces: 312 };
+    return list;
+  }
+
+  it("flags the part in the pane, says what is outside parts, and offers to make parts of it", () => {
+    const p = props({ list: mixed(), onInclude: vi.fn(), onGroupLoose: vi.fn() });
+    render(<CutListPane {...p} />);
+    const seat = screen.getByText("Bench seat").closest("tr")!;
+    expect(seat.getAttribute("data-not-solid")).toBe("true");
+    expect(seat.querySelector("small")!.textContent).toContain("not solid (sizes from bounds)");
+    const note = screen.getByTestId("cutlist-geometry");
+    expect(note.textContent).toContain("1 part not solid (sizes from bounds) · 312 faces outside parts · 1 part left out of the totals");
+    fireEvent.click(within(note).getByRole("button", { name: "Make parts from loose faces" }));
+    expect(p.onGroupLoose).toHaveBeenCalledTimes(1);
+  });
+
+  it("an include box per part drops it or counts it again, without selecting the row", () => {
+    const p = props({ list: mixed(), onInclude: vi.fn() });
+    render(<CutListPane {...p} />);
+    const kick = screen.getByLabelText("Include Toe kick") as HTMLInputElement;
+    expect(kick.checked).toBe(false);
+    expect(kick.closest("tr")!.className).toContain("out");
+    fireEvent.click(kick);
+    expect(p.onInclude).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Toe kick" })], true);
+    fireEvent.click(screen.getByLabelText("Include Shelf"));
+    expect(p.onInclude).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Shelf" })], false);
+    expect(p.onSelectRows).not.toHaveBeenCalled();
+    // The right-click menu says the same.
+    fireEvent.contextMenu(screen.getByText("Shelf").closest("tr")!);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Leave out of the totals" }));
+    expect(p.onInclude).toHaveBeenLastCalledWith([expect.objectContaining({ name: "Shelf" })], false);
+  });
+
+  it("every output carries the flag: CSV, report, labels", async () => {
+    const { cutListCsv, parseCsv, csvCellText } = await import("../cutlist/csv");
+    const { labelsPdf } = await import("../cutlist/documents");
+    const list = mixed();
+    const csv = parseCsv(cutListCsv(list)).map((r) => r.map(csvCellText));
+    const seat = csv.find((r) => r[0] === "Bench seat")!;
+    expect(seat[13]).toContain("not solid (sizes from bounds)");
+    expect(csv.find((r) => r[0] === "Toe kick")![13]).toContain("left out of the totals");
+    const report = readPdf(reportPdf(list, "Bench")).text.flat().join(" ");
+    expect(report).toContain("not solid (sizes from bounds)");
+    expect(report).toContain("312 faces outside parts");
+    const labels = readPdf(labelsPdf(list, "Bench")).text.flat().join(" ");
+    expect(labels).toContain("not solid (sizes from bounds)");
+    expect(labels).not.toContain("Toe kick");
+  });
+});

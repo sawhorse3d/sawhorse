@@ -161,7 +161,12 @@ fn bad(msg: impl Into<String>) -> DocumentError {
 /// Weld points closer than [`POINT_MERGE`] (the first occurrence wins). Returns the welded
 /// points and the old -> new index map.
 fn weld(points: &[DVec3]) -> (Vec<DVec3>, Vec<u32>) {
-    let cell = POINT_MERGE;
+    weld_within(points, POINT_MERGE)
+}
+
+/// Weld points closer than `gap` (the first occurrence wins).
+fn weld_within(points: &[DVec3], gap: f64) -> (Vec<DVec3>, Vec<u32>) {
+    let cell = gap;
     let key = |p: DVec3| {
         (
             (p.x / cell).floor() as i64,
@@ -181,7 +186,7 @@ fn weld(points: &[DVec3]) -> (Vec<DVec3>, Vec<u32>) {
                 for dz in -1..=1 {
                     if let Some(list) = grid.get(&(x + dx, y + dy, z + dz)) {
                         for &q in list {
-                            if out[q as usize].distance(p) <= POINT_MERGE {
+                            if out[q as usize].distance(p) <= gap {
                                 found = Some(q);
                                 break 'search;
                             }
@@ -402,6 +407,132 @@ fn consistent_orientation(faces: &[Vec<Vec<u32>>]) -> Option<Vec<bool>> {
         }
     }
     turn.into_iter().collect()
+}
+
+/// Gaps the cut list's heal closes (0.1 mm): far above drawing noise, far below anything a
+/// woodworker draws on purpose.
+pub const HEAL_GAP: f64 = 1e-4;
+/// An isolated face smaller than this share of a mesh's whole area is a sliver.
+pub const SLIVER_SHARE: f64 = 1e-3;
+
+/// What the cut list's heal found on a non-solid mesh ([`heal_check`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HealCheck {
+    /// After the heal, every edge has exactly two faces and the faces can all face one
+    /// way: a closed shell (or several), sized like a solid.
+    pub closed: bool,
+    /// Faces left after the heal.
+    pub faces: usize,
+}
+
+/// The heal the cut list tries on a mesh before it sizes the part from its bounds: weld
+/// vertices closer than [`HEAL_GAP`] (close tiny gaps), drop faces with no area and exact
+/// repeats, drop isolated slivers (faces sharing no edge with any other face and smaller
+/// than [`SLIVER_SHARE`] of the whole), then ask whether what is left is closed and can be
+/// turned to face one way (inconsistent faces flipped). Nothing in the model changes: the
+/// answer only decides whether a part is flagged "not solid (sizes from bounds)".
+pub fn heal_check(positions: &[DVec3], faces: &[Vec<Vec<u32>>]) -> HealCheck {
+    let (pts, map) = weld_within(positions, HEAL_GAP);
+    let mut seen: BTreeSet<Vec<Vec<u32>>> = BTreeSet::new();
+    let mut kept: Vec<Vec<Vec<u32>>> = Vec::new();
+    let mut areas: Vec<f64> = Vec::new();
+    let mut pinched = false;
+    for f in faces {
+        let Some(first) = f.first() else { continue };
+        let outer = clean_ring(first, &map);
+        let area = if outer.len() >= 3 {
+            ring_area(&outer, &pts)
+        } else {
+            0.0
+        };
+        if area <= AREA_EPS {
+            continue;
+        }
+        let mut rings = vec![outer];
+        for h in &f[1..] {
+            let h = clean_ring(h, &map);
+            if h.len() >= 3 && ring_area(&h, &pts) > AREA_EPS {
+                rings.push(h);
+            }
+        }
+        let all: Vec<u32> = rings.iter().flatten().copied().collect();
+        if all.iter().copied().collect::<BTreeSet<u32>>().len() != all.len() {
+            pinched = true;
+        }
+        if seen.insert(face_key(&rings)) {
+            kept.push(rings);
+            areas.push(area);
+        }
+    }
+    let edge_uses = |faces: &[Vec<Vec<u32>>]| {
+        let mut uses: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+        for (fi, f) in faces.iter().enumerate() {
+            for r in f {
+                for k in 0..r.len() {
+                    let (a, b) = (r[k], r[(k + 1) % r.len()]);
+                    uses.entry((a.min(b), a.max(b))).or_default().push(fi);
+                }
+            }
+        }
+        uses
+    };
+    // Isolated slivers: no edge shared with another face, and tiny next to the whole.
+    let total: f64 = areas.iter().sum();
+    let uses = edge_uses(&kept);
+    let mut shared = vec![false; kept.len()];
+    for list in uses.values() {
+        if list.len() > 1 {
+            for &f in list {
+                shared[f] = true;
+            }
+        }
+    }
+    let mut i = 0;
+    kept.retain(|_| {
+        let keep = shared[i] || areas[i] >= SLIVER_SHARE * total;
+        i += 1;
+        keep
+    });
+    let faces_left = kept.len();
+    let closed = !pinched
+        && faces_left >= 4
+        && edge_uses(&kept).values().all(|l| l.len() == 2)
+        && consistent_orientation(&kept).is_some();
+    HealCheck {
+        closed,
+        faces: faces_left,
+    }
+}
+
+/// The faces of a mesh in edge-connected pieces (faces sharing an edge are one piece), each
+/// piece's face indices in order; pieces in order of their first face.
+pub fn connected_pieces(faces: &[Vec<Vec<u32>>]) -> Vec<Vec<usize>> {
+    let mut parent: Vec<usize> = (0..faces.len()).collect();
+    let mut first_use: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for (fi, f) in faces.iter().enumerate() {
+        for r in f {
+            for k in 0..r.len() {
+                let (a, b) = (r[k], r[(k + 1) % r.len()]);
+                match first_use.entry((a.min(b), a.max(b))) {
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(fi);
+                    }
+                    std::collections::btree_map::Entry::Occupied(e) => {
+                        let (x, y) = (find(&mut parent, *e.get()), find(&mut parent, fi));
+                        if x != y {
+                            parent[x.max(y)] = x.min(y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut pieces: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for fi in 0..faces.len() {
+        let r = find(&mut parent, fi);
+        pieces.entry(r).or_default().push(fi);
+    }
+    pieces.into_values().collect()
 }
 
 fn signed_volume(tris: &[[u32; 3]], pts: &[DVec3]) -> f64 {
@@ -1234,5 +1365,73 @@ mod tests {
         let mut item = stl_box([0.0; 3], [1.0, 1.0, 1.0]);
         item.positions[0][0] = f64::NAN;
         assert!(build_item(&item).is_err());
+    }
+
+    fn pts(item: &ImportItem) -> Vec<DVec3> {
+        item.positions
+            .iter()
+            .map(|p| DVec3::from_array(*p))
+            .collect()
+    }
+
+    #[test]
+    fn the_cut_list_heal_closes_tiny_gaps_and_drops_isolated_slivers() {
+        // A closed box: closed.
+        let b = stl_box([0.0; 3], [1.0, 1.0, 1.0]);
+        assert!(heal_check(&pts(&b), &b.faces).closed);
+        // An open box (the top gone): not closed, whatever the heal does.
+        let mut open = b.clone();
+        open.faces.truncate(10);
+        assert!(!heal_check(&pts(&open), &open.faces).closed);
+        // A 50 micrometre gap on one corner: the import's 10 micrometre weld leaves it open,
+        // the heal's 0.1 mm weld closes it.
+        let mut gap = b.clone();
+        gap.positions[0][0] += 5e-5;
+        assert!(build_item(&gap).unwrap().loose.is_some());
+        assert!(heal_check(&pts(&gap), &gap.faces).closed);
+        // Reversed faces are turned.
+        let mut rev = b.clone();
+        rev.faces[0][0].reverse();
+        assert!(heal_check(&pts(&rev), &rev.faces).closed);
+        // A floating sliver beside the box is dropped; a floating panel the size of a face
+        // is not (it is real geometry), so that mesh stays open.
+        let mut sliver = b.clone();
+        let o = sliver.positions.len() as u32;
+        sliver
+            .positions
+            .extend([[3.0, 0.0, 0.0], [3.001, 0.0, 0.0], [3.0, 0.001, 0.0]]);
+        sliver.faces.push(vec![vec![o, o + 1, o + 2]]);
+        assert!(heal_check(&pts(&sliver), &sliver.faces).closed);
+        let mut panel = b.clone();
+        panel
+            .positions
+            .extend([[3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.0, 1.0, 0.0]]);
+        panel.faces.push(vec![vec![o, o + 1, o + 2]]);
+        assert!(!heal_check(&pts(&panel), &panel.faces).closed);
+    }
+
+    #[test]
+    fn faces_come_apart_into_edge_connected_pieces() {
+        let a = stl_box([0.0; 3], [1.0, 1.0, 1.0]);
+        let b = stl_box([2.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        // Welded indices, as a mesh holds them.
+        let mut item = a.clone();
+        let off = item.positions.len() as u32;
+        item.positions.extend(b.positions.clone());
+        item.faces.extend(
+            b.faces
+                .iter()
+                .map(|f| vec![f[0].iter().map(|v| v + off).collect()]),
+        );
+        let (_, map) = weld(&pts(&item));
+        let faces: Vec<Vec<Vec<u32>>> = item
+            .faces
+            .iter()
+            .map(|f| vec![clean_ring(&f[0], &map)])
+            .collect();
+        let pieces = connected_pieces(&faces);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(pieces[0], (0..12).collect::<Vec<_>>());
+        assert_eq!(pieces[1], (12..24).collect::<Vec<_>>());
     }
 }

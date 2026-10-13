@@ -1739,6 +1739,24 @@ export function App() {
     [apply],
   );
 
+  /** Lane 15: count parts, or leave them out of the totals and the nesting (one undo step). */
+  const setInclude = useCallback(
+    (rows: CutRow[], include: boolean) =>
+      void apply(partOps(rows, (row) => ({ op: "set_include", part: row.target, include })), () =>
+        include ? `${partNames(rows)} counted in the totals again.` : `${partNames(rows)} left out of the totals and the nesting (still listed; tick it to count it again).`,
+      ),
+    [apply],
+  );
+  /** Lane 15: each connected piece of the loose faces in the open context becomes a group, so a part. */
+  const groupLoose = useCallback(
+    () =>
+      void apply({ op: "group_loose", meshes: [] }, (out) => {
+        const n = out.outcome.kind === "loose_grouped" ? out.outcome.groups.length : 0;
+        return `Loose faces made into ${n} part${n === 1 ? "" : "s"} (one group per connected piece; Ctrl+Z puts them back).`;
+      }),
+    [apply],
+  );
+
   // ---- nesting (lane 9) -------------------------------------------------------------------
 
   const toggleNest = useCallback(() => {
@@ -2431,6 +2449,8 @@ export function App() {
           onSelectRows: selectCutRows,
           onGrain: setGrain,
           onStock: setStock,
+          onInclude: setInclude,
+          onGroupLoose: groupLoose,
           onCsv: () => void saveCut(csvBytes, "cut list.csv", CSV_TYPE, "the cut list as a spreadsheet"),
           onPdf: () => void saveCut((l) => reportPdf(l, cutTitle), "cut list.pdf", PDF_TYPE, "the cut list report"),
           onPrint: printCut,

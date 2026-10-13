@@ -3,7 +3,7 @@
 // 5160-style sheets: 30 labels, 3 across and 10 down, 2 5/8 x 1 in).
 import type { CutList } from "../kernel/types";
 import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "./pdf";
-import { formatArea, formatBoardFeet, formatSize, formatSteps, GRAIN_WORDS, listStyle, materialText, REPORT_COLUMNS, reportCells, scopeNote, sizeUnit, summary } from "./format";
+import { formatArea, formatBoardFeet, formatSize, formatSteps, geometryNote, GRAIN_WORDS, listStyle, materialText, NOT_SOLID_NOTE, REPORT_COLUMNS, reportCells, scopeNote, sizeUnit, summary } from "./format";
 
 const IN = 72;
 
@@ -57,6 +57,12 @@ export function reportPdf(list: CutList, title: string): Uint8Array {
       const s = summary(list);
       p.text(40, y, `${list.totals.parts} parts, ${list.totals.pieces} pieces · ${s.boardFeet} ${s.boardFeetLabel} · ${s.sheets} ${s.sheetsLabel} · sizes in ${sizeUnit(list.rounding)}`, 9, { gray: 0.35 });
       y -= 22;
+      // Lane 15: parts that are not solids, faces outside parts, parts left out.
+      const g = geometryNote(list);
+      if (g) {
+        p.text(40, y + 9, fit(g, 8.5, W - 80), 8.5, { gray: 0.2 });
+        y -= 6;
+      }
     } else y -= 8;
     REPORT_COLUMNS.forEach((label, k) => {
       const [x, w, right] = LAYOUT[k];
@@ -123,11 +129,13 @@ export function labelSlot(k: number): { page: number; x: number; y: number } {
   return { page: Math.floor(k / per), x: LABEL_SHEET.left + col * LABEL_SHEET.pitchX, y: LETTER[1] - LABEL_SHEET.top - (row + 1) * LABEL_SHEET.pitchY };
 }
 
-/** One label per part: name and quantity, size, material, and the grain as words and an arrow. */
+/** One label per part: name and quantity, size, material, and the grain as words and an arrow.
+ * A part that is not a solid says so on its material line; a part left out of the totals
+ * gets no label (lane 15). */
 export function labelsPdf(list: CutList, title: string, opts: { outlines?: boolean } = {}): Uint8Array {
   const doc = new PdfDoc({ title: `Labels: ${title}`, creator: "Sawhorse" });
   const { width: w, height: h } = LABEL_SHEET;
-  list.rows.forEach((row, k) => {
+  list.rows.filter((row) => row.included !== false).forEach((row, k) => {
     const slot = labelSlot(k);
     while (doc.pages.length <= slot.page) doc.page();
     const p = doc.pages[slot.page];
@@ -137,7 +145,7 @@ export function labelsPdf(list: CutList, title: string, opts: { outlines?: boole
     p.text(x + pad, y + h - 17, fit(row.name, 11, w - 2 * pad - 34, true), 11, { bold: true });
     p.text(x + w - pad, y + h - 17, `×${row.qty}`, 11, { bold: true, align: "right" });
     p.text(x + pad, y + h - 31, fit(formatSize(row, list.rounding, listStyle(list)), 9, w - 2 * pad), 9);
-    p.text(x + pad, y + h - 44, fit(`${materialText(row)}${row.sheet ? " (sheet)" : ""}`, 8, w - 2 * pad), 8, { gray: 0.25 });
+    p.text(x + pad, y + h - 44, fit(`${materialText(row)}${row.sheet ? " (sheet)" : ""}${row.not_solid ? ` · ${NOT_SOLID_NOTE}` : ""}`, 8, w - 2 * pad), 8, { gray: 0.25 });
     const grain = `Grain ${GRAIN_WORDS[row.grain]}`;
     p.text(x + pad, y + 10, fit(grain, 7.5, w - 2 * pad - 50), 7.5, { gray: 0.25 });
     if (row.grain !== "none") {

@@ -113,11 +113,19 @@ export function formatBoardFeet(bf: number): string {
 
 export const GRAIN_WORDS: Record<Grain, string> = { length: "along L", width: "across W", none: "none" };
 
-/** Plain-language notes for a row, the same in the pane, the CSV, the print view and the
- * PDF: a grain set on the part ("grain across W", "no grain"; the default, along L, set
- * explicitly too), shaped, handed, hidden, scaled. */
+/** What a part that is not a watertight solid says, everywhere it is written (lane 15). */
+export const NOT_SOLID_NOTE = "not solid (sizes from bounds)";
+/** What a part dropped from the totals says (lane 15). */
+export const LEFT_OUT_NOTE = "left out of the totals";
+
+/** Plain-language notes for a row, the same in the pane, the CSV, the print view, the PDF
+ * and the labels: left out of the totals, not solid (sized from its bounds), a grain set
+ * on the part ("grain across W", "no grain"; the default, along L, set explicitly too),
+ * shaped, handed, hidden, scaled. */
 export function rowNotes(row: CutRow): string[] {
   const notes: string[] = [];
+  if (row.included === false) notes.push(LEFT_OUT_NOTE);
+  if (row.not_solid) notes.push(NOT_SOLID_NOTE);
   if (row.grain_set) notes.push(row.grain === "none" ? "no grain" : `grain ${GRAIN_WORDS[row.grain]}`);
   if (row.shaped) notes.push("shaped");
   if (row.handed) notes.push(row.handed === row.total ? "handed" : `${row.handed} of ${row.total} handed`);
@@ -177,4 +185,16 @@ export function reportCells(row: CutRow, list: CutList): string[] {
 export function scopeNote(r: Rounding): string {
   const step = r === "sixteenth" ? "1/16 in" : r === "thirty_second" ? "1/32 in" : "0.5 mm";
   return `Finished sizes, rounded to the nearest ${step}. Grain runs along L unless noted. Edge banding is not included; the sheet count here is a rough area estimate (Nesting lays the parts out on real sheets and boards, kerf included).`;
+}
+
+/** Lane 15: what the list says about geometry that is not a solid: "2 parts not solid
+ * (sizes from bounds) · 312 faces outside parts · 1 part left out". Empty when all is solid. */
+export function geometryNote(list: CutList): string {
+  const t = list.totals;
+  const bits: string[] = [];
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  if (t.not_solid) bits.push(`${n(t.not_solid, "part", "parts")} not solid (sizes from bounds)`);
+  if (t.loose_faces) bits.push(`${n(t.loose_faces, "face", "faces")} outside parts`);
+  if (t.excluded) bits.push(`${n(t.excluded, "part", "parts")} left out of the totals`);
+  return bits.join(" · ");
 }

@@ -79,6 +79,10 @@ export type KernelOp =
   | { op: "set_grain"; part: PartRef; grain: Grain }
   /** Cut list: the stock a part is cut from (null: its material's name) and sheet or lumber (null: decide). */
   | { op: "set_stock"; part: PartRef; stock: string | null; sheet: boolean | null }
+  /** Cut list (lane 15): count a part, or drop it from the totals and the nesting (still listed). */
+  | { op: "set_include"; part: PartRef; include: boolean }
+  /** Lane 15: each edge-connected piece of loose non-solid faces into a group of its own (none named: every mesh in the open context). */
+  | { op: "group_loose"; meshes: number[] }
   /** Nesting (lane 9): add a stock, or replace the stock named `replace` (a rename carries the defaults). */
   | { op: "define_stock"; stock: StockDef; replace?: string | null }
   | { op: "delete_stock"; name: string }
@@ -316,6 +320,7 @@ export type OpOutcome =
   | { kind: "renamed" }
   | { kind: "mesh_deleted" }
   | { kind: "part_set" }
+  | { kind: "loose_grouped"; groups: number[] }
   | { kind: "stock_set" }
   | { kind: "restored"; objects: number; meshes: number; sketches: number }
   | { kind: "section_added"; section: number }
@@ -930,6 +935,10 @@ export interface CutRow {
   steps: [number, number, number];
   shaped: boolean;
   scaled: boolean;
+  /** Lane 15: not a watertight solid even after the heal: sized from the box around its faces. */
+  not_solid: boolean;
+  /** Lane 15: counted in the totals and nested (false: dropped by the person, still listed). */
+  included: boolean;
   grain: Grain;
   grain_set: boolean;
   material: string | null;
@@ -943,7 +952,14 @@ export interface CutRow {
 
 export interface CutTotals {
   parts: number;
+  /** Pieces counted (dropped rows left out). */
   pieces: number;
+  /** Lane 15: rows dropped from the totals. */
+  excluded: number;
+  /** Lane 15: rows that are not solids (sized from their bounds). */
+  not_solid: number;
+  /** Lane 15: faces of non-solid geometry outside any part (never listed). */
+  loose_faces: number;
   hidden: number;
   board_feet: number;
   lumber: { material: string | null; board_feet: number }[];
@@ -1029,6 +1045,8 @@ export interface Placement {
   turned: boolean;
   grain: Grain;
   size: V3;
+  /** Lane 15: its part is not a solid (the rectangle is the box around its faces). */
+  not_solid?: boolean;
 }
 
 export interface StockPiece {

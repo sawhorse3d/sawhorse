@@ -236,6 +236,10 @@ pub fn check_nesting_of(
     };
     let mut want = BTreeSet::new();
     for (ri, row) in list.rows.iter().enumerate() {
+        // A row dropped from the list is never nested (lane 15).
+        if !row.included {
+            continue;
+        }
         for c in 1..=counted(row).len() {
             want.insert((ri, c));
         }
@@ -560,8 +564,24 @@ pub fn check_cut_list(m: &Model) -> Result<(), String> {
                         .filter(|o| o.parent == Some(n))
                         .map(|o| o.id)
                         .collect();
-                    if solids.is_empty() || g.nodes.iter().any(|x| x.parent == Some(n)) {
-                        return bad("a piece's group or instance is not solids only");
+                    // Lane 15: non-solid meshes with faces make a part too (flagged unless
+                    // they heal closed).
+                    let meshes: Vec<&crate::meshbuild::LooseMesh> = m
+                        .meshes()
+                        .into_iter()
+                        .map(|(_, x)| x)
+                        .filter(|x| x.member.parent() == Some(n) && !x.faces.is_empty())
+                        .collect();
+                    if (solids.is_empty() && meshes.is_empty())
+                        || g.nodes.iter().any(|x| x.parent == Some(n))
+                    {
+                        return bad("a piece's group or instance is not a part container");
+                    }
+                    let open = meshes
+                        .iter()
+                        .any(|x| !crate::meshbuild::heal_check(&x.positions, &x.faces).closed);
+                    if open && !row.not_solid {
+                        return bad("a piece of open meshes is not flagged not solid");
                     }
                     for id in solids {
                         if !seen.insert(id) {
@@ -596,6 +616,24 @@ pub fn check_cut_list(m: &Model) -> Result<(), String> {
             return bad("handed count is not the mirrored instances");
         }
     }
+    // Lane 15: faces outside parts are the meshes' faces whose container is the model or an
+    // assembly (a group or instance holding groups or instances).
+    let loose: usize = m
+        .meshes()
+        .into_iter()
+        .map(|(_, x)| x)
+        .filter(|x| match x.member.parent() {
+            None => true,
+            Some(p) => g.nodes.iter().any(|y| y.parent == Some(p)),
+        })
+        .map(|x| x.faces.len())
+        .sum();
+    if loose != all.totals.loose_faces {
+        return Err(format!(
+            "cut list: {} faces outside parts, the model has {loose}",
+            all.totals.loose_faces
+        ));
+    }
     let solids: BTreeSet<u64> = m.object_ids().into_iter().collect();
     if seen != solids {
         return Err(format!(
@@ -619,7 +657,18 @@ pub fn check_cut_list(m: &Model) -> Result<(), String> {
             ));
         }
     }
-    let drawn: usize = all.rows.iter().map(|r| r.total - r.hidden).sum();
+    let drawn: usize = all
+        .rows
+        .iter()
+        .filter(|r| r.included)
+        .map(|r| r.total - r.hidden)
+        .sum();
+    let counted: usize = all.rows.iter().filter(|r| r.included).map(|r| r.qty).sum();
+    if all.totals.pieces != counted
+        || all.totals.excluded != all.rows.iter().filter(|r| !r.included).count()
+    {
+        return Err("cut list: the totals count a dropped part".into());
+    }
     if visible.totals.pieces != drawn || visible.rows.iter().any(|r| r.qty == 0 || r.hidden != 0) {
         return Err("cut list: Visible only does not count exactly the drawn pieces".into());
     }

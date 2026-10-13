@@ -15,6 +15,17 @@
 //! - a solid or solid-only group inside an assembly *component* is a member part of that
 //!   definition: one piece per copy of the assembly.
 //!
+//! **Parts that are not solids (lane 15).** Most hand-made SketchUp furniture is not
+//! watertight: a bench or a desk arrives as groups of open faces, which the importer keeps
+//! as non-solid meshes. A group or instance holding such meshes is still a part container:
+//! the meshes first get the heal [`crate::meshbuild::heal_check`] tries (tiny gaps closed,
+//! inconsistent faces turned, isolated slivers dropped); if they still do not close, the
+//! part is sized from the minimal oriented box around its faces exactly like a solid (T x W
+//! x L, grain along the length unless set) and flagged `not_solid`. Board feet and the sheet
+//! classification use that size; nesting places it like any other part. Loose faces outside
+//! any group or component are never parts; the list counts them (`loose_faces`). Any part
+//! can be dropped from the totals and the nesting ([`PartAttrs::include`]).
+//!
 //! Mirrored instances count in the same row and are reported as "handed". An instance
 //! scaled so its size differs from its siblings gets its own row (same name, `scaled`).
 //!
@@ -47,6 +58,7 @@ use glam::{DMat3, DVec2, DVec3};
 
 use crate::hash::StableHasher;
 use crate::ids::{DefId, NodeId, ObjectId, from_public, to_public};
+use crate::meshbuild::LooseMesh;
 use crate::model::Model;
 use crate::nodes::{Item, Kids, MemberKind, NodeKind, Thing};
 use crate::object::Object;
@@ -136,6 +148,10 @@ pub struct PartAttrs {
     /// material name and the thickness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sheet: Option<bool>,
+    /// Lane 15: `Some(false)` drops the part from the totals, the outputs' counts and the
+    /// nesting (it stays listed, marked, so it can be taken back); absent: included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<bool>,
 }
 
 impl PartAttrs {
@@ -153,6 +169,16 @@ impl PartAttrs {
             None => h.u64(u64::MAX),
         }
         h.u64(self.sheet.map_or(u64::MAX, u64::from));
+        // Lane 15, hashed only when said, so every older document keeps its hash.
+        if let Some(i) = self.include {
+            h.tag("include");
+            h.u64(u64::from(i));
+        }
+    }
+
+    /// Whether the part counts (not dropped with [`crate::model::Op::SetInclude`]).
+    pub fn included(&self) -> bool {
+        self.include != Some(false)
     }
 }
 
@@ -292,6 +318,12 @@ pub struct CutRow {
     pub shaped: bool,
     /// A copy scaled to a size its siblings do not have (it gets a row of its own).
     pub scaled: bool,
+    /// Lane 15: the part's geometry is not a watertight solid, even after the heal
+    /// ([`crate::meshbuild::heal_check`]): its size is the minimal box around its faces,
+    /// flagged "not solid (sizes from bounds)" everywhere the part is written.
+    pub not_solid: bool,
+    /// Lane 15: counted in the totals and nested (false: dropped by the person, still listed).
+    pub included: bool,
     pub grain: Grain,
     /// The grain was set on this part (not the default).
     pub grain_set: bool,
@@ -337,8 +369,15 @@ pub struct SheetTotal {
 pub struct CutTotals {
     /// Rows.
     pub parts: usize,
-    /// Pieces counted.
+    /// Pieces counted (rows dropped from the list left out).
     pub pieces: usize,
+    /// Lane 15: rows dropped (`include` off), listed but not counted.
+    pub excluded: usize,
+    /// Lane 15: rows whose geometry is not a solid (sized from their bounds).
+    pub not_solid: usize,
+    /// Lane 15: faces of non-solid geometry outside any part (loose faces at the top level
+    /// or beside nested groups), never parts: "312 faces outside parts".
+    pub loose_faces: usize,
     /// Pieces hidden among those in the model.
     pub hidden: usize,
     pub board_feet: f64,
@@ -409,6 +448,48 @@ impl Shape {
         }
         Shape { points, normals }
     }
+
+    /// Solids and non-solid meshes together (lane 15): a mesh adds its points and its
+    /// faces' directions, so an open box is measured like the closed one would be.
+    fn of_parts(solids: &[&Object], meshes: &[&LooseMesh], x: &Xform) -> Shape {
+        let mut s = Shape::of(solids, x);
+        let a = x.to_affine();
+        let identity = *x == Xform::IDENTITY;
+        let nm = a.matrix3.inverse().transpose();
+        for m in meshes {
+            for p in &m.positions {
+                s.points
+                    .push(if identity { *p } else { a.transform_point3(*p) });
+            }
+            for f in &m.faces {
+                let Some(outer) = f.first() else { continue };
+                let ring: Vec<DVec3> = outer
+                    .iter()
+                    .filter_map(|&k| m.positions.get(k as usize).copied())
+                    .collect();
+                let mut n = DVec3::ZERO;
+                for k in 0..ring.len() {
+                    n += ring[k].cross(ring[(k + 1) % ring.len()]);
+                }
+                let area = 0.5 * n.length();
+                let dir = if identity { n } else { nm * n };
+                let len = dir.length();
+                if area > 0.0 && len > 0.0 && len.is_finite() {
+                    s.normals.push((dir / len, area));
+                }
+            }
+        }
+        s
+    }
+}
+
+/// Whether some non-solid meshes make a closed shell once healed (lane 15): a part made of
+/// meshes that heal is sized like a solid and not flagged.
+fn meshes_heal(meshes: &[&LooseMesh]) -> bool {
+    meshes
+        .iter()
+        .filter(|m| !m.faces.is_empty())
+        .all(|m| crate::meshbuild::heal_check(&m.positions, &m.faces).closed)
 }
 
 /// `v` or `-v`, whichever has its largest component positive (first of x, y, z on a tie).
@@ -701,7 +782,7 @@ fn similarity(x: &Xform) -> Option<f64> {
 
 /// A box in part coordinates, placed in the world by `x`. Similarities map the box; any
 /// other map (a non-uniform scale or a shear) is measured again in the world.
-fn place(local: &PartBox, x: &Xform, solids: &[&Object]) -> Option<PartBox> {
+fn place(local: &PartBox, x: &Xform, solids: &[&Object], meshes: &[&LooseMesh]) -> Option<PartBox> {
     if *x == Xform::IDENTITY {
         return Some(*local);
     }
@@ -721,7 +802,7 @@ fn place(local: &PartBox, x: &Xform, solids: &[&Object]) -> Option<PartBox> {
                 shaped: local.shaped,
             })
         }
-        None => min_box(&Shape::of(solids, x), own_axes(x)),
+        None => min_box(&Shape::of_parts(solids, meshes, x), own_axes(x)),
     }
 }
 
@@ -734,6 +815,8 @@ struct Piece {
     visible: bool,
     handed: bool,
     bbox: PartBox,
+    /// Every piece of geometry in it is a solid, or meshes that heal closed (lane 15).
+    solid: bool,
 }
 
 fn is_sheet_word(s: &str) -> bool {
@@ -825,11 +908,28 @@ impl Model {
         out
     }
 
-    /// A group or instance holding solids and no group or instance: one piece of wood.
+    /// A group or instance holding solids (or, since lane 15, non-solid meshes with faces)
+    /// and no group or instance: one piece of wood.
     fn is_part_container(&self, kids: &Kids, n: NodeId) -> bool {
         let things = kids.things.get(&Some(n)).map_or(&[][..], |v| v.as_slice());
         !things.iter().any(|t| matches!(t, Thing::Node(_)))
-            && things.iter().any(|t| matches!(t, Thing::Object(_)))
+            && things.iter().any(|t| match t {
+                Thing::Object(_) => true,
+                Thing::Mesh(k) => !self.meshes[*k].faces.is_empty(),
+                Thing::Node(_) => false,
+            })
+    }
+
+    fn meshes_in(&self, kids: &Kids, n: NodeId) -> Vec<&LooseMesh> {
+        kids.things
+            .get(&Some(n))
+            .into_iter()
+            .flatten()
+            .filter_map(|t| match t {
+                Thing::Mesh(k) => Some(&self.meshes[*k]),
+                _ => None,
+            })
+            .collect()
     }
 
     fn solids_in(&self, kids: &Kids, n: NodeId) -> Vec<&Object> {
@@ -864,24 +964,48 @@ impl Model {
             .collect()
     }
 
+    /// The material of the first painted mesh directly in `n`, else what is around it.
+    fn mesh_material_in(&self, n: NodeId) -> Option<String> {
+        self.mesh_order
+            .iter()
+            .map(|&k| &self.meshes[k])
+            .filter(|m| m.member.parent == Some(n))
+            .find_map(|m| m.material.clone())
+            .or_else(|| self.container_material(Some(n)).map(str::to_string))
+    }
+
+    fn template_meshes(&self, d: DefId) -> Vec<&LooseMesh> {
+        self.defs[d]
+            .members
+            .values()
+            .filter_map(|m| match &m.kind {
+                MemberKind::Mesh(o) => Some(&**o),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Every piece, in Outliner order (each container's groups and instances by id, then
-    /// its solids in creation order).
-    fn pieces(&self) -> Vec<Piece> {
+    /// its solids in creation order), and the faces of non-solid meshes outside any part.
+    fn pieces(&self) -> (Vec<Piece>, usize) {
         let kids = self.kids();
-        let mut cache: BTreeMap<PartKey, Option<PartBox>> = BTreeMap::new();
+        let mut cache: BTreeMap<PartKey, Option<(PartBox, bool)>> = BTreeMap::new();
         let mut out = Vec::new();
+        let mut loose = 0usize;
         // Depth first, in Outliner order.
         fn walk(
             m: &Model,
             kids: &Kids,
             c: Option<NodeId>,
-            cache: &mut BTreeMap<PartKey, Option<PartBox>>,
+            cache: &mut BTreeMap<PartKey, Option<(PartBox, bool)>>,
             out: &mut Vec<Piece>,
+            loose: &mut usize,
         ) {
             let things = kids.things.get(&c).cloned().unwrap_or_default();
             for t in things {
                 match t {
-                    Thing::Mesh(_) => {}
+                    // Faces outside any part: counted, never a part (lane 15).
+                    Thing::Mesh(k) => *loose += m.meshes[k].faces.len(),
                     Thing::Object(k) => {
                         if let Some(p) = m.solid_piece(k, cache) {
                             out.push(p);
@@ -893,20 +1017,20 @@ impl Model {
                                 out.push(p);
                             }
                         } else {
-                            walk(m, kids, Some(n), cache, out);
+                            walk(m, kids, Some(n), cache, out, loose);
                         }
                     }
                 }
             }
         }
-        walk(self, &kids, None, &mut cache, &mut out);
-        out
+        walk(self, &kids, None, &mut cache, &mut out, &mut loose);
+        (out, loose)
     }
 
     fn solid_piece(
         &self,
         k: ObjectId,
-        cache: &mut BTreeMap<PartKey, Option<PartBox>>,
+        cache: &mut BTreeMap<PartKey, Option<(PartBox, bool)>>,
     ) -> Option<Piece> {
         let o = &self.objects[k];
         let item = Item::Object(to_public(k));
@@ -927,14 +1051,16 @@ impl Model {
                         &Shape::of(&[template], &Xform::IDENTITY),
                         own_axes(&Xform::IDENTITY),
                     )
+                    .map(|b| (b, true))
                 });
-                let bbox = place(&local?, &x, &[template])?;
+                let bbox = place(&local?.0, &x, &[template], &[])?;
                 Some(Piece {
                     key,
                     item,
                     visible,
                     handed: x.determinant() < 0.0,
                     bbox,
+                    solid: true,
                 })
             }
             _ => {
@@ -948,6 +1074,7 @@ impl Model {
                     visible,
                     handed: false,
                     bbox,
+                    solid: true,
                 })
             }
         }
@@ -957,7 +1084,7 @@ impl Model {
         &self,
         kids: &Kids,
         n: NodeId,
-        cache: &mut BTreeMap<PartKey, Option<PartBox>>,
+        cache: &mut BTreeMap<PartKey, Option<(PartBox, bool)>>,
     ) -> Option<Piece> {
         let node = &self.nodes[n];
         let item = Item::Node(to_public(n));
@@ -966,24 +1093,33 @@ impl Model {
             NodeKind::Instance(d) => {
                 let key = PartKey::Definition(to_public(d));
                 let solids = self.template_solids(d);
+                let meshes = self.template_meshes(d);
                 let local = *cache.entry(key).or_insert_with(|| {
                     min_box(
-                        &Shape::of(&solids, &Xform::IDENTITY),
+                        &Shape::of_parts(&solids, &meshes, &Xform::IDENTITY),
                         own_axes(&Xform::IDENTITY),
                     )
+                    .map(|b| (b, meshes_heal(&meshes)))
                 });
-                let bbox = place(&local?, &node.xform, &solids)?;
+                let (local, solid) = local?;
+                let bbox = place(&local, &node.xform, &solids, &meshes)?;
                 Some(Piece {
                     key,
                     item,
                     visible,
                     handed: node.xform.determinant() < 0.0,
                     bbox,
+                    solid,
                 })
             }
             NodeKind::Group => {
                 let solids = self.solids_in(kids, n);
-                let bbox = min_box(&Shape::of(&solids, &Xform::IDENTITY), own_axes(&node.xform))?;
+                let meshes = self.meshes_in(kids, n);
+                let bbox = min_box(
+                    &Shape::of_parts(&solids, &meshes, &Xform::IDENTITY),
+                    own_axes(&node.xform),
+                )?;
+                let solid = meshes_heal(&meshes);
                 let (key, handed) = match (node.member.slot, self.member_def(node.member.parent)) {
                     (Some(slot), Some((d, i))) => (
                         PartKey::Member {
@@ -1000,6 +1136,7 @@ impl Model {
                     visible,
                     handed,
                     bbox,
+                    solid,
                 })
             }
         }
@@ -1015,7 +1152,9 @@ impl Model {
                 .iter()
                 .find(|&&o| self.objects[o].member.parent == Some(n))
                 .map(|&o| &self.objects[o]);
-            first.and_then(|o| self.majority_material(&[o], None))
+            first
+                .and_then(|o| self.majority_material(&[o], None))
+                .or_else(|| self.mesh_material_in(n))
         };
         match key {
             PartKey::Definition(id) => {
@@ -1029,7 +1168,13 @@ impl Model {
                 let material = self
                     .template_solids(d)
                     .first()
-                    .and_then(|o| self.majority_material(&[o], around));
+                    .and_then(|o| self.majority_material(&[o], around))
+                    .or_else(|| {
+                        self.template_meshes(d)
+                            .iter()
+                            .find_map(|m| m.material.clone())
+                            .or(around.map(str::to_string))
+                    });
                 (
                     def.name.clone(),
                     def.part.clone(),
@@ -1083,7 +1228,7 @@ impl Model {
 
     /// The cut list (see the module docs).
     pub fn cut_list(&self, opts: &CutOptions) -> CutList {
-        let pieces = self.pieces();
+        let (pieces, loose_faces) = self.pieces();
         // Rows: one per part and size (a scaled copy gets its own), in order of first piece.
         let mut order: Vec<(PartKey, [i64; 3])> = Vec::new();
         let mut groups: BTreeMap<(PartKey, [i64; 3]), Vec<usize>> = BTreeMap::new();
@@ -1157,6 +1302,8 @@ impl Model {
                 steps,
                 shaped: idx.iter().any(|&i| pieces[i].bbox.shaped),
                 scaled: sizes_per_key[&first.key] > 1,
+                not_solid: idx.iter().any(|&i| !pieces[i].solid),
+                included: attrs.included(),
                 grain: attrs.grain.unwrap_or_default(),
                 grain_set: attrs.grain.is_some(),
                 material,
@@ -1182,7 +1329,8 @@ impl Model {
         // Solid lumber first, then sheet goods (each in Outliner order): the order a shop
         // works through them, and the sheets sit together for the rough sheet count.
         rows.sort_by_key(|r| r.sheet);
-        let totals = totals(&rows, r);
+        let mut totals = totals(&rows, r);
+        totals.loose_faces = loose_faces;
         let mut list = CutList {
             rounding: r,
             visible_only: opts.visible_only,
@@ -1201,7 +1349,9 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
     // Grouped by material and exact thickness (0.1 um), never by the rounded thickness: a
     // coarser rounding must not merge two stocks (and so change the sheet count).
     let mut sheets: BTreeMap<(Option<String>, i64), (f64, bool, i64)> = BTreeMap::new();
-    for row in rows {
+    // Rows the person dropped stay listed but count nowhere (lane 15).
+    let counted = || rows.iter().filter(|r| r.included);
+    for row in counted() {
         if row.sheet {
             let e = sheets
                 .entry((row.material.clone(), qbits(row.size[0])))
@@ -1232,12 +1382,15 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
         .collect();
     CutTotals {
         parts: rows.len(),
-        pieces: rows.iter().map(|r| r.qty).sum(),
+        pieces: counted().map(|r| r.qty).sum(),
+        excluded: rows.iter().filter(|r| !r.included).count(),
+        not_solid: rows.iter().filter(|r| r.not_solid).count(),
+        loose_faces: 0,
         hidden: rows
             .iter()
             .map(|r| r.total - r.occurrences.iter().filter(|o| o.visible).count())
             .sum(),
-        board_feet: rows.iter().map(|r| r.board_feet).sum(),
+        board_feet: counted().map(|r| r.board_feet).sum(),
         lumber: lumber
             .into_iter()
             .map(|(material, board_feet)| LumberTotal {
@@ -1289,7 +1442,15 @@ impl CutList {
             for s in r.size {
                 h.u64(qbits(s) as u64);
             }
-            h.u64(u64::from(r.shaped) | u64::from(r.scaled) << 1 | u64::from(r.sheet) << 2);
+            // Lane 15's two flags take bits that are 0 in every older list, so older hashes
+            // stand.
+            h.u64(
+                u64::from(r.shaped)
+                    | u64::from(r.scaled) << 1
+                    | u64::from(r.sheet) << 2
+                    | u64::from(r.not_solid) << 3
+                    | u64::from(!r.included) << 4,
+            );
             h.u64(
                 r.grain.code()
                     | u64::from(r.grain_set) << 2
@@ -1312,6 +1473,10 @@ impl CutList {
         // Totals follow from the rows; the counts are hashed as a check.
         h.u64(u64::from(self.totals.sheet_count));
         h.usize(self.totals.pieces);
+        if self.totals.loose_faces > 0 {
+            h.tag("loose-faces");
+            h.usize(self.totals.loose_faces);
+        }
         h.finish()
     }
 }

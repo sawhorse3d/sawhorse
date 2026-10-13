@@ -928,6 +928,156 @@ impl Model {
         })
     }
 
+    /// Group loose faces (lane 15): each edge-connected piece of the named non-solid meshes
+    /// (none named: every mesh with faces directly in the open context) goes into a new
+    /// group of its own, named after the mesh ("benches 1", "benches 2", ...), so the cut
+    /// list counts it as a part. Nothing moves; the pieces keep the mesh's material, tag,
+    /// note and flags. Loose lines go with the piece whose vertices they touch first, else
+    /// stay in a mesh of lines where the mesh was.
+    pub(crate) fn group_loose(&mut self, ids: &[u64]) -> Result<OpOutcome, KernelError> {
+        let keys: Vec<MeshId> = if ids.is_empty() {
+            self.mesh_order
+                .iter()
+                .copied()
+                .filter(|&k| {
+                    let m = &self.meshes[k];
+                    m.member.parent == self.context && !m.faces.is_empty()
+                })
+                .collect()
+        } else {
+            let mut out = Vec::new();
+            for &id in ids {
+                let k = from_public::<MeshId>(id);
+                if !self.meshes.contains_key(k) {
+                    return Err(DocumentError::NoSuchMesh(id).into());
+                }
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+            out
+        };
+        let mut groups = Vec::new();
+        for k in keys {
+            self.editable_mesh(k)?;
+            let mesh = self.meshes[k].clone();
+            if mesh.faces.is_empty() {
+                continue;
+            }
+            let pieces = crate::meshbuild::connected_pieces(&mesh.faces);
+            // Vertex -> the piece that first uses it (for the loose lines).
+            let mut owner: BTreeMap<u32, usize> = BTreeMap::new();
+            for (pi, faces) in pieces.iter().enumerate() {
+                for &f in faces {
+                    for &v in mesh.faces[f].iter().flatten() {
+                        owner.entry(v).or_insert(pi);
+                    }
+                }
+            }
+            let mut piece_lines: Vec<Vec<[u32; 2]>> = vec![Vec::new(); pieces.len()];
+            let mut stray: Vec<[u32; 2]> = Vec::new();
+            for l in &mesh.lines {
+                match owner.get(&l[0]).or_else(|| owner.get(&l[1])) {
+                    Some(&pi) => piece_lines[pi].push(*l),
+                    None => stray.push(*l),
+                }
+            }
+            let at = self.mesh_order.iter().position(|&m| m == k).unwrap_or(0);
+            self.meshes.remove(k);
+            self.mesh_order.retain(|&m| m != k);
+            let parent = mesh.member.parent;
+            let mut made = Vec::new();
+            let width = pieces.len().to_string().len();
+            for (pi, faces) in pieces.iter().enumerate() {
+                let mut local: BTreeMap<u32, u32> = BTreeMap::new();
+                let mut positions = Vec::new();
+                let mut index = |v: u32, positions: &mut Vec<glam::DVec3>| -> u32 {
+                    *local.entry(v).or_insert_with(|| {
+                        positions.push(mesh.positions[v as usize]);
+                        (positions.len() - 1) as u32
+                    })
+                };
+                let pf: Vec<Vec<Vec<u32>>> = faces
+                    .iter()
+                    .map(|&f| {
+                        mesh.faces[f]
+                            .iter()
+                            .map(|r| r.iter().map(|&v| index(v, &mut positions)).collect())
+                            .collect()
+                    })
+                    .collect();
+                let pl: Vec<[u32; 2]> = piece_lines[pi]
+                    .iter()
+                    .map(|l| [index(l[0], &mut positions), index(l[1], &mut positions)])
+                    .collect();
+                let name = if pieces.len() == 1 {
+                    mesh.name.clone()
+                } else {
+                    format!("{} {:0width$}", mesh.name, pi + 1)
+                };
+                let g = self.nodes.insert(Node {
+                    name: Some(name.chars().take(64).collect::<String>().trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                    kind: NodeKind::Group,
+                    xform: Xform::IDENTITY,
+                    tag: None,
+                    member: Membership {
+                        parent,
+                        ..Default::default()
+                    },
+                    part: PartAttrs::default(),
+                    material: None,
+                });
+                let piece = crate::meshbuild::LooseMesh {
+                    name: mesh.name.clone(),
+                    positions,
+                    faces: pf,
+                    lines: pl,
+                    tag: mesh.tag.clone(),
+                    material: mesh.material.clone(),
+                    note: mesh.note.clone(),
+                    member: Membership {
+                        parent: Some(g),
+                        hidden: mesh.member.hidden,
+                        locked: false,
+                        slot: None,
+                    },
+                };
+                made.push(self.meshes.insert(piece));
+                groups.push(to_public(g));
+            }
+            if !stray.is_empty() {
+                let mut lm = mesh.clone();
+                let mut local: BTreeMap<u32, u32> = BTreeMap::new();
+                let mut positions = Vec::new();
+                lm.lines = stray
+                    .iter()
+                    .map(|l| {
+                        l.map(|v| {
+                            *local.entry(v).or_insert_with(|| {
+                                positions.push(mesh.positions[v as usize]);
+                                (positions.len() - 1) as u32
+                            })
+                        })
+                    })
+                    .collect();
+                lm.positions = positions;
+                lm.faces.clear();
+                lm.member.slot = None;
+                made.push(self.meshes.insert(lm));
+            }
+            for (i, m) in made.into_iter().enumerate() {
+                self.mesh_order
+                    .insert((at + i).min(self.mesh_order.len()), m);
+            }
+            self.mark(parent);
+        }
+        if groups.is_empty() {
+            return Err(StructureError::NoLooseFaces.into());
+        }
+        Ok(OpOutcome::LooseGrouped { groups })
+    }
+
     /// Make Component: the items go into a new definition with one instance (placed with
     /// the identity, so the definition's axes are the world's and nothing moves).
     ///

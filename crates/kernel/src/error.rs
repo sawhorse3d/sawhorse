@@ -268,6 +268,9 @@ pub enum StructureError {
     InstanceInvalid(String),
     #[error("the import's groups and components do not fit together: {0}")]
     BadStructure(String),
+    /// Lane 15: Group loose faces found nothing to group.
+    #[error("there are no loose faces here to make into parts")]
+    NoLooseFaces,
 }
 
 /// Errors from the stock library and the nesting settings (lane 9). Nothing changed.

@@ -452,6 +452,19 @@ pub enum Op {
         #[serde(default)]
         sheet: Option<bool>,
     },
+    /// Cut list (lane 15): count a part, or drop it from the totals, the outputs' counts and
+    /// the nesting (it stays listed, marked). Metadata, like grain.
+    SetInclude {
+        part: crate::cutlist::PartRef,
+        include: bool,
+    },
+    /// Lane 15: put each edge-connected piece of non-solid meshes into a group of its own, so
+    /// the cut list counts it as a part (loose faces are never parts). `meshes` empty: every
+    /// mesh in the open context. One undo step; the geometry does not move or change.
+    GroupLoose {
+        #[serde(default)]
+        meshes: Vec<u64>,
+    },
     /// Nesting (lane 9): add a stock to the document's library, or replace the stock named
     /// `replace` with it (a rename carries the per-material defaults along).
     DefineStock {
@@ -926,6 +939,10 @@ pub enum OpOutcome {
     MeshDeleted,
     /// A part's grain or stock was set (cut list).
     PartSet,
+    /// Loose meshes went into groups, one per edge-connected piece (lane 15).
+    LooseGrouped {
+        groups: Vec<u64>,
+    },
     /// The stock library or the nesting settings changed.
     StockSet,
     /// A saved model was restored.
@@ -1864,6 +1881,11 @@ impl Model {
                     a.sheet = sheet;
                 })
             }
+            Op::SetInclude { part, include } => {
+                let v = (!*include).then_some(false);
+                self.set_part(*part, |a| a.include = v)
+            }
+            Op::GroupLoose { meshes } => self.group_loose(meshes),
             Op::DefineStock { stock, replace } => {
                 self.edit_stock(|l| l.define(stock, replace.as_deref()))
             }

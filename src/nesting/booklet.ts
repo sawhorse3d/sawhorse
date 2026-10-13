@@ -4,6 +4,7 @@
 // cutting diagram to scale, the parts on it and its cut sequence.
 import type { Nesting, StockPiece } from "../kernel/types";
 import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "../cutlist/pdf";
+import { NOT_SOLID_NOTE } from "../cutlist/format";
 import { diagram } from "./diagram";
 import { area, cutText, dims, len, nestNote, nestSummary, pct, pieceNumber, pieceTitle, pieceYield, reasonText, settingsText, sizeUnit, stockSize, type Units } from "./format";
 
@@ -171,7 +172,7 @@ function piecePages(doc: PdfDoc, n: Nesting, piece: StockPiece, title: string, r
   // Two columns: parts, and the cut sequence.
   const colW = (right - left - 24) / 2;
   const startY = y;
-  const parts = piece.placements.map((q) => `${q.tag}  ${q.name}  ${dims(q.size[1], q.size[2], r)} ${sizeUnit(r)}${q.turned ? " (turned)" : ""}`);
+  const parts = piece.placements.map((q) => `${q.tag}  ${q.name}  ${dims(q.size[1], q.size[2], r)} ${sizeUnit(r)}${q.turned ? " (turned)" : ""}${q.not_solid ? ` · ${NOT_SOLID_NOTE}` : ""}`);
   const cuts = piece.cuts.map((c) => `${c.n}. ${cutText(c, r)}`);
   const lineH = 11.5;
   const bottom = 40;

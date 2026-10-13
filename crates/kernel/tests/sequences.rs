@@ -159,6 +159,14 @@ enum Fuzz {
     /// Kerf, trim (picks) and the algorithm.
     NestSettings(u8, u8, bool),
     ResetStock,
+    /// Lane 15: count a part or drop it from the list.
+    Include(u8, bool),
+    /// Lane 15: import a box as a polygon soup (shape: 0 closed, 1 no top, 2 no top or
+    /// bottom, 3 a closed box with a 50 micrometre gap the cut list's heal closes), in a
+    /// group or loose, at a grid point, sized by the picks.
+    ImportPart(u8, bool, [u8; 3], [u8; 3]),
+    /// Lane 15: Group loose faces (all of them, or one mesh by pick).
+    GroupLoose(Option<u8>),
     /// Move part of a solid: a face's vertices (which 0), an edge (1) or a vertex (2) of
     /// face `face`, by the pick, with or without autofold.
     MoveGeometry {
@@ -413,6 +421,9 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
         2 => (any::<u8>(), prop::option::of(any::<u8>())).prop_map(|(m, s)| Fuzz::MaterialStock(m, s)),
         2 => (any::<u8>(), any::<u8>(), any::<bool>()).prop_map(|(k, t, a)| Fuzz::NestSettings(k, t, a)),
         1 => Just(Fuzz::ResetStock),
+        2 => (any::<u8>(), any::<bool>()).prop_map(|(k, b)| Fuzz::Include(k, b)),
+        2 => (0u8..4, any::<bool>(), any::<[u8; 3]>(), any::<[u8; 3]>()).prop_map(|(s, g, a, z)| Fuzz::ImportPart(s, g, a, z)),
+        1 => prop::option::of(any::<u8>()).prop_map(Fuzz::GroupLoose),
     ]
 }
 
@@ -1711,6 +1722,98 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             },
         },
         Fuzz::ResetStock => Op::ResetStockLibrary,
+        Fuzz::Include(k, b) => Op::SetInclude {
+            part: part(*k),
+            include: *b,
+        },
+        Fuzz::ImportPart(shape, grouped, at, size) => {
+            let at = at.map(|v| f64::from(v % 8) * 0.05);
+            let size = size.map(|v| 0.01 + f64::from(v % 16) * 0.02);
+            let c = |i: u32| {
+                [
+                    at[0] + if i & 1 != 0 { size[0] } else { 0.0 },
+                    at[1] + if i & 2 != 0 { size[1] } else { 0.0 },
+                    at[2] + if i & 4 != 0 { size[2] } else { 0.0 },
+                ]
+            };
+            let quads: [[u32; 4]; 6] = [
+                [0, 2, 3, 1],
+                [4, 5, 7, 6],
+                [0, 1, 5, 4],
+                [2, 6, 7, 3],
+                [0, 4, 6, 2],
+                [1, 3, 7, 5],
+            ];
+            let skip: &[usize] = match shape {
+                1 => &[1],
+                2 => &[0, 1],
+                _ => &[],
+            };
+            let mut positions: Vec<[f64; 3]> = (0..8).map(c).collect();
+            let mut faces: Vec<Vec<Vec<u32>>> = quads
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !skip.contains(i))
+                .map(|(_, q)| vec![q.to_vec()])
+                .collect();
+            if *shape == 3 {
+                let mut p = c(7);
+                p[0] += 5e-5;
+                positions.push(p);
+                for v in faces[1][0].iter_mut() {
+                    if *v == 7 {
+                        *v = 8;
+                    }
+                }
+            }
+            let item = sawhorse_kernel::meshbuild::ImportItem {
+                name: "Fuzz part".into(),
+                group: None,
+                tag: None,
+                material: None,
+                positions,
+                faces,
+                lines: vec![],
+                merge_coplanar: false,
+                face_labels: vec![],
+                face_materials: vec![],
+                face_uvs: vec![],
+            };
+            let (items, nodes) = if *grouped {
+                (
+                    vec![],
+                    vec![sawhorse_kernel::model::ImportNode {
+                        name: Some("Fuzz group".into()),
+                        tag: None,
+                        hidden: false,
+                        kind: sawhorse_kernel::model::ImportNodeKind::Group {
+                            items: vec![item],
+                            children: vec![],
+                        },
+                    }],
+                )
+            } else {
+                (vec![item], vec![])
+            };
+            Op::Import {
+                items,
+                strokes: vec![],
+                materials: vec![],
+                scenes: vec![],
+                hidden_tags: vec![],
+                definitions: vec![],
+                nodes,
+            }
+        }
+        Fuzz::GroupLoose(k) => Op::GroupLoose {
+            meshes: match k {
+                None => vec![],
+                Some(k) => {
+                    let ids: Vec<u64> = m.meshes().iter().map(|(id, _)| *id).collect();
+                    vec![pick(&ids, *k).unwrap_or(9999)]
+                }
+            },
+        },
         Fuzz::DefineMat {
             name,
             color,

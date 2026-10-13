@@ -1,0 +1,217 @@
+{
+  "name": "cutlist-mixed",
+  "description": "Lane 15: a table top (a closed box: a solid part) and an apron imported as an open box with no top or bottom (a mesh in a group: a part flagged not solid, sized from its bounds), in one document. Its cut_list and nesting hashes prove WASM lists and nests flagged parts as native does.",
+  "ops": [
+    {
+      "op": "import",
+      "items": [],
+      "strokes": [],
+      "materials": [],
+      "scenes": [],
+      "hidden_tags": [],
+      "nodes": [
+        {
+          "name": "Top",
+          "hidden": false,
+          "kind": "group",
+          "items": [
+            {
+              "name": "Top",
+              "positions": [
+                [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.4064,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.6095999999999999,
+                  0.0
+                ],
+                [
+                  0.4064,
+                  0.6095999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  0.019049999999999997
+                ],
+                [
+                  0.4064,
+                  0.0,
+                  0.019049999999999997
+                ],
+                [
+                  0.0,
+                  0.6095999999999999,
+                  0.019049999999999997
+                ],
+                [
+                  0.4064,
+                  0.6095999999999999,
+                  0.019049999999999997
+                ]
+              ],
+              "faces": [
+                [
+                  [
+                    0,
+                    2,
+                    3,
+                    1
+                  ]
+                ],
+                [
+                  [
+                    4,
+                    5,
+                    7,
+                    6
+                  ]
+                ],
+                [
+                  [
+                    0,
+                    1,
+                    5,
+                    4
+                  ]
+                ],
+                [
+                  [
+                    2,
+                    6,
+                    7,
+                    3
+                  ]
+                ],
+                [
+                  [
+                    0,
+                    4,
+                    6,
+                    2
+                  ]
+                ],
+                [
+                  [
+                    1,
+                    3,
+                    7,
+                    5
+                  ]
+                ]
+              ],
+              "merge_coplanar": false
+            }
+          ]
+        },
+        {
+          "name": "Apron",
+          "hidden": false,
+          "kind": "group",
+          "items": [
+            {
+              "name": "Apron",
+              "positions": [
+                [
+                  0.0,
+                  0.0,
+                  -0.1016
+                ],
+                [
+                  0.35559999999999997,
+                  0.0,
+                  -0.1016
+                ],
+                [
+                  0.0,
+                  0.019049999999999997,
+                  -0.1016
+                ],
+                [
+                  0.35559999999999997,
+                  0.019049999999999997,
+                  -0.1016
+                ],
+                [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.35559999999999997,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.019049999999999997,
+                  0.0
+                ],
+                [
+                  0.35559999999999997,
+                  0.019049999999999997,
+                  0.0
+                ]
+              ],
+              "faces": [
+                [
+                  [
+                    0,
+                    1,
+                    5,
+                    4
+                  ]
+                ],
+                [
+                  [
+                    2,
+                    6,
+                    7,
+                    3
+                  ]
+                ],
+                [
+                  [
+                    0,
+                    4,
+                    6,
+                    2
+                  ]
+                ],
+                [
+                  [
+                    1,
+                    3,
+                    7,
+                    5
+                  ]
+                ]
+              ],
+              "merge_coplanar": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "hash": "fa1bccd121bc8e9c",
+  "stats": {
+    "objects": 1,
+    "faces": 6,
+    "edges": 12,
+    "vertices": 8,
+    "genus": 0,
+    "watertight": true
+  },
+  "cut_list": "b8ec65eb675ca6e6",
+  "nesting": "28077bbc2e89cc77"
+}

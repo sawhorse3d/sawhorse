@@ -711,6 +711,9 @@ fn list_of(parts: &[(f64, f64, f64, usize, Grain, bool, u8)], visible_mask: u64)
             steps: [0; 3],
             shaped: false,
             scaled: false,
+            // Lane 15: flagged parts nest like any other; a dropped part is never nested.
+            not_solid: k % 3 == 1,
+            included: k % 7 != 3,
             grain,
             grain_set: grain != Grain::Length,
             material: Some(["Oak", "Maple", "Birch ply", "MDF"][mat as usize % 4].into()),
@@ -729,6 +732,9 @@ fn list_of(parts: &[(f64, f64, f64, usize, Grain, bool, u8)], visible_mask: u64)
         totals: CutTotals {
             parts: 0,
             pieces: 0,
+            excluded: 0,
+            not_solid: 0,
+            loose_faces: 0,
             hidden: 0,
             board_feet: 0.0,
             lumber: vec![],

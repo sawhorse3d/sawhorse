@@ -547,6 +547,93 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
   });
 });
 
+// ---- lane 15: hand-made SketchUp furniture that is not watertight --------------------------
+//
+// Corynth's CC-BY furniture (corynth-ccby/, SketchUp 23.2 saves) is typical of what people
+// draw: open faces, faces shared by three or more, nothing a solid. Lane 15 makes such a
+// group or component a part anyway, sized from the box around its faces and flagged "not
+// solid (sizes from bounds)". desk.skp holds its desk as one placed definition ("desk 1",
+// 147 faces, 5 open edges, 93 edges shared by three or more faces): a flagged part straight
+// away. benches.skp is all loose faces at the top level (501 faces, no group at all): the
+// Cut list counts them as faces outside parts, and "Make parts from loose faces" (Group
+// loose faces, one undo step) turns each connected piece into a flagged part.
+const CORYNTH = "corynth-ccby/Corynth's Stuff/share";
+type CutRowLite = { name: string; qty: number; size: number[]; not_solid: boolean; included: boolean };
+type CutLite = { rows: CutRowLite[]; totals: { not_solid: number; loose_faces: number; parts: number } };
+const cutListOf = (page: Page) => page.evaluate(() => (window as unknown as { __sawhorse: { cutList(): Promise<CutLite> } }).__sawhorse.cutList());
+
+test.describe("private SketchUp fixtures: furniture that is not solid (lane 15)", () => {
+  test.skip(!dir, "SAWHORSE_PRIVATE_FIXTURES is unset or not a directory: the private SketchUp files are not here");
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("desk.skp: the desk is a part flagged not solid, sized from its bounds", async ({ page }, info) => {
+    const file = `${CORYNTH}/desk.skp`;
+    test.skip(!have(file), `${file} is not in the fixtures directory`);
+    test.setTimeout(120_000);
+    const errors = watchErrors(page);
+    // FIXTURE: one definition placed once, open and over-shared edges.
+    const src = model(file);
+    const desk = [...src.definitions.values()].find((d) => d.name === "desk 1");
+    expect.soft(desk?.faces.length, "FIXTURE: the desk's faces").toBe(147);
+    const shell = desk ? shellCheck(desk) : { open: -1, over: -1 };
+    expect.soft(shell.open + shell.over, "FIXTURE: the desk is not a closed shell").toBeGreaterThan(0);
+    await open(page);
+    const { refused, title } = await importFile(page, file);
+    expect.soft(refused, `IMPORT: refused (${title})`).toBe(false);
+    await page.getByRole("tab", { name: "Cut list" }).click();
+    await expect(page.locator(".cutlist table")).toBeVisible();
+    const cut = await cutListOf(page);
+    const flagged = cut.rows.filter((r) => r.not_solid);
+    expect.soft(flagged.length, `IMPORT: at least one part flagged not solid: ${JSON.stringify(cut.rows.map((r) => [r.name, r.not_solid]))}`).toBeGreaterThanOrEqual(1);
+    const row = cut.rows.find((r) => r.name === "desk 1");
+    expect.soft(row?.not_solid, "IMPORT: the desk's row is flagged").toBe(true);
+    // Its size is the box around the file's own desk faces (metres; T <= W <= L).
+    if (desk && row) {
+      const [ex, ey, ez] = extent(desk.vertices);
+      const want = [ex.size, ey.size, ez.size].map((s) => s * IN).sort((a, b) => a - b);
+      for (let k = 0; k < 3; k++) near(`IMPORT: desk ${"TWL"[k]} (m) from its bounds`, row.size[k], want[k], 1e-6 + want[k] * 1e-6);
+    }
+    await expect.soft(page.locator(".cutlist tbody tr[data-not-solid] small").first()).toContainText("not solid (sizes from bounds)");
+    await expect.soft(page.getByTestId("cutlist-geometry")).toContainText("not solid (sizes from bounds)");
+    // It nests like any other part.
+    const shot = await capture(page, "corynth-desk-cutlist");
+    info.annotations.push({ type: "capture", description: shot });
+    console.log(`[private-fixtures] desk.skp: ${JSON.stringify(cut.rows.map((r) => ({ name: r.name, qty: r.qty, not_solid: r.not_solid, size_in: r.size.map((s) => +(s / IN).toFixed(3)) })))}`);
+    expect.soft(errors, "no page errors or console errors").toEqual([]);
+  });
+
+  test("benches.skp: loose faces are counted, then made into parts flagged not solid", async ({ page }, info) => {
+    const file = `${CORYNTH}/benches.skp`;
+    test.skip(!have(file), `${file} is not in the fixtures directory`);
+    test.setTimeout(120_000);
+    const errors = watchErrors(page);
+    const src = model(file);
+    expect.soft(src.root.faces.length, "FIXTURE: every face is loose at the top level").toBe(501);
+    expect.soft(src.definitions.size, "FIXTURE: no groups or components").toBe(0);
+    await open(page);
+    const { refused, title } = await importFile(page, file);
+    expect.soft(refused, `IMPORT: refused (${title})`).toBe(false);
+    await page.getByRole("tab", { name: "Cut list" }).click();
+    const before = await cutListOf(page);
+    expect.soft(before.totals.loose_faces, "IMPORT: the loose faces are counted outside parts").toBeGreaterThan(0);
+    const note = page.getByTestId("cutlist-geometry");
+    await expect.soft(note).toContainText(`${before.totals.loose_faces} faces outside parts`);
+    await note.getByRole("button", { name: "Make parts from loose faces" }).click();
+    await expect.poll(async () => (await cutListOf(page)).totals.loose_faces, { timeout: 30_000 }).toBe(0);
+    const after = await cutListOf(page);
+    const flagged = after.rows.filter((r) => r.not_solid);
+    expect.soft(flagged.length, `at least one part flagged not solid: ${after.rows.length} rows`).toBeGreaterThanOrEqual(1);
+    await expect.soft(page.locator(".cutlist tbody tr[data-not-solid]").first()).toBeVisible();
+    const shot = await capture(page, "corynth-benches-cutlist");
+    info.annotations.push({ type: "capture", description: shot });
+    console.log(`[private-fixtures] benches.skp: loose ${before.totals.loose_faces} -> parts ${after.rows.length}, flagged ${flagged.length}`);
+    // One undo step puts the loose faces back.
+    await page.keyboard.press("Control+z");
+    await expect.poll(async () => (await cutListOf(page)).totals.loose_faces, { timeout: 30_000 }).toBe(before.totals.loose_faces);
+    expect.soft(errors, "no page errors or console errors").toEqual([]);
+  });
+});
+
 // ---- part 2: every .skp under the directory ------------------------------------------------
 
 const SWEEP = dir ? skpFiles(dir) : [];

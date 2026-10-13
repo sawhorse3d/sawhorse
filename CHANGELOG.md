@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (lane 15, alpha.2 readiness, 2026-10-12)
+
+- **Cut list and nesting from parts that are not solids.** A group or component instance whose faces are not a watertight solid (most hand-made SketchUp furniture) is now a part: the cut list first tries a heal (gaps under 0.1 mm welded, inconsistent faces turned, isolated slivers dropped), and if the faces still do not close it sizes the part from the minimal box around them (T x W x L, grain along the length unless set) and flags it **not solid (sizes from bounds)** in the pane, the CSV, the report and its PDF, the labels and the nesting booklet. Board feet, the sheet reading and the nesting use that size. Faces outside any group are still never parts; the pane counts them ("312 faces outside parts") and **Make parts from loose faces** (kernel op `group_loose`, one undo step) puts each edge-connected piece into a group of its own.
+- **Include per part** (`set_include`): untick a row to keep it listed but out of the totals, the labels and the nesting; saved with the model, hashed only when set.
+
 ### Added (lane 12, section planes and drawing sheets, 2026-10-12)
 
 - **Section planes** (ADR-0010): the **Section** tool (rail and Tools menu, no key) lays a plane on any face with a live preview, square to an axis with the arrow keys, reversed with Alt, placed with a click or Enter, active, in the open group or component. One active plane per context; a plane in a group cuts only what the group holds, and a solid is cut by every active plane around it. The view clips exactly and **fills the cut from the kernel's own polygons** (holes stay holes), outlined in the style's section colour. The Outliner lists planes (Activate / Deactivate Cut, Reverse, Create Group from Slice, Export Slice SVG / DXF, Hide, Rename, Delete); Move, Rotate, Scale and copies carry them. **Create Group from Slice** draws the cut's outline as faces in a new group. File > Export > Section slice (SVG filled, DXF closed polylines, 1:1 mm).

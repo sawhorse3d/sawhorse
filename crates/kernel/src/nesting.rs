@@ -121,6 +121,9 @@ pub struct Placement {
     pub grain: Grain,
     /// Thickness, width, length (exact).
     pub size: [f64; 3],
+    /// Lane 15: its part is not a solid; the rectangle is the box around its faces.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_solid: bool,
 }
 
 /// One sheet or board and what is cut from it.
@@ -384,6 +387,11 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
     let mut out: Vec<Option<Choice>> = vec![None; n];
     // Said: a stock named by the part, or the material's default.
     for (i, row) in list.rows.iter().enumerate() {
+        // A part dropped from the list takes no stock (lane 15); `nest_list` skips it.
+        if !row.included {
+            out[i] = Some(Err((UnplacedReason::NoStock, None)));
+            continue;
+        }
         let t = row.size[0];
         if row.stock_set
             && let Some(m) = &row.material
@@ -1108,6 +1116,10 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
     let mut group_order: Vec<(usize, Option<String>)> = Vec::new();
     let mut group_items: BTreeMap<(usize, Option<String>), Vec<Item2>> = BTreeMap::new();
     for (ri, row) in list.rows.iter().enumerate() {
+        // Dropped from the list: not nested, not reported (row numbers stay the list's).
+        if !row.included {
+            continue;
+        }
         let counted: Vec<&crate::cutlist::Occurrence> = row
             .occurrences
             .iter()
@@ -1221,6 +1233,7 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
                         turned: p.turned,
                         grain: row.grain,
                         size: row.size,
+                        not_solid: row.not_solid,
                     }
                 })
                 .collect();
