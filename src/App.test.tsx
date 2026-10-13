@@ -1,9 +1,20 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { App, describeImport, plural } from "./App";
+import { RENDER_URL_KEY } from "./credits/gate";
 import { TOOLS } from "./lib/tools";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  localStorage.removeItem(RENDER_URL_KEY);
+});
+
+/** Lane 15: a render service set in Settings that answers its health check (and nothing else). */
+function renderServiceUp() {
+  localStorage.setItem(RENDER_URL_KEY, "https://render.test");
+  vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response("{}", { status: 200 })) : Promise.reject(new TypeError("offline"))));
+}
 
 function pressed(tool: string): boolean {
   return document.querySelector(`.tool[data-tool="${tool}"]`)?.getAttribute("aria-pressed") === "true";
@@ -17,7 +28,8 @@ describe("App shell", () => {
     expect(document.querySelector(".app > main.vp")).not.toBeNull();
     expect(document.querySelector(".app > aside.side")).not.toBeNull();
     expect(document.querySelector(".app > footer.vcb")).not.toBeNull();
-    expect(screen.getByText("Credits")).toBeTruthy();
+    // Lane 15: no render service answering here, so no Credits chip.
+    expect(screen.queryByText("Credits")).toBeNull();
     for (const v of ["Iso", "Top", "Front", "Right", "Persp"]) expect(screen.getByRole("button", { name: v })).toBeTruthy();
   });
 
@@ -46,18 +58,22 @@ describe("App shell", () => {
     }
   });
 
-  it("does not steal keys typed into the prompt box", () => {
+  it("does not steal keys typed into the prompt box", async () => {
+    renderServiceUp();
     render(<App />);
-    fireEvent.click(screen.getByRole("tab", { name: "Render" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Render" }));
     const prompt = screen.getByLabelText("Prompt");
     fireEvent.keyDown(prompt, { key: "p" });
     expect(pressed("select")).toBe(true);
   });
 
-  it("has the right-panel tabs: a live Outliner, Tags, Cut list, Materials, Styles, Render, and the Plugins glyph tab", () => {
+  it("has the right-panel tabs: a live Outliner, Tags, Cut list, Materials, Styles, Render (with a render service), and the Plugins glyph tab", async () => {
+    renderServiceUp();
     render(<App />);
+    await screen.findByRole("tab", { name: "Render" });
     const tabs = screen.getAllByRole("tab").map((t) => t.getAttribute("aria-label") ?? t.textContent);
     expect(tabs).toEqual(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render", "Plugins"]);
+    expect(screen.getByText("Credits")).toBeTruthy();
     // No example content: an empty model has an empty Outliner, and Tags has its default.
     expect(screen.queryByText("Side L")).toBeNull();
     expect(screen.getByText(/Nothing yet/)).toBeTruthy();
@@ -78,6 +94,31 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Render" }));
     fireEvent.click(screen.getByRole("button", { name: /Kitchen/ }));
     expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toMatch(/warm kitchen/);
+  });
+
+  it("without a render service: no Credits chip, no Render pane, and Settings says why in one line (lane 15)", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("offline")));
+    render(<App />);
+    expect(screen.queryByText("Credits")).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.getAttribute("aria-label") ?? t.textContent)).toEqual(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Plugins"]);
+    // Edit > Settings…
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Settings/ }));
+    const line = await screen.findByTestId("render-gate");
+    await vi.waitFor(() => expect(line.getAttribute("data-status")).toMatch(/off|unreachable/));
+    expect(line.textContent).toMatch(/^Renders are off/);
+    // A service that answers turns renders on.
+    vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response("{}", { status: 200 })) : Promise.reject(new TypeError("offline"))));
+    fireEvent.change(screen.getByLabelText("Render service address"), { target: { value: "https://render.test/" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(screen.getByTestId("render-gate").getAttribute("data-status")).toBe("ready"));
+    expect(screen.getByTestId("render-gate").textContent).toBe("Renders are on: the render service at https://render.test answered. The Credits chip and the Render pane are shown.");
+    expect(localStorage.getItem(RENDER_URL_KEY)).toBe("https://render.test");
+    expect(await screen.findByRole("tab", { name: "Render" })).toBeTruthy();
+    expect(screen.getByText("Credits")).toBeTruthy();
+    // Cleared: off again.
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await vi.waitFor(() => expect(screen.queryByRole("tab", { name: "Render" })).toBeNull());
   });
 
   it("types straight into the value bar mid-gesture and cycles units", () => {

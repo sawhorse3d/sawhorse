@@ -56,7 +56,7 @@ Parallel lanes: each checkout (each `.worktrees/<slug>`, each clone) gets its ow
 
 ### Render service (lane 8)
 
-The Render pane talks to the render service (`../render-service`, its own repository) at `VITE_RENDER_SERVICE_URL`, default `http://127.0.0.1:8787`. Run it with `cd ../render-service && npm ci && npm run dev`. With no keys it uses a mock provider, a simulated checkout and an embedded Postgres. Without it, the pane says "Render service not connected" and the chip shows a dash. The full local loop, the device key and what is sent are in `docs/RENDER.md`. Device-key tests run in WSL: `cd src-tauri && cargo test -p sawhorse-device-key` (WSL needs `libdbus-1-dev` and `pkg-config`).
+The Render pane talks to the render service (`../render-service`, its own repository) at the address saved in Edit > Settings, or in a development build at `VITE_RENDER_SERVICE_URL`, default `http://127.0.0.1:8787` (lane 15: a release build shows the Credits chip and the Render pane only when a service is set there and answers `GET /healthz`; `src/credits/gate.ts`). Run it with `cd ../render-service && npm ci && npm run dev`. With no keys it uses a mock provider, a simulated checkout and an embedded Postgres. Without it, the pane says "Render service not connected" and the chip shows a dash. The full local loop, the device key and what is sent are in `docs/RENDER.md`. Device-key tests run in WSL: `cd src-tauri && cargo test -p sawhorse-device-key` (WSL needs `libdbus-1-dev` and `pkg-config`).
 
 ### The e2e suites (lanes 3, 4, 5, 6, 7 and 8)
 

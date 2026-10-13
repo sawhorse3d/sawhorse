@@ -21,8 +21,11 @@ test("shell matches the approved mock's structure", async ({ page }) => {
   // The mock's fifteen tools plus Section (lane 12) at the end of the rail.
   await expect(page.locator(".tool")).toHaveCount(16);
   await expect(page.locator(".tool").last()).toHaveAttribute("data-tool", "section");
-  // The mock's four tabs, plus Materials and Styles (lane 10) and the Plugins glyph tab (lane 11).
-  await expect(page.getByRole("tab")).toHaveText(["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render", ""]);
+  // The mock's tabs, plus Materials and Styles (lane 10) and the Plugins glyph tab (lane 11).
+  // Render (and the Credits chip) only with a render service set and answering (lane 15):
+  // none here, so neither is shown (e2e/render.spec.ts covers both states).
+  await expect(page.getByRole("tab")).toHaveText(["Outliner", "Tags", "Cut list", "Materials", "Styles", ""]);
+  await expect(page.locator("header.top .chip")).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Plugins" })).toBeVisible();
   await expect(page.locator(".legend")).toContainText("Endpoint");
   await expect(page.locator(".vcb")).toBeVisible();

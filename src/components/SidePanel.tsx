@@ -29,6 +29,8 @@ const TABS: { id: PaneId; label: string; glyph?: boolean }[] = [
 
 export interface SidePanelProps {
   credits: CreditsHandle;
+  /** Lane 15: the Render pane is offered only when a render service is set and answering. */
+  renderOn?: boolean;
   /** Draw the render passes from the current view (the viewport engine). */
   capture: () => Promise<RenderPasses>;
   /** Bumped to bring the Render pane forward (the Credits chip). */
@@ -49,14 +51,17 @@ export interface SidePanelProps {
   onPane?: (pane: PaneId) => void;
 }
 
-export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, plugins, focusPlugins = 0, onPane }: SidePanelProps) {
+export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, plugins, focusPlugins = 0, onPane }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
   useEffect(() => {
     onPane?.(pane);
   }, [pane, onPane]);
   useEffect(() => {
-    if (focusRender > 0) setPane("render");
-  }, [focusRender]);
+    if (focusRender > 0 && renderOn) setPane("render");
+  }, [focusRender, renderOn]);
+  useEffect(() => {
+    if (!renderOn && pane === "render") setPane("outliner");
+  }, [renderOn, pane]);
   useEffect(() => {
     if (focusTags > 0) setPane("tags");
   }, [focusTags]);
@@ -70,7 +75,7 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
   return (
     <aside className="side" aria-label="Panels">
       <div className="tabs" role="tablist">
-        {TABS.map((t) => (
+        {TABS.filter((t) => renderOn || t.id !== "render").map((t) => (
           <button
             key={t.id}
             type="button"
@@ -130,9 +135,11 @@ export function SidePanel({ credits, capture, focusRender = 0, outliner, tags, f
         <StylesPane {...styles} />
       </section>
 
-      <section className="pane" id="pane-render" role="tabpanel" aria-labelledby="tab-render" hidden={pane !== "render"}>
-        <RenderPane credits={credits} capture={capture} />
-      </section>
+      {renderOn ? (
+        <section className="pane" id="pane-render" role="tabpanel" aria-labelledby="tab-render" hidden={pane !== "render"}>
+          <RenderPane credits={credits} capture={capture} />
+        </section>
+      ) : null}
 
       <section className="pane" id="pane-plugins" role="tabpanel" aria-labelledby="tab-plugins" hidden={pane !== "plugins"}>
         <h3>

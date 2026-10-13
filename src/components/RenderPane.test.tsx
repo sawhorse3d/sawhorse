@@ -96,7 +96,8 @@ describe("Render pane", () => {
     expect(atob(req.edges_png!).charCodeAt(4)).toBe(2);
     expect(atob(req.clay_png!).charCodeAt(4)).toBe(3);
     expect(req.request_id).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    expect((document.getElementById("renderImg") as HTMLImageElement).src).toBe("http://svc.test/v1/renders/x/image?exp=1&sig=s");
+    // Lane 15: fetched into a blob: URL when it can be; here (no such host) the address itself.
+    await waitFor(() => expect((document.getElementById("renderImg") as HTMLImageElement | null)?.src).toBe("http://svc.test/v1/renders/x/image?exp=1&sig=s"));
     expect(screen.getByText("Mock render · no provider keys")).toBeTruthy();
     expect(screen.getByTestId("chip").textContent).toBe("2");
   });
@@ -174,7 +175,7 @@ describe("Render pane", () => {
     await waitFor(() => expect(screen.getByAltText("Oak bookshelf")).toBeTruthy());
     expect(screen.getByText("failed · refunded")).toBeTruthy();
     fireEvent.click(screen.getByAltText("Oak bookshelf").closest("button")!);
-    expect((document.getElementById("renderImg") as HTMLImageElement).src).toBe("http://svc.test/h1.png");
+    await waitFor(() => expect((document.getElementById("renderImg") as HTMLImageElement | null)?.src).toBe("http://svc.test/h1.png"));
   });
 
   it("moves credits with an emailed claim code", async () => {

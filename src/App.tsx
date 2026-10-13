@@ -22,6 +22,8 @@ import { PDF_TYPE } from "./cutlist/pdf";
 import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef, StockPiece } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient } from "./kernel/client";
+import { useRenderGate } from "./credits/gate";
+import { SettingsDialog } from "./components/SettingsDialog";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
@@ -2280,6 +2282,8 @@ export function App() {
         },
         "-",
         { label: "Restore Unsaved Work", disabled: !pendingRestore, onSelect: () => pendingRestore && restore(pendingRestore) },
+        "-",
+        { label: "Settings…", title: "The render service (renders are off until one is set and answering)", onSelect: () => setSettingsOpen(true) },
       ],
       View: [
         // Lane 12: the model or its drawing sheets.
@@ -2331,8 +2335,12 @@ export function App() {
   const valueLabel = active?.valueLabel() ?? null;
 
   // Render credits (lane 8): the chip and the Render pane share one connection and balance.
-  const credits = useCredits();
+  // Lane 15: both appear only when a render service is set (Settings) and answers.
+  const gate = useRenderGate();
+  const renderOn = gate.status === "ready";
+  const credits = useCredits(undefined, { baseUrl: gate.url, enabled: renderOn });
   const [renderFocus, setRenderFocus] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const capture = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine) throw new NothingToRenderError("The 3D view is not available (WebGL2 is off in this browser), so there is nothing to render from.");
@@ -2384,6 +2392,7 @@ export function App() {
       {isWebDemo() ? <DemoBanner /> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
+      {settingsOpen ? <SettingsDialog url={gate.url} status={gate.status} onUrl={gate.setUrl} onRecheck={gate.recheck} onClose={() => setSettingsOpen(false)} /> : null}
       {plugins.dialogs}
       <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
       {stockOpen && nesting ? (
@@ -2403,6 +2412,7 @@ export function App() {
         view={camView}
         onView={setView}
         credits={cs.connection === "connected" ? cs.credits : null}
+        showCredits={renderOn}
         creditsState={cs.connection}
         creditsTitle={chipTitle}
         onCredits={() => setRenderFocus((n) => n + 1)}
@@ -2465,6 +2475,7 @@ export function App() {
       />
       <SidePanel
         credits={credits}
+        renderOn={renderOn}
         capture={capture}
         focusRender={renderFocus}
         focusTags={focusTags}

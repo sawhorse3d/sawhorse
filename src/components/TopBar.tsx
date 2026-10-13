@@ -26,6 +26,8 @@ export interface TopBarProps {
   onView: (v: ViewId) => void;
   /** Credits on this device; null while the render service is not connected. */
   credits: number | null;
+  /** Lane 15: the chip is shown only when renders are on (a service set and answering). */
+  showCredits?: boolean;
   /** Connection state of the render service (data attribute and tooltip). */
   creditsState?: string;
   creditsTitle?: string;
@@ -77,7 +79,7 @@ function Entry({ item: it, sub, setSub, close }: { item: MenuItem; sub: string |
   );
 }
 
-export function TopBar({ view, onView, credits, creditsState, creditsTitle, onCredits, menus }: TopBarProps) {
+export function TopBar({ view, onView, credits, showCredits = true, creditsState, creditsTitle, onCredits, menus }: TopBarProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [sub, setSub] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -137,9 +139,11 @@ export function TopBar({ view, onView, credits, creditsState, creditsTitle, onCr
           </button>
         ))}
       </div>
+      {showCredits ? (
       <button type="button" className="chip" title={creditsTitle ?? "Render credits on this device"} data-state={creditsState} onClick={onCredits}>
         Credits <b id="credits">{credits ?? "—"}</b>
       </button>
+      ) : null}
     </header>
   );
 }

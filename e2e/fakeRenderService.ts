@@ -108,6 +108,8 @@ export async function fakeRenderService(page: Page, initialCredits = 3): Promise
     const req = route.request();
     const url = new URL(req.url());
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    // Lane 15: the app asks /healthz at startup before it shows the chip and the Render pane.
+    if (url.pathname === "/healthz") return json(route, 200, { ok: true, mock: true });
     if (url.pathname.endsWith("/image")) return route.fulfill({ status: 200, headers: { ...cors, "Content-Type": "image/png" }, body: png });
 
     // Verify the signature the way the service does.

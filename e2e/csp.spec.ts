@@ -24,7 +24,8 @@ test("the app works under its content security policy without a single violation
   expect(csp).toContain("object-src 'none'");
 
   await box(page);
-  for (const tab of ["Outliner", "Tags", "Cut list", "Materials", "Styles", "Render", "Plugins"]) {
+  // (Render is offered only with a render service answering; e2e/render.spec.ts opens it.)
+  for (const tab of ["Outliner", "Tags", "Cut list", "Materials", "Styles", "Plugins"]) {
     await page.getByRole("tab", { name: tab, exact: true }).click();
     await expect(page.getByRole("tab", { name: tab, exact: true })).toHaveAttribute("aria-selected", "true");
   }

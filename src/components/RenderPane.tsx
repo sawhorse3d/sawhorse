@@ -15,6 +15,45 @@ export const PRESETS: { name: string; sub: string; prompt: string }[] = [
   { name: "Exterior", sub: "deck, overcast", prompt: "Cedar shelf unit on a covered deck, overcast sky, wet boards" },
 ];
 
+/** Lane 15: a render image from the service, through fetch into a blob: URL. The service's
+ * address is set at run time (Settings), and the page's content security policy lets images
+ * come only from the app, data: and blob: (plus the build's own service), so an image from a
+ * service set later is fetched (connect-src allows it) and shown from memory. Falls back to
+ * the address itself when the fetch fails. */
+export function useImageSrc(url: string | null): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!url) {
+      setSrc(null);
+      return;
+    }
+    if (url.startsWith("data:") || url.startsWith("blob:") || typeof fetch === "undefined" || typeof URL.createObjectURL !== "function") {
+      setSrc(url);
+      return;
+    }
+    let alive = true;
+    let made: string | null = null;
+    setSrc(null);
+    fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => {
+        made = URL.createObjectURL(b);
+        if (alive) setSrc(made);
+      })
+      .catch(() => alive && setSrc(url));
+    return () => {
+      alive = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [url]);
+  return src;
+}
+
+function RenderImage({ url, alt, id, lazy }: { url: string; alt: string; id?: string; lazy?: boolean }) {
+  const src = useImageSrc(url);
+  return src ? <img src={src} alt={alt} id={id} loading={lazy ? "lazy" : undefined} /> : <span className="stage">Loading the image…</span>;
+}
+
 export const IDLE_TEXT = "Render appears here. The model's depth and edge passes are sent with the prompt; nothing else leaves this machine.";
 
 type Result =
@@ -273,7 +312,7 @@ export function RenderPane({ credits, capture }: RenderPaneProps) {
         ) : null}
         {result.kind === "done" ? (
           <>
-            <img src={result.url} alt={`Render: ${result.prompt}`} id="renderImg" />
+            <RenderImage url={result.url} alt={`Render: ${result.prompt}`} id="renderImg" />
             <span className="cap">{result.mock ? "Mock render · no provider keys" : `Rendered by ${result.provider}`}</span>
           </>
         ) : null}
@@ -285,7 +324,7 @@ export function RenderPane({ credits, capture }: RenderPaneProps) {
           {history?.map((h) =>
             h.image_url ? (
               <button key={h.request_id} type="button" title={h.prompt} onClick={() => setResult({ kind: "done", url: h.image_url!, mock: (h.provider ?? "").startsWith("mock"), provider: h.provider ?? "", prompt: h.prompt })}>
-                <img src={h.image_url} alt={h.prompt} loading="lazy" />
+                <RenderImage url={h.image_url} alt={h.prompt} lazy />
               </button>
             ) : (
               <span key={h.request_id} className="gone" title={h.prompt}>

@@ -29,11 +29,19 @@ export interface CreditsHandle {
   watchCheckout: () => void;
 }
 
-let factory: () => RenderServiceClient = () => new RenderServiceClient(serviceUrl(), deviceKey);
+let factory: (url?: string) => RenderServiceClient = (url) => new RenderServiceClient(url ?? serviceUrl(), deviceKey);
 
 /** Tests replace the client every useCredits() without an explicit one gets. */
-export function setDefaultCreditsClient(f: () => RenderServiceClient): void {
+export function setDefaultCreditsClient(f: (url?: string) => RenderServiceClient): void {
   factory = f;
+}
+
+/** Lane 15: which service, and whether to talk to it at all (the render gate). */
+export interface CreditsOptions {
+  /** The service's address (default: the build's). */
+  baseUrl?: string | null;
+  /** False: never ask the service (no polling, no retries); the state stays "unreachable". */
+  enabled?: boolean;
 }
 
 /** Retries while the service cannot be reached back off: 10 s, 30 s, 60 s, then every 5 min
@@ -62,8 +70,10 @@ export function setCreditsLogger(f: (message: string) => void): void {
 }
 export const CHECKOUT_WATCH_MS = 10 * 60_000;
 
-export function useCredits(explicit?: RenderServiceClient): CreditsHandle {
-  const client = useMemo(() => explicit ?? factory(), [explicit]);
+export function useCredits(explicit?: RenderServiceClient, opts: CreditsOptions = {}): CreditsHandle {
+  const baseUrl = opts.baseUrl ?? undefined;
+  const enabled = opts.enabled ?? true;
+  const client = useMemo(() => explicit ?? factory(baseUrl), [explicit, baseUrl]);
   const [state, setState] = useState<CreditsState>({
     connection: "connecting",
     credits: null,
@@ -112,6 +122,12 @@ export function useCredits(explicit?: RenderServiceClient): CreditsHandle {
 
   useEffect(() => {
     alive.current = true;
+    if (!enabled) {
+      setState((s) => ({ ...s, connection: "unreachable", credits: null, balance: null, problem: "Renders are off (see Settings)." }));
+      return () => {
+        alive.current = false;
+      };
+    }
     deviceKey()
       .then((k) => alive.current && setState((s) => ({ ...s, storage: k.storage, installId: s.installId ?? k.installId })))
       .catch(() => {});
@@ -127,7 +143,7 @@ export function useCredits(explicit?: RenderServiceClient): CreditsHandle {
       alive.current = false;
       window.removeEventListener("focus", onFocus);
     };
-  }, [refresh]);
+  }, [refresh, enabled]);
 
   // Poll while a checkout is open; retry, backing off, while the service is down.
   const { connection, awaitingPayment } = state;
@@ -137,10 +153,10 @@ export function useCredits(explicit?: RenderServiceClient): CreditsHandle {
     return () => clearInterval(t);
   }, [awaitingPayment, refresh]);
   useEffect(() => {
-    if (awaitingPayment || connection !== "unreachable") return;
+    if (!enabled || awaitingPayment || connection !== "unreachable") return;
     const t = setTimeout(() => void refresh(), retryDelay(failures.current));
     return () => clearTimeout(t);
-  }, [connection, awaitingPayment, refresh, retries]);
+  }, [connection, awaitingPayment, refresh, retries, enabled]);
 
   const setCredits = useCallback((n: number) => setState((s) => ({ ...s, credits: n, balance: s.balance ? { ...s.balance, credits: n } : s.balance })), []);
 

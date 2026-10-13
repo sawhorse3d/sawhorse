@@ -3,7 +3,22 @@ import { fakeRenderService, SERVICE } from "./fakeRenderService";
 
 // Lane 8: the Credits chip and the Render pane against the render service's API, with the
 // service faked inside Playwright (see fakeRenderService.ts; it verifies every signature).
+// Lane 15: a release build shows neither until a render service is set in Settings and
+// answers its health check; each test here sets the address first (as Settings saves it).
 const requireKernel = !!process.env.REQUIRE_KERNEL;
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((url) => {
+    try {
+      if (!sessionStorage.getItem("render-url-set")) {
+        localStorage.setItem("sawhorse.renderServiceUrl", url);
+        sessionStorage.setItem("render-url-set", "1");
+      }
+    } catch {
+      /* storage blocked */
+    }
+  }, SERVICE);
+});
 
 async function kernelReady(page: Page) {
   const vp = page.locator("main.vp");
@@ -14,8 +29,27 @@ async function kernelReady(page: Page) {
   return vp;
 }
 
-test("not connected: the chip shows a dash and Render explains, nothing is charged", async ({ page }) => {
+test("no render service, or one not answering: no chip, no Render pane, Settings says why (lane 15)", async ({ page }) => {
+  // Set but not answering.
   await page.route(`${SERVICE}/**`, (route) => route.abort("connectionrefused"));
+  await page.goto("/");
+  await expect(page.locator("main.vp")).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("menuitem", { name: /Settings/ }).click();
+  const line = page.getByTestId("render-gate");
+  await expect(line).toHaveAttribute("data-status", "unreachable");
+  await expect(line).toHaveText(`Renders are off: the render service at ${SERVICE} did not answer its health check.`);
+  await expect(page.locator("header.top .chip")).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
+  // Cleared: off, nothing asked.
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(line).toHaveAttribute("data-status", "off");
+  await expect(line).toHaveText("Renders are off: no render service is set. Sawhorse needs none to model, list or nest.");
+  await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
+});
+
+test("set and answering, but the balance call fails: the chip shows a dash and Render explains, nothing is charged", async ({ page }) => {
+  await page.route(`${SERVICE}/**`, (route) => (new URL(route.request().url()).pathname === "/healthz" ? route.fulfill({ status: 200, body: "{}", headers: { "Access-Control-Allow-Origin": "*" } }) : route.abort("connectionrefused")));
   await page.goto("/");
   const chip = page.locator("header.top .chip");
   await expect(chip).toHaveAttribute("data-state", "unreachable");
