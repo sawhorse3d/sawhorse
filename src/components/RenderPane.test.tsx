@@ -1,13 +1,22 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { RenderPane } from "./RenderPane";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { RenderPane, useImageSrc } from "./RenderPane";
 import { useCredits } from "../credits/useCredits";
 import { ServiceError, ServiceUnreachableError, type Balance, type RenderRequest, type RenderServiceClient } from "../credits/client";
 import { NothingToRenderError, type RenderPasses } from "../render/passes";
 
+// The pane fetches a render's image into a blob: URL when it can (lane 15). No test reaches
+// the network: by default the fetch fails at once, as for a host that does not answer, and
+// the pane shows the address itself (a real lookup of svc.test took up to seconds, so the
+// waits below timed out now and then).
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("offline in tests"))));
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const PASSES: RenderPasses = {
@@ -96,7 +105,7 @@ describe("Render pane", () => {
     expect(atob(req.edges_png!).charCodeAt(4)).toBe(2);
     expect(atob(req.clay_png!).charCodeAt(4)).toBe(3);
     expect(req.request_id).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    // Lane 15: fetched into a blob: URL when it can be; here (no such host) the address itself.
+    // Lane 15: fetched into a blob: URL when it can be; here (the fetch fails) the address itself.
     await waitFor(() => expect((document.getElementById("renderImg") as HTMLImageElement | null)?.src).toBe("http://svc.test/v1/renders/x/image?exp=1&sig=s"));
     expect(screen.getByText("Mock render · no provider keys")).toBeTruthy();
     expect(screen.getByTestId("chip").textContent).toBe("2");
@@ -193,5 +202,43 @@ describe("Render pane", () => {
       { step: "redeem", email: "wood@example.com", code: "ABCD-2345" },
     ]);
     expect(screen.getByTestId("chip").textContent).toBe("230");
+  });
+});
+
+describe("useImageSrc (lane 15)", () => {
+  it("shows a render through a blob: URL it makes from the fetched image, and frees it after", async () => {
+    const made: string[] = [];
+    const freed: string[] = [];
+    const had = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+    URL.createObjectURL = (() => {
+      made.push(`blob:test/${made.length}`);
+      return made[made.length - 1];
+    }) as typeof URL.createObjectURL;
+    URL.revokeObjectURL = ((u: string) => void freed.push(u)) as typeof URL.revokeObjectURL;
+    try {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("png bytes", { status: 200 })));
+      const { result, unmount } = renderHook(({ url }) => useImageSrc(url), { initialProps: { url: "http://svc.test/v1/renders/x/image" } });
+      await waitFor(() => expect(result.current).toBe("blob:test/0"));
+      unmount();
+      expect(freed).toEqual(["blob:test/0"]);
+    } finally {
+      URL.createObjectURL = had.create;
+      URL.revokeObjectURL = had.revoke;
+    }
+  });
+
+  it("keeps data: and blob: addresses as they are, and falls back to the address when the fetch fails", async () => {
+    const { result, rerender } = renderHook(({ url }) => useImageSrc(url), { initialProps: { url: "data:image/png;base64,AAAA" as string | null } });
+    expect(result.current).toBe("data:image/png;base64,AAAA");
+    rerender({ url: null });
+    expect(result.current).toBe(null);
+    const had = URL.createObjectURL;
+    URL.createObjectURL = (() => "blob:never") as typeof URL.createObjectURL;
+    try {
+      rerender({ url: "http://svc.test/v1/renders/y/image" });
+      await waitFor(() => expect(result.current).toBe("http://svc.test/v1/renders/y/image"));
+    } finally {
+      URL.createObjectURL = had;
+    }
   });
 });
