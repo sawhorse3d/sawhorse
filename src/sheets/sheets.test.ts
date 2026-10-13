@@ -167,9 +167,13 @@ describe("render geometry", () => {
     // The turned label: along its run upwards from the anchor, not beside it.
     expect(hitItem(r, [0.199, 0.14], slack)?.id).toBe(3);
     expect(hitItem(r, [0.21, 0.155], slack)?.id).toBe(1);
-    // An outline rectangle takes clicks on its outline, not inside it.
+    // An outline rectangle takes clicks on its outline, not inside it ...
     expect(hitItem(r, [0.05, 0.045], slack)?.id).toBe(4);
     expect(hitItem(r, [0.07, 0.045], slack)?.id).toBe(1);
+    // ... unless it is selected: then anywhere in its box (it drags from its middle).
+    expect(hitItem(r, [0.07, 0.045], slack, [4])?.id).toBe(4);
+    // A selected dimension still takes clicks only on what it draws.
+    expect(hitItem(r, [0.07, 0.106], slack, [2])?.id).toBe(1);
     // Outside everything.
     expect(hitItem(r, [0.3, 0.3], slack)).toBeNull();
   });

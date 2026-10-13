@@ -13,7 +13,8 @@ import { box, clickAt, ready, type } from "./helpers";
 type P2 = [number, number];
 type V3 = [number, number, number];
 type Info = { id: number; rect: [number, number, number, number]; factor: number; centre: P2; frame: { right: V3; up: V3 } };
-type Render = { id: number; name: string; size: P2; items: { id: number; kind: string; bounds: [number, number, number, number]; text?: string; points?: V3[]; detached?: boolean }[]; viewports: Info[]; prims: { p: string; text?: string }[] };
+type Item = { id: number; kind: string; bounds: [number, number, number, number]; text?: string; points?: V3[]; detached?: boolean; prims: [number, number] };
+type Render = { id: number; name: string; size: P2; items: Item[]; viewports: Info[]; prims: { p: string; text?: string; at?: P2; size?: number; anchor?: string }[] };
 type W = { __sawhorse: { sheet: { render(): Render | null; selection(): number[]; tool(): string; toClient(p: P2): P2 | null } } };
 
 const IN = 0.0254;
@@ -21,6 +22,15 @@ const render = (page: Page) => page.evaluate(() => (window as unknown as W).__sa
 const selection = (page: Page) => page.evaluate(() => (window as unknown as W).__sawhorse.sheet.selection());
 const hint = (page: Page) => page.locator("#hint");
 const texts = (r: Render | null) => (r?.prims ?? []).filter((p) => p.p === "text").map((p) => p.text);
+
+/** A paper point inside an item's first text (its words): the sheet picks a dimension or a
+ * label only on what it draws (lane 12c), not anywhere in its bounding box. */
+function onTextOf(r: Render, it: Item): P2 {
+  const t = r.prims.slice(it.prims[0], it.prims[1]).find((p) => p.p === "text" && p.at && p.size);
+  if (!t) throw new Error(`item ${it.id} draws no text`);
+  const dx = t.anchor === "start" ? 2 * t.size! : t.anchor === "end" ? -2 * t.size! : 0;
+  return [t.at![0] + dx, t.at![1] - 0.4 * t.size!];
+}
 
 /** Page coordinates of a paper point (metres). */
 async function client(page: Page, p: P2): Promise<P2> {
@@ -155,8 +165,9 @@ test("build a sheet of the bookshelf with every tool, edit it, undo, and save it
   expect((await render(page))!.items.filter((i) => i.kind === "dimension").map((i) => i.text)).toEqual(['36"', '72"', '17 1/4"']);
 
   // Delete the label, then undo it back.
-  const label = (await render(page))!.items.find((i) => i.kind === "label")!;
-  await page.mouse.click(...(await client(page, [label.bounds[0] + label.bounds[2] - 0.1 * IN, label.bounds[1] + label.bounds[3] / 2])));
+  const withLabel = (await render(page))!;
+  const label = withLabel.items.find((i) => i.kind === "label")!;
+  await page.mouse.click(...(await client(page, onTextOf(withLabel, label))));
   expect(await selection(page)).toEqual([label.id]);
   await page.keyboard.press("Delete");
   await expect.poll(async () => (await render(page))!.items.length).toBe(7);
@@ -260,13 +271,20 @@ test("a dimension on the model follows it when the model changes; a click on it 
   const below = await client(page, [v.rect[0] + v.rect[2] / 2, v.rect[1] + v.rect[3] - 0.2 * IN]);
   await page.mouse.click(below[0], below[1]);
   await expect(hint(page)).toContainText("follows it when the model changes");
-  const dims = async () => (await render(page))!.items.filter((i) => i.kind === "dimension");
+  // The sheet is laid out again a moment after Sheets mode comes back: until then, none.
+  const dims = async () => ((await render(page))?.items ?? []).filter((i) => i.kind === "dimension");
   await expect.poll(async () => (await dims()).map((i) => i.text)).toEqual(['30"']);
 
   // Select it with a click on its text, and click it again: nothing changes.
   await page.locator('.tool[data-sheet-tool="select"]').click();
   const d0 = (await dims())[0];
-  const onText = await client(page, [d0.bounds[0] + d0.bounds[2] / 2, d0.bounds[1] + 0.02 * IN]);
+  // Lane 12c: inside the dimension's box but on none of its lines or text, a click picks the
+  // viewport it sits on (the box used to steal it).
+  const vpItem = (await render(page))!.items.find((i) => i.kind === "viewport")!;
+  const inBox = await client(page, [d0.bounds[0] + d0.bounds[2] / 2, d0.bounds[1] + 0.02 * IN]);
+  await page.mouse.click(inBox[0], inBox[1]);
+  expect(await selection(page)).toEqual([vpItem.id]);
+  const onText = await client(page, onTextOf((await render(page))!, d0));
   await page.mouse.click(onText[0], onText[1]);
   expect(await selection(page)).toEqual([d0.id]);
   await expect(page.getByTestId("dim-follows")).toContainText("follows the model when you change it");

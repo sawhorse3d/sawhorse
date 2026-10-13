@@ -147,12 +147,12 @@ function insideRings(p: [number, number], rings: [number, number][][]): boolean 
 }
 
 /** The box a text primitive covers, in its own frame (x along the text from its anchor, y
- * down from the baseline): Helvetica's advance widths, ascent 0.8 and descent 0.25 of
- * the size. */
+ * down from the baseline): Helvetica's advance widths, from a full size above the baseline
+ * (as the kernel bounds it) to a quarter below (descenders). */
 export function textBox(t: Extract<Prim, { p: "text" }>): [number, number, number, number] {
   const w = textWidth(shownText(t), t.size, !!t.bold);
   const x0 = t.anchor === "start" ? 0 : t.anchor === "middle" ? -w / 2 : -w;
-  return [x0, -0.8 * t.size, w, 1.05 * t.size];
+  return [x0, -t.size, w, 1.25 * t.size];
 }
 
 /** `p` on what primitive `pr` draws, within `slack` paper metres: on a line (half its pen
@@ -194,11 +194,12 @@ export function primHit(pr: Prim, p: [number, number], slack: number): boolean {
 const BOXED: ReadonlySet<ItemInfo["kind"]> = new Set(["viewport", "table", "image"]);
 
 /** `p` on item `it` within `slack`: inside the frame of a viewport, a table or an image;
- * on the drawn geometry (lines, text boxes, arrowheads) of anything else. */
-export function itemHit(it: ItemInfo, prims: Prim[], p: [number, number], slack = 0): boolean {
+ * on the drawn geometry (lines, text boxes, arrowheads) of anything else. `boxed` picks
+ * the item anywhere in its box (a selected rectangle or label, which is moved by its box). */
+export function itemHit(it: ItemInfo, prims: Prim[], p: [number, number], slack = 0, boxed = false): boolean {
   const [x, y, w, h] = it.bounds;
   if (p[0] < x - slack || p[0] > x + w + slack || p[1] < y - slack || p[1] > y + h + slack) return false;
-  if (BOXED.has(it.kind)) return true;
+  if (boxed || BOXED.has(it.kind)) return true;
   for (let i = it.prims[0]; i < it.prims[1]; i++) {
     const pr = prims[i];
     if (pr && primHit(pr, p, slack)) return true;
@@ -209,10 +210,14 @@ export function itemHit(it: ItemInfo, prims: Prim[], p: [number, number], slack 
 /** The item under `p` (within `slack` paper metres): the topmost (drawn last) whose drawn
  * geometry it is on. A dimension's lines and text, a label's text and leader, a line or a
  * rectangle's outline take a click only on themselves, so a click in a viewport between a
- * dimension's lines picks the viewport (lane 12c; it used to pick by bounding box). */
-export function hitItem(r: Pick<SheetRender, "items" | "prims">, p: [number, number], slack = 0): ItemInfo | null {
+ * dimension's lines picks the viewport (lane 12c; it used to pick by bounding box). A
+ * selected item other than a dimension is also taken anywhere in its box (the box drawn
+ * around it), so a selected rectangle drags from its middle; a dimension's box spans the
+ * drawing it measures, so it never is. */
+export function hitItem(r: Pick<SheetRender, "items" | "prims">, p: [number, number], slack = 0, selected: readonly number[] = []): ItemInfo | null {
   for (let i = r.items.length - 1; i >= 0; i--) {
-    if (itemHit(r.items[i], r.prims, p, slack)) return r.items[i];
+    const it = r.items[i];
+    if (itemHit(it, r.prims, p, slack, it.kind !== "dimension" && selected.includes(it.id))) return it;
   }
   return null;
 }
