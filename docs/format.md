@@ -10,7 +10,7 @@ A `.shz` file is a Sawhorse model. It is a ZIP archive (APPNOTE 6.3, Deflate or 
 | `scene.json` | yes | Everything about the model: the header below and the model data. UTF-8 JSON. |
 | `geometry.glb` | yes (Sawhorse writes it) | Every solid and imported mesh as glTF 2.0 binary, so any glTF viewer can show a `.shz`. Also the fallback geometry for objects that `scene.json` lists without a `brep`. |
 | `thumbnail.webp` / `.jpg` / `.png` | no | A picture of the model (Sawhorse since lane 15: the view at save time as WebP, or JPEG where the browser cannot write WebP, at most 512 px on the long side and at most 100 KB; earlier files: PNG). Named by `scene.json`'s `thumbnail`; a reader takes any of the three. A writer leaves out a picture over 100 KB. |
-| `plugin-data.json` | no | Plugins' document-scoped stores (lane 11, ADR-0009): `{"version": 1, "plugins": {"<plugin id>": {"<key>": <JSON value>, ...}}}`, at most 64 KB per plugin. Written only when a plugin stored something in the document; readers that do not run plugins ignore it. Not part of the model hash. |
+| `plugin-data.json` | no | Plugins' document-scoped stores (lane 11, ADR-0009): `{"version": 1, "plugins": {"<plugin id>": {"<key>": <JSON value>, ...}}}`, at most 64 KB per plugin and 1 MB of text in all, at most 4 MB as stored. Written only when a plugin stored something in the document; readers that do not run plugins ignore it. Not part of the model hash. Since lane 16 Sawhorse writes and reads it with the rest of the file (`crates/shz`: deflated, read through the same caps as every entry) and hands its text to the app, which never unzips a user's file itself; the other entries keep their methods (`mimetype` and images stored). A reader drops any store whose key is `__proto__` and any store over its size. |
 | `assets/` | no | Texture images (PNG or JPEG), one entry per image, named by `scene.json`'s `textures[].path` and referenced from materials by that path. Stored, not compressed again. |
 
 Readers must ignore entries and JSON fields they do not know. Writers must not put required meaning into new fields without raising `version`.
@@ -291,6 +291,18 @@ glTF 2.0 binary. One node per object and per imported mesh, named after it, flat
 - `extras.sawhorse`: `object` (the object id) or `mesh` (the mesh id); `solid` (true for objects); `tag`; `groups` (the names of the groups and components around it, outermost first); for meshes, `note`.
 - A custom vertex attribute `_FACE_ID` (FLOAT SCALAR): the persistent face id of the face each vertex belongs to, so faces (and the drawn edges between coplanar faces) can be rebuilt exactly.
 - Materials as `pbrMetallicRoughness.baseColorFactor` (linear), named after the model's materials; a solid whose faces show different materials has one primitive per material. The `.shz` copy leaves texture images out (they are in `assets/`); a GLB exported on its own embeds them with `TEXCOORD_0`.
+
+## Reading limits (lane 16)
+
+A reader may refuse a file that would take unreasonable memory or time to read; Sawhorse refuses, with a plain message and nothing changed:
+
+- an archive of more than 2,048 entries, a name listed twice, or two entries sharing compressed bytes;
+- an entry whose declared uncompressed size is over its cap (`scene.json` 256 MB, `geometry.glb` 512 MB, a texture 16 MB, the thumbnail 100 KB, `plugin-data.json` 4 MB), whose declared size implies better than 1,100 to 1 compression (over 1 MB), or whose inflated bytes are not exactly its declared size; more than 1 GB in all;
+- more than 512 `textures` rows, or one path listed twice (checked before any image is read);
+- a name over 64 characters, a mesh note over 1,000, a material texture reference over 1,024; a mesh point, guide or dimension more than 10 km from the origin or not a number; a scene camera more than 1,000 km away;
+- components nested more than 64 deep, a definition that contains itself, or a model whose components would derive more than the model limits (100,000 solids and meshes, 100,000 groups and instances, 20,000 definitions, 5,000,000 faces, 10,000,000 points), counted along the definitions before anything is derived.
+
+Files Sawhorse writes are always within these. `docs/LIMITS.md` lists every limit with its reason.
 
 ## Compatibility rules
 

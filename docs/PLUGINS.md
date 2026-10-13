@@ -148,7 +148,7 @@ The types, with every call's permission, are in [`packages/plugin-api/index.d.ts
 
 Calls that talk to the app return promises. `units` and `geometry` are local and synchronous. Values crossing to the app must be plain data: numbers, strings, booleans, `null`, lists, plain objects and `Uint8Array` (fields that are `undefined` are left out).
 
-**Errors.** A call that talks to the app never throws for a refusal: its promise **rejects with a `PluginApiError`** (import it from `"sawhorse"`), whose `code` says why: `"permission"` (plugin.json does not ask for what the call needs), `"invalid"` (a parameter the app cannot use, including one that is not plain data: it is refused before anything is sent), `"not_found"`, `"busy"`, `"unknown"` (no such call), `"send_failed"` (the message could not be sent at all, for instance after the plugin was stopped) and `"refused"` (anything else the app said no to). Building a batch step by step (`model.batch(...)`, `b.op(...)`) is local and throws at the line with the mistake; `commit()` rejects.
+**Errors.** A call that talks to the app never throws for a refusal: its promise **rejects with a `PluginApiError`** (import it from `"sawhorse"`), whose `code` says why: `"permission"` (plugin.json does not ask for what the call needs), `"invalid"` (a parameter the app cannot use, including one that is not plain data: it is refused before anything is sent), `"too_large"` (the call, or the app's answer to it, is over the [message budget](#the-message-budget)), `"not_found"`, `"busy"` (too many calls at once or too fast: try again later), `"stopped"` (the plugin was stopped while the call waited), `"unknown"` (no such call), `"send_failed"` (the message could not be sent at all, for instance after the plugin was stopped) and `"refused"` (anything else the app said no to). Building a batch step by step (`model.batch(...)`, `b.op(...)`) is local and throws at the line with the mistake; `commit()` rejects.
 
 ```js
 import { storage, PluginApiError } from "sawhorse";
@@ -159,6 +159,19 @@ try {
   else throw e;
 }
 ```
+
+### The message budget
+
+Every call, answer, callback and event is one message, serialized once by its sender into a single buffer that is handed to the other side without a copy. The receiver measures the buffer before it reads anything in it, then reads the values out of it with every limit below applied before anything is allocated for them. The app never relies on the sandbox's own checks (a plugin can replace any built-in in its worker), so the limits hold whatever a plugin does to its own globals. ADR-0009 has the design; [docs/LIMITS.md](LIMITS.md#plugins) lists every number with its reason.
+
+| What | Budget |
+|---|---|
+| One message | 4 MB. `file.save` and the answer to `file.open`: 34 MB (a 32 MB file). `net.fetch`: 12 MB (a 10 MB body or answer). A plugin's modules at start: 24 MB in all. |
+| Values | strings up to 4 M characters, byte arrays up to 32 MB (a `Uint8Array` that views part of a larger buffer sends only its own bytes; one over a `SharedArrayBuffer` or a resizable buffer is refused), 1,000,000 values, nested 64 deep, object keys up to 256 characters, no `__proto__` key, lists without holes or extra properties. |
+| Rate | 300 messages a second (bursts of 100); above that requests are refused with `"busy"`, and ten seconds' worth in one second stops the plugin. The time the app spends on a plugin's messages is measured too: more than a quarter of every second for five seconds stops it. |
+| Waiting at once | 64 requests; 4 batches; 4 `net.fetch`; one `file.save` or `file.open`; one `ui.prompt` or `ui.confirm`. Stopping a plugin drops its queued batches, closes its dialog and cancels its downloads. |
+
+A call over the budget rejects with `code: "too_large"` and sends nothing; an answer the app cannot fit in the budget (a `model.solids()` of a huge model, say) rejects the call the same way, so your promise always settles. An event too large to deliver is dropped with a line in your console.
 
 ### sawhorse.model
 
@@ -252,7 +265,7 @@ Any op of the kernel's op log ([`src/kernel/types.ts`](../src/kernel/types.ts) `
 | `set_grain`, `set_stock` | `part`, `grain` / `stock`, `sheet` | (the cut list) |
 | `offset`, `follow_me`, `imprint`, `split_face`, `erase_face` ... | as the built-in tools send them | |
 
-A batch holds at most 10,000 ops.
+A batch holds at most 2,000 ops, and at most 10 batches a second are applied. A batch also has a work budget: each op costs about the size of the model it is applied to, so ops times things in the model (solids, meshes, groups, instances, sketches) must stay under 20,000,000; split bigger work into several batches (each its own undo step). The batch as sent is at most 4 MB (about 150,000 points of geometry).
 
 ### sawhorse.ui
 
@@ -293,7 +306,7 @@ await panel.update({ fields: { status: { text: "Done.", tone: "info" }, generate
 await panel.setBody([...]); // replace everything
 ```
 
-`values` holds every input field by id. A typed length that cannot be read ("3 1/2 ft-ish") shows its error under the field and is not sent (the field keeps the focus to be fixed; Esc puts the old value back). Enter that commits a number or text field hands the keyboard back to the model, so the person's next tool key ("r", "p") picks a tool; a checkbox or a button keeps only Space and Enter. Images are `data:` URLs of png, jpeg, gif, webp or svg only.
+`values` holds every input field by id. A typed length that cannot be read ("3 1/2 ft-ish") shows its error under the field and is not sent (the field keeps the focus to be fixed; Esc puts the old value back). Enter that commits a number or text field hands the keyboard back to the model, so the person's next tool key ("r", "p") picks a tool; a checkbox or a button keeps only Space and Enter. Images are base64 `data:` URLs of png, jpeg, gif or webp (SVG is refused: its size is not in its header), at most 256 KB each and 2048 x 2048 pixels (read from the image's header before the browser decodes it). One panel holds at most 100 fields, 5,000 table cells, 256 K characters of text and 4 images (512 KB in all); a body or an update over that is refused with `"invalid"`. Registering the same panel, command or tool again with nothing changed redraws nothing.
 
 ### Tools
 
@@ -374,7 +387,7 @@ await storage.document.set("cabinet", 12); // kept with the open document, saved
 await storage.document.keys(); await storage.document.delete("cabinet");
 ```
 
-Any string of 1 to 200 characters is a key, including `constructor`, `toString` and `__proto__`.
+Any string of 1 to 200 characters is a key, including `constructor`, `toString` and `__proto__`. Values are JSON values (no `Uint8Array`: encode bytes as base64 text). All plugins together keep at most 1 MB in this browser and 1 MB in a document; a `set` that would pass either is refused with `"invalid"`. Sizes are measured without turning the value into text first, so an oversized value is refused at once.
 
 ### sawhorse.file
 
@@ -387,7 +400,7 @@ const picked = await file.open({ extensions: [".csv"], description: "CSV" }); //
 
 ### sawhorse.net
 
-Needs `net` and only reaches the hosts listed in the manifest's `net`, over https (http only for `localhost`), with no cookies or credentials and no redirects. The app makes the request; the plugin gets the answer (at most 10 MB, 30 s).
+Needs `net` and only reaches the hosts listed in the manifest's `net`, over https (http only for `localhost`), with no cookies or credentials and no redirects. The app makes the request; the plugin gets the answer (at most 10 MB, 30 s). An answer that says it is larger (`Content-Length`) is refused before it is read, and one that turns out larger is cut off at 10 MB and refused (`"too_large"`). At most 4 requests wait at once and 50 MB a minute come in per plugin (`"busy"` past that).
 
 ```js
 const res = await net.fetch("https://api.example.com/prices?wood=oak"); // a Response
@@ -399,7 +412,7 @@ The desktop app's content security policy does not yet let the window reach outs
 
 ### log and the developer console
 
-`log(...)` and `console.log / info / warn / error` write to the plugin's developer console (Plugins pane, **Developer: console**; also the browser's console). The last error shows in the pane as the plugin's last error. At most 100 lines a second are kept.
+`log(...)` and `console.log / info / warn / error` write to the plugin's developer console (Plugins pane, **Developer: console**; also the browser's console). The last error shows in the pane as the plugin's last error (its first 600 characters). At most 100 lines a second are kept, each cut to 4,000 characters as sent and 2,000 as kept.
 
 ## What a plugin cannot do
 
@@ -419,7 +432,8 @@ So a plugin cannot:
 - **Talk to other pages or start workers.** `BroadcastChannel`, `MessageChannel`, `Worker`, `SharedWorker` and raw `postMessage` are removed.
 - **Use devices.** `navigator` keeps only facts about the browser (`language`, `languages`, `hardwareConcurrency`, `onLine`, `platform`, `userAgent` and the like); USB, HID, serial, Bluetooth, permissions and the GPU are not there.
 - **Run on someone else's grant.** A grant belongs to the files the person enabled ([Permissions](#permissions)).
-- **Freeze the app.** It runs in its own thread; the watchdog stops it when it stops answering.
+- **Freeze the app.** It runs in its own thread; the watchdog stops it when it stops answering, and the app stops it when it sends too much, too fast, or keeps the app busy ([The message budget](#the-message-budget)). **Stop** in the Plugins pane ends it at any time.
+- **Exhaust the app's memory through messages.** Every message is measured before it is read, against the budget above; nothing a plugin claims (a list's length, a buffer's size) is allocated before the bytes show it is really there.
 - **Change history or navigate.** Undo, redo, opening and closing groups and replacing the document are the person's.
 
 ### What a plugin's global object has

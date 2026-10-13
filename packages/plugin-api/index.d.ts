@@ -343,7 +343,8 @@ declare module "sawhorse" {
     | { type: "button"; id: string; label: string; primary?: boolean; disabled?: boolean }
     | { type: "table"; id?: string; columns: string[]; rows: (string | number)[][]; align?: ("left" | "right")[] }
     | { type: "note"; id?: string; text: string; tone?: "info" | "warning" | "error" }
-    /** A picture from a data: URL (png, jpeg, gif, webp or svg). */
+    /** A picture from a base64 data: URL: png, jpeg, gif or webp (lane 16: not svg), at most
+     * 256 KB and 2048 x 2048 pixels; 4 images and 512 KB per panel. */
     | { type: "image"; id?: string; src: string; alt: string; width?: number };
 
   export type Values = Record<string, string | number | boolean | null>;
@@ -530,8 +531,11 @@ declare module "sawhorse" {
 
   /** What every refused call rejects with (lane 15). Calls never throw for a refusal: they
    * reject. `code`: "permission" (plugin.json does not ask for it), "invalid" (a parameter
-   * the app cannot use), "not_found", "busy", "unknown" (no such call), "send_failed" (the
-   * message could not be sent), "refused" (anything else the app said no to). */
+   * the app cannot use), "too_large" (the call or its answer is over the message budget,
+   * lane 16: 4 MB a message, more for files and the network), "not_found", "busy" (too many
+   * calls at once or too fast), "stopped" (the plugin stopped while the call waited),
+   * "unknown" (no such call), "send_failed" (the message could not be sent), "refused"
+   * (anything else the app said no to). */
   export class PluginApiError extends Error {
     readonly code: string;
   }
@@ -544,7 +548,7 @@ declare module "sawhorse" {
     keys(): Promise<string[]>;
   }
 
-  /** storage. `app`: kept by this app (per device, 256 KB). `document`: saved inside the .shz with the model (64 KB). */
+  /** storage. `app`: kept by this app (per device, 256 KB; 1 MB for all plugins). `document`: saved inside the .shz with the model (64 KB; 1 MB for all plugins). JSON values only. */
   export const storage: { app: Store; document: Store };
 
   export const file: {
