@@ -571,6 +571,7 @@ fn random_sheets_lay_out() {
                         viewport: viewports[(r >> 2) as usize % viewports.len()],
                         dim,
                         points: [p(5), p(17), p(29)][..dim.points()].to_vec(),
+                        anchors: Vec::new(),
                         offset: 0.02 * (f(r >> 40) - 0.5),
                         style: Default::default(),
                         text: None,
@@ -583,6 +584,7 @@ fn random_sheets_lay_out() {
                     leader: viewports.first().map(|v| LeaderEnd::Model {
                         viewport: *v,
                         point: [0.45, 0.1, 0.9],
+                        anchor: None,
                     }),
                 },
                 4 => ItemKind::Table {

@@ -1,11 +1,11 @@
 // The sheet canvas (lane 12): the paper as the kernel lays it out, zoomed and panned, with
 // the select tool (click, Shift+click, box, drag to move on the grid, corner handles to
 // resize, Alt+drag inside a viewport to slide its drawing, drag a dimension to stand it
-// off) and the placement tools (viewport, dimension, label, table, image, line,
+// off; a click without a drag only selects) and the placement tools (viewport, dimension, label, table, image, line,
 // rectangle). It never edits anything itself: every change is a request the workspace
 // turns into one kernel op, so the kernel stays the judge and every edit is one undo step.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DimKind, ItemKind, LeaderEnd, Sheet } from "../kernel/sheetTypes";
+import type { DimKind, ItemKind, LeaderEnd, ModelAnchor, Sheet } from "../kernel/sheetTypes";
 import type { V3 } from "../kernel/types";
 import { itemRect, rectFrom } from "./paper";
 import { CANVAS_K, dimOffset, dimPreview, hitItem, modelToPaper, sheetLayers, snapPoint, type Href, type ItemInfo, type SheetRender, type SheetSnap, type ViewportInfo } from "./render";
@@ -20,7 +20,7 @@ export type PlaceRequest =
   | { kind: "box"; tool: "viewport" | "table" | "image" | "rect"; rect: Rect; dragged: boolean }
   | { kind: "line"; a: P2; b: P2 }
   | { kind: "label"; at: P2; leader: LeaderEnd | null; text: string }
-  | { kind: "dimension"; viewport: number; dim: DimKind; points: V3[]; offset: number };
+  | { kind: "dimension"; viewport: number; dim: DimKind; points: V3[]; anchors: (ModelAnchor | null)[]; offset: number };
 
 export interface SheetCanvasProps {
   render: SheetRender | null;
@@ -50,7 +50,7 @@ export interface SheetCanvasHandle {
 
 /** A pending multi-click placement. */
 type Pending =
-  | { t: "dim"; viewport: number; points: V3[]; paper: P2[] }
+  | { t: "dim"; viewport: number; points: V3[]; anchors: (ModelAnchor | null)[]; paper: P2[] }
   | { t: "label-tip"; tip: P2; leader: LeaderEnd | null }
   | { t: "label-text"; at: P2; leader: LeaderEnd | null };
 
@@ -60,7 +60,7 @@ type Gesture =
   | { t: "resize"; id: number; handle: Handle; cur: P2 }
   | { t: "box"; start: P2; cur: P2; add: boolean }
   | { t: "slide"; id: number; start: P2; cur: P2 }
-  | { t: "standoff"; id: number; cur: P2 }
+  | { t: "standoff"; id: number; start: P2; cur: P2 }
   | { t: "place-box"; tool: "viewport" | "table" | "image" | "rect"; start: P2; cur: P2 }
   | { t: "place-line"; start: P2; cur: P2 };
 
@@ -114,13 +114,16 @@ function resized(r: Rect, h: Handle, p: P2): Rect {
   return rectFrom(fixed, p);
 }
 
-/** A dimension's paper points (null: its viewport is gone or a point is behind the eye). */
-export function dimPaper(r: SheetRender, k: ItemKind): P2[] | null {
+/** A dimension's paper points (null: its viewport is gone or a point is behind the eye):
+ * where the kernel drew them (`id`: the item, whose anchors it found on the model as it is
+ * now), else its stored points. */
+export function dimPaper(r: SheetRender, k: ItemKind, id?: number): P2[] | null {
   if (k.kind !== "dimension") return null;
   const v = r.viewports.find((x) => x.id === k.viewport);
   if (!v) return null;
+  const drawn = id === undefined ? undefined : r.items.find((i) => i.id === id)?.points;
   const out: P2[] = [];
-  for (const p of k.points) {
+  for (const p of drawn ?? k.points) {
     const q = modelToPaper(v, p);
     if (!q) return null;
     out.push(q);
@@ -357,7 +360,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
           return;
         }
         if (ids.length === 1 && k?.kind === "dimension") {
-          setG({ t: "standoff", id: hit.id, cur: p });
+          setG({ t: "standoff", id: hit.id, start: p, cur: p });
           return;
         }
         setG({ t: "move", start: p, cur: p, ids, anchor: anchorOf(items.get(ids.find((i) => anchorOf(items.get(i))) ?? -1)) });
@@ -460,7 +463,9 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
       case "standoff": {
         const k = items.get(g.id);
         if (!k || k.kind !== "dimension") return;
-        const pts = dimPaper(render, k);
+        // A click (no drag) only selects it.
+        if (dist(p, g.start) < px(3)) return;
+        const pts = dimPaper(render, k, g.id);
         if (!pts || dist(p, pts[0]) < 1e-9) return;
         const offset = dimOffset(k.dim, pts, p);
         if (Math.abs(offset - k.offset) < 1e-6) return;
@@ -497,7 +502,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     const need = NEEDS[dimKind];
     if (pending?.t === "dim" && pending.points.length >= need) {
       const offset = dimOffset(dimKind, pending.paper, p);
-      onPlace({ kind: "dimension", viewport: pending.viewport, dim: dimKind, points: pending.points, offset });
+      onPlace({ kind: "dimension", viewport: pending.viewport, dim: dimKind, points: pending.points, anchors: pending.anchors, offset });
       setPending(null);
       return;
     }
@@ -505,8 +510,8 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     if (!v) return onMessage("Click a point of the drawing in a viewport: an endpoint, a midpoint, an intersection or a point on an edge.", true);
     const s = await snapAt(p, v.id);
     if (!s) return onMessage("Nothing to dimension there: click on a line of the drawing.", true);
-    const prev = pending?.t === "dim" ? pending : { t: "dim" as const, viewport: v.id, points: [] as V3[], paper: [] as P2[] };
-    const next = { ...prev, points: [...prev.points, s.point], paper: [...prev.paper, s.at] };
+    const prev = pending?.t === "dim" ? pending : { t: "dim" as const, viewport: v.id, points: [] as V3[], anchors: [] as (ModelAnchor | null)[], paper: [] as P2[] };
+    const next = { ...prev, points: [...prev.points, s.point], anchors: [...prev.anchors, s.anchor ?? null], paper: [...prev.paper, s.at] };
     setPending(next);
     const left = need - next.points.length;
     onMessage(left > 0 ? `${SNAP_NAMES[s.kind]}. ${left === 1 ? "One more point" : `${left} more points`}${dimKind === "angular" && next.points.length === 1 ? " (the first was the corner)" : ""}.` : "Now click where the dimension line goes.", false);
@@ -528,7 +533,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     if (v) {
       const s = await snapAt(p, v.id);
       if (s) {
-        leader = { on: "model", viewport: v.id, point: s.point };
+        leader = s.anchor ? { on: "model", viewport: v.id, point: s.point, anchor: s.anchor } : { on: "model", viewport: v.id, point: s.point };
         tip = s.at;
       }
     }
@@ -621,7 +626,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     }
     if (g?.t === "standoff") {
       const k = items.get(g.id);
-      const pts = k && dimPaper(render, k);
+      const pts = k && dist(g.cur, g.start) >= px(3) ? dimPaper(render, k, g.id) : null;
       if (k?.kind === "dimension" && pts) {
         const line = dimPreview(k.dim, pts, dimOffset(k.dim, pts, g.cur));
         if (line) {

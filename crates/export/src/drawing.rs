@@ -180,6 +180,27 @@ pub struct Line {
     pub a3: [f64; 3],
     pub b3: [f64; 3],
     pub kind: LineKind,
+    /// The solid's edge it is part of, when it is one (see [`Drawing::anchor`]).
+    #[serde(skip)]
+    pub src: Option<LineSrc>,
+}
+
+/// Where a line lies on a solid's edge: the edge (an index into [`Drawing::edges`]) and
+/// how far along it the line's ends are, 0 at the edge's first corner, 1 at its second.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LineSrc {
+    pub edge: usize,
+    pub ta: f64,
+    pub tb: f64,
+}
+
+/// An edge of a solid, named so that it can be found again after the solid is edited: the
+/// solid and the persistent ids of the faces at each of its corners.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeRef {
+    pub object: u64,
+    pub a: Vec<u64>,
+    pub b: Vec<u64>,
 }
 
 /// A filled area (a section cap): rings in drawing coordinates, outer first.
@@ -197,6 +218,30 @@ pub struct Drawing {
     /// `[x0, y0, x1, y1]` of everything drawn (`None`: nothing).
     pub bounds: Option<[f64; 4]>,
     pub hash: String,
+    /// The solids' edges the lines are part of (see [`Line::src`]).
+    #[serde(skip)]
+    pub edges: Vec<EdgeRef>,
+}
+
+impl Drawing {
+    /// Where model point `p` on `line` sits on the model, as an anchor that follows the
+    /// solid's edits (`None`: the line is no solid's edge: a sketch, an imported mesh, a
+    /// section cut).
+    pub fn anchor(&self, line: &Line, p: [f64; 3]) -> Option<sawhorse_kernel::sheets::ModelAnchor> {
+        let src = line.src?;
+        let e = self.edges.get(src.edge)?;
+        let (a, b) = (DVec3::from_array(line.a3), DVec3::from_array(line.b3));
+        let d = b - a;
+        let s = if d.length_squared() > 0.0 {
+            ((DVec3::from_array(p) - a).dot(d) / d.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let t = (src.ta + (src.tb - src.ta) * s).clamp(0.0, 1.0);
+        Some(sawhorse_kernel::sheets::ModelAnchor::on_edge(
+            e.object, &e.a, &e.b, t,
+        ))
+    }
 }
 
 /// What to draw besides the visible lines.
@@ -214,6 +259,8 @@ struct Edge3 {
     b: DVec3,
     normals: [DVec3; 2],
     cut: bool,
+    /// A solid's edge: its index in [`Picture::refs`] and where `a` and `b` are along it.
+    src: Option<(usize, f64, f64)>,
 }
 
 /// The kept side of a plane: `(p - origin) . normal >= 0`.
@@ -238,6 +285,11 @@ fn clip_polygon(ring: &[DVec3], planes: &[Keep]) -> Vec<DVec3> {
 }
 
 fn clip_segment(a: DVec3, b: DVec3, planes: &[Keep]) -> Option<(DVec3, DVec3)> {
+    clip_params(a, b, planes).map(|(t0, t1)| (a.lerp(b, t0), a.lerp(b, t1)))
+}
+
+/// The part of the segment `a b` on the kept side of every plane, as parameters along it.
+fn clip_params(a: DVec3, b: DVec3, planes: &[Keep]) -> Option<(f64, f64)> {
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
     for (o, n) in planes {
         let (da, db) = ((a - *o).dot(*n), (b - *o).dot(*n));
@@ -253,7 +305,7 @@ fn clip_segment(a: DVec3, b: DVec3, planes: &[Keep]) -> Option<(DVec3, DVec3)> {
             }
         }
     }
-    (t1 - t0 > 1e-12).then(|| (a.lerp(b, t0), a.lerp(b, t1)))
+    (t1 - t0 > 1e-12).then_some((t0, t1))
 }
 
 /// Everything a view of `model` draws: triangles that hide (model points), edges, and the
@@ -262,6 +314,7 @@ struct Picture {
     tris: Vec<[DVec3; 3]>,
     edges: Vec<Edge3>,
     caps: Vec<Vec<Vec<DVec3>>>,
+    refs: Vec<EdgeRef>,
 }
 
 fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
@@ -282,6 +335,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
         tris: Vec::new(),
         edges: Vec::new(),
         caps: Vec::new(),
+        refs: Vec::new(),
     };
     let add_tri = |pic: &mut Picture, t: [DVec3; 3], clip: &[Keep]| {
         if clip.is_empty()
@@ -312,14 +366,25 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                 .and_then(|l| b.face(l.face))
                 .map_or(DVec3::ZERO, |f| f.plane.normal)
         };
+        let corners = b.corner_face_ids();
+        let faces_at = |v| corners.get(&v).cloned().unwrap_or_default();
         for (e, edge) in b.edges() {
             let (p, q) = b.edge_points(e);
-            if let Some((p, q)) = clip_segment(p, q, &clip) {
+            if let Some((t0, t1)) = clip_params(p, q, &clip) {
+                let src = b.half_edge(edge.he).map(|h| {
+                    pic.refs.push(EdgeRef {
+                        object: id,
+                        a: faces_at(h.origin),
+                        b: faces_at(b.dest(edge.he)),
+                    });
+                    (pic.refs.len() - 1, t0, t1)
+                });
                 pic.edges.push(Edge3 {
-                    a: p,
-                    b: q,
+                    a: p.lerp(q, t0),
+                    b: p.lerp(q, t1),
                     normals: [normal_of(Some(edge.he)), normal_of(edge.twin)],
                     cut: false,
+                    src,
                 });
             }
         }
@@ -344,6 +409,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: q,
                     normals: [DVec3::ZERO; 2],
                     cut: false,
+                    src: None,
                 });
             }
         };
@@ -378,6 +444,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: q,
                     normals: [DVec3::ZERO; 2],
                     cut: false,
+                    src: None,
                 });
             }
         }
@@ -400,6 +467,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: cut.to_world(*b),
                     normals: [DVec3::ZERO; 2],
                     cut: true,
+                    src: None,
                 });
             }
             // A cap is seen when the eye looks at its face: from the side cut away.
@@ -540,10 +608,15 @@ pub fn draw(
             }
         }
         pic.edges
-            .retain_mut(|e| match clip_segment(e.a, e.b, &[near]) {
-                Some((a, b)) => {
+            .retain_mut(|e| match clip_params(e.a, e.b, &[near]) {
+                Some((t0, t1)) => {
+                    let (a, b) = (e.a.lerp(e.b, t0), e.a.lerp(e.b, t1));
                     e.a = a;
                     e.b = b;
+                    if let Some((_, s0, s1)) = &mut e.src {
+                        let (u0, u1) = (*s0 + (*s1 - *s0) * t0, *s0 + (*s1 - *s0) * t1);
+                        (*s0, *s1) = (u0, u1);
+                    }
                     true
                 }
                 None => false,
@@ -638,12 +711,24 @@ pub fn draw(
             if p.truncate().distance(q.truncate()) <= min_len {
                 return None;
             }
+            let (a3, b3) = (frame.unproject(p), frame.unproject(q));
+            // Where the ends are along the edge, in the model (a perspective view's drawing
+            // is not linear in the model, so not from `s` and `t`).
+            let along = |x: DVec3| {
+                let d = e.b - e.a;
+                ((x - e.a).dot(d) / d.length_squared().max(1e-300)).clamp(0.0, 1.0)
+            };
             Some(Line {
                 a: p.truncate().to_array(),
                 b: q.truncate().to_array(),
-                a3: frame.unproject(p).to_array(),
-                b3: frame.unproject(q).to_array(),
+                a3: a3.to_array(),
+                b3: b3.to_array(),
                 kind,
+                src: e.src.map(|(edge, t0, t1)| LineSrc {
+                    edge,
+                    ta: t0 + (t1 - t0) * along(a3),
+                    tb: t0 + (t1 - t0) * along(b3),
+                }),
             })
         };
         lines.extend(visible.into_iter().filter_map(|iv| piece(iv, kind)));
@@ -704,6 +789,7 @@ pub fn draw(
         fills,
         bounds,
         hash: format!("{:016x}", h.finish()),
+        edges: pic.refs,
     })
 }
 

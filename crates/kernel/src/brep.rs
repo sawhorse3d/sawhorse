@@ -466,6 +466,22 @@ impl Brep {
             .collect()
     }
 
+    /// The persistent ids of the faces at every vertex, ascending: what names a corner
+    /// across edits (see [`crate::sheets::ModelAnchor`]). One pass over the half-edges.
+    pub fn corner_face_ids(&self) -> BTreeMap<VertexId, Vec<u64>> {
+        let mut out: BTreeMap<VertexId, Vec<u64>> = BTreeMap::new();
+        for h in self.half_edges.values() {
+            out.entry(h.origin)
+                .or_default()
+                .push(self.faces[self.loops[h.lp].face].id);
+        }
+        for ids in out.values_mut() {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+        out
+    }
+
     /// All vertices of a face (outer and holes), sorted.
     pub fn face_vertices(&self, f: FaceId) -> BTreeSet<VertexId> {
         self.faces[f]

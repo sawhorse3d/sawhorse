@@ -279,6 +279,87 @@ pub enum DimStyle {
     Dots,
 }
 
+/// Most face ids an anchor names at one corner.
+const MAX_ANCHOR_FACES: usize = 64;
+
+/// Where a model point sits on a solid, so it follows the solid through edits (a dimension's
+/// end, a leader's tip). A corner of a solid is named by the persistent ids of the faces
+/// that meet there, which push/pull, Move, Rotate, Scale and splits keep (ADR-0010): the
+/// corner where `at` meet, or, with `to`, the point `t` of the way from that corner to the
+/// one where `to` meet (a midpoint, a point along an edge). When no corner of the solid has
+/// those faces any more (the solid is gone, or the edit took the corner away) the point
+/// stays where it was last placed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ModelAnchor {
+    /// The solid (public id).
+    pub object: u64,
+    /// The persistent ids of the faces meeting at the corner, ascending.
+    pub at: Vec<u64>,
+    /// The other corner's faces (empty: the point is the corner `at`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<u64>,
+    /// How far from `at` toward `to`, 0 to 1.
+    #[serde(default, skip_serializing_if = "is_zero_f")]
+    pub t: f64,
+}
+
+fn is_zero_f(x: &f64) -> bool {
+    *x == 0.0
+}
+
+impl ModelAnchor {
+    /// The point `t` of the way along the edge of solid `object` from the corner where faces
+    /// `at` meet to the one where `to` meet; at (or within a billionth of) an end, just that
+    /// corner.
+    pub fn on_edge(object: u64, at: &[u64], to: &[u64], t: f64) -> ModelAnchor {
+        const END: f64 = 1e-9;
+        let corner = |faces: &[u64]| ModelAnchor {
+            object,
+            at: faces.to_vec(),
+            to: Vec::new(),
+            t: 0.0,
+        };
+        if t <= END || to.is_empty() {
+            corner(at)
+        } else if t >= 1.0 - END {
+            corner(to)
+        } else {
+            ModelAnchor {
+                object,
+                at: at.to_vec(),
+                to: to.to_vec(),
+                t,
+            }
+        }
+    }
+
+    /// Well formed: face ids at each corner (at most 64, ascending, none zero) and `t` in 0..=1.
+    pub fn check(&self) -> Result<(), &'static str> {
+        let ok = |f: &[u64]| {
+            f.len() <= MAX_ANCHOR_FACES && f.iter().all(|x| *x != 0) && f.is_sorted_by(|a, b| a < b)
+        };
+        if self.object == 0 || self.at.is_empty() || !ok(&self.at) || !ok(&self.to) {
+            return Err("an anchor names a solid and the faces at its corners");
+        }
+        if !(self.t.is_finite() && (0.0..=1.0).contains(&self.t))
+            || (self.to.is_empty() && self.t != 0.0)
+        {
+            return Err("an anchor's place along its edge is 0 to 1");
+        }
+        Ok(())
+    }
+
+    fn hash_into(&self, h: &mut StableHasher) {
+        h.u64(self.object);
+        h.usize(self.at.len());
+        self.at.iter().for_each(|f| h.u64(*f));
+        h.usize(self.to.len());
+        self.to.iter().for_each(|f| h.u64(*f));
+        h.len(self.t);
+    }
+}
+
 /// Where a label's leader points.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -286,8 +367,14 @@ pub enum DimStyle {
 pub enum LeaderEnd {
     /// A point on the paper.
     Paper { at: [f64; 2] },
-    /// A model point seen in a viewport: the leader follows it when the viewport changes.
-    Model { viewport: u64, point: [f64; 3] },
+    /// A model point seen in a viewport: the leader follows it when the viewport changes,
+    /// and with an anchor, when the solid it is on changes.
+    Model {
+        viewport: u64,
+        point: [f64; 3],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<ModelAnchor>,
+    },
 }
 
 /// What an item is (paper coordinates: metres from the paper's top-left, y down; a rect is
@@ -318,8 +405,13 @@ pub enum ItemKind {
         /// The viewport item whose model points it measures.
         viewport: u64,
         dim: DimKind,
-        /// Model points (two, or three for angles and arcs).
+        /// Model points (two, or three for angles and arcs): where each end was placed.
         points: Vec<[f64; 3]>,
+        /// Where each point sits on a solid (one per point, `None` for a point on no solid's
+        /// corner or edge), so the dimension follows the model's edits; empty in documents
+        /// from before anchors, whose dimensions keep their points.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        anchors: Vec<Option<ModelAnchor>>,
         /// How far the dimension line stands off its points, paper metres (sign: side).
         offset: f64,
         #[serde(default)]
@@ -446,6 +538,7 @@ impl ItemKind {
                 viewport,
                 dim,
                 points,
+                anchors,
                 offset,
                 style,
                 text,
@@ -457,6 +550,19 @@ impl ItemKind {
                 points.iter().flatten().for_each(|v| h.len(*v));
                 h.len(*offset);
                 h.tag(text.as_deref().unwrap_or("\u{0}"));
+                // Hashed only when present, so dimensions from before anchors keep their hash.
+                if !anchors.is_empty() {
+                    h.tag("anchors");
+                    for a in anchors {
+                        match a {
+                            Some(a) => {
+                                h.u64(1);
+                                a.hash_into(h);
+                            }
+                            None => h.u64(0),
+                        }
+                    }
+                }
             }
             ItemKind::Label {
                 at,
@@ -474,10 +580,18 @@ impl ItemKind {
                         h.u64(1);
                         p2(h, at);
                     }
-                    Some(LeaderEnd::Model { viewport, point }) => {
+                    Some(LeaderEnd::Model {
+                        viewport,
+                        point,
+                        anchor,
+                    }) => {
                         h.u64(2);
                         h.u64(*viewport);
                         point.iter().for_each(|v| h.len(*v));
+                        if let Some(a) = anchor {
+                            h.tag("anchor");
+                            a.hash_into(h);
+                        }
                     }
                 }
             }
@@ -599,6 +713,48 @@ impl Model {
         self.sheets.get(from_public::<SheetId>(id))
     }
 
+    /// Where `anchor` is in the model as it is now (see [`ModelAnchor`]). `near` (the point
+    /// as last placed) picks between corners that have the same faces, as a notched face
+    /// meeting its neighbour twice can. `None`: the solid is gone or no corner of it has
+    /// those faces any more.
+    pub fn anchor_point(&self, anchor: &ModelAnchor, near: [f64; 3]) -> Option<[f64; 3]> {
+        let b = self.object(anchor.object)?.brep();
+        let corners = b.corner_face_ids();
+        let at_faces = |faces: &[u64]| -> Vec<glam::DVec3> {
+            corners
+                .iter()
+                .filter(|(_, f)| f.as_slice() == faces)
+                .filter_map(|(v, _)| b.vertex(*v).map(|x| x.pos))
+                .collect()
+        };
+        let near = glam::DVec3::from_array(near);
+        let from = at_faces(&anchor.at);
+        let to = if anchor.to.is_empty() {
+            Vec::new()
+        } else {
+            at_faces(&anchor.to)
+        };
+        let mut best: Option<(f64, glam::DVec3)> = None;
+        let mut offer = |p: glam::DVec3| {
+            let d = p.distance_squared(near);
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, p));
+            }
+        };
+        for p in &from {
+            if anchor.to.is_empty() {
+                offer(*p);
+            } else {
+                for q in &to {
+                    if p != q {
+                        offer(p.lerp(*q, anchor.t));
+                    }
+                }
+            }
+        }
+        best.map(|(_, p)| p.to_array())
+    }
+
     fn sheet_key(&self, id: u64) -> Result<SheetId, SheetError> {
         let k = from_public::<SheetId>(id);
         if self.sheets.contains_key(k) {
@@ -688,12 +844,19 @@ impl Model {
                 viewport: v,
                 dim,
                 points,
+                anchors,
                 offset,
                 text,
                 ..
             } => {
                 if !viewport(*v) {
                     return bad("a dimension must be attached to a viewport on the same sheet");
+                }
+                if !anchors.is_empty()
+                    && (anchors.len() != points.len()
+                        || anchors.iter().flatten().any(|a| a.check().is_err()))
+                {
+                    return bad("a dimension's anchors must match its points");
                 }
                 if points.len() != dim.points()
                     || !points
@@ -731,8 +894,13 @@ impl Model {
                     Some(LeaderEnd::Paper { at }) if !finite2(at) => {
                         bad("a leader must end on the paper")
                     }
-                    Some(LeaderEnd::Model { viewport: v, point })
-                        if !viewport(*v) || !point.iter().all(|x| x.is_finite()) =>
+                    Some(LeaderEnd::Model {
+                        viewport: v,
+                        point,
+                        anchor,
+                    }) if !viewport(*v)
+                        || !point.iter().all(|x| x.is_finite())
+                        || anchor.as_ref().is_some_and(|a| a.check().is_err()) =>
                     {
                         bad("a leader must point at a model point in a viewport on the same sheet")
                     }
@@ -1061,6 +1229,7 @@ mod tests {
             viewport: 1,
             dim: DimKind::Horizontal,
             points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
+            anchors: Vec::new(),
             offset: 0.01,
             style: DimStyle::Ticks,
             text: None,

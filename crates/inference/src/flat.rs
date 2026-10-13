@@ -7,13 +7,15 @@
 
 use glam::{DVec2, DVec3};
 
-/// A drawing line: paper points and the model points they are.
+/// A drawing line: paper points and the model points they are, and the caller's own tag
+/// for it (which line of its drawing it is), handed back with a snap on it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlatSeg {
     pub a: DVec2,
     pub b: DVec2,
     pub a3: DVec3,
     pub b3: DVec3,
+    pub tag: usize,
 }
 
 /// What a flat snap found.
@@ -33,6 +35,9 @@ pub struct FlatSnap {
     pub at: [f64; 2],
     /// In the model.
     pub point: [f64; 3],
+    /// The tag of the line the point is on (an intersection: the first line).
+    #[serde(skip)]
+    pub tag: usize,
 }
 
 fn closest_on(s: &FlatSeg, p: DVec2) -> (f64, DVec2) {
@@ -65,36 +70,47 @@ pub fn snap(segs: &[FlatSeg], p: DVec2, radius: f64) -> Option<FlatSnap> {
         .iter()
         .filter(|s| closest_on(s, p).1.distance(p) <= radius)
         .collect();
-    let mut best: Option<(FlatKind, f64, DVec2, DVec3)> = None;
-    let mut offer = |kind: FlatKind, at: DVec2, point: DVec3| {
+    let mut best: Option<(FlatKind, f64, DVec2, DVec3, usize)> = None;
+    let mut offer = |kind: FlatKind, at: DVec2, point: DVec3, tag: usize| {
         let d = at.distance(p);
         if d > radius {
             return;
         }
-        if best.is_none_or(|(k, bd, _, _)| kind < k || (kind == k && d < bd)) {
-            best = Some((kind, d, at, point));
+        if best.is_none_or(|(k, bd, ..)| kind < k || (kind == k && d < bd)) {
+            best = Some((kind, d, at, point, tag));
         }
     };
     for s in &near {
-        offer(FlatKind::Endpoint, s.a, s.a3);
-        offer(FlatKind::Endpoint, s.b, s.b3);
-        offer(FlatKind::Midpoint, (s.a + s.b) * 0.5, s.a3.lerp(s.b3, 0.5));
+        offer(FlatKind::Endpoint, s.a, s.a3, s.tag);
+        offer(FlatKind::Endpoint, s.b, s.b3, s.tag);
+        offer(
+            FlatKind::Midpoint,
+            (s.a + s.b) * 0.5,
+            s.a3.lerp(s.b3, 0.5),
+            s.tag,
+        );
     }
     for (i, s) in near.iter().enumerate() {
         for u in &near[i + 1..] {
             if let Some((t, _)) = cross(s, u) {
-                offer(FlatKind::Intersection, s.a.lerp(s.b, t), s.a3.lerp(s.b3, t));
+                offer(
+                    FlatKind::Intersection,
+                    s.a.lerp(s.b, t),
+                    s.a3.lerp(s.b3, t),
+                    s.tag,
+                );
             }
         }
     }
     for s in &near {
         let (t, at) = closest_on(s, p);
-        offer(FlatKind::OnEdge, at, s.a3.lerp(s.b3, t));
+        offer(FlatKind::OnEdge, at, s.a3.lerp(s.b3, t), s.tag);
     }
-    best.map(|(kind, _, at, point)| FlatSnap {
+    best.map(|(kind, _, at, point, tag)| FlatSnap {
         kind,
         at: at.to_array(),
         point: point.to_array(),
+        tag,
     })
 }
 
@@ -108,6 +124,7 @@ mod tests {
             b: DVec2::from_array(b),
             a3: DVec3::new(a[0], 0.0, a[1]),
             b3: DVec3::new(b[0], 0.0, b[1]),
+            tag: 0,
         }
     }
 

@@ -5,6 +5,7 @@ import { nextSheetName } from "./SheetsWorkspace";
 import { PT, crc32, pngDpi, sheetsPdf, withDpi } from "./exports";
 import { readPdf, textWidth, winAnsi } from "../cutlist/pdf";
 import { dimPaper } from "./SheetCanvas";
+import type { V3 } from "../kernel/types";
 
 const front: ViewportInfo = {
   id: 1,
@@ -159,6 +160,18 @@ describe("render geometry", () => {
     expect(pts![0][0]).toBeCloseTo(0.07, 12);
     expect(pts![1][0]).toBeCloseTo(0.08, 12);
     expect(dimPaper(render, { kind: "dimension", viewport: 9, dim: "horizontal", points: [[0, 0, 0], [1, 0, 0]], offset: 0 })).toBeNull();
+  });
+
+  it("takes a dimension's ends from where the kernel drew them (its anchors followed the model)", () => {
+    // Stored at 30 in wide; the kernel found the anchored corner 6 in further out (36 in).
+    const k = { kind: "dimension" as const, viewport: 1, dim: "horizontal" as const, points: [[0.381, 0, 0.6], [0.381 + 0.08, 0, 0.6]] as V3[], offset: 0.01 };
+    const followed: SheetRender = { ...render, items: render.items.map((i) => (i.id === 2 ? { ...i, points: [[0.381, 0, 0.6], [0.381 + 0.16, 0, 0.6]] as V3[] } : i)) };
+    const stored = dimPaper(followed, k)!;
+    const drawn = dimPaper(followed, k, 2)!;
+    expect(stored[1][0] - stored[0][0]).toBeCloseTo(0.01, 12);
+    expect(drawn[1][0] - drawn[0][0]).toBeCloseTo(0.02, 12);
+    // No points from the kernel (an older render, or another id): the stored ones.
+    expect(dimPaper(render, k, 2)).toEqual(stored);
   });
 });
 

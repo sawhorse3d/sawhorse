@@ -53,7 +53,17 @@ export type DimKind = "horizontal" | "vertical" | "aligned" | "angular" | "radiu
 export type DimStyle = "arrows" | "ticks" | "dots";
 export type CutColumn = "part" | "qty" | "thickness" | "width" | "length" | "size" | "material" | "grain" | "amount" | "notes";
 
-export type LeaderEnd = { on: "paper"; at: [number, number] } | { on: "model"; viewport: number; point: V3 };
+/** Where a model point sits on a solid, so it follows the solid's edits (the kernel's
+ * `ModelAnchor`): the corner where faces `at` meet, or the point `t` of the way from it to
+ * the corner where faces `to` meet. */
+export interface ModelAnchor {
+  object: number;
+  at: number[];
+  to?: number[];
+  t?: number;
+}
+
+export type LeaderEnd = { on: "paper"; at: [number, number] } | { on: "model"; viewport: number; point: V3; anchor?: ModelAnchor | null };
 
 export type ItemKind =
   | {
@@ -66,7 +76,7 @@ export type ItemKind =
       caption?: string | null;
       border?: boolean;
     }
-  | { kind: "dimension"; viewport: number; dim: DimKind; points: V3[]; offset: number; style?: DimStyle; text?: string | null }
+  | { kind: "dimension"; viewport: number; dim: DimKind; points: V3[]; anchors?: (ModelAnchor | null)[]; offset: number; style?: DimStyle; text?: string | null }
   | { kind: "label"; at: [number, number]; text: string; size: number; leader?: LeaderEnd | null }
   | { kind: "table"; rect: [number, number, number, number]; columns: CutColumn[]; decimal?: boolean; visible_only?: boolean; title?: string | null }
   | { kind: "image"; rect: [number, number, number, number]; path: string }

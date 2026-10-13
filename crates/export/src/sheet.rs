@@ -11,6 +11,9 @@
 //! - **Dimensions** are computed from their model points every time (never stored as
 //!   paper): their value is what [`measure`] reads in the viewport's view, written in the
 //!   sheet's length format; their lines follow the points wherever the viewport puts them.
+//!   A point anchored on a solid (`ModelAnchor`) is found again on the solid as it is now,
+//!   so a dimension follows push/pull, Move, Rotate and Scale; a point that is not (or
+//!   whose corner is gone) stays where it was placed.
 //! - **Labels** (with leaders to the paper or to model points), **cut-list tables** (the
 //!   kernel's cut list in the item's columns), **images**, **lines**, **rectangles**, each
 //!   viewport's **caption**, the **margin frame** and the **title block**.
@@ -154,6 +157,13 @@ pub struct ItemInfo {
     /// A dimension's text, as drawn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// A dimension's model points as drawn: its anchors found on the model as it is now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<[f64; 3]>>,
+    /// A dimension with a point whose anchor is no longer on the model (the solid or the
+    /// corner is gone): that point stays where it was placed.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub detached: bool,
     /// The range of `prims` it drew (`start..end`): the canvas moves them while dragging.
     pub prims: [usize; 2],
 }
@@ -463,6 +473,7 @@ pub fn viewport_drawing(
                 fills: Vec::new(),
                 bounds: None,
                 hash: String::new(),
+                edges: Vec::new(),
             },
             Some(e.to_string()),
         ),
@@ -532,6 +543,8 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
     for it in &sheet.items {
         let start = prims.len();
         let mut text_out = None;
+        let mut points_out = None;
+        let mut detached = false;
         let kind = match &it.kind {
             ItemKind::Viewport {
                 rect,
@@ -633,13 +646,29 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
                 viewport,
                 dim,
                 points,
+                anchors,
                 offset,
                 style,
                 text: own,
             } => {
                 if let Some(info) = vp(*viewport) {
-                    let model_pts: Vec<DVec3> =
-                        points.iter().map(|p| DVec3::from_array(*p)).collect();
+                    let model_pts: Vec<DVec3> = points
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let Some(Some(a)) = anchors.get(i) else {
+                                return DVec3::from_array(*p);
+                            };
+                            match model.anchor_point(a, *p) {
+                                Some(q) => DVec3::from_array(q),
+                                None => {
+                                    detached = true;
+                                    DVec3::from_array(*p)
+                                }
+                            }
+                        })
+                        .collect();
+                    points_out = Some(model_pts.iter().map(|p| p.to_array()).collect());
                     let r = DVec3::from_array(info.frame.right);
                     let u = DVec3::from_array(info.frame.up);
                     let value = measure(r, u, *dim, &model_pts);
@@ -685,8 +714,16 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
                 }
                 let target = match leader {
                     Some(LeaderEnd::Paper { at }) => Some(DVec2::from_array(*at)),
-                    Some(LeaderEnd::Model { viewport, point }) => {
-                        vp(*viewport).and_then(|v| v.model_to_paper(DVec3::from_array(*point)))
+                    Some(LeaderEnd::Model {
+                        viewport,
+                        point,
+                        anchor,
+                    }) => {
+                        let p = anchor
+                            .as_ref()
+                            .and_then(|a| model.anchor_point(a, *point))
+                            .unwrap_or(*point);
+                        vp(*viewport).and_then(|v| v.model_to_paper(DVec3::from_array(p)))
                     }
                     None => None,
                 };
@@ -789,6 +826,8 @@ pub fn render(model: &Model, id: u64, opts: &RenderOptions) -> Option<SheetRende
             kind,
             bounds: b.rect(),
             text: text_out,
+            points: points_out,
+            detached,
             prims: [start, prims.len()],
         });
     }

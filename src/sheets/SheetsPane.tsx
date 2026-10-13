@@ -305,11 +305,22 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
           </>
         );
       }
-      case "dimension":
+      case "dimension": {
+        const info = render?.items.find((i) => i.id === id);
+        const anchored = (kind.anchors ?? []).filter((a) => a).length;
         return (
           <>
             <p className="sp-read">
-              {DIM_KINDS.find((d) => d.kind === kind.dim)?.label} dimension: <b>{render?.items.find((i) => i.id === id)?.text ?? "?"}</b>
+              {DIM_KINDS.find((d) => d.kind === kind.dim)?.label} dimension: <b>{info?.text ?? "?"}</b>
+            </p>
+            <p className="note" data-testid="dim-follows">
+              {info?.detached
+                ? "An end's corner is gone from the model: that end stays where it was placed."
+                : anchored === kind.points.length
+                  ? "On the model's corners and edges: it follows the model when you change it."
+                  : anchored > 0
+                    ? "Partly on the model: the ends on a solid follow it, the others stay where they were placed."
+                    : "Its ends are fixed points (placed on a sketch, a mesh, a section cut, or before dimensions followed the model)."}
             </p>
             <Field label="Text" value={kind.text ?? ""} placeholder="The measured length" onCommit={(t) => set({ ...kind, text: t.trim() ? t : null })} />
             <label className="sp-field">
@@ -324,6 +335,7 @@ function ItemProps({ id, kind, props, render }: { id: number; kind: ItemKind; pr
             <p className="note">Drag the dimension to stand it off; it follows its viewport.</p>
           </>
         );
+      }
       case "label":
         return (
           <>
@@ -456,7 +468,7 @@ export function SheetsPane(props: SheetsPaneProps) {
                     </button>
                   ))}
                 </div>
-                <p className="note">Click points of a viewport's drawing (two; three for an angle, the corner first, or for an arc), then where the line goes. It measures the model, whatever the scale.</p>
+                <p className="note">Click points of a viewport's drawing (two; three for an angle, the corner first, or for an arc), then where the line goes. It measures the model, whatever the scale, and follows it when you change it.</p>
               </Section>
             ) : null}
             {tool === "label" ? (

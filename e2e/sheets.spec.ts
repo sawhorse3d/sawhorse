@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { readPdf } from "../src/cutlist/pdf";
 import { pngDpi } from "../src/sheets/exports";
 import { goldenShz, openShz } from "./shz";
+import { box, clickAt, ready, type } from "./helpers";
 
 // Drawing sheets (lane 12) through the browser build: the sheet golden laid out by the
 // kernel on the canvas; then a sheet built from nothing on the bookshelf with every tool
@@ -12,7 +13,7 @@ import { goldenShz, openShz } from "./shz";
 type P2 = [number, number];
 type V3 = [number, number, number];
 type Info = { id: number; rect: [number, number, number, number]; factor: number; centre: P2; frame: { right: V3; up: V3 } };
-type Render = { id: number; name: string; size: P2; items: { id: number; kind: string; bounds: [number, number, number, number]; text?: string }[]; viewports: Info[]; prims: { p: string; text?: string }[] };
+type Render = { id: number; name: string; size: P2; items: { id: number; kind: string; bounds: [number, number, number, number]; text?: string; points?: V3[]; detached?: boolean }[]; viewports: Info[]; prims: { p: string; text?: string }[] };
 type W = { __sawhorse: { sheet: { render(): Render | null; selection(): number[]; tool(): string; toClient(p: P2): P2 | null } } };
 
 const IN = 0.0254;
@@ -230,4 +231,70 @@ test("the sheet golden out as PDF (its dimension strings are text in it), DXF, P
   const printed = await page.evaluate(() => (window as unknown as { printed: string[] }).printed);
   expect(printed[0]).toContain('width="11in" height="8.5in"');
   expect(printed[1]).toContain("@page { size: 11in 8.5in; margin: 0 }");
+});
+
+// The 2026-10-12 verifier: widening the cabinet from 30 to 36 in left the sheet saying 30",
+// its dimension line 3 3/4 in beside a 4 1/2 in outline. A dimension placed on a solid's
+// corners now follows the solid; and a click on a dimension (no drag) only selects it.
+test("a dimension on the model follows it when the model changes; a click on it only selects", async ({ page }) => {
+  test.setTimeout(120_000);
+  await ready(page);
+  await box(page, "30,12", "36");
+  await sheetsMode(page);
+  await page.getByRole("button", { name: "Add a sheet", exact: true }).first().click();
+  await page.getByRole("combobox", { name: "Shows" }).selectOption("std:front");
+  await drag(page, [0.75 * IN, 0.625 * IN], [7.75 * IN, 7.625 * IN]);
+  await expect(hint(page)).toContainText("Viewport: Front");
+  const v = (await render(page))!.viewports[0];
+  const f = v.factor;
+  // The overall width, corner to corner.
+  await page.locator('.tool[data-sheet-tool="dimension"]').click();
+  await page.getByRole("radio", { name: "Horizontal", exact: true }).click();
+  for (const m of [[0, 0, 0], [30, 0, 0]] as V3[]) {
+    const c = await modelClient(page, v, m.map((x) => x * IN) as V3);
+    await page.mouse.move(c[0] + 2, c[1] - 2, { steps: 3 });
+    await expect(page.locator(".sh-snap")).toBeAttached();
+    await page.mouse.click(c[0] + 2, c[1] - 2);
+  }
+  await expect(hint(page)).toContainText("where the dimension line goes");
+  const below = await client(page, [v.rect[0] + v.rect[2] / 2, v.rect[1] + v.rect[3] - 0.2 * IN]);
+  await page.mouse.click(below[0], below[1]);
+  await expect(hint(page)).toContainText("follows it when the model changes");
+  const dims = async () => (await render(page))!.items.filter((i) => i.kind === "dimension");
+  await expect.poll(async () => (await dims()).map((i) => i.text)).toEqual(['30"']);
+
+  // Select it with a click on its text, and click it again: nothing changes.
+  await page.locator('.tool[data-sheet-tool="select"]').click();
+  const d0 = (await dims())[0];
+  const onText = await client(page, [d0.bounds[0] + d0.bounds[2] / 2, d0.bounds[1] + 0.02 * IN]);
+  await page.mouse.click(onText[0], onText[1]);
+  expect(await selection(page)).toEqual([d0.id]);
+  await expect(page.getByTestId("dim-follows")).toContainText("follows the model when you change it");
+  const before = JSON.stringify(await render(page));
+  const nearEnd = await client(page, [d0.bounds[0] + 0.03 * IN, d0.bounds[1] + d0.bounds[3] / 2]);
+  await page.mouse.click(nearEnd[0], nearEnd[1]);
+  await page.mouse.click(onText[0], onText[1]);
+  await expect(hint(page)).not.toContainText("Dimension changed");
+  expect(JSON.stringify(await render(page))).toBe(before);
+
+  // Back in the model, pull the right side out 6 in.
+  await page.locator('.sheet-tabs .mode-switch [data-mode="model"]').click();
+  await expect(page.locator("main.vp")).toBeVisible();
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await page.keyboard.press("p");
+  await clickAt(page, [30, 6, 18], "on-face");
+  await expect(hint(page)).toContainText("Pushing face");
+  await type(page, "6");
+  await expect(hint(page)).toContainText("Pulled 6 in");
+
+  // The sheet says 36", and its ends are 4 1/2 in apart at 1:8 (factor f), on the new corner.
+  await sheetsMode(page);
+  await expect.poll(async () => (await dims()).map((i) => i.text)).toEqual(['36"']);
+  const d1 = (await dims())[0];
+  expect(d1.detached).toBeUndefined();
+  const [a, b] = d1.points!;
+  expect(b[0] / IN).toBeCloseTo(36, 9);
+  expect(((b[0] - a[0]) * f) / IN).toBeCloseTo(36 * f, 9);
+  expect(d1.bounds[2]).toBeGreaterThan(36 * IN * f - 1e-9);
+  await page.screenshot({ path: "test-results/sheets-dimension-follows.png" });
 });

@@ -626,7 +626,7 @@ fn sheet_item(
     p: &SheetPick,
 ) -> sawhorse_kernel::sheets::ItemKind {
     use sawhorse_kernel::paper::{CameraSpec, CutColumn, DimKind, Scale, StdView};
-    use sawhorse_kernel::sheets::{DimStyle, ItemKind, LeaderEnd, ViewportSource};
+    use sawhorse_kernel::sheets::{DimStyle, ItemKind, LeaderEnd, ModelAnchor, ViewportSource};
     let viewports: Vec<u64> = m
         .sheet(sheet)
         .map(|s| {
@@ -718,10 +718,38 @@ fn sheet_item(
             ][*k as usize % 6];
             // Kind 6: too few points (refused).
             let n = if *k == 6 { 1 } else { dim.points() };
+            // Anchors: none (an older document), on the first solid's corners (found or
+            // not), or malformed (refused).
+            let first = m.object_ids().first().copied().unwrap_or(1);
+            let anchors = match v % 4 {
+                0 | 1 => Vec::new(),
+                2 => (0..n)
+                    .map(|i| {
+                        (i % 2 == 0).then(|| {
+                            ModelAnchor::on_edge(
+                                first,
+                                &[1, 2 + i as u64, 5],
+                                &[2, 3, 6],
+                                f64::from(*k % 3) / 2.0,
+                            )
+                        })
+                    })
+                    .collect(),
+                _ => vec![
+                    Some(ModelAnchor {
+                        object: first,
+                        at: vec![3, 1],
+                        to: Vec::new(),
+                        t: 0.5,
+                    });
+                    n
+                ],
+            };
             ItemKind::Dimension {
                 viewport: viewport(*v),
                 dim,
                 points: pts[..n].to_vec(),
+                anchors,
                 offset: *offset,
                 style: [DimStyle::Arrows, DimStyle::Ticks, DimStyle::Dots][*v as usize % 3],
                 text: (v % 6 == 5).then(|| "36 (overall)".to_string()),
@@ -745,6 +773,14 @@ fn sheet_item(
                 _ => Some(LeaderEnd::Model {
                     viewport: viewport(*t),
                     point: [0.25, 0.0, 0.5],
+                    anchor: (t % 2 == 1).then(|| {
+                        ModelAnchor::on_edge(
+                            m.object_ids().first().copied().unwrap_or(1),
+                            &[1, 3, 5],
+                            &[],
+                            0.0,
+                        )
+                    }),
                 }),
             },
         },

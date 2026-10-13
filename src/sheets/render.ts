@@ -4,7 +4,7 @@
 // them into SVG (the canvas and the SVG file share it) and holds the pure geometry the
 // canvas needs (viewport mapping, hit tests, grid snapping).
 import { fit } from "../cutlist/pdf";
-import type { DimKind } from "../kernel/sheetTypes";
+import type { DimKind, ModelAnchor } from "../kernel/sheetTypes";
 import type { V3 } from "../kernel/types";
 
 export type Anchor = "start" | "middle" | "end";
@@ -43,6 +43,10 @@ export interface ItemInfo {
   kind: "viewport" | "dimension" | "label" | "table" | "image" | "line" | "rect";
   bounds: [number, number, number, number];
   text?: string;
+  /** A dimension's model points as drawn: its anchors found on the model as it is now. */
+  points?: V3[];
+  /** A dimension with an end whose solid or corner is gone: that end stays where it was. */
+  detached?: boolean;
   /** The range of `prims` it drew, [start, end). */
   prims: [number, number];
 }
@@ -74,6 +78,8 @@ export interface SheetSnap {
   kind: "endpoint" | "midpoint" | "intersection" | "on-edge";
   at: [number, number];
   point: V3;
+  /** Where the point sits on a solid (absent: a sketch, a mesh, a section cut). */
+  anchor?: ModelAnchor;
 }
 
 export const IN = 0.0254;

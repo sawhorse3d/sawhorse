@@ -118,6 +118,7 @@ fn sheets_and_items_are_undoable_ops() {
             viewport: v,
             dim: DimKind::Horizontal,
             points: vec![[0.0; 3], [36.0 * IN, 0.0, 0.0]],
+            anchors: Vec::new(),
             offset: -0.25 * IN,
             style: DimStyle::Ticks,
             text: None,
@@ -133,6 +134,7 @@ fn sheets_and_items_are_undoable_ops() {
             leader: Some(LeaderEnd::Model {
                 viewport: v,
                 point: [18.0 * IN, 0.0, 40.0 * IN],
+                anchor: None,
             }),
         },
     );
@@ -249,6 +251,7 @@ fn what_is_refused() {
                 viewport: 9,
                 dim: DimKind::Aligned,
                 points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
+                anchors: Vec::new(),
                 offset: 0.0,
                 style: DimStyle::Arrows,
                 text: None,
@@ -263,6 +266,7 @@ fn what_is_refused() {
                 viewport: 1,
                 dim: DimKind::Angular,
                 points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
+                anchors: Vec::new(),
                 offset: 0.0,
                 style: DimStyle::Arrows,
                 text: None,
@@ -635,6 +639,7 @@ fn the_sheet_golden_is_this_drawing() {
         viewport: front,
         dim: kind,
         points: vec![a.map(|v| v * IN), b.map(|v| v * IN)],
+        anchors: Vec::new(),
         offset: offset * IN,
         style: DimStyle::Arrows,
         text: None,
@@ -670,6 +675,7 @@ fn the_sheet_golden_is_this_drawing() {
             leader: Some(LeaderEnd::Model {
                 viewport: front,
                 point: [18.0 * IN, 11.0 * IN, 30.0 * IN],
+                anchor: None,
             }),
         },
     );

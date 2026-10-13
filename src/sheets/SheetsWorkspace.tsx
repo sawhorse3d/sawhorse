@@ -231,7 +231,20 @@ export function SheetsWorkspace(props: SheetsWorkspaceProps) {
         await addItem({ kind: "label", at: req.at, text: req.text, size: IN / 8, leader: req.leader }, "Label placed.", "keep");
         return;
       case "dimension":
-        await addItem({ kind: "dimension", viewport: req.viewport, dim: req.dim, points: req.points, offset: req.offset, style: "arrows" }, "Dimension placed: it measures the model and follows its viewport.", "keep");
+        await addItem(
+          {
+            kind: "dimension",
+            viewport: req.viewport,
+            dim: req.dim,
+            points: req.points,
+            // On a solid's corners or edges: it follows the solid's edits.
+            ...(req.anchors.some((a) => a) ? { anchors: req.anchors } : {}),
+            offset: req.offset,
+            style: "arrows",
+          },
+          req.anchors.every((a) => a) ? "Dimension placed: it measures the model and follows it when the model changes." : "Dimension placed: it measures the model. An end on a sketch, a mesh or a section cut stays where you put it.",
+          "keep",
+        );
         return;
     }
   };
