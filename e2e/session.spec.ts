@@ -32,7 +32,7 @@ async function box(page: Page, size = "24,16", height = "12") {
   await expect(page.locator("#hint")).toContainText("Extruded");
 }
 
-/** The autosave record in IndexedDB (null until the first save). */
+/** Steps in the autosave record in IndexedDB (0 until the first save). */
 async function autosaved(page: Page): Promise<number> {
   return page.evaluate(
     () =>
@@ -41,10 +41,11 @@ async function autosaved(page: Page): Promise<number> {
         req.onupgradeneeded = () => req.result.createObjectStore("autosave");
         req.onsuccess = () => {
           const db = req.result;
-          const get = db.transaction("autosave", "readonly").objectStore("autosave").get("current");
+          // Lane 16: the log is kept as text with a small record beside it.
+          const get = db.transaction("autosave", "readonly").objectStore("autosave").get("current-meta");
           get.onsuccess = () => {
             db.close();
-            resolve((get.result?.log?.length as number | undefined) ?? 0);
+            resolve((get.result?.steps as number | undefined) ?? 0);
           };
           get.onerror = () => resolve(0);
         };
@@ -88,6 +89,23 @@ test("discarding forgets the unsaved work; ?autosave=0 never offers it", async (
   await expect(vp).toHaveAttribute("data-objects", "1");
   await page.waitForTimeout(600);
   expect(await autosaved(page)).toBe(0);
+});
+
+test("New clears the autosave: a model as it was started, saved or opened leaves nothing to restore", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  await expect.poll(() => autosaved(page)).toBe(3);
+  page.once("dialog", (d) => void d.accept());
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect.poll(() => autosaved(page)).toBe(0);
+  await page.waitForTimeout(600);
+  expect(await autosaved(page)).toBe(0);
+  await page.reload();
+  await expect(vp).toHaveAttribute("data-kernel", "ready");
+  await page.waitForTimeout(300);
+  await expect(page.locator("#hint").getByRole("button", { name: "Restore" })).toHaveCount(0);
 });
 
 test("solids are named by display number, never by raw id", async ({ page }) => {

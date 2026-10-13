@@ -21,7 +21,7 @@ import { loadCutRounding, saveCutRounding } from "./cutlist/rounding-store";
 import { PDF_TYPE } from "./cutlist/pdf";
 import type { CutList, CutRow, Grain, Nesting, NestSettings, Placement, Rounding, StockDef, StockPiece } from "./kernel/types";
 import { ValueBar, type StatusMessage } from "./components/ValueBar";
-import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient } from "./kernel/client";
+import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient, type RestartInfo } from "./kernel/client";
 import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
@@ -51,7 +51,7 @@ import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
-import { autosaveEnabled, clearAutosave, describeAutosave, loadAutosave, saveAutosave, worthRestoring, type Autosave } from "./lib/autosave";
+import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
 import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, readBrowserFile, saveFile, stem, type FileHandle, type PickedFile } from "./io/files";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
@@ -389,15 +389,35 @@ export function App() {
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** An autosave found at load and not yet restored or discarded (also on the Edit menu). */
   const [pendingRestore, setPendingRestore] = useState<Autosave | null>(null);
+  /** Lane 16: said once per model when its history is too large to autosave. */
+  const autosaveTooLarge = useRef(false);
+  /** Lane 16: the log hash of the model as last saved, opened or started new. While the
+   * model is still that, there is nothing to recover and no autosave is kept. */
+  const cleanLogHash = useRef<string | null>(null);
+  const markClean = useCallback((logHash: string | null) => {
+    cleanLogHash.current = logHash;
+    autosaveTooLarge.current = false;
+    void clearAutosave();
+  }, []);
   const scheduleAutosave = useCallback(() => {
     if (!autosaveEnabled()) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => {
       const k = kernelRef.current;
       if (!k) return;
-      void k
-        .log()
-        .then((log) => saveAutosave({ log, savedAt: Date.now(), solids: live.current.scene?.state.stats.objects ?? 0 }))
+      if (cleanLogHash.current !== null && live.current.scene?.state.log_hash === cleanLogHash.current) {
+        void clearAutosave();
+        return;
+      }
+      // The client keeps the log (lane 16): no round trip to a kernel that may be busy.
+      const ops = k.logTexts();
+      const json = k.logJson();
+      void saveAutosave(json, { savedAt: Date.now(), solids: live.current.scene?.state.stats.objects ?? 0, steps: ops.length, worth: logIsWorth(ops) })
+        .then((kept) => {
+          if (kept || autosaveTooLarge.current) return;
+          autosaveTooLarge.current = true;
+          setMessage({ text: `Autosave is off for this model: its history is larger than ${MAX_AUTOSAVE_BYTES / 1024 / 1024} MB. Save it as a file (File > Save).`, error: false });
+        })
         .catch(() => undefined);
     }, 300);
   }, []);
@@ -500,7 +520,11 @@ export function App() {
       editsPending.current++;
       const next = queue.current.then(async () => {
         try {
-          const s = await k.replay(a.log);
+          // The log goes to the kernel as the text it was kept as (lane 16).
+          const json = await loadOffered();
+          if (json === null) throw new Error("the unsaved work kept in this browser cannot be read");
+          const s = await k.replay(json);
+          void clearOffered();
           live.current.scene = s;
           setNameSource(s.state, s.mesh);
           setScene(s);
@@ -508,11 +532,13 @@ export function App() {
           setTarget(null);
           live.current.selection = [];
           setSelection([]);
-          setMessage({ text: `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.log.length} steps (undo works as before).`, error: false });
+          setMessage({ text: `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.steps} steps (undo works as before).`, error: false });
           setFitSeq((n) => n + 1);
           scheduleAutosave();
         } catch (err) {
-          setMessage({ text: `Could not restore the unsaved work: ${friendlyError(err instanceof Error ? err.message : String(err))}`, error: true });
+          // Kept aside, still offered: Discard removes it.
+          setPendingRestore({ ...a, state: "unreadable" });
+          setMessage({ text: `Could not restore the unsaved work: ${friendlyError(err instanceof Error ? err.message : String(err))}`, error: true, actions: [{ label: "Discard", run: () => discardRef.current() }] });
         }
       });
       void next.finally(() => editsPending.current--);
@@ -522,9 +548,11 @@ export function App() {
   );
   const discardRestore = useCallback(() => {
     setPendingRestore(null);
-    void clearAutosave();
+    void clearOffered();
     setMessage({ text: "Unsaved work discarded.", error: false });
   }, []);
+  const discardRef = useRef(discardRestore);
+  discardRef.current = discardRestore;
 
   // ---- files ---------------------------------------------------------------------------
 
@@ -541,7 +569,8 @@ export function App() {
   const importBytes = useCallback(
     async (f: PickedFile) => {
       const ext = extensionOf(f.name);
-      setMessage({ text: `Importing ${f.name}…`, error: false });
+      // Lane 16: a long import can be stopped (the kernel restarts from the last step).
+      setMessage({ text: `Importing ${f.name}…`, error: false, actions: [{ label: "Cancel", run: () => void kernelRef.current?.cancel("cancelled by you") }] });
       let notes: string[] = [];
       let empty: EmptySkp | null = null;
       const r = await run(
@@ -593,6 +622,7 @@ export function App() {
   const openBytes = useCallback(
     async (f: PickedFile) => {
       if (!confirmDiscard()) return;
+      setMessage({ text: `Opening ${f.name}…`, error: false, actions: [{ label: "Cancel", run: () => void kernelRef.current?.cancel("cancelled by you") }] });
       let info: { notes: string[]; opened: { display_units: string | null } } | null = null;
       const r = await run(
         async (k) => {
@@ -607,11 +637,15 @@ export function App() {
         setReport({ title: `Could not open ${f.name}`, lines: [live.current.lastError ?? "refused"], error: true });
         return;
       }
-      const opened = info as { notes: string[]; opened: { display_units: string | null } };
-      pluginsRef.current?.documentOpened(f.name, f.bytes);
+      const opened = info as { notes: string[]; opened: { display_units: string | null; plugin_data?: string | null } };
+      // The plugins' document stores came back through the kernel (lane 16): the app never
+      // unzips a user's file itself.
+      pluginsRef.current?.documentOpened(f.name, opened.opened.plugin_data ?? null);
       setDocName(f.name);
       fileHandle.current = f.handle;
       setSavedLogLen(r.scene.state.log_len);
+      // Opened: the file is the copy to go back to (lane 16).
+      markClean(r.scene.state.log_hash);
       const du = opened.opened.display_units;
       if (du && UNIT_SYSTEMS.some((x) => x.id === du)) {
         setUnits(du as UnitSystem);
@@ -621,7 +655,7 @@ export function App() {
       setSelection([]);
       setFitSeq((n) => n + 1);
     },
-    [run, confirmDiscard],
+    [run, confirmDiscard, markClean],
   );
 
   /** Route files (picked, dropped): a .shz opens, anything else is imported. */
@@ -637,6 +671,25 @@ export function App() {
     [openBytes, importBytes],
   );
 
+  /** Dropped or chosen browser files, one at a time (lane 16): each is checked by its name
+   * and size before it is read, and taken in before the next is read. */
+  const takeBrowserFiles = useCallback(
+    async (files: File[]) => {
+      for (const f of files) {
+        if (!ALL_EXTENSIONS.includes(extensionOf(f.name))) {
+          setMessage({ text: `${f.name}: not a file Sawhorse can open (use .shz, .skp, STL, 3MF, glTF, OBJ, DXF or SVG).`, error: true });
+          continue;
+        }
+        try {
+          await takeFiles([await readBrowserFile(f)]);
+        } catch (e) {
+          setMessage({ text: e instanceof Error ? e.message : String(e), error: true });
+        }
+      }
+    },
+    [takeFiles],
+  );
+
   const newDocument = useCallback(async () => {
     if (!confirmDiscard()) return;
     const r = await run((k) => k.newDocument(), null, () => "New model.");
@@ -645,11 +698,12 @@ export function App() {
       setDocName(null);
       fileHandle.current = undefined;
       setSavedLogLen(r.scene.state.log_len);
+      markClean(r.scene.state.log_hash);
       setReport(null);
       setSelection([]);
       setView("iso");
     }
-  }, [run, confirmDiscard]);
+  }, [run, confirmDiscard, markClean]);
 
   const openDialog = useCallback(async () => {
     try {
@@ -676,21 +730,23 @@ export function App() {
       try {
         await queue.current;
         const png = (await engineRef.current?.snapshotThumbnail(512)) ?? new Uint8Array();
-        // Plugins' document-scoped stores ride along as plugin-data.json (lane 11).
-        const raw = await k.saveShz(live.current.units, png);
-        const bytes = pluginsRef.current?.manager.doc.attach(raw) ?? raw;
+        // Plugins' document-scoped stores ride along as plugin-data.json (lane 11), written by
+        // the kernel's own writer (lane 16).
+        const bytes = await k.saveShz(live.current.units, png, pluginsRef.current?.manager.doc.json() ?? "");
         const name = `${docName ? stem(docName) : "Untitled"}.shz`;
         const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current);
         if (!res) return;
         setDocName(res.name);
         fileHandle.current = res.handle;
         setSavedLogLen(live.current.scene?.state.log_len ?? null);
+        // Saved: this session's autosave is not needed to get the work back (lane 16).
+        markClean(live.current.scene?.state.log_hash ?? null);
         setMessage({ text: `Saved ${res.name} (${(bytes.length / 1024).toFixed(0)} KB).`, error: false });
       } catch (e) {
         setMessage({ text: `Could not save: ${e instanceof Error ? e.message : String(e)}`, error: true });
       }
     },
-    [docName],
+    [docName, markClean],
   );
 
   /** What an export takes: the selected solids (and what is in selected groups and components), or everything visible. */
@@ -765,7 +821,10 @@ export function App() {
   // Desktop drag-and-drop arrives through Tauri (see src-tauri/src/lib.rs).
   useEffect(() => {
     let off = () => {};
-    void onTauriDrop((files) => void takeFiles(files)).then((f) => (off = f));
+    void onTauriDrop(
+      (files) => takeFiles(files),
+      (text) => setMessage({ text, error: true }),
+    ).then((f) => (off = f));
     return () => off();
   }, [takeFiles]);
 
@@ -777,6 +836,32 @@ export function App() {
       setKernelNote("Web Workers are not available here.");
       return;
     }
+    // Lane 16: when the kernel had to be restarted (it failed, hung or was cancelled), show
+    // the document rebuilt from its log and say so.
+    k.onRestart = (info: RestartInfo) => {
+      if (info.scene) {
+        live.current.scene = info.scene;
+        setNameSource(info.scene.state, info.scene.mesh);
+        setScene(info.scene);
+        setKernelState("ready");
+      }
+      const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+      w.__sawhorse = { ...(w.__sawhorse ?? {}), lastRestart: { reason: info.reason, error: info.error ?? null, rebuilt: !!info.scene && !info.error } };
+      setMessage(
+        info.error
+          ? { text: `The kernel stopped (${friendlyError(info.reason)}) and the model could not be rebuilt: ${friendlyError(info.error)}`, error: true }
+          : { text: `The kernel stopped (${friendlyError(info.reason)}) and was restarted from your last step: nothing was lost, and undo works as before.`, error: true },
+      );
+    };
+    // Tests (?kerneltest=1): make the next import fail inside the kernel.
+    try {
+      if (new URLSearchParams(window.location.search).get("kerneltest") === "1") {
+        const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), restarts: () => k.restarts } };
+      }
+    } catch {
+      /* no URL */
+    }
     k.init()
       .then(async (s) => {
         setNameSource(s.state, s.mesh);
@@ -785,9 +870,14 @@ export function App() {
         setKernelState("ready");
         setSavedLogLen(s.state.log_len);
         if (!autosaveEnabled()) return;
-        const saved = await loadAutosave();
-        if (!worthRestoring(saved)) return;
-        setPendingRestore(saved);
+        // Never blocks the start (lane 16): a record that cannot be read or is too large is
+        // offered for discarding only.
+        try {
+          const saved = await takeAutosave();
+          if (worthRestoring(saved)) setPendingRestore(saved);
+        } catch {
+          /* nothing kept */
+        }
       })
       .catch((err) => {
         if (err instanceof KernelUnavailableError) {
@@ -806,13 +896,16 @@ export function App() {
 
   useEffect(() => {
     if (!pendingRestore) return;
+    const usable = pendingRestore.state === "ok";
     setMessage({
-      text: `Restore unsaved work? ${describeAutosave(pendingRestore)}.`,
-      error: false,
-      actions: [
-        { label: "Restore", run: () => restore(pendingRestore) },
-        { label: "Discard", run: discardRestore },
-      ],
+      text: usable ? `Restore unsaved work? ${describeAutosave(pendingRestore)}.` : `Unsaved work was kept in this browser, but ${describeAutosave(pendingRestore)}; it is set aside, not loaded.`,
+      error: !usable,
+      actions: usable
+        ? [
+            { label: "Restore", run: () => restore(pendingRestore) },
+            { label: "Discard", run: discardRestore },
+          ]
+        : [{ label: "Discard", run: discardRestore }],
     });
   }, [pendingRestore, restore, discardRestore]);
 
@@ -2307,7 +2400,7 @@ export function App() {
           },
         },
         "-",
-        { label: "Restore Unsaved Work", disabled: !pendingRestore, onSelect: () => pendingRestore && restore(pendingRestore) },
+        { label: "Restore Unsaved Work", disabled: !pendingRestore || pendingRestore.state !== "ok", onSelect: () => pendingRestore && restore(pendingRestore) },
         "-",
         { label: "Settings…", title: "The render service (renders are off until one is set and answering)", onSelect: () => setSettingsOpen(true) },
       ],
@@ -2397,8 +2490,7 @@ export function App() {
         if (!e.dataTransfer.files.length) return;
         e.preventDefault();
         setDragging(false);
-        const files = [...e.dataTransfer.files];
-        void Promise.all(files.map(readBrowserFile)).then(takeFiles);
+        void takeBrowserFiles([...e.dataTransfer.files]);
       }}
     >
       <input
@@ -2411,7 +2503,7 @@ export function App() {
         onChange={(e) => {
           const files = [...(e.currentTarget.files ?? [])];
           e.currentTarget.value = "";
-          void Promise.all(files.map(readBrowserFile)).then(takeFiles);
+          void takeBrowserFiles(files);
         }}
       />
       {dragging ? <div className="drop-hint">Drop a .shz to open it, or a SketchUp, STL, 3MF, glTF, OBJ, DXF or SVG file to import it</div> : null}

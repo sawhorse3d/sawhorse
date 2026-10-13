@@ -5,6 +5,12 @@
 // The worker owns ONE persistent kernel document for the session (model + op log +
 // undo ring). Every edit is an op applied transactionally; after each request the
 // worker answers with the outcome and the fresh scene (view mesh + document state).
+//
+// Lane 16: every answer also brings the op log entries the app does not hold yet
+// (`logSync`), so the app can rebuild the document in a fresh worker; and a failure of the
+// kernel itself (a WebAssembly trap: a Rust panic or running out of memory, which leaves
+// this worker's kernel unusable) is answered with `fatal`, so the app replaces the worker
+// instead of showing every later request refused.
 import type { SheetRow } from "./sheetTypes";
 import type { DocState, Inference, KernelOp, LibraryEntry, MeshData, OpOutcome, Picked, SceneData, SceneGraph, SectionView, TextureBlob, WasmDoc, WasmModule, WorkerRequest, WorkerResponse } from "./types";
 
@@ -83,9 +89,19 @@ function scene(d: WasmDoc): SceneData {
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+/** A failure of the kernel itself, not a refusal: after a trap the WebAssembly instance (and
+ * the document it holds, borrowed when it failed) cannot be used again. */
+function fatal(err: unknown): boolean {
+  if (typeof WebAssembly !== "undefined" && err instanceof WebAssembly.RuntimeError) return true;
+  const m = err instanceof Error ? err.message : String(err);
+  return /recursive use of an object|unreachable|memory access out of bounds|out of memory|RuntimeError/i.test(m);
+}
+
 ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const req = event.data;
   let res: WorkerResponse;
+  // The document was replaced (init, replay, open): the app's copy of the log starts over.
+  let replaced = false;
   try {
     const mod = await load();
     switch (req.kind) {
@@ -95,6 +111,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "init": {
         doc?.free();
         doc = mod.document_new();
+        replaced = true;
         // A fresh UI (or a test resetting it) has no images yet.
         sentTextures.clear();
         res = { id: req.id, ok: true, scene: scene(doc) };
@@ -102,7 +119,8 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
       case "replay": {
         // Build first, swap after: a refused log leaves the current document alone.
-        const next = mod.document_replay(JSON.stringify(req.ops));
+        const next = mod.document_replay(req.json ?? JSON.stringify(req.ops ?? []));
+        replaced = true;
         doc?.free();
         doc = next;
         res = { id: req.id, ok: true, scene: scene(doc) };
@@ -144,6 +162,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       case "importFile": {
         const d = document(mod);
+        if (req.failForTest) d.fail_for_test(req.failForTest);
         const r = JSON.parse(d.import_file(req.name, req.bytes, JSON.stringify(req.options ?? {}))) as { outcome: OpOutcome; notes: string[] };
         res = { id: req.id, ok: true, outcome: r.outcome, notes: r.notes, scene: scene(d) };
         break;
@@ -151,6 +170,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       case "importSkp": {
         // openskp (MIT) parses SketchUp files here, off the UI thread, loaded on first use.
         const { skpToOp, importOutcomeOf } = await import("../io/skp");
+        if (req.failForTest) document(mod).fail_for_test(req.failForTest);
         const r = skpToOp(req.bytes, req.name);
         if (!r.op) {
           // Lane 15: an empty file changes nothing here; the app opens it as an empty model.
@@ -166,16 +186,17 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
       case "saveShz": {
-        const file = document(mod).save_shz(req.displayUnits, req.thumbnail);
+        const file = document(mod).save_shz(req.displayUnits, req.thumbnail, req.pluginData ?? "");
         res = { id: req.id, ok: true, file };
         break;
       }
       case "openShz": {
         const d = document(mod);
-        const info = JSON.parse(d.open_shz(req.bytes)) as { notes: string[]; display_units: string | null; generator: string };
+        const info = JSON.parse(d.open_shz(req.bytes)) as { notes: string[]; display_units: string | null; generator: string; plugin_data?: string | null };
+        replaced = true;
         const st = JSON.parse(d.state_json()) as { objects: number[]; meshes: unknown[]; sketches: unknown[] };
         const outcome: OpOutcome = { kind: "restored", objects: st.objects.length, meshes: st.meshes.length, sketches: st.sketches.length };
-        res = { id: req.id, ok: true, outcome, notes: info.notes, opened: { display_units: info.display_units, generator: info.generator }, scene: scene(d) };
+        res = { id: req.id, ok: true, outcome, notes: info.notes, opened: { display_units: info.display_units, generator: info.generator, plugin_data: info.plugin_data ?? null }, scene: scene(d) };
         break;
       }
       case "exportFile": {
@@ -237,8 +258,16 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
     }
+    // The log entries the app does not hold yet (lane 16).
+    if (res.ok && req.known !== undefined && doc) {
+      const len = doc.op_log_len();
+      if (replaced || len !== req.known) {
+        const from = replaced || len < req.known ? 0 : req.known;
+        res.logSync = { from, tail: doc.op_log_tail(from) };
+      }
+    }
   } catch (err) {
-    res = { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), missing: err instanceof KernelMissing };
+    res = { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), missing: err instanceof KernelMissing, fatal: fatal(err) };
   }
   const transfer: Transferable[] = [];
   if (res.ok && res.scene) {

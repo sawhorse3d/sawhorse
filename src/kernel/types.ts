@@ -762,8 +762,14 @@ export interface WasmDoc {
   import_file(name: string, bytes: Uint8Array, options: string): string;
   /** Lane 11: a named batch whose ops may hold placeholders ({"$ref": i, "path": "..."}), applied as one op (crates/kernel/src/refbatch.rs). */
   apply_named_batch(json: string): string;
-  save_shz(displayUnits: string, thumbnail: Uint8Array): Uint8Array;
+  /** Lane 16: `pluginData` is written as plugin-data.json when not empty. */
+  save_shz(displayUnits: string, thumbnail: Uint8Array, pluginData: string): Uint8Array;
   open_shz(bytes: Uint8Array): string;
+  /** Lane 16: entries in the op log, and the log from `from` on, one JSON text per op. */
+  op_log_len(): number;
+  op_log_tail(from: number): string[];
+  /** Lane 16, tests only: fail mid-edit the way a kernel bug would (a panic: a trap). */
+  fail_for_test(how: string): string;
   /** The material a face shows (the Paint tool's sample), as JSON. */
   sample(object: number, face: number): string;
   /** The bytes of a texture image the model holds. */
@@ -803,7 +809,8 @@ export interface WasmModule {
 export type RequestBody =
   | { kind: "version" }
   | { kind: "init" }
-  | { kind: "replay"; ops: KernelOp[] }
+  /** An op log to rebuild from: the ops, or (lane 16) their JSON as one text. */
+  | { kind: "replay"; ops?: KernelOp[]; json?: string }
   | { kind: "scene" }
   | { kind: "apply"; op: KernelOp }
   | { kind: "undo" }
@@ -816,9 +823,9 @@ export type RequestBody =
   | { kind: "offsetPreview"; source: OffsetSource; distance: number }
   | { kind: "export"; format: "stl" | "obj"; object: number }
   | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
-  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions }
-  | { kind: "importSkp"; name: string; bytes: Uint8Array }
-  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array }
+  | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions; failForTest?: string }
+  | { kind: "importSkp"; name: string; bytes: Uint8Array; failForTest?: string }
+  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array; pluginData: string }
   | { kind: "openShz"; bytes: Uint8Array }
   | { kind: "cutList"; options: CutOptions }
   | { kind: "nest"; options: NestOptions }
@@ -836,7 +843,8 @@ export type RequestBody =
   | { kind: "sheetSnap"; sheet: number; item: number; x: number; y: number; radius: number }
   | { kind: "viewportFit"; item: import("./sheetTypes").ItemKind }
   | { kind: "sheetDxf"; sheet: number };
-export type WorkerRequest = RequestBody & { id: number };
+/** `known`: how much of the op log the app holds (lane 16): the answer brings the rest. */
+export type WorkerRequest = RequestBody & { id: number; known?: number };
 
 /** Formats the kernel writes (crates/wasm-api `DocCore::export`). */
 export type ExportFormat = "stl" | "3mf" | "glb" | "obj" | "mtl" | "dxf" | "dxf-outline" | "svg-view" | "svg-outline" | "svg-section" | "dxf-section";
@@ -887,8 +895,12 @@ export type WorkerResponse =
       file?: Uint8Array | string;
       /** Reader notes from an import (units assumed, entities skipped). */
       notes?: string[];
-      /** What opening a .shz found: the unit system it was saved in, who wrote it. */
-      opened?: { display_units: string | null; generator: string };
+      /** What opening a .shz found: the unit system it was saved in, who wrote it, and (lane 16)
+       * its plugin-data.json as text (read by the kernel, capped). */
+      opened?: { display_units: string | null; generator: string; plugin_data?: string | null };
+      /** Lane 16: the op log entries the app does not have yet (from `from` on), one JSON text
+       * per op: what it keeps to rebuild the document in a fresh worker. */
+      logSync?: { from: number; tail: string[] };
       /** Lane 15: the .skp was empty (nothing drawn): its units and style; nothing changed. */
       emptySkp?: { units: string | null; unitsWord: string | null; style: { name: string; face: FaceStyle | null } | null };
       cutList?: CutList;
@@ -908,7 +920,8 @@ export type WorkerResponse =
       sheetDxf?: string;
       faces?: FaceInfo[];
     }
-  | { id: number; ok: false; error: string; missing?: boolean };
+  /** `fatal` (lane 16): the kernel itself failed (a trap, out of memory): this worker is done for. */
+  | { id: number; ok: false; error: string; missing?: boolean; fatal?: boolean };
 
 /** One face of a solid (Doc.faces_json): persistent id, plane and size. */
 export interface FaceInfo {
