@@ -118,59 +118,80 @@ export class KernelClient {
 
   /**
    * Replace the worker: refuse what was running, start a fresh worker, rebuild the document
-   * from the log (or start a new one when there is no log), and tell the app.
+   * from the log (or start a new one when there is no log), and tell the app. A fresh worker
+   * that fails while rebuilding (it traps, dies or hangs too) is replaced in turn, within the
+   * same limit of restarts; it never leaves the rebuild, or the requests behind it, waiting.
    */
   private restart(reason: string): Promise<void> {
-    if (this.restarting) return this.restarting;
     if (this.dead) return Promise.resolve();
-    this.restarts++;
-    // A worker that keeps failing (its script will not load, every rebuild traps) is not
-    // restarted forever: after three restarts in half a minute the kernel is unavailable.
-    const now = Date.now();
-    this.recent = this.recent.filter((t) => now - t < 30_000);
-    this.recent.push(now);
-    if (this.recent.length > 3) {
-      this.dead = `The kernel failed ${this.recent.length} times in half a minute (${reason}); reload the page.`;
-      const gone = new KernelUnavailableError(this.dead);
-      for (const p of this.pending.values()) {
-        if (p.timer !== null) clearTimeout(p.timer);
-        p.reject(gone);
-      }
-      this.pending.clear();
-      this.worker.terminate();
-      this.onRestart?.({ reason, scene: null, error: this.dead });
-      return Promise.resolve();
-    }
-    const old = this.worker;
-    old.terminate();
-    const err = new KernelRestarted(`The kernel stopped (${reason}) and was restarted from your last step; this did not change the model.`);
+    // Whatever was running is refused: it changed nothing. During a rebuild that is the
+    // rebuild's own request, and the rebuild moves on to a fresh worker.
+    this.rejectAll(new KernelRestarted(`The kernel stopped (${reason}) and was restarted from your last step; this did not change the model.`));
+    if (this.restarting) return this.restarting;
+    this.restarting = this.rebuild(reason).finally(() => {
+      this.restarting = null;
+    });
+    return this.restarting;
+  }
+
+  private rejectAll(err: Error): void {
     for (const p of this.pending.values()) {
       if (p.timer !== null) clearTimeout(p.timer);
       p.reject(err);
     }
     this.pending.clear();
-    this.worker = this.spawn();
-    const log = this.logJson();
-    const rebuild = async (): Promise<RestartInfo> => {
-      try {
-        const r = this.mirror.length ? await this.send({ kind: "replay", json: log }) : await this.send({ kind: "init" });
-        return { reason, scene: r.scene ?? null };
-      } catch (e) {
-        // The log does not rebuild (it should: every entry was applied before): a new document.
-        const error = e instanceof Error ? e.message : String(e);
+  }
+
+  /** Count a restart. A worker that keeps failing (its script will not load, every rebuild
+   * traps) is not restarted forever: past three restarts in half a minute the kernel is
+   * unavailable, every call is refused at once, and the app is told. */
+  private mayRestart(reason: string): boolean {
+    this.restarts++;
+    const now = Date.now();
+    this.recent = this.recent.filter((t) => now - t < 30_000);
+    this.recent.push(now);
+    if (this.recent.length <= 3) return true;
+    this.dead = `The kernel failed ${this.recent.length} times in half a minute (${reason}); reload the page.`;
+    this.rejectAll(new KernelUnavailableError(this.dead));
+    this.worker.terminate();
+    this.onRestart?.({ reason, scene: null, error: this.dead });
+    return false;
+  }
+
+  private async rebuild(reason: string): Promise<void> {
+    // The log first; when it does not rebuild (it should: every entry was applied before),
+    // a new document, and the app is told why.
+    let useLog = this.mirror.length > 0;
+    let error: string | undefined;
+    let lostReplays = 0;
+    for (;;) {
+      if (!this.mayRestart(reason)) return;
+      this.worker.terminate();
+      this.worker = this.spawn();
+      for (;;) {
         try {
-          const r = await this.send({ kind: "init" });
-          return { reason, scene: r.scene ?? null, error };
-        } catch {
-          return { reason, scene: null, error };
+          const r = await this.send(useLog ? { kind: "replay", json: this.logJson() } : { kind: "init" });
+          this.onRestart?.({ reason, scene: r.scene ?? null, ...(error !== undefined ? { error } : {}) });
+          return;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const workerGone = e instanceof KernelRestarted;
+          if (useLog) {
+            // A worker lost while replaying gets one more try (it may have been the
+            // machine); a log that fails twice, or that the kernel refuses, is given up.
+            if (!(workerGone && ++lostReplays < 2)) {
+              error = msg;
+              useLog = false;
+            }
+          } else if (!workerGone) {
+            this.onRestart?.({ reason, scene: null, error: error ?? msg });
+            return;
+          }
+          // The worker refused but lives: a new document in it. It failed: another worker.
+          if (workerGone) break;
         }
       }
-    };
-    this.restarting = rebuild().then((info) => {
-      this.restarting = null;
-      this.onRestart?.(info);
-    });
-    return this.restarting;
+    }
   }
 
   /** Post one request to the current worker, with its deadline; no waiting on a restart. */

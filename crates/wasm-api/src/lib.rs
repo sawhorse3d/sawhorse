@@ -1107,6 +1107,12 @@ impl Doc {
         self.core.document().log().len() as f64
     }
 
+    /// How many times the op log was compacted (lane 16): when it changes, a copy of the log
+    /// kept by the app starts over from the first entry.
+    pub fn op_log_epoch(&self) -> f64 {
+        self.core.document().compactions() as f64
+    }
+
     /// The op log from entry `from` on, one JSON text per op (lane 16): what the app keeps
     /// so it can rebuild the document in a fresh worker if this one fails.
     pub fn op_log_tail(&self, from: f64) -> Vec<String> {

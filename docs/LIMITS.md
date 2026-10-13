@@ -76,9 +76,9 @@ Every limit below is checked where the work it bounds starts, before memory is s
 
 | What | Limit | Why |
 |---|---|---|
-| A kernel failure (a trap: a bug or running out of memory) | the kernel's worker is replaced and the document rebuilt from its history | The model is never lost: the app keeps the history (the op log), and the step that failed changed nothing. The status line says so; undo works as before. |
+| A kernel failure (a trap: a bug or running out of memory) | the kernel's worker is replaced and the document rebuilt from its history | The model is not lost: the app keeps the history (the op log), and the step that failed changed nothing. The status line says so; undo works as before. A fresh worker that fails while rebuilding is replaced in turn; a history that fails to rebuild twice (it should not: every step in it was applied before) gives way to a new model, and the app says why. |
 | A request that runs too long | an import or an open 3 minutes, rebuilding a history 5 minutes, anything else 2 minutes; Cancel on an import or an open | The worker is replaced and the document rebuilt, as for a failure. |
-| A kernel that keeps failing | more than 3 restarts in 30 seconds | It is given up on (reload the page), instead of restarting forever. |
+| A kernel that keeps failing | more than 3 restarts in 30 seconds | It is given up on (reload the page), instead of restarting forever; every request is refused at once, none is left waiting. |
 | Saving on the desktop | written beside the file, synced, read back and compared, then put in place; the previous file kept as `<name>.bak` | A crash, a power cut or a full disk while saving never leaves a half-written file in place of a good one. |
 | Saving anywhere | the kernel reads every `.shz` it writes back through its own reader (directory, checksums, limits, model) before it is handed out | A file that would not open is never written over the last good copy. |
 

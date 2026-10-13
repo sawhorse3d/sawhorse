@@ -52,6 +52,9 @@ pub struct Document {
     digests: Vec<u64>,
     /// Bytes of the logged ops' JSON (lane 16, [`LOG_BYTES`]).
     log_bytes: usize,
+    /// How many times the log was compacted (lane 16): a copy of the log kept elsewhere
+    /// starts over when this changes, whatever the log's length.
+    compactions: u64,
     undo: VecDeque<Model>,
     /// What each undo snapshot costs (bytes, estimated), in step with `undo`.
     undo_cost: VecDeque<usize>,
@@ -111,6 +114,12 @@ impl Document {
         self.log = vec![op];
         self.digests = vec![digest];
         self.log_bytes = len;
+        self.compactions += 1;
+    }
+
+    /// How many times the log was compacted (see [`Document::compact_log`]).
+    pub fn compactions(&self) -> u64 {
+        self.compactions
     }
 
     /// Bytes of JSON the log holds.
@@ -344,6 +353,7 @@ mod tests {
         assert!(d.log_bytes() > 0);
         d.compact_log();
         assert_eq!(d.log().len(), 1);
+        assert_eq!(d.compactions(), 1);
         assert_eq!(
             (d.hash(), d.depth()),
             (h, depth),

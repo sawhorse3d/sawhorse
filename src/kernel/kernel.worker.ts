@@ -88,6 +88,9 @@ function scene(d: WasmDoc): SceneData {
 }
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+/** The document's log compactions when the app's copy of the log was last brought up to
+ * date (lane 16). */
+let logEpoch = 0;
 
 /** A failure of the kernel itself, not a refusal: after a trap the WebAssembly instance (and
  * the document it holds, borrowed when it failed) cannot be used again. */
@@ -259,10 +262,15 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
     }
     // The log entries the app does not hold yet (lane 16).
+    // A compacted log (one restore of the model, past its byte budget) starts over even when
+    // its length happens to match what the app holds.
     if (res.ok && req.known !== undefined && doc) {
       const len = doc.op_log_len();
-      if (replaced || len !== req.known) {
-        const from = replaced || len < req.known ? 0 : req.known;
+      const epoch = doc.op_log_epoch();
+      const compacted = epoch !== logEpoch;
+      logEpoch = epoch;
+      if (replaced || compacted || len !== req.known) {
+        const from = replaced || compacted || len < req.known ? 0 : req.known;
         res.logSync = { from, tail: doc.op_log_tail(from) };
       }
     }

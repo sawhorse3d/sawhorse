@@ -767,6 +767,8 @@ export interface WasmDoc {
   open_shz(bytes: Uint8Array): string;
   /** Lane 16: entries in the op log, and the log from `from` on, one JSON text per op. */
   op_log_len(): number;
+  /** Lane 16: how many times the op log was compacted. */
+  op_log_epoch(): number;
   op_log_tail(from: number): string[];
   /** Lane 16, tests only: fail mid-edit the way a kernel bug would (a panic: a trap). */
   fail_for_test(how: string): string;

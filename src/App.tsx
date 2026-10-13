@@ -844,6 +844,9 @@ export function App() {
         setNameSource(info.scene.state, info.scene.mesh);
         setScene(info.scene);
         setKernelState("ready");
+      } else {
+        // Given up on (it kept failing): nothing more will run; the message says to reload.
+        setKernelState("error");
       }
       const w = window as unknown as { __sawhorse?: Record<string, unknown> };
       w.__sawhorse = { ...(w.__sawhorse ?? {}), lastRestart: { reason: info.reason, error: info.error ?? null, rebuilt: !!info.scene && !info.error } };
