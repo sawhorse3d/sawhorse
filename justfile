@@ -5,8 +5,10 @@
 set shell := ["bash", "-cu"]
 set windows-shell := ["bash", "-cu"]
 
-# Regenerable build bytes stay off C: (ADR build rules). WSL picks its own subdir in scripts/env.sh.
-export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", if os() == "windows" { "D:/build-cache/sawhorse" } else { justfile_directory() / "crates/target" })
+# Regenerable build bytes stay off C: (ADR build rules), one target dir per checkout: on
+# Windows scripts/env.sh names it (WSL picks its own subdir there too), so two checkouts never
+# share one (a shared dir can hand one checkout the other's wasm kernel).
+export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", if os() == "windows" { `. scripts/env.sh && printf '%s' "$CARGO_TARGET_DIR"` } else { justfile_directory() / "crates/target" })
 
 default:
     @just --list

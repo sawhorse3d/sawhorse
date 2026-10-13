@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkPkg } from "./wasm-checkout.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pkg = path.join(root, "src", "wasm", "pkg");
@@ -12,6 +13,14 @@ if (!existsSync(path.join(pkg, "sawhorse_wasm.js"))) {
   console.error("golden-wasm: src/wasm/pkg missing; run `npm run wasm` first");
   process.exit(1);
 }
+// Another checkout's kernel proves nothing against these goldens (an older one fails with
+// "unknown variant"): say which it is, first.
+const built = await checkPkg(root);
+if (!built.ok) {
+  console.error(`golden-wasm: ${built.reason}; run \`npm run wasm\``);
+  process.exit(1);
+}
+console.log(`golden-wasm: kernel ${built.reason}`);
 const mod = await import(pathToFileURL(path.join(pkg, "sawhorse_wasm.js")).href);
 mod.initSync({ module: readFileSync(path.join(pkg, "sawhorse_wasm_bg.wasm")) });
 

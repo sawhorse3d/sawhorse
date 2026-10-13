@@ -8,7 +8,7 @@ Three places run the code: the maintainer's Windows machine (no MSVC), WSL Ubunt
    - every Rust command runs in **WSL Ubuntu**; `scripts/cargo.sh` and `npm run wasm` forward there automatically when they see Windows without MSVC;
    - native Windows, macOS and Linux installers are built by **GitHub Actions** (`.github/workflows/release.yml`, `tauri-action`);
    - `tauri dev` / `tauri build` do not run locally until a linker exists.
-2. **Build bytes live on D:.** `CARGO_TARGET_DIR` is `D:/build-cache/sawhorse` on Windows and `/mnt/d/build-cache/sawhorse/wsl` in WSL (separate subdir: Linux host artifacts must not mix with Windows ones). `scripts/env.sh` and the `justfile` set it. Never commit a `target-dir` into `.cargo/config.toml`. CI uses cargo's default (`crates/target`, gitignored).
+2. **Build bytes live on D:, one target dir per checkout.** `CARGO_TARGET_DIR` is `D:/build-cache/sawhorse-<folder>-<sum>` on Windows and `/mnt/d/build-cache/sawhorse/wsl-<folder>-<sum>` in WSL (separate subdirs: Linux host artifacts must not mix with Windows ones), where `<folder>` is the checkout's folder (a worktree's slug) and `<sum>` the `cksum` of its full path. `scripts/env.sh` sets it (the `justfile` asks it). Two checkouts must never share one: cargo copies the wasm kernel (`sawhorse_wasm.wasm`, an unhashed name) out of `deps/` only when it compiles, so a checkout cargo thinks is fresh gets whatever kernel the other one copied out last. Worse, cargo names workspace crates' artifacts without their checkout's path, so two checkouts overwrite each other's compiled crates too (reproduced while fixing this: a checkout's wasm-api compiled against the other checkout's older `sawhorse-inference`). On 2026-10-12 that handed a clone a kernel without the section ops: `npm run wasm` said "Finished" in two seconds and `golden:wasm` failed with "unknown variant `add_section`". `npm run wasm` now checks the kernel's `build_checkout()` stamp (a hash of the directory it was compiled from) against the checkout (`scripts/wasm-checkout.mjs`; `npm run check:wasm` runs it alone), rebuilds once by itself when it is another checkout's, and `npm run golden:wasm` and `npm run build` refuse such a kernel. Old shared dirs (`D:/build-cache/sawhorse`, `.../wsl`, `.../wsl-<slug>`) are regenerable and can be deleted. Never commit a `target-dir` into `.cargo/config.toml`. CI uses cargo's default (`crates/target`, gitignored).
 
 ## Toolchains
 
@@ -52,7 +52,7 @@ npm run check:tauri         # fails if Tauri resolved to anything but 2.x
 
 `?theme=light` or `?theme=dark` on the URL forces a theme.
 
-Parallel lanes: each `.worktrees/<slug>` checkout gets its own cargo target directory automatically (`scripts/env.sh` appends the slug: `D:/build-cache/sawhorse-<slug>`, `/mnt/d/build-cache/sawhorse/wsl-<slug>`), so lanes never wait on each other's cargo lock. Give each lane its own Vite and preview ports (`npx vite --port 5184`, `PW_PORT=4184`); Playwright reuses an existing server on its port, which would otherwise be another lane's build.
+Parallel lanes: each checkout (each `.worktrees/<slug>`, each clone) gets its own cargo target directory automatically (`scripts/env.sh`: `D:/build-cache/sawhorse-<slug>-<sum>`, `/mnt/d/build-cache/sawhorse/wsl-<slug>-<sum>`), so lanes never wait on each other's cargo lock or pick up each other's kernel. The first build in a new checkout is a clean one (about two minutes for the wasm kernel). Give each lane its own Vite and preview ports (`npx vite --port 5184`, `PW_PORT=4184`); Playwright reuses an existing server on its port, which would otherwise be another lane's build.
 
 ### Render service (lane 8)
 
@@ -299,11 +299,12 @@ The same through `just`: `just check-wasm`, `just test`, `just clippy`, `just fm
 ```bash
 wsl.exe
 cd /mnt/c/Users/<you>/Desktop/sawhorse/app
-. scripts/env.sh            # cargo + ~/.local/bin on PATH, CARGO_TARGET_DIR=/mnt/d/build-cache/sawhorse/wsl
+. scripts/env.sh            # cargo + ~/.local/bin on PATH, CARGO_TARGET_DIR=/mnt/d/build-cache/sawhorse/wsl-<folder>-<sum>
 cd crates
 cargo test --workspace
 cargo check --workspace --target wasm32-unknown-unknown
 cd .. && wasm-pack build crates/wasm-api --target web --out-dir ../../src/wasm/pkg --out-name sawhorse_wasm --no-pack --release
+node scripts/wasm-checkout.mjs   # is the kernel in src/wasm/pkg this checkout's? (npm run wasm checks it itself)
 ```
 
 ## Test machinery (ADR-0001 "robustness first")

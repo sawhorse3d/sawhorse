@@ -32,6 +32,30 @@ pub fn kernel_version() -> String {
     sawhorse_kernel::VERSION.to_string()
 }
 
+/// Which checkout built this kernel: the FNV-1a hash (64-bit, hex) of this crate's directory
+/// as the compiler saw it. `scripts/build-wasm.mjs` and `scripts/golden-wasm.mjs` compare it
+/// with their own checkout, so a kernel another checkout built into a shared cargo target
+/// dir (cargo copies the unhashed `sawhorse_wasm.wasm` out only when it compiles, so a
+/// checkout it thinks is fresh gets whatever was copied last) is caught, never loaded. A
+/// hash, so no machine path is ever written into the build.
+#[wasm_bindgen]
+pub fn build_checkout() -> String {
+    format!("{BUILD_CHECKOUT:016x}")
+}
+
+const BUILD_CHECKOUT: u64 = fnv1a(env!("CARGO_MANIFEST_DIR").as_bytes());
+
+const fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut i = 0;
+    while i < bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        i += 1;
+    }
+    h
+}
+
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
@@ -1122,6 +1146,21 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stamp scripts/wasm-checkout.mjs recomputes: FNV-1a 64 (the published test
+    /// vectors), of this crate's own directory, as 16 hex digits.
+    #[test]
+    fn the_build_checkout_stamp_is_fnv1a_of_the_crate_dir() {
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a(b"foobar"), 0x8594_4171_f739_67e8);
+        let s = build_checkout();
+        assert_eq!(s.len(), 16);
+        assert_eq!(
+            s,
+            format!("{:016x}", fnv1a(env!("CARGO_MANIFEST_DIR").as_bytes()))
+        );
+    }
 
     fn op(d: &mut DocCore, json: &str) -> serde_json::Value {
         serde_json::from_str(&d.apply_json(json).unwrap()).unwrap()
