@@ -7,6 +7,8 @@
 //
 //   (render-service)  PORT=8787 RENDER_PROVIDER=mock node src/main.ts > service.log
 //   (app)             npx vite --port 5178 --strictPort
+//   (the script saves the service address, --service or http://127.0.0.1:8787, in Settings'
+//   storage of each browser context: since lane 12c a development build has no default)
 //   node scripts/capture-credits.mjs --url http://localhost:5178 --service-log path/to/service.log \
 //        --out-dir ../_captures --prefix 2026-10-11-lane08
 //
@@ -18,6 +20,16 @@ import path from "node:path";
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith("--") ? [...acc, [a.slice(2), all[i + 1]]] : acc), []),
 );
+const SERVICE_URL = (args.service || "http://127.0.0.1:8787").replace(/\/+$/, "");
+/** Runs in the page before the app: the address Edit > Settings saves (src/credits/gate.ts). */
+function useService(url) {
+  try {
+    localStorage.setItem("sawhorse.renderServiceUrl", url);
+  } catch {
+    /* storage blocked */
+  }
+}
+
 const url = args.url ?? "http://localhost:5178";
 const outDir = path.resolve(args["out-dir"] ?? "../_captures");
 const prefix = args.prefix ?? "lane08";
@@ -58,6 +70,7 @@ async function onPart(page, pick, du, dv) {
 const browser = await chromium.launch({ channel: process.env.PW_CHANNEL ?? "msedge" });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+  await context.addInitScript(useService, SERVICE_URL);
   const page = await context.newPage();
   await kernelReady(page);
   const chip = page.locator("header.top .chip");
@@ -135,6 +148,7 @@ try {
   // A second device (fresh browser profile = new device key) claims the credits by email.
   if (serviceLog) {
     const other = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+    await other.addInitScript(useService, SERVICE_URL);
     const p2 = await other.newPage();
     await kernelReady(p2);
     await p2.waitForFunction(() => document.querySelector("header.top .chip")?.getAttribute("data-state") === "connected", null, { timeout: 15_000 });

@@ -69,15 +69,15 @@ type LastImport = { name: string; outcome: Outcome; notes: string[] };
 type V = [number, number, number];
 
 /**
- * Console errors and uncaught exceptions of the page: an import must not raise any. The
- * Credits chip polls the render service on 127.0.0.1:8787, which is not running here and
- * logs a refused connection; that is not the import's.
+ * Console errors and uncaught exceptions of the page: an import must not raise any. (No
+ * render service is configured here, so since lane 12c nothing asks for one either: no
+ * refused connection to forgive.)
  */
 function watchErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => {
-    if (m.type() === "error" && !/:8787(?![0-9])/.test(m.location().url)) errors.push(`console.error: ${m.text()} (${m.location().url})`);
+    if (m.type() === "error") errors.push(`console.error: ${m.text()} (${m.location().url})`);
   });
   return errors;
 }

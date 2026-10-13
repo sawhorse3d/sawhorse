@@ -4,7 +4,7 @@ How the Render pane, the Credits chip and the render service fit together (ADR-0
 
 ## What the user sees
 
-- **Nothing, until a render service is set and answers** (lane 15). Render credits are not launched, so a first run shows no Credits chip and no Render pane. They appear when a render service address is saved in **Edit > Settings…** (kept on this device; a development build, `npm run dev`, also takes `VITE_RENDER_SERVICE_URL` or the local default `http://127.0.0.1:8787`) **and** that service answers `GET /healthz` with a 2xx within 4 s, asked at startup and whenever the address changes (**Check again** asks once more). Otherwise one line in Settings says which: "Renders are off: no render service is set." or "...the render service at URL did not answer its health check." A release build never falls back to a built-in address. Render images are fetched and shown from memory (`blob:`), so a service set at run time works under the page's content security policy, which lets images come only from the app.
+- **Nothing, until a render service is set and answers** (lane 15). Render credits are not launched, so a first run shows no Credits chip and no Render pane. They appear when a render service address is saved in **Edit > Settings…** (kept on this device; a development build, `npm run dev`, also takes `VITE_RENDER_SERVICE_URL`; since lane 12c it has no default address, so with nothing set nothing is asked) **and** that service answers `GET /healthz` with a 2xx within 4 s, asked once at startup (only when an address is configured) and whenever the address changes (**Check again** asks once more). Otherwise one line in Settings says which: "Renders are off: no render service is set." or "...the render service at URL did not answer its health check." A release build never falls back to a built-in address. Render images are fetched and shown from memory (`blob:`), so a service set at run time works under the page's content security policy, which lets images come only from the app.
 - **Credits chip** (top bar): the balance on this device. It shows a dash while the render service is not connected, and clicking it opens the Render pane. Its tooltip says where the device key is kept.
 - **Render pane**: the approved mock's layout.
   - Presets (Workshop, Kitchen, Living room, Exterior) fill the prompt box.
@@ -53,7 +53,7 @@ The same vector (seed `00..1f`, a `POST /v1/checkout` request) is tested in thre
 
 ## Configuration
 
-- `VITE_RENDER_SERVICE_URL` sets the service at build time. The default is `http://127.0.0.1:8787`, the local service.
+- `VITE_RENDER_SERVICE_URL` sets the service for a development build (for the local service, `http://127.0.0.1:8787`). Unset, the app asks no service until one is saved in Settings.
 - Tauri's CSP allows `http://127.0.0.1:8787` in `connect-src` and `img-src`. The production origin must be added there at launch; see `docs/LAUNCH-CREDITS.md`.
 
 ## Tests

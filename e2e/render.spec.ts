@@ -48,6 +48,18 @@ test("no render service, or one not answering: no chip, no Render pane, Settings
   await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
 });
 
+test("a service set: the app asks its health once at startup (lane 12c)", async ({ page }) => {
+  let health = 0;
+  await page.route(`${SERVICE}/**`, (route) => {
+    if (new URL(route.request().url()).pathname === "/healthz") health++;
+    return route.abort("connectionrefused");
+  });
+  await page.goto("/");
+  await expect(page.locator("main.vp")).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  expect(health).toBe(1);
+});
+
 test("set and answering, but the balance call fails: the chip shows a dash and Render explains, nothing is charged", async ({ page }) => {
   await page.route(`${SERVICE}/**`, (route) => (new URL(route.request().url()).pathname === "/healthz" ? route.fulfill({ status: 200, body: "{}", headers: { "Access-Control-Allow-Origin": "*" } }) : route.abort("connectionrefused")));
   await page.goto("/");

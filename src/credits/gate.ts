@@ -3,8 +3,12 @@
 // Settings, saved on this device; a development build also takes VITE_RENDER_SERVICE_URL)
 // AND that service answers its health check when the app starts (or when the address is
 // changed). Otherwise nothing about credits is shown, and one line in Settings says why.
+//
+// The probe follows the same gate (lane 12c): with no address configured nothing is asked
+// at all (a development build no longer falls back to the local service's default address,
+// which logged a refused connection on every start), and one start asks once: React's
+// development double mount shares the request already on its way.
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_SERVICE_URL } from "./client";
 
 /** Where the address typed in Settings is kept (this browser or this desktop app only). */
 export const RENDER_URL_KEY = "sawhorse.renderServiceUrl";
@@ -38,15 +42,18 @@ export function saveServiceUrl(url: string | null): void {
   }
 }
 
-/** A development build's default (the local render service); none in a release build. */
+/** A development build's address from VITE_RENDER_SERVICE_URL, when one is set; none in a
+ * release build, and none when the variable is not set (nothing is configured then, so
+ * nothing is asked: start the local service with VITE_RENDER_SERVICE_URL, or set it in
+ * Settings). */
 export function devServiceUrl(): string | null {
   const e = env();
   if (!e.DEV) return null;
-  const v = typeof e.VITE_RENDER_SERVICE_URL === "string" && e.VITE_RENDER_SERVICE_URL ? e.VITE_RENDER_SERVICE_URL : DEFAULT_SERVICE_URL;
-  return v.replace(/\/+$/, "");
+  const v = typeof e.VITE_RENDER_SERVICE_URL === "string" ? e.VITE_RENDER_SERVICE_URL.trim() : "";
+  return v ? v.replace(/\/+$/, "") : null;
 }
 
-/** The address the app uses: the one saved in Settings, else a development default. */
+/** The address the app uses: the one saved in Settings, else a development build's. */
 export function configuredServiceUrl(): string | null {
   return storedServiceUrl() ?? devServiceUrl();
 }
@@ -78,6 +85,26 @@ export async function serviceHealthy(url: string, fetchImpl: typeof fetch = (...
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Requests on their way, per fetch and per `url` and round of asking: a second ask for the
+ * same round (React's development double mount) shares the first instead of asking again.
+ * Forgotten once answered, so a later start or a Recheck asks afresh. */
+const inFlight = new WeakMap<object, Map<string, Promise<boolean>>>();
+const DEFAULT_FETCH = {};
+
+/** {@link serviceHealthy}, asked once per `url` and `round` while the answer is on its way. */
+export function probeOnce(url: string, round: number, fetchImpl?: typeof fetch): Promise<boolean> {
+  const owner: object = fetchImpl ?? DEFAULT_FETCH;
+  let byKey = inFlight.get(owner);
+  if (!byKey) inFlight.set(owner, (byKey = new Map()));
+  const key = `${round}
+${url}`;
+  const going = byKey.get(key);
+  if (going) return going;
+  const p = serviceHealthy(url, fetchImpl).finally(() => byKey.delete(key));
+  byKey.set(key, p);
+  return p;
 }
 
 /** What Settings says about renders, in one line. */
@@ -114,7 +141,7 @@ export function useRenderGate(fetchImpl?: typeof fetch): RenderGate {
     }
     let alive = true;
     setStatus("checking");
-    void serviceHealthy(url, fetchImpl).then((ok) => {
+    void probeOnce(url, asked, fetchImpl).then((ok) => {
       if (alive) setStatus(ok ? "ready" : "unreachable");
     });
     return () => {

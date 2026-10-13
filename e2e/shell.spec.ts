@@ -37,6 +37,22 @@ test("shell matches the approved mock's structure", async ({ page }) => {
   expect(colours).toEqual(["#7bc043", "#17a2a0", "#e08a1e", "#8a5cd6"]);
 });
 
+test("no render service configured: nothing asks for one, nothing logs a refused connection (lane 12c)", async ({ page }) => {
+  const asked: string[] = [];
+  const errors: string[] = [];
+  page.on("request", (r) => {
+    if (/\/healthz$/.test(new URL(r.url()).pathname) || /:8787(?![0-9])/.test(r.url())) asked.push(r.url());
+  });
+  page.on("console", (m) => {
+    if (m.type() === "error") errors.push(`${m.text()} (${m.location().url})`);
+  });
+  await page.goto("/");
+  await expect(page.locator("main.vp")).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  expect(asked).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test("keyboard shortcuts switch tools", async ({ page }) => {
   await page.goto("/");
   for (const [key, tool] of [["p", "pushpull"], ["r", "rect"], ["l", "line"], ["Space", "select"]] as const) {
