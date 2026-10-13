@@ -13,9 +13,14 @@
 //   - the demo in app/ is built for <base>app/, with the kernel WASM and its worker, and
 //     carries its content security policy (the plugin sandbox's second lock);
 //   - no machine paths or personal names anywhere in the output;
-//   - with --online, every download link answers (follows GitHub's redirect to the file).
+//   - with --online, every download link answers (follows GitHub's redirect to the file);
+//     with --allow-missing-release as well, links into a release that is not published yet
+//     (its tag page answers 404) are reported and let through, while links into a published
+//     release must still answer. The Pages workflow passes it so the site can name the next
+//     release's files before the maintainer tags it (lane 15); a release check without it
+//     fails until the files exist.
 //
-//   node scripts/check-site.mjs [--dir dist-site] [--base /] [--online]
+//   node scripts/check-site.mjs [--dir dist-site] [--base /] [--online [--allow-missing-release]]
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +36,8 @@ let base = opt("base", "/");
 if (!base.startsWith("/")) base = `/${base}`;
 if (!base.endsWith("/")) base = `${base}/`;
 const online = argv.includes("--online");
+const allowMissingRelease = argv.includes("--allow-missing-release");
+const notes = [];
 
 const problems = [];
 const bad = (msg) => problems.push(msg);
@@ -161,19 +168,42 @@ for (const f of files.filter((f) => /\.(html|css|js|svg|txt|json)$/i.test(f) || 
 }
 
 // ---- online: the download links answer ------------------------------------------------
+/** Whether the release a download link points into is published (its tag page answers). */
+const published = new Map();
+async function releasePublished(url) {
+  const m = /^(https:\/\/github\.com\/[^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(url);
+  if (!m) return true;
+  const page = `${m[1]}/releases/tag/${m[2]}`;
+  if (!published.has(page)) {
+    let ok = true;
+    try {
+      ok = (await fetch(page, { method: "HEAD", redirect: "follow" })).status !== 404;
+    } catch {
+      ok = true;
+    }
+    published.set(page, ok);
+  }
+  return published.get(page);
+}
+
 if (online) {
   for (const url of downloads) {
+    let problem = null;
     try {
       const r = await fetch(url, { method: "HEAD", redirect: "follow" });
-      if (!r.ok) bad(`download ${url}: HTTP ${r.status}`);
+      if (!r.ok) problem = `HTTP ${r.status}`;
     } catch (e) {
-      bad(`download ${url}: ${e.message}`);
+      problem = e.message;
     }
+    if (!problem) continue;
+    if (allowMissingRelease && !(await releasePublished(url))) notes.push(`download ${url}: the release is not published yet (allowed by --allow-missing-release)`);
+    else bad(`download ${url}: ${problem}`);
   }
 }
+for (const n of notes) console.log(`[check-site] note: ${n}`);
 
 if (problems.length) {
   console.error(`[check-site] ${problems.length} problem(s):\n  - ${problems.join("\n  - ")}`);
   process.exit(1);
 }
-console.log(`[check-site] ok: ${pages.length} pages, ${files.length} files, base ${base}${online ? `, ${downloads.size} download links answer` : ""}`);
+console.log(`[check-site] ok: ${pages.length} pages, ${files.length} files, base ${base}${online ? `, ${downloads.size - notes.length} download links answer${notes.length ? `, ${notes.length} wait for their release` : ""}` : ""}`);
