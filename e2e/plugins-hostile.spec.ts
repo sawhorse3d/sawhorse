@@ -210,7 +210,8 @@ test("a ui-only plugin's tool never sees a solid id: pointer events over a solid
   }
   const [cx, cy] = await at(page, [6, 6, 6]);
   await page.mouse.click(cx, cy);
-  await expect.poll(async () => (await logs()).filter((l) => l.includes("event=")).length, { timeout: 15_000 }).toBeGreaterThan(3);
+  // The click goes after the moves (moves are coalesced while the plugin is busy): wait for it.
+  await expect.poll(async () => (await logs()).some((l) => l.includes("event=") && l.includes('"type":"click"')), { timeout: 15_000 }).toBe(true);
 
   const events = (await logs()).filter((l) => l.includes("event=")).map((l) => l.slice(l.indexOf("event=") + 6));
   let ownPoints = 0;

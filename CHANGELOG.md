@@ -16,6 +16,7 @@ A review of every path by which data or effects cross between a plugin and the a
 - **No consent bypass in the page**: `window.__sawhorse.plugins` (which could enable a plugin with no dialog) exists only in development and test builds; `npm run build` and `npm run site:check` fail a build that has it. Playwright runs against its own build with the hooks (`scripts/e2e-serve.mjs`).
 - **A grant never grows by itself**: it records the hosts the person saw, and shrinks when a plugin's files ask for less, so a permission dropped and asked for again shows the dialog again.
 - Method, event, colour and inference-kind lookups use own keys only (`"constructor"` was a colour).
+- **A plugin's batch stops growing at its limit**: `b.op` throws `too_large` at the op past 2,000 or past 4 MB, instead of serializing a runaway loop's million ops for seconds (long enough, on a busy machine, for the watchdog to stop the plugin).
 
 ### Fixed (lane 17, section slices, 2026-10-13)
 

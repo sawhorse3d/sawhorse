@@ -267,7 +267,7 @@ Any op of the kernel's op log ([`src/kernel/types.ts`](../src/kernel/types.ts) `
 | `set_grain`, `set_stock` | `part`, `grain` / `stock`, `sheet` | (the cut list) |
 | `offset`, `follow_me`, `imprint`, `split_face`, `erase_face` ... | as the built-in tools send them | |
 
-A batch holds at most 2,000 ops, and at most 10 batches a second are applied. A batch also has a work budget: each op costs about the size of the model it is applied to, so ops times things in the model (solids, meshes, groups, instances, sketches) must stay under 20,000,000; split bigger work into several batches (each its own undo step). The batch as sent is at most 4 MB (about 150,000 points of geometry).
+A batch holds at most 2,000 ops, and at most 10 batches a second are applied. Both are checked as the batch is built: `b.op(...)` throws a `PluginApiError` with `code: "too_large"` at the op past 2,000, or at the op that would take the batch past the 4 MB a message may hold, so a runaway loop stops at once instead of building a batch the app would refuse. A batch also has a work budget: each op costs about the size of the model it is applied to, so ops times things in the model (solids, meshes, groups, instances, sketches) must stay under 20,000,000; split bigger work into several batches (each its own undo step). The batch as sent is at most 4 MB (about 150,000 points of geometry).
 
 ### sawhorse.ui
 

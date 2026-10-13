@@ -10,7 +10,8 @@ import { PERMISSION_TEXT } from "../../packages/plugin-api/src/manifest.ts";
 import { fakeHost } from "../tools/fakeHost";
 import { PluginTool } from "../tools/plugin";
 import { METHODS } from "./host";
-import { batchRefusedWithoutRead, permissionLines, PluginManager, type AppBridge } from "./manager";
+import { BATCH_MAX_OPS } from "../../packages/plugin-api/src/runtime.ts";
+import { batchRefusedWithoutRead, MAX_BATCH_OPS, permissionLines, PluginManager, type AppBridge } from "./manager";
 import { grantCovers, grantMatches, loadGrants, packageDigest, trimGrant } from "./store";
 import { checkToolView } from "./toolView";
 
@@ -716,5 +717,11 @@ describe("consent, attribution and grants (lane 17, F4 to F9)", () => {
     const v = checkToolView({ overlay: [{ points: [[0, 0, 0], [1, 0, 0]], color: "constructor" }], inference: { start: [0, 0, 0], lock: { dir: [0, 0, 1], kind: "toString" } } });
     expect(v.overlay[0].color).toBe("--accent");
     expect(v.inference.lock).toBeUndefined();
+  });
+});
+
+describe("one batch limit for the plugin and the app (lane 17)", () => {
+  it("the runtime stops adding ops where the app would refuse the batch", () => {
+    expect(BATCH_MAX_OPS).toBe(MAX_BATCH_OPS);
   });
 });

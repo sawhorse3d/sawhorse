@@ -50,6 +50,8 @@ SketchUp's value to woodworkers is half its extensions: cabinet makers, joinery 
 - **Grants (F8).** A grant changed only on Enable, so a source that keeps its grant across changes (a bundled sample, an unpacked folder) could drop a permission and ask for it again later with no dialog. A grant now records the `net` entries shown with it and, whenever it holds for the files added, shrinks to what they ask for (`trimGrant`); asking for more, a permission or a host, needs the dialog.
 - **Lookups (F9).** The method and event tables and a tool view's colour and lock kind are read by own keys (`Object.hasOwn`): `"constructor"` was a colour (a function), and a refusal could print a function's source as the permission a method needed.
 
+- **A batch's limits hold while it is built** (found by the lane's full end-to-end run, a flake of lane 16's hostile-plugin test, about one run in four on `main` too). Its attack adds a million ops to one batch; `b.op` serialized every one (4.5 s of the plugin's own thread, no answer to the watchdog's pings) before the commit was refused, and on a loaded machine that passed 15 s and the watchdog stopped the plugin mid-test. The runtime now throws `too_large` at the op past 2,000 (`BATCH_MAX_OPS`, the app's and the kernel's `MAX_OPS`) or past the 4 MB a message holds, at once (13 ms). The test's expectations are unchanged.
+
 What was already consistent and stays so: requests are checked against `METHODS` before anything else; events are delivered only when subscribed and allowed; storage is scoped to the manifest's id; files come back as names, never paths; there is no `fetch` without `net`; panel images are `data:` URLs; batches are checked before the kernel sees them.
 
 ## Consequences

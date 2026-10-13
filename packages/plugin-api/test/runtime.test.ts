@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxItem, componentOp, createRuntime, outcomeValue } from "../src/runtime.ts";
+import { BATCH_MAX_OPS, boxItem, componentOp, createRuntime, outcomeValue, PluginApiError } from "../src/runtime.ts";
 import { decodePluginFrame, type PluginMessage } from "../src/rpc.ts";
 
 function setup(permissions = ["model.read", "model.write", "ui"]) {
@@ -309,5 +309,39 @@ describe("the wire (lane 16)", () => {
     // And a bad op throws at the line that adds it.
     const c = (api.model.batch as (n: string) => { op(o: unknown): unknown })("Bad");
     expect(() => c.op({ op: "rename", name: () => 1 })).toThrow(/op 0\.name is a function/);
+  });
+});
+
+describe("a batch's limits hold while it is built (lane 17)", () => {
+  it("the op past 2,000 throws at once with too_large, after microseconds, not a million serializations", () => {
+    const { api, sent } = setup();
+    const b = (api.model.batch as (n: string) => { op(o: unknown): unknown; length: number })("A million ops");
+    const t0 = performance.now();
+    let thrown: unknown = null;
+    try {
+      for (let i = 0; i < 1e6; i++) b.op({ op: "rename", item: { object: 1 }, name: "x" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PluginApiError);
+    expect((thrown as PluginApiError).code).toBe("too_large");
+    expect((thrown as Error).message).toContain(`at most ${BATCH_MAX_OPS} ops`);
+    expect(b.length).toBe(BATCH_MAX_OPS);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(sent.length).toBe(0);
+  });
+
+  it("the ops together must fit one message: the one that would pass 4 MB throws", () => {
+    const { api } = setup();
+    const b = (api.model.batch as (n: string) => { op(o: unknown): unknown; length: number })("Big");
+    const name = "n".repeat(1024 * 1024);
+    let code: string | null = null;
+    try {
+      for (let i = 0; i < 10; i++) b.op({ op: "rename", item: { object: 1 }, name });
+    } catch (e) {
+      code = (e as { code?: string }).code ?? null;
+    }
+    expect(code).toBe("too_large");
+    expect(b.length).toBeLessThan(4);
   });
 });

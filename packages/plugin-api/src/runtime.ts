@@ -13,7 +13,7 @@
 // PluginApiError ("invalid" / "too_large") and nothing is sent.
 import { bbox, plane, transform, vec3, type Bounds, type Transform, type Vec3 } from "./geometry.ts";
 import { decodeHostFrame, encodePluginMessage, EVENT_NAMES, logText, peekFrame, PluginApiError, type Data, type HostMessage, type LogLevel, type PluginInfo, type PluginMessage } from "./rpc.ts";
-import { encodeValue, WireError } from "./wire.ts";
+import { encodeValue, FRAME_BUDGET, WireError } from "./wire.ts";
 
 export { PluginApiError };
 
@@ -201,8 +201,13 @@ export interface BatchResult {
 }
 
 /** A transactional batch: ops are collected, then `commit` applies them as one undo step. */
+/** Most ops one batch holds (the app's MAX_BATCH_OPS, crates/kernel/src/refbatch.rs MAX_OPS). */
+export const BATCH_MAX_OPS = 2_000;
+
 export class Batch {
   private ops: unknown[] = [];
+  /** Bytes the ops take serialized: the batch must fit one message (FRAME_BUDGET.default). */
+  private bytes = 0;
   private done = false;
   readonly name: string;
   private commitFn: (name: string, ops: unknown[]) => Promise<unknown[]>;
@@ -220,10 +225,16 @@ export class Batch {
   op(op: { op: string; [k: string]: unknown }): Ref {
     if (this.done) throw new Error(`batch "${this.name}" was already committed`);
     if (!op || typeof op.op !== "string") throw new TypeError('an op is an object with an "op" field, like { op: "rename", item: { object: 3 }, name: "Top" }');
+    // Lane 17: the batch's limits hold as it is built, not only at commit. A loop adding a
+    // million ops used to serialize every one of them (seconds of the plugin's thread, with
+    // no answer to the watchdog's pings) before the commit was refused.
+    if (this.ops.length >= BATCH_MAX_OPS) throw new PluginApiError(`batch "${this.name}" holds at most ${BATCH_MAX_OPS} ops: split the work into several batches (each its own undo step)`, "too_large");
     const kind = op.op;
     // Serialized now, once (lane 16): a bad op throws at the line that added it, and what is
-    // sent is exactly what was checked.
-    this.ops.push(encodeValue(op, `op ${this.ops.length}`));
+    // sent is exactly what was checked. Within what is left of the message budget.
+    const enc = encodeValue(op, `op ${this.ops.length}`, Math.max(0, FRAME_BUDGET.default - this.bytes));
+    this.bytes += enc.bytes.byteLength;
+    this.ops.push(enc);
     return new Ref(this.ops.length - 1, kind);
   }
 
