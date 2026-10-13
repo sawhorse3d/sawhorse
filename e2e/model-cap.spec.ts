@@ -134,8 +134,10 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   await expect(vp).toHaveAttribute("data-objects", "100000", { timeout: 60_000 });
 
   // The window kept drawing frames through all of it, and the plugin was never taken for
-  // hung (it was the app that used to be busy).
-  expect(await longestGap(page)).toBeLessThan(3000);
+  // hung (it was the app that used to be busy). Measured on the development machine: 0.55 s
+  // at most here, under 0.5 s for each pane and for selecting all; the bounds leave room for
+  // a CI runner several times slower and still catch the 46-second freeze by far.
+  expect(await longestGap(page)).toBeLessThan(6000);
   await expect(row).toHaveAttribute("data-status", "running");
 
   // Every pane, the selection and the view at that size.
@@ -143,7 +145,7 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
     await watchFrames(page);
     await page.getByRole("tab", { name: tab }).click();
     await page.waitForTimeout(400);
-    expect(await longestGap(page), `the ${tab} pane`).toBeLessThan(3000);
+    expect(await longestGap(page), `the ${tab} pane`).toBeLessThan(5000);
   }
   // The Outliner lists 100,000 rows and draws the ones in view.
   const tree = page.getByRole("tree", { name: "Groups, components and solids" });
@@ -159,7 +161,7 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   await page.waitForTimeout(400);
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
-  expect(await longestGap(page), "select all").toBeLessThan(4000);
+  expect(await longestGap(page), "select all").toBeLessThan(6000);
   // The page's own heap stays well under what the 46-second freeze built up.
   const heap = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0);
   expect(heap).toBeLessThan(1.5e9);
