@@ -202,7 +202,13 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         // missing, folded or turned the wrong way leaves its whole area here. Faces are
         // planar only to within PLANARITY, so where a face meets the plane in a slightly bent
         // line its kept part and the cap may join along chords up to its bend apart: allow
-        // the farthest any corner sits off its face's plane times the cut's length.
+        // the farthest any corner sits off its face's plane times the cut's length. And a
+        // face whose every corner is within a nanometre of the plane (LENGTH_EPS, the tie
+        // rule's ON_FACE) lies on it and is kept or cut whole, while the cap lies exactly in
+        // the plane: the face may be tilted off it by up to twice that across its width, so
+        // the two differ by up to that tilt times its area, at most LENGTH_EPS times its
+        // perimeter (lane 12d's property tests: a box face tilted 1.5e-8 rad off a plane
+        // through its centre, 1.2e-9 m2 apart).
         let bend = reached_objects
             .iter()
             .flat_map(|(_, x)| {
@@ -218,7 +224,9 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             .fold(0.0, f64::max);
         for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
             let open = p.vector_area.length();
-            if open > 1e-9 * (1.0 + p.area) + 2.0 * bend * p.cap_length {
+            let allowed = 1e-9 * (1.0 + p.area)
+                + (2.0 * bend + 2.0 * crate::tolerance::LENGTH_EPS) * p.cap_length;
+            if open > allowed {
                 return Err(format!(
                     "section {id}: the {half} half is not closed (vector area {open} of {} m2; faces bend {bend}, cap {} m around)",
                     p.area, p.cap_length

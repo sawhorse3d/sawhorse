@@ -268,10 +268,13 @@ impl KeptPart {
 type Node = (VertexId, VertexId);
 
 /// One directed piece of the cut inside one face: from crossing `a` to crossing `b`, with
-/// the solid's material on its left (seen from the plane's normal).
+/// the solid's material on its left (seen from the plane's normal) when `vote` is set.
 struct Piece {
     a: Node,
     b: Node,
+    /// The direction comes from a face that clearly crosses the plane: it counts as
+    /// evidence of which side the material is on.
+    vote: bool,
 }
 
 /// A face this close to parallel with the plane (the cross product of the normals) is
@@ -292,7 +295,13 @@ fn parallel(plane: &Plane, face: &crate::brep::Face) -> bool {
 /// [`ON_FACE`] of the plane lies on it whatever its tilt and is treated the same way: a face
 /// tilted 5e-11 off the plane (a Follow Me sweep along an edge 4e-6 off square, 2026-10-12
 /// fuzz) had three corners exactly on it and three 1.2e-11 off, so one half kept the notch
-/// between the three as a sliver of negative area with no cap to close it.
+/// between the three as a sliver of negative area with no cap to close it. Since lane 12d
+/// "within" is within twice the face's own bend when that is more (a face is planar only to
+/// within PLANARITY, so where it lies relative to a plane closer than that cannot be told):
+/// a box face bent by moving one corner 0.3 micrometres up off a plane through the other
+/// three dented the top face, its corners classified one by one clipped it to a triangle
+/// over the dent, and no cap could close what the side faces cut (lane 12d property tests;
+/// the chain failed it the same way).
 fn vertex_distances(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, f64> {
     let mut dist: BTreeMap<VertexId, f64> = b
         .vertices()
@@ -301,7 +310,12 @@ fn vertex_distances(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, 
     let raw = dist.clone();
     for (_, f) in b.faces() {
         let vs: Vec<VertexId> = f.loops().flat_map(|l| b.loop_vertices(l)).collect();
-        if !(parallel(plane, f) || vs.iter().all(|v| raw[v].abs() <= ON_FACE)) {
+        let bend = vs
+            .iter()
+            .map(|v| f.plane.signed_distance(b.vertices[*v].pos).abs())
+            .fold(0.0, f64::max);
+        let near = ON_FACE.max(2.0 * bend);
+        if !(parallel(plane, f) || vs.iter().all(|v| raw[v].abs() <= near)) {
             continue;
         }
         let first = dist[&vs[0]];
@@ -321,13 +335,33 @@ fn vertex_distances(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, 
     dist
 }
 
-/// The rings where `plane` cuts a solid, in the plane's frame: material on the left of
-/// every ring (outer rings counter-clockwise, holes clockwise). Exact up to the crossing
-/// interpolation; see the module docs for the tie rule.
-pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
-    let b = o.brep();
+/// The cut's pieces: what [`cut_pieces`] finds in each face.
+struct Cut {
+    pieces: Vec<Piece>,
+    /// Where every crossing is.
+    points: BTreeMap<Node, DVec3>,
+}
+
+/// How far below its bend times this a face's tilt off the plane (the sine of the angle
+/// between them times the face's size) makes the direction of its cut untrustworthy: a
+/// face that is planar only to within PLANARITY and lies within about that of the plane
+/// meets it along a line its stored normal no longer points across.
+const WEAK: f64 = 16.0;
+
+/// The tolerance of the cap's arrangement, per metre of the solid's largest coordinate: a
+/// few hundred rounding errors, far below anything the model can hold apart.
+const ARRANGE_TOL: f64 = 2e-13;
+
+/// Every piece where `plane` cuts a face of `b`, in face order, with the tie rule of
+/// [`vertex_distances`]. Within a face the crossings of its boundary are sorted along the
+/// line where it meets the plane and paired up; each pair is a piece, directed with the
+/// material on its left. Such a direction comes from the face's normal, which says nothing
+/// for a face lying within its own bend of the plane (2026-10-12, lane 12c verification:
+/// two such faces of a box split a micrometre off a plane had a piece whose two ends sat at
+/// the same place along that line, ordered by vertex id, pointing the wrong way): those
+/// pieces are sorted along their own spread and laid without a vote ([`Piece::vote`]).
+fn cut_pieces(b: &crate::brep::Brep, plane: &Plane, dist: &BTreeMap<VertexId, f64>) -> Cut {
     let n = plane.normal;
-    let dist = vertex_distances(b, plane);
     let kept = |v: VertexId| dist[&v] >= 0.0;
     let mut points: BTreeMap<Node, DVec3> = BTreeMap::new();
     let mut pieces: Vec<Piece> = Vec::new();
@@ -335,8 +369,9 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
         if parallel(plane, f) {
             continue; // parallel to the plane: never crossed (the tie rule)
         }
-        let t = n.cross(f.plane.normal).normalize();
-        let mut xs: Vec<(f64, Node)> = Vec::new();
+        let cross = n.cross(f.plane.normal);
+        let t = cross.normalize();
+        let mut xs: Vec<(DVec3, Node)> = Vec::new();
         for l in f.loops() {
             let vs = b.loop_vertices(l);
             for i in 0..vs.len() {
@@ -363,98 +398,199 @@ pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
                         pl + (ph - pl) * (dl / (dl - dh))
                     }
                 });
-                xs.push(((x - plane.origin).dot(t), node));
+                xs.push((x, node));
             }
         }
         if xs.len() % 2 == 1 {
             continue; // cannot happen on a valid solid; never pair a stray crossing
         }
-        xs.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for [a, b] in xs.as_chunks::<2>().0 {
-            pieces.push(Piece { a: a.1, b: b.1 });
+        let corners: Vec<DVec3> = f.loops().flat_map(|l| b.loop_points(l)).collect();
+        let bend = corners
+            .iter()
+            .map(|p| f.plane.signed_distance(*p).abs())
+            .fold(0.0, f64::max);
+        let size = corners
+            .iter()
+            .map(|p| p.distance(corners[0]))
+            .fold(0.0, f64::max);
+        let weak = cross.length() * size <= WEAK * bend;
+        // Sort along the line: the plane's line through the face, or for a weak face the
+        // crossings' own spread (its farthest pair), turned the same way.
+        let along = if weak {
+            let mut d = DVec3::ZERO;
+            for (i, (p, _)) in xs.iter().enumerate() {
+                for (q, _) in &xs[i + 1..] {
+                    if (*q - *p).length_squared() > d.length_squared() {
+                        d = *q - *p;
+                    }
+                }
+            }
+            if d.dot(t) < 0.0 { -d } else { d }
+        } else {
+            t
+        };
+        let mut keyed: Vec<(f64, Node)> = xs
+            .iter()
+            .map(|(x, k)| ((*x - plane.origin).dot(along), *k))
+            .collect();
+        keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for [a, b] in keyed.as_chunks::<2>().0 {
+            if a.1 != b.1 {
+                pieces.push(Piece {
+                    a: a.1,
+                    b: b.1,
+                    vote: !weak,
+                });
+            }
         }
     }
-    // Chain the pieces head to tail. At every node as many pieces start as end: one per
-    // face at an edge crossing, and around a vertex on the plane as many going in as coming
-    // out (the faces around it alternate). A vertex where the cut passes more than once
-    // (two lobes of the section touching there, or a hole touching its outer ring: a
-    // folded solid, 2026-10-12 fuzz with plane snapping off) has several ways on. Before
-    // 2026-10-12 the chain took any unused piece at a node, in either direction, so there
-    // it could run a piece backwards: the ring folded over itself, its area came out
-    // wrong or nearly zero, the cap was dropped, and the kept halves no longer made the
-    // whole. Now a ring only ever follows a piece forwards, takes the leftmost way on (it
-    // traces one patch of material at a time), and is split where it comes back to a node
-    // it already passed, so every ring is simple and keeps the material on its left.
-    pieces.retain(|p| p.a != p.b); // a face touching the plane at one vertex: nothing to cut
-    let at2d = |k: &Node| plane.to_local(points[k]);
-    let mut starts: BTreeMap<Node, Vec<usize>> = BTreeMap::new();
-    for (i, p) in pieces.iter().enumerate() {
-        starts.entry(p.a).or_default().push(i);
+    Cut { pieces, points }
+}
+
+/// The rings where `plane` cuts a solid, in the plane's frame: material on the left of
+/// every ring (outer rings counter-clockwise, holes clockwise), every ring simple. Exact up
+/// to the crossing interpolation; see the module docs for the tie rule.
+///
+/// Since lane 12d the rings come out of a planar arrangement ([`crate::arrangement`]): every
+/// piece of every face ([`cut_pieces`]) is laid in it with its material side, split where it
+/// crosses or touches another and merged where pieces coincide; the arrangement's faces are
+/// material when the pieces around them say so, or else when the solid holds a point inside
+/// them ([`inside_below`]); the cap is the union of the material faces. The pieces used to be
+/// chained into rings directly, which went wrong two ways: a hole whose edge lies along the
+/// cap's outline (a plane along the top edge of the hole in a frame) never met the outline
+/// at a node, so the hole was lost and the cap was a plain rectangle; and a piece pointing
+/// the wrong way (a weak face, above) left a ring that could not close, so the whole cap
+/// was dropped.
+pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
+    let b = o.brep();
+    let dist = vertex_distances(b, plane);
+    let cut = cut_pieces(b, plane, &dist);
+    if cut.pieces.is_empty() {
+        return Vec::new();
     }
-    let mut used = vec![false; pieces.len()];
+    let scale = b
+        .vertices()
+        .map(|(_, v)| v.pos.abs().max_element())
+        .fold(1.0, f64::max);
+    let mut arr = crate::arrangement::Arrangement::new(ARRANGE_TOL * scale);
+    let at2d = |k: &Node| plane.to_local(cut.points[k]);
+    for (i, p) in cut.pieces.iter().enumerate() {
+        arr.insert(at2d(&p.a), at2d(&p.b), i32::from(p.vote), i);
+    }
+    arr.settle();
     let mut rings = Vec::new();
-    for start in 0..pieces.len() {
-        if used[start] {
-            continue;
-        }
-        used[start] = true;
-        let first = pieces[start].a;
-        let mut ring = vec![first];
-        let (mut prev, mut cur) = (first, pieces[start].b);
-        let mut closed = false;
-        for _ in 0..=pieces.len() {
-            if cur == first {
-                closed = true;
-                break;
-            }
-            ring.push(cur);
-            let din = at2d(&cur) - at2d(&prev);
-            let turn = |k: usize| {
-                let dout = at2d(&pieces[k].b) - at2d(&cur);
-                din.perp_dot(dout).atan2(din.dot(dout))
-            };
-            let next = starts
-                .get(&cur)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|&k| !used[k])
-                .max_by(|&x, &y| turn(x).total_cmp(&turn(y)).then(y.cmp(&x)));
-            let Some(k) = next else {
-                break;
-            };
-            used[k] = true;
-            (prev, cur) = (cur, pieces[k].b);
-        }
-        if !closed {
-            continue;
-        }
-        for loop_nodes in split_pinches(ring) {
-            let pts: Vec<DVec2> = loop_nodes.iter().map(at2d).collect();
-            let pts = tidy_ring(pts);
-            if pts.len() >= 3
-                && sawhorse_tessellate::signed_area(&pts).abs() > crate::tolerance::AREA_EPS * 1e-6
-            {
-                rings.push(pts);
-            }
+    for r in arr.material_rings(|q| inside_below(b, plane, &dist, q, scale)) {
+        let pts = tidy_ring(r);
+        if pts.len() >= 3
+            && sawhorse_tessellate::signed_area(&pts).abs() > crate::tolerance::AREA_EPS * 1e-6
+        {
+            rings.push(pts);
         }
     }
     rings
 }
 
-/// A closed ring of nodes that passes a node more than once, as the simple rings it is
-/// made of (each from one visit of the node to the next).
-fn split_pinches(ring: Vec<Node>) -> Vec<Vec<Node>> {
-    let mut out = Vec::new();
-    let mut stack: Vec<Node> = Vec::with_capacity(ring.len());
-    for k in ring {
-        if let Some(i) = stack.iter().position(|x| *x == k) {
-            out.push(stack.split_off(i));
+/// Directions (off `-normal`, along `u` and `v`) of the rays [`inside_below`] casts, tried in
+/// turn until one meets nothing on an edge.
+const RAYS: [(f64, f64); 6] = [
+    (0.1371, 0.0583),
+    (-0.0917, 0.1229),
+    (0.0443, -0.1613),
+    (-0.1789, -0.0371),
+    (0.2113, 0.1931),
+    (-0.0611, 0.2477),
+];
+
+/// Whether the solid holds the point `q` of the plane's frame, taken just below the plane
+/// (on the side that is cut away, which is what the tie rule makes the cap: a face lying on
+/// the plane is kept, so the cap is the cut a hair below it). A ray from `q` into the cut-away
+/// side counts the faces it passes through; a face the tie rule keeps whole or puts on the
+/// plane is never met. `None` when every ray runs within the tolerance of a face's edge or
+/// starts on a face. The cap's arrangement asks this only about a face whose pieces disagree
+/// or say nothing.
+fn inside_below(
+    b: &crate::brep::Brep,
+    plane: &Plane,
+    dist: &BTreeMap<VertexId, f64>,
+    q: DVec2,
+    scale: f64,
+) -> Option<bool> {
+    let start = plane.to_world(q);
+    let faces: Vec<_> = b
+        .faces()
+        .filter(|(_, f)| {
+            f.loops()
+                .flat_map(|l| b.loop_vertices(l))
+                .any(|v| dist[&v] < 0.0)
+        })
+        .map(|(_, f)| {
+            let rings: Vec<Vec<DVec2>> = f
+                .loops()
+                .map(|l| {
+                    b.loop_points(l)
+                        .iter()
+                        .map(|p| f.plane.to_local(*p))
+                        .collect()
+                })
+                .collect();
+            let bend = f
+                .loops()
+                .flat_map(|l| b.loop_points(l))
+                .map(|p| f.plane.signed_distance(p).abs())
+                .fold(0.0, f64::max);
+            (&f.plane, rings, 1e-9 * scale + 2.0 * bend)
+        })
+        .collect();
+    'rays: for (a, c) in RAYS {
+        let r = (-plane.normal + plane.u * a + plane.v * c).normalize();
+        let mut hits = 0u32;
+        for (fp, rings, tol) in &faces {
+            let h = fp.signed_distance(start);
+            let denom = r.dot(fp.normal);
+            let s = if denom.abs() < 1e-9 {
+                f64::NAN
+            } else {
+                -h / denom
+            };
+            // The ray starts in the face's plane (or runs along it): if it starts on the
+            // face, no ray can tell.
+            let on_plane = s.is_nan() || s.abs() <= *tol;
+            let at = if on_plane {
+                if h.abs() > *tol {
+                    continue;
+                }
+                start
+            } else if s < 0.0 {
+                continue;
+            } else {
+                start + r * s
+            };
+            let p = fp.to_local(at);
+            let near = rings.iter().any(|ring| {
+                (0..ring.len()).any(|i| {
+                    crate::sketch::point_segment_distance(p, ring[i], ring[(i + 1) % ring.len()])
+                        <= *tol
+                })
+            });
+            if near {
+                continue 'rays;
+            }
+            let inside = rings
+                .iter()
+                .filter(|ring| crate::validate::point_in_ring(p, ring))
+                .count()
+                % 2
+                == 1;
+            if inside {
+                if on_plane {
+                    continue 'rays;
+                }
+                hits += 1;
+            }
         }
-        stack.push(k);
+        return Some(hits % 2 == 1);
     }
-    out.push(stack);
-    out
+    None
 }
 
 /// Drop repeated points and points on one line with their neighbours: between them, or
@@ -497,7 +633,7 @@ pub(crate) fn assemble(rings: Vec<Vec<DVec2>>) -> Vec<(Vec<DVec2>, Vec<Vec<DVec2
         let best = outers
             .iter()
             .enumerate()
-            .filter(|(_, (o, _))| inside(probe, o))
+            .filter(|(_, (o, _))| crate::validate::point_in_ring(probe, o))
             .min_by(|a, b| {
                 sawhorse_tessellate::signed_area(&a.1.0)
                     .total_cmp(&sawhorse_tessellate::signed_area(&b.1.0))
@@ -508,22 +644,6 @@ pub(crate) fn assemble(rings: Vec<Vec<DVec2>>) -> Vec<(Vec<DVec2>, Vec<Vec<DVec2
         }
     }
     outers
-}
-
-/// Even-odd point in ring.
-fn inside(p: DVec2, ring: &[DVec2]) -> bool {
-    let mut c = false;
-    let n = ring.len();
-    for i in 0..n {
-        let (a, b) = (ring[i], ring[(i + 1) % n]);
-        if (a.y > p.y) != (b.y > p.y) {
-            let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
-            if p.x < x {
-                c = !c;
-            }
-        }
-    }
-    c
 }
 
 /// An affine function of the frame's 2D points: `c0 + c1 x + c2 y` (another plane's signed
@@ -1302,5 +1422,68 @@ mod tests {
         assert!((sawhorse_tessellate::signed_area(&caps[0].0) - 1.0).abs() < 1e-12);
         let top = Plane::new(DVec3::new(0.0, 0.0, 1.0), -DVec3::Z).unwrap();
         assert!(solid_rings(&o, &top).is_empty());
+    }
+
+    /// CX2 in miniature: a frame cut by a plane through the top edge of its hole. One side's
+    /// top face crosses the plane in a single piece straight over the hole while the hole's
+    /// wall lays its edge along it the other way; the arrangement cancels the two, so both
+    /// sides get the same notched cap (it used to be a plain rectangle on one side).
+    #[test]
+    fn a_frame_cut_along_its_hole_edge_keeps_the_notch() {
+        let sq = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            vec![
+                DVec2::new(x0, y0),
+                DVec2::new(x1, y0),
+                DVec2::new(x1, y1),
+                DVec2::new(x0, y1),
+            ]
+        };
+        let mut hole = sq(1.0, 1.5, 2.0, 2.5);
+        hole.reverse();
+        let o = Object::extrude(&Plane::GROUND, &sq(0.0, 0.0, 3.0, 3.0), &[hole], 1.0).unwrap();
+        // Through the hole's top edge (y = 2.5, z = 1), rising 1 in 2: it leaves the slab at
+        // y = 0.5 on the bottom, so the cut spans y 0.5..2.5 and the hole notches its top.
+        let n = DVec3::new(0.0, 1.0, -2.0).normalize();
+        let expect = 5.0 * 5f64.sqrt() / 2.0;
+        for normal in [n, -n] {
+            let plane = Plane::new(DVec3::new(0.0, 2.5, 1.0), normal).unwrap();
+            let caps = assemble(solid_rings(&o, &plane));
+            assert_eq!(caps.len(), 1, "{normal}: {caps:?}");
+            assert!(caps[0].1.is_empty(), "{normal}: {caps:?}");
+            assert_eq!(caps[0].0.len(), 8, "{normal}: {caps:?}");
+            let a = sawhorse_tessellate::signed_area(&caps[0].0);
+            assert!((a - expect).abs() < 1e-12, "{normal}: {a} {expect}");
+        }
+    }
+
+    /// The ray that settles a face the pieces disagree on: inside a box, just below a plane
+    /// through it, yes; outside, no; on a face the plane lies on, the side that is cut away.
+    #[test]
+    fn the_ray_reads_the_solid_just_below_the_plane() {
+        let o = Object::extrude(
+            &Plane::GROUND,
+            &[
+                DVec2::ZERO,
+                DVec2::new(2.0, 0.0),
+                DVec2::new(2.0, 1.0),
+                DVec2::new(0.0, 1.0),
+            ],
+            &[],
+            1.0,
+        )
+        .unwrap();
+        let b = o.brep();
+        let at = |plane: &Plane, p: DVec3| {
+            let dist = vertex_distances(b, plane);
+            inside_below(b, plane, &dist, plane.to_local(p), 2.0)
+        };
+        let mid = Plane::new(DVec3::new(0.0, 0.0, 0.5), DVec3::Z).unwrap();
+        assert_eq!(at(&mid, DVec3::new(1.0, 0.5, 0.5)), Some(true));
+        assert_eq!(at(&mid, DVec3::new(3.0, 0.5, 0.5)), Some(false));
+        // On the top face: facing out (down into the box) the box is below; facing in, not.
+        let out = Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z).unwrap();
+        assert_eq!(at(&out, DVec3::new(1.0, 0.5, 1.0)), Some(true));
+        let into = Plane::new(DVec3::new(0.0, 0.0, 1.0), -DVec3::Z).unwrap();
+        assert_eq!(at(&into, DVec3::new(1.0, 0.5, 1.0)), Some(false));
     }
 }

@@ -1,0 +1,102 @@
+{
+  "name": "2026-10-13-section-frame-prism-along-a-hole-edge",
+  "error": "lane-12c verification long fuzz, FUZZ_PLANE_SNAP=0, FUZZ_SEED=20262303: op 10 Extrude { sketch: 1, region: 2, distance: 1.75 }: section 1: the cut-away half is not closed (vector area 0.08838834764831847 of 0.5602594018405975 m2; faces bend 0, cap 2.8409902576697332 m around)",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.0
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": -0.25,
+      "h": -0.25
+    },
+    {
+      "op": "push_pull",
+      "object": 1,
+      "face": 1,
+      "distance": 0.0
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "region",
+        "sketch": 1,
+        "region": 4294967297
+      },
+      "distance": 0.0625
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        -1.5,
+        0.25
+      ],
+      "normal": [
+        0.0,
+        1.0,
+        -1.0
+      ],
+      "active": false
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 2,
+      "distance": 1.75
+    }
+  ]
+}
