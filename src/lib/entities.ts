@@ -3,7 +3,7 @@
 // Pure (no DOM, no three.js), so all of it is unit-tested.
 import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
-import { meshesIn, solidsIn } from "./scope";
+import { contentsOf, graphIndex } from "./scope";
 
 const r9 = (x: number) => Math.round(x * 1e9) / 1e9;
 const pkey = (p: V3) => p.map(r9).join(",");
@@ -94,8 +94,9 @@ function dedupe(es: Entity[]): Entity[] {
 export function partsOf(e: Entity, mesh: MeshData | null, graph?: SceneGraph | null): number[] {
   if (!mesh) return [];
   const out: number[] = [];
-  const inNode = e.kind === "node" && graph ? new Set(solidsIn(graph, e.node)) : null;
-  const meshesInNode = e.kind === "node" && graph ? new Set(meshesIn(graph, e.node)) : null;
+  const inside = e.kind === "node" && graph ? contentsOf(graph, [e.node]) : null;
+  const inNode = inside ? inside.objects : null;
+  const meshesInNode = inside ? inside.meshes : null;
   mesh.parts.forEach((p, i) => {
     if (e.kind === "face" && p.kind === "face" && p.owner === e.object && p.index === e.face) out.push(i);
     else if (e.kind === "region" && p.kind === "region" && p.owner === e.sketch && p.index === e.region) out.push(i);
@@ -106,20 +107,20 @@ export function partsOf(e: Entity, mesh: MeshData | null, graph?: SceneGraph | n
   return out;
 }
 
-/** Edge segments of every solid in a node. */
-function nodeEdges(node: number, mesh: MeshData | null, graph: SceneGraph | null | undefined): [V3, V3][] {
-  if (!graph) return [];
-  return solidsIn(graph, node).flatMap((o) => objectEdges(o, mesh));
-}
-
 /** Edge segments of an object in the view mesh. */
 export function objectEdges(object: number, mesh: MeshData | null): [V3, V3][] {
-  if (!mesh) return [];
+  return edgesOf(new Set([object]), mesh);
+}
+
+/** Edge segments of any of `objects` in the view mesh, in the mesh's order: one pass. */
+function edgesOf(objects: Set<number>, mesh: MeshData | null): [V3, V3][] {
+  if (!mesh || !objects.size) return [];
   const out: [V3, V3][] = [];
   const e = mesh.edges;
+  // Which owners are those objects, once (an owner is listed once, edges point at it).
+  const wanted = mesh.edgeOwners.map((o) => !!o && o.kind === "object" && objects.has(o.id));
   for (let i = 0; i < mesh.edgeOwner.length; i++) {
-    const o = mesh.edgeOwners[mesh.edgeOwner[i]];
-    if (o && o.kind === "object" && o.id === object) {
+    if (wanted[mesh.edgeOwner[i]]) {
       out.push([
         [e[6 * i], e[6 * i + 1], e[6 * i + 2]],
         [e[6 * i + 3], e[6 * i + 4], e[6 * i + 5]],
@@ -129,36 +130,83 @@ export function objectEdges(object: number, mesh: MeshData | null): [V3, V3][] {
   return out;
 }
 
+/** What a set of entities covers in the view mesh, gathered once (lane 16): the parts and
+ * edges of a selection of every one of 100,000 solids used to be found solid by solid, a
+ * pass over the whole mesh each. */
+function covered(es: Entity[], mesh: MeshData | null, graph: SceneGraph | null | undefined): { parts: number[]; edges: [V3, V3][]; points: V3[] } {
+  const out = { parts: [] as number[], edges: [] as [V3, V3][], points: [] as V3[] };
+  if (!es.length) return out;
+  const objects = new Set<number>();
+  const meshes = new Set<number>();
+  const faces = new Map<number, Set<number>>();
+  const regions = new Map<number, Set<number>>();
+  const edgeObjects = new Set<number>();
+  const nodes: number[] = [];
+  for (const e of es) {
+    if (e.kind === "edge") out.edges.push([e.a, e.b]);
+    else if (e.kind === "vertex") out.points.push(e.at);
+    else if (e.kind === "object") {
+      objects.add(e.object);
+      edgeObjects.add(e.object);
+    } else if (e.kind === "node") nodes.push(e.node);
+    else if (e.kind === "face") (faces.get(e.object) ?? faces.set(e.object, new Set()).get(e.object)!).add(e.face);
+    else if (e.kind === "region") (regions.get(e.sketch) ?? regions.set(e.sketch, new Set()).get(e.sketch)!).add(e.region);
+  }
+  if (nodes.length && graph) {
+    const inside = contentsOf(graph, nodes);
+    for (const o of inside.objects) {
+      objects.add(o);
+      edgeObjects.add(o);
+    }
+    for (const m of inside.meshes) meshes.add(m);
+  }
+  if (mesh && (objects.size || meshes.size || faces.size || regions.size)) {
+    mesh.parts.forEach((p, i) => {
+      if (p.kind === "face" ? objects.has(p.owner) || !!faces.get(p.owner)?.has(p.index) : p.kind === "region" ? !!regions.get(p.owner)?.has(p.index) : p.kind === "mesh" && meshes.has(p.owner)) out.parts.push(i);
+    });
+  }
+  // Not push(...): a spread of a million segments is past the call stack's limit.
+  for (const seg of edgesOf(edgeObjects, mesh)) out.edges.push(seg);
+  return out;
+}
+
 /**
  * The viewport highlight for a selection plus the entity under the cursor. With the scene
  * graph, a group or component highlights as a whole, and while one is open everything
  * outside it is faded.
  */
 export function highlightFor(selection: Entity[], hover: Entity | null, mesh: MeshData | null, graph?: SceneGraph | null): Highlight {
+  return withHover(selectionHighlight(selection, mesh, graph), selection, hover, mesh, graph);
+}
+
+/** The highlight of a selection alone (what changes with the selection and the model). */
+export function selectionHighlight(selection: Entity[], mesh: MeshData | null, graph?: SceneGraph | null): Highlight {
   const h: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [], fadedParts: [] };
-  h.sections = { selected: selection.flatMap((e) => (e.kind === "section" ? [e.section] : [])), hover: hover?.kind === "section" ? hover.section : null };
-  for (const e of selection) {
-    h.selectedParts.push(...partsOf(e, mesh, graph));
-    if (e.kind === "edge") h.selectedEdges.push([e.a, e.b]);
-    if (e.kind === "vertex") h.selectedPoints.push(e.at);
-    if (e.kind === "object") h.selectedEdges.push(...objectEdges(e.object, mesh));
-    if (e.kind === "node") h.selectedEdges.push(...nodeEdges(e.node, mesh, graph));
-  }
-  if (hover && !selection.some((s) => sameEntity(s, hover))) {
-    h.hoverParts.push(...partsOf(hover, mesh, graph));
-    if (hover.kind === "edge") h.hoverEdges.push([hover.a, hover.b]);
-    if (hover.kind === "object") h.hoverEdges.push(...objectEdges(hover.object, mesh));
-    if (hover.kind === "node") h.hoverEdges.push(...nodeEdges(hover.node, mesh, graph));
-  }
+  h.sections = { selected: selection.flatMap((e) => (e.kind === "section" ? [e.section] : [])), hover: null };
+  const sel = covered(selection, mesh, graph);
+  h.selectedParts = sel.parts;
+  h.selectedEdges = sel.edges;
+  h.selectedPoints = sel.points;
   const ctx = graph?.context ?? null;
   if (graph && ctx !== null && mesh) {
-    const inside = new Set(solidsIn(graph, ctx));
-    const insideMeshes = new Set(meshesIn(graph, ctx));
+    const inside = contentsOf(graph, [ctx]);
     const sketches = new Set(graph.sketches.filter(([, p]) => p !== null && solidsInChain(graph, p, ctx)).map(([s]) => s));
     mesh.parts.forEach((p, i) => {
-      const keep = p.kind === "face" ? inside.has(p.owner) : p.kind === "mesh" ? insideMeshes.has(p.owner) : sketches.has(p.owner);
+      const keep = p.kind === "face" ? inside.objects.has(p.owner) : p.kind === "mesh" ? inside.meshes.has(p.owner) : sketches.has(p.owner);
       if (!keep) h.fadedParts!.push(i);
     });
+  }
+  return h;
+}
+
+/** A selection's highlight with the entity under the cursor added (what changes as the
+ * pointer moves: one entity's parts, never the selection's again). */
+export function withHover(base: Highlight, selection: Entity[], hover: Entity | null, mesh: MeshData | null, graph?: SceneGraph | null): Highlight {
+  const h: Highlight = { ...base, hoverParts: [], hoverEdges: [], sections: { selected: base.sections?.selected ?? [], hover: hover?.kind === "section" ? hover.section : null } };
+  if (hover && !selection.some((s) => sameEntity(s, hover))) {
+    const c = covered([hover], mesh, graph);
+    h.hoverParts = c.parts;
+    h.hoverEdges = c.edges;
   }
   return h;
 }
@@ -170,7 +218,7 @@ function solidsInChain(graph: SceneGraph, n: number, ancestor: number): boolean 
   while (at !== null && !seen.has(at)) {
     if (at === ancestor) return true;
     seen.add(at);
-    at = graph.nodes.find((x) => x.id === at)?.parent ?? null;
+    at = graphIndex(graph).node.get(at)?.parent ?? null;
   }
   return false;
 }

@@ -6,7 +6,7 @@
 // model (Shift picks a range of rows, Ctrl toggles one); right-click sets the grain or the
 // stock of the row, or of every picked row at once. The Nesting button opens the Nesting
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
 import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
 
@@ -113,6 +113,9 @@ export function columnWidths(list: CutList, style: ReturnType<typeof listStyle>)
   return [`calc(${qty}ch + ${PAD}px)`, ...sizes.map((n, k) => `calc(${n}ch + ${PAD + mark(k)}px)`)];
 }
 
+/** Rows the pane draws at first, and how many more each "Show more" adds (lane 16). */
+export const CUT_ROWS_SHOWN = 500;
+
 const GRAIN_CHOICES: { grain: Grain; label: string }[] = [
   { grain: "length", label: "Grain along the length" },
   { grain: "width", label: "Grain across (along the width)" },
@@ -158,6 +161,12 @@ export function CutListPane(p: CutListPaneProps) {
     if (!e.shiftKey) setAnchor(rowKey(row));
   };
   const menuKeys = new Set(menu?.rows.map(rowKey) ?? []);
+  // Lane 16: a long list draws its first rows, and more on request; the totals, the
+  // exports, Print and selecting rows in the model always cover every row. (Every row is
+  // drawn as part of the page, and a model of 100,000 loose solids is 100,000 rows.)
+  const [shown, setShown] = useState(CUT_ROWS_SHOWN);
+  const rowCount = list?.rows.length ?? 0;
+  const widths = useMemo(() => (list ? columnWidths(list, style) : []), [list, style]);
 
   return (
     <div className="cutlist" data-testid="cutlist">
@@ -226,7 +235,7 @@ export function CutListPane(p: CutListPaneProps) {
             <table aria-label="Cut list" className="fit">
               <colgroup>
                 <col className="c-part" />
-                {columnWidths(list, style).map((w, k) => (
+                {widths.map((w, k) => (
                   <col key={k} style={{ width: w }} />
                 ))}
                 <col className="c-mat" />
@@ -242,7 +251,7 @@ export function CutListPane(p: CutListPaneProps) {
                 </tr>
               </thead>
               <tbody>
-                {list.rows.map((row) => {
+                {list.rows.slice(0, shown).map((row) => {
                   const k = rowKey(row);
                   const notes = rowNotes(row);
                   if (row.sheet) notes.unshift("sheet");
@@ -301,6 +310,14 @@ export function CutListPane(p: CutListPaneProps) {
                 })}
               </tbody>
             </table>
+            {rowCount > shown ? (
+              <p className="note more" data-testid="cutlist-more">
+                {`${rowCount - shown} more rows not drawn here (the totals, CSV, PDF and Print include them). `}
+                <button type="button" className="link" onClick={() => setShown((n) => n + CUT_ROWS_SHOWN)}>
+                  {`Show ${Math.min(CUT_ROWS_SHOWN, rowCount - shown)} more`}
+                </button>
+              </p>
+            ) : null}
           </div>
           <div className="sum">
             <div data-testid="tile-board-feet" title={BOARD_FEET_NOTE}>

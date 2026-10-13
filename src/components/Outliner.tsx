@@ -64,13 +64,32 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
   const g = graphOf(state);
   const rows: OutlineRow[] = [];
   const names = new Map((state?.object_info ?? []).map((o) => [o.id, o.name]));
+  const tags = new Map((state?.object_info ?? []).map((o) => [o.id, o.tag]));
   const numbers = new Map((state?.solids ?? []).map((s) => [s.id, s.number]));
   const meshNames = new Map((state?.meshes ?? []).map((m) => [m.id, m.name]));
+  const definitions = new Map(g.definitions.map((d) => [d.id, d]));
   const path = new Set(g.path);
   const counter = new Map<number, number>();
+  // Lane 16: what each container holds, indexed once (in the graph's order). The walk used
+  // to filter every list for every container, which at the model's 100,000 solids was 20 s
+  // of the window's thread.
+  const by = <T extends { parent: number | null }>(list: readonly T[]) => {
+    const m = new Map<number | null, T[]>();
+    for (const x of list) {
+      const at = m.get(x.parent);
+      if (at) at.push(x);
+      else m.set(x.parent, [x]);
+    }
+    return m;
+  };
+  const nodesIn = by(g.nodes);
+  const objectsIn = by(g.objects);
+  const meshesIn = by(g.meshes);
+  const sectionsIn = by(g.sections ?? []);
+  const holds = (id: number) => nodesIn.has(id) || objectsIn.has(id) || meshesIn.has(id) || sectionsIn.has(id);
   const walk = (parent: number | null, level: number) => {
-    for (const n of g.nodes.filter((x) => x.parent === parent)) {
-      const def = n.definition !== null ? g.definitions.find((d) => d.id === n.definition) : undefined;
+    for (const n of nodesIn.get(parent) ?? []) {
+      const def = n.definition !== null ? definitions.get(n.definition) : undefined;
       let hint = "group";
       if (n.kind === "instance") {
         const k = (counter.get(n.definition ?? 0) ?? 0) + 1;
@@ -79,7 +98,6 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
       }
       if (n.hidden) hint += " · hidden";
       if (n.tag) hint += ` · ${n.tag}`;
-      const children = g.nodes.some((x) => x.parent === n.id) || g.objects.some((o) => o.parent === n.id) || g.meshes.some((m) => m.parent === n.id) || (g.sections ?? []).some((s) => s.parent === n.id);
       rows.push({
         key: `n:${n.id}`,
         entity: { kind: "node", node: n.id },
@@ -91,15 +109,15 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
         locked: n.locked,
         visible: n.visible,
         parent: n.parent,
-        children,
+        children: holds(n.id),
         open: path.has(n.id),
         definition: n.definition,
         instances: def?.instances ?? 0,
       });
       if (expanded.has(n.id)) walk(n.id, level + 1);
     }
-    for (const o of g.objects.filter((x) => x.parent === parent)) {
-      const tag = state?.object_info.find((x) => x.id === o.id)?.tag;
+    for (const o of objectsIn.get(parent) ?? []) {
+      const tag = tags.get(o.id);
       rows.push({
         key: `o:${o.id}`,
         entity: { kind: "object", object: o.id },
@@ -117,7 +135,7 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
         instances: 0,
       });
     }
-    for (const m of g.meshes.filter((x) => x.parent === parent)) {
+    for (const m of meshesIn.get(parent) ?? []) {
       rows.push({
         key: `m:${m.id}`,
         entity: null,
@@ -135,7 +153,7 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
         instances: 0,
       });
     }
-    for (const s of (g.sections ?? []).filter((x) => x.parent === parent)) {
+    for (const s of sectionsIn.get(parent) ?? []) {
       rows.push({
         key: `s:${s.id}`,
         entity: { kind: "section", section: s.id },
@@ -157,6 +175,21 @@ export function outlineRows(state: DocState | null, expanded: Set<number>): Outl
   };
   walk(null, 0);
   return rows;
+}
+
+/** Rows above which the Outliner draws only those in view (lane 16). */
+export const OUTLINE_WINDOW_FROM = 300;
+/** A row's height when the Outliner draws only those in view (`.tree.outline.windowed li`). */
+export const OUTLINE_ROW_PX = 24;
+
+/** The rows to draw of `count`, for a list scrolled `top` px past its first row in a view
+ * `height` px tall: those in view and a screenful either side (a view of no height, as in
+ * a hidden pane, is taken as a tall one). */
+export function outlineWindow(count: number, top: number, height: number): { first: number; last: number } {
+  const h = height > 0 ? height : 1200;
+  const first = Math.max(0, Math.floor((top - h) / OUTLINE_ROW_PX));
+  const last = Math.min(count, Math.max(first, Math.ceil((top + 2 * h) / OUTLINE_ROW_PX)));
+  return { first: Math.min(first, count), last };
 }
 
 export interface OutlinerProps {
@@ -192,6 +225,35 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathKey]);
   const rows = useMemo(() => outlineRows(state, expanded), [state, expanded]);
+  // Lane 16: a long tree draws only the rows in view (and a screenful either side); the
+  // list keeps its full height, so the scroll bar and scrolling work as before. Every row
+  // is drawn as a node of the page, and at the model's 100,000 solids drawing them all kept
+  // the window from answering for half a minute after each edit.
+  const listRef = useRef<HTMLUListElement>(null);
+  const windowed = rows.length > OUTLINE_WINDOW_FROM;
+  const [view, setView] = useState({ top: 0, height: 0 });
+  useEffect(() => {
+    const ul = listRef.current;
+    if (!windowed || !ul) return;
+    let scroller: HTMLElement | null = ul.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+    const box = scroller ?? document.documentElement;
+    const update = () => {
+      const top = box.getBoundingClientRect().top - ul.getBoundingClientRect().top;
+      const height = box.clientHeight;
+      setView((v) => (Math.abs(v.top - top) < OUTLINE_ROW_PX / 2 && v.height === height ? v : { top, height }));
+    };
+    update();
+    const target: HTMLElement | Window = scroller ?? window;
+    target.addEventListener("scroll", update, { passive: true });
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+    ro?.observe(box);
+    return () => {
+      target.removeEventListener("scroll", update);
+      ro?.disconnect();
+    };
+  }, [windowed]);
+  const span = windowed ? outlineWindow(rows.length, view.top, view.height) : { first: 0, last: rows.length };
   const selected = useMemo(() => new Set(selection.map(entityKey)), [selection]);
   const isSelected = (r: OutlineRow) => !!r.entity && selected.has(entityKey(r.entity));
   const nodeOf = (r: OutlineRow) => (r.entity?.kind === "node" ? r.entity.node : -1);
@@ -251,13 +313,22 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
       {empty ? (
         <p className="note">Nothing yet. Draw a shape and push it into a solid; select solids and press Ctrl+G to group them.</p>
       ) : (
-        <ul className="tree outline" role="tree" aria-label="Groups, components and solids">
-          {rows.map((r) => {
+        <ul
+          ref={listRef}
+          className={windowed ? "tree outline windowed" : "tree outline"}
+          role="tree"
+          aria-label="Groups, components and solids"
+          data-rows={rows.length}
+          style={windowed ? { paddingTop: span.first * OUTLINE_ROW_PX, paddingBottom: (rows.length - span.last) * OUTLINE_ROW_PX } : undefined}
+        >
+          {rows.slice(span.first, span.last).map((r, i) => {
             const isSel = isSelected(r);
             return (
               <li
                 key={r.key}
                 role="treeitem"
+                aria-setsize={windowed ? rows.length : undefined}
+                aria-posinset={windowed ? span.first + i + 1 : undefined}
                 aria-selected={isSel}
                 aria-expanded={r.children ? expanded.has(nodeOf(r)) : undefined}
                 data-row={r.key}

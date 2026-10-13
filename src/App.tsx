@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TopBar, type MenuItem } from "./components/TopBar";
 import { DemoBanner } from "./components/DemoBanner";
@@ -26,8 +27,8 @@ import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
-import { entityKey, eraseOps, highlightFor, partsOf } from "./lib/entities";
-import { contextTrail, describeNode, entityShown, graphOf, quoted, scopeEntity, solidsIn } from "./lib/scope";
+import { entityKey, eraseOps, partsOf, selectionHighlight, withHover } from "./lib/entities";
+import { contextTrail, describeNode, entityShown, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
@@ -322,6 +323,8 @@ export function App() {
   const nestUnits = useMemo(() => ({ r: cutRounding, style: cutStyle }), [cutRounding, cutStyle]);
   const [cutVisibleOnly, setCutVisibleOnly] = useState(false);
   const [cutList, setCutList] = useState<CutList | null>(null);
+  /** The cut list report is being printed (it is drawn only then). */
+  const [printing, setPrinting] = useState(false);
   const [cutProblem, setCutProblem] = useState<string | null>(null);
   // Nesting (lane 9): the parts laid out on stock by the kernel while its section is open.
   const [nestOpen, setNestOpen] = useState<boolean>(loadNestOpen);
@@ -1476,8 +1479,8 @@ export function App() {
 
   const parentOfItem = useCallback((it: Item): number | null => {
     const g = graphOf(live.current.scene?.state);
-    if ("node" in it) return g.nodes.find((n) => n.id === it.node)?.parent ?? null;
-    return g.objects.find((o) => o.id === it.object)?.parent ?? null;
+    if ("node" in it) return nodeById(g, it.node)?.parent ?? null;
+    return objectParent(g, it.object);
   }, []);
 
   const select = useCallback((es: Entity[]) => {
@@ -1686,7 +1689,7 @@ export function App() {
       }
       const g = graphOf(live.current.scene?.state);
       if (e.kind === "node") {
-        const n = g.nodes.find((x) => x.id === e.node);
+        const n = nodeById(g, e.node);
         // A component is renamed as a whole (every copy shows the new name); a group by itself.
         if (n?.kind === "instance" && n.definition !== null && name) {
           void apply({ op: "rename_definition", definition: n.definition, name }, () => `Renamed the component to ${quoted(name)}.`);
@@ -1802,7 +1805,7 @@ export function App() {
       const pieces: Entity[] = rows.flatMap((row) => row.occurrences.filter((o) => o.visible).map((o): Entity => ("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object })));
       const names = rows.length === 1 ? quoted(rows[0].name) : `${rows.length} parts`;
       if (!pieces.length) return void setMessage({ text: rows.length === 1 ? `Every '${rows[0].name}' is hidden: show it (the Outliner's eye or its tag) to select it.` : `Every piece of those ${rows.length} parts is hidden: show them to select them.`, error: true });
-      const parentOf = (e: Entity) => (e.kind === "node" ? (g.nodes.find((n) => n.id === e.node)?.parent ?? null) : e.kind === "object" ? (g.objects.find((o) => o.id === e.object)?.parent ?? null) : null);
+      const parentOf = (e: Entity) => (e.kind === "node" ? (nodeById(g, e.node)?.parent ?? null) : e.kind === "object" ? objectParent(g, e.object) : null);
       const parents = new Set(pieces.map(parentOf));
       const what = `${plural(pieces.length, "piece")} of ${names}`;
       if (parents.size === 1) {
@@ -1841,10 +1844,10 @@ export function App() {
     const g = graphOf(scene?.state);
     const held = (e: Entity): boolean => {
       if (keys.has(entityKey(e))) return true;
-      let at = e.kind === "node" ? (g.nodes.find((n) => n.id === e.node)?.parent ?? null) : e.kind === "object" ? (g.objects.find((o) => o.id === e.object)?.parent ?? null) : null;
+      let at = e.kind === "node" ? (nodeById(g, e.node)?.parent ?? null) : e.kind === "object" ? objectParent(g, e.object) : null;
       for (let guard = 0; at !== null && guard < 64; guard++) {
         if (keys.has(entityKey({ kind: "node", node: at }))) return true;
-        at = g.nodes.find((n) => n.id === at)?.parent ?? null;
+        at = nodeById(g, at)?.parent ?? null;
       }
       return false;
     };
@@ -1958,11 +1961,11 @@ export function App() {
     const object = hover.kind === "face" || hover.kind === "object" ? hover.object : null;
     const ancestors = new Set<number>();
     if (hover.kind === "node") ancestors.add(hover.node);
-    let at = object !== null ? (g.objects.find((o) => o.id === object)?.parent ?? null) : hover.kind === "node" ? (g.nodes.find((x) => x.id === hover.node)?.parent ?? null) : null;
+    let at = object !== null ? objectParent(g, object) : hover.kind === "node" ? (nodeById(g, hover.node)?.parent ?? null) : null;
     for (let guard = 0; at !== null && guard < 64; guard++) {
       ancestors.add(at);
       const here: number = at;
-      at = g.nodes.find((x) => x.id === here)?.parent ?? null;
+      at = nodeById(g, here)?.parent ?? null;
     }
     for (const piece of nesting.pieces)
       for (const q of piece.placements) {
@@ -2039,7 +2042,11 @@ export function App() {
     const done = () => {
       body.classList.remove("print-cutlist");
       window.removeEventListener("afterprint", done);
+      setPrinting(false);
     };
+    // The report is drawn for printing only (lane 16: it lists every row, and a model of
+    // 100,000 loose solids is 100,000 rows to keep in the page while the pane is open).
+    flushSync(() => setPrinting(true));
     body.classList.add("print-cutlist");
     window.addEventListener("afterprint", done);
     setMessage({ text: "Printing the cut list (the report only, not the window).", error: false });
@@ -2283,7 +2290,10 @@ export function App() {
     return [target.kind === "face" ? { kind: "face", object: target.object, face: target.face } : { kind: "region", sketch: target.sketch, region: target.region }];
   }, [selection, toolId, target]);
   // A part hovered in a nesting diagram lights up in the model.
-  const highlight = useMemo(() => highlightFor(highlightEntities, nestHover ?? hover, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, nestHover, hover, scene]);
+  // The selection's highlight is worked out when the selection or the model changes; the
+  // pointer moving only adds what is under it (lane 16).
+  const selectedHighlight = useMemo(() => selectionHighlight(highlightEntities, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, scene]);
+  const highlight = useMemo(() => withHover(selectedHighlight, highlightEntities, nestHover ?? hover, scene?.mesh ?? null, scene?.state.graph ?? null), [selectedHighlight, highlightEntities, nestHover, hover, scene]);
 
   // Guides and dimensions draw under the tool's own overlay.
   const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);
@@ -2516,7 +2526,7 @@ export function App() {
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
       {settingsOpen ? <SettingsDialog url={gate.url} status={gate.status} onUrl={gate.setUrl} onRecheck={gate.recheck} onClose={() => setSettingsOpen(false)} /> : null}
       {plugins.dialogs}
-      <CutListReport list={cutOpen ? cutList : null} title={cutTitle} />
+      <CutListReport list={printing ? cutList : null} title={cutTitle} />
       {stockOpen && nesting ? (
         <StockDialog
           library={nesting.library}

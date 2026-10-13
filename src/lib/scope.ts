@@ -6,7 +6,7 @@
 //   component as one unit ("node"): the outermost one below the open context.
 // - Only what is directly inside the open context can be edited. Everything else stays
 //   visible (faded) and inferable, but not editable.
-import type { DocState, Entity, GraphNode, SceneGraph } from "../kernel/types";
+import type { DocState, Entity, GraphLeaf, GraphNode, SceneGraph } from "../kernel/types";
 
 export const EMPTY_GRAPH: SceneGraph = { context: null, path: [], nodes: [], objects: [], meshes: [], sketches: [], definitions: [], tag_colors: {} };
 
@@ -14,8 +14,85 @@ export function graphOf(state: DocState | null | undefined): SceneGraph {
   return state?.graph ?? EMPTY_GRAPH;
 }
 
+/** Lookups over one scene graph, built once per graph (lane 16): at the model's 100,000
+ * solids, a search of the lists for every solid made selecting everything take minutes. */
+interface GraphIndex {
+  nodes: readonly GraphNode[];
+  objects: readonly GraphLeaf[];
+  meshes: readonly GraphLeaf[];
+  counts: [number, number, number];
+  node: Map<number, GraphNode>;
+  object: Map<number, GraphLeaf>;
+  /** What each node (or the model, null) holds directly, in the graph's order. */
+  kidNodes: Map<number | null, number[]>;
+  kidObjects: Map<number | null, number[]>;
+  kidMeshes: Map<number | null, number[]>;
+  objectOrder: Map<number, number>;
+  meshOrder: Map<number, number>;
+}
+
+const indexes = new WeakMap<SceneGraph, GraphIndex>();
+
+function push<K>(m: Map<K, number[]>, k: K, v: number) {
+  const at = m.get(k);
+  if (at) at.push(v);
+  else m.set(k, [v]);
+}
+
+export function graphIndex(g: SceneGraph): GraphIndex {
+  const had = indexes.get(g);
+  if (had && had.nodes === g.nodes && had.objects === g.objects && had.meshes === g.meshes && had.counts[0] === g.nodes.length && had.counts[1] === g.objects.length && had.counts[2] === g.meshes.length) return had;
+  const ix: GraphIndex = {
+    nodes: g.nodes,
+    objects: g.objects,
+    meshes: g.meshes,
+    counts: [g.nodes.length, g.objects.length, g.meshes.length],
+    node: new Map(),
+    object: new Map(),
+    kidNodes: new Map(),
+    kidObjects: new Map(),
+    kidMeshes: new Map(),
+    objectOrder: new Map(),
+    meshOrder: new Map(),
+  };
+  for (const n of g.nodes) {
+    if (!ix.node.has(n.id)) ix.node.set(n.id, n);
+    push(ix.kidNodes, n.parent, n.id);
+  }
+  g.objects.forEach((o, i) => {
+    if (!ix.object.has(o.id)) ix.object.set(o.id, o);
+    ix.objectOrder.set(o.id, i);
+    push(ix.kidObjects, o.parent, o.id);
+  });
+  g.meshes.forEach((m, i) => {
+    ix.meshOrder.set(m.id, i);
+    push(ix.kidMeshes, m.parent, m.id);
+  });
+  indexes.set(g, ix);
+  return ix;
+}
+
 export function nodeById(g: SceneGraph, id: number): GraphNode | undefined {
-  return g.nodes.find((n) => n.id === id);
+  return graphIndex(g).node.get(id);
+}
+
+/** Every solid and imported mesh inside any of `nodes`, at any depth (lane 16: one walk
+ * down from them, not a climb up from every solid in the model). */
+export function contentsOf(g: SceneGraph, nodes: Iterable<number>): { objects: Set<number>; meshes: Set<number> } {
+  const ix = graphIndex(g);
+  const objects = new Set<number>();
+  const meshes = new Set<number>();
+  const seen = new Set<number>();
+  const stack = [...nodes];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    for (const o of ix.kidObjects.get(n) ?? []) objects.add(o);
+    for (const m of ix.kidMeshes.get(n) ?? []) meshes.add(m);
+    for (const k of ix.kidNodes.get(n) ?? []) stack.push(k);
+  }
+  return { objects, meshes };
 }
 
 /** The chain of nodes from the outermost down to `parent` itself (empty for the model). */
@@ -30,7 +107,7 @@ export function chain(g: SceneGraph, parent: number | null): number[] {
 }
 
 export function objectParent(g: SceneGraph, object: number): number | null {
-  return g.objects.find((o) => o.id === object)?.parent ?? null;
+  return graphIndex(g).object.get(object)?.parent ?? null;
 }
 
 export function sketchParent(g: SceneGraph, sketch: number): number | null {
@@ -113,19 +190,21 @@ export function reachableContext(e: Entity, state: DocState | null | undefined):
 
 /** Every solid inside a node, at any depth. */
 export function solidsIn(g: SceneGraph, node: number): number[] {
-  return g.objects.filter((o) => chain(g, o.parent).includes(node)).map((o) => o.id);
+  const ix = graphIndex(g);
+  return [...contentsOf(g, [node]).objects].sort((a, b) => ix.objectOrder.get(a)! - ix.objectOrder.get(b)!);
 }
 
 /** Every imported mesh inside a node, at any depth. */
 export function meshesIn(g: SceneGraph, node: number): number[] {
-  return g.meshes.filter((m) => chain(g, m.parent).includes(node)).map((m) => m.id);
+  const ix = graphIndex(g);
+  return [...contentsOf(g, [node]).meshes].sort((a, b) => ix.meshOrder.get(a)! - ix.meshOrder.get(b)!);
 }
 
 /** A solid can be edited: directly in the open context and not locked (a solid the graph
  * does not list is left to the kernel to judge). */
 export function objectEditable(state: DocState | null | undefined, object: number): boolean {
   const g = graphOf(state);
-  const o = g.objects.find((x) => x.id === object);
+  const o = graphIndex(g).object.get(object);
   return !o || (o.parent === g.context && !o.locked);
 }
 
@@ -158,10 +237,10 @@ export function describeNode(g: SceneGraph, id: number): string {
  * would erase what nobody can see. */
 export function entityShown(e: Entity, state: DocState | null | undefined): boolean {
   const g = graphOf(state);
-  if (e.kind === "node") return g.nodes.find((n) => n.id === e.node)?.visible ?? false;
+  if (e.kind === "node") return graphIndex(g).node.get(e.node)?.visible ?? false;
   if (e.kind === "section") return g.sections?.find((s) => s.id === e.section)?.visible ?? false;
   const object = e.kind === "object" || e.kind === "face" ? e.object : (e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object" ? e.owner.id : null;
-  if (object !== null) return g.objects.find((o) => o.id === object)?.visible ?? true;
+  if (object !== null) return graphIndex(g).object.get(object)?.visible ?? true;
   return true;
 }
 
