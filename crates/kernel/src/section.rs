@@ -44,6 +44,9 @@ pub const MAX_NAME: usize = 64;
 /// tie rule, on the side that is kept). Far below the merge distance, far above f64
 /// noise on coordinates of a few metres.
 const ON_PLANE: f64 = 1e-12;
+/// A face with every corner this close to a section plane lies on it (the tie rule): it is
+/// never split, whatever its tilt ([`vertex_distances`]).
+const ON_FACE: f64 = crate::tolerance::LENGTH_EPS;
 
 /// A section plane (see the module docs).
 #[derive(Debug, Clone, PartialEq)]
@@ -239,17 +242,22 @@ fn parallel(plane: &Plane, face: &crate::brep::Face) -> bool {
 /// the plane is wholly on one side or wholly on it. Without that, a face tilted 1e-13 off a
 /// plane through it (a plane copied with a squashing scale, 2026-10-12 fuzz) had two corners
 /// at 0 and two at -1e-12: the cut skipped it as parallel while the kept volume split it,
-/// and the halves no longer made the whole.
+/// and the halves no longer made the whole. A face whose every corner is within
+/// [`ON_FACE`] of the plane lies on it whatever its tilt and is treated the same way: a face
+/// tilted 5e-11 off the plane (a Follow Me sweep along an edge 4e-6 off square, 2026-10-12
+/// fuzz) had three corners exactly on it and three 1.2e-11 off, so one half kept the notch
+/// between the three as a sliver of negative area with no cap to close it.
 fn vertex_distances(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, f64> {
     let mut dist: BTreeMap<VertexId, f64> = b
         .vertices()
         .map(|(k, v)| (k, plane.signed_distance(v.pos)))
         .collect();
+    let raw = dist.clone();
     for (_, f) in b.faces() {
-        if !parallel(plane, f) {
+        let vs: Vec<VertexId> = f.loops().flat_map(|l| b.loop_vertices(l)).collect();
+        if !(parallel(plane, f) || vs.iter().all(|v| raw[v].abs() <= ON_FACE)) {
             continue;
         }
-        let vs: Vec<VertexId> = f.loops().flat_map(|l| b.loop_vertices(l)).collect();
         let first = dist[&vs[0]];
         if vs.iter().all(|v| dist[v] == first) {
             continue;

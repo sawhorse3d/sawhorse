@@ -1,0 +1,88 @@
+{
+  "name": "2026-10-12-section-through-a-face-a-hair-off-the-plane",
+  "error": "op 6 FollowMe { profile: Region { sketch: 1, region: 4294967297 }, path: [[0.0, 0.0, 0.0], [0.0, 0.0, -0.25], [-0.25, 0.0, -0.25]], closed: false }: section 1: the halves kept 0.046875375000041665 + 0.059895833333333336 do not make the whole 0.10937537500016667",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": -0.75,
+      "y": 0.5,
+      "w": 1.0,
+      "h": 0.25
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.250004,
+      "y": 0.5,
+      "w": 0.5,
+      "h": -1.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.25,
+      "w": 0.250004,
+      "h": -0.25
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "op": "follow_me",
+      "profile": {
+        "of": "region",
+        "sketch": 1,
+        "region": 4294967297
+      },
+      "path": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -0.25
+        ],
+        [
+          -0.25,
+          0.0,
+          -0.25
+        ]
+      ],
+      "closed": false
+    }
+  ]
+}
