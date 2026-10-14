@@ -305,12 +305,13 @@ pub(crate) type Distances = SecondaryMap<VertexId, f64>;
 /// line their stored plane gives or, when weak, along their triangles. Each pass fixed the
 /// case a verifier's fuzz found and the hostile generator found the next sibling, 1 in 130k
 /// to 700k cases, always faces nearly on the plane classified one way and cut another; the
-/// last (the lane-19b verifier's) was a box top whose poked corner is 1.8 micrometres beyond
-/// twice its 0.65 micrometre bend, two n-gons drawn over it, a plane at the original top:
-/// the cut-away half kept 0.0251 m2 of sheet with no cap
+/// last (the lane-19b verifier's) was a box top whose poked corner, 1.8 micrometres off the
+/// plane, was beyond twice its 0.65 micrometre bend, two n-gons drawn over it, a plane at the
+/// original top: the cut-away half kept 0.0251 m2 of sheet with no cap
 /// (`tests/repro/2026-10-14-section-top-face-poked-beyond-its-bend-*.json`). Lane 19c stopped
 /// patching rules: with one distance per vertex and the cut made of the solid's own
-/// triangles ([`clip_solid`]), the cap closes the half whatever the distances are.
+/// triangles ([`clip_solid`]), the chords the cap is laid from are exactly what the kept
+/// triangles leave open, whatever the distances are.
 pub(crate) fn distances(b: &Brep, plane: &Plane) -> Distances {
     let mut out = SecondaryMap::with_capacity(b.vertex_count());
     for (k, v) in b.vertices() {
@@ -492,7 +493,11 @@ struct Run {
 /// open segment to a chord). They close up into a cycle, being the boundary of a surface, and
 /// the cap laid on them in the plane (the arrangement keeps them a cycle, and takes for
 /// material every face its winding number puts inside, [`crate::arrangement`]) has them as
-/// its boundary, walked the other way: kept faces and cap close each other edge for edge.
+/// its boundary, walked the other way: kept faces and cap close each other edge for edge
+/// (where the chords wind round no point of the plane twice: an embedded solid cut by its
+/// own distances never makes them, and corners forced onto the plane could only where two
+/// sheets of its surface lie within about a nanometre of each other and of the plane; there
+/// the cap would be the union, and `testing::check_sections` would show the overlap).
 /// Along the normal that is exact (the cap's boundary is the chords seen in the plane); across
 /// it, a chord's end is off the plane only by how far the tie rule moved its corner (at most
 /// ON_FACE). No face's stored plane, bend or neighbours enter it, so it holds for any
