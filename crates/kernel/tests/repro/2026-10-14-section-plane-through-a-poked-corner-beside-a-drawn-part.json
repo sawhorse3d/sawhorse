@@ -1,0 +1,153 @@
+{
+  "name": "2026-10-14-section-plane-through-a-poked-corner-beside-a-drawn-part",
+  "error": "section 1: the kept half is not closed (vector area 0.0000000780638947943803 of 0.3437498488508743 m2; faces bend 0.00000012319004178034538, cap 0.23755065689873883 m around) (the lane-19b interim build: every face cut by its chords, no merged surfaces; lane 19b property tests, planes_on_a_nudged_face_drawn_on, PROPTEST_RNG_SEED=2026101412, shrunk; plane snapping off)",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.125,
+      "h": 0.125
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.625
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 6
+      },
+      "points": [
+        [
+          0.0,
+          0.06464621130928007,
+          0.5466799072858843
+        ],
+        [
+          0.0,
+          0.15147080674986507,
+          0.5466799072858843
+        ],
+        [
+          0.0,
+          0.15147080674986507,
+          0.786553250587641
+        ],
+        [
+          0.0,
+          0.06464621130928007,
+          0.786553250587641
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 6
+      },
+      "points": [
+        [
+          0.0,
+          0.06356409173315619,
+          -0.14510388676049224
+        ],
+        [
+          0.0,
+          0.0685640917331562,
+          -0.14510388676049224
+        ],
+        [
+          0.0,
+          0.0685640917331562,
+          0.27010388676049224
+        ],
+        [
+          0.0,
+          0.06356409173315619,
+          0.27010388676049224
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          0.125,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          2.2117396950950423e-07,
+          0.0,
+          0.0
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        2.2117396950950423e-07,
+        0.125,
+        0.0
+      ],
+      "normal": [
+        1.0,
+        -0.0,
+        -0.0
+      ]
+    },
+    {
+      "op": "flip_section",
+      "section": 1
+    },
+    {
+      "op": "flip_section",
+      "section": 1
+    }
+  ]
+}

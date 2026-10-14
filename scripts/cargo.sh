@@ -29,7 +29,7 @@ if needs_wsl; then
   for a in "$@"; do args+=" $(printf '%q' "$a")"; done
   # Environment does not cross into WSL by itself; forward the knobs the tests read.
   envs=""
-  for v in UPDATE_GOLDEN FUZZ_CASES FUZZ_SEED FUZZ_REPORT FUZZ_PLANE_SNAP FUZZ_REASON_LEN FUZZ_DUMP_REFUSALS FUZZ_REPRO_DIR PROPTEST_CASES RUST_BACKTRACE RUSTFLAGS; do
+  for v in UPDATE_GOLDEN FUZZ_CASES FUZZ_SEED FUZZ_REPORT FUZZ_PLANE_SNAP FUZZ_REASON_LEN FUZZ_DUMP_REFUSALS FUZZ_REPRO_DIR PROPTEST_CASES PROPTEST_RNG_SEED RUST_BACKTRACE RUSTFLAGS; do
     if [ -n "${!v:-}" ]; then envs+="$v=$(printf '%q' "${!v}") "; fi
   done
   exec wsl.exe bash -lc "cd '$wslpath/crates' && . ../scripts/env.sh && ${envs}cargo$args"
