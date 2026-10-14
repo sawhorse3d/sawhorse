@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: lane 16, 2026-10-13 (the limits that protect you, below, are new in lane 16).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: lane 16b, 2026-10-13 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b).
 
 ## Model size
 
@@ -20,7 +20,8 @@ The model may hold 100,000 solids (below), and the window stays responsive at th
 
 - The **Outliner** lists every row but draws only the rows in view and a screenful either side (above 300 rows; the scroll bar is the whole list's). Its rows are worked out in one pass over the model.
 - The **Cut list** draws its first 500 rows and 500 more each time you ask; the totals, CSV, PDF, labels, Print and picking rows always cover every row. The print report is built only when you print.
-- **Selecting** many solids or groups finds their faces and edges in one pass over the view, not one pass per solid.
+- **Selecting** many solids or groups reads their faces and edges from lookups built once per model change (in idle time), not a pass over the view per solid.
+- **The selection's highlight** (lane 16b) is drawn from two state textures, a byte per face and a byte per solid, which the faces' and edges' shaders read: a change writes only the bytes that change. Up to 20,000 edge segments are drawn as thick highlight lines as before; more are drawn as the edges' own thin lines in the selection colour. Selecting all 100,000 solids used to build 1,200,000 thick lines and recolour every triangle on the window's thread: 5.2 s under a 6x CPU slowdown, and 8.6 s where the GPU is emulated in software (as on CI's runners, which measured 19 to 31 s), where each frame with everything selected then took 8.1 s to draw. Now: 0.6 to 0.7 s at 6x, 0.65 s emulated (1.0 s emulated and 4x slower), 0.56 s a frame, and under 0.1 s on the development machine as it is.
 - The **plugin watchdog** does not count a pause of the app itself against a plugin: its budget starts again when the app's thread runs again.
 
 A model that large is still slow to work in where every solid is involved: the cut list of 100,000 loose solids is 100,000 rows, and a plugin cannot read the list of all its solids in one message (`model.solids` is refused as `too_large` past the 4 MB message budget; `model.stats` counts them).
@@ -36,6 +37,10 @@ A model that large is still slow to work in where every solid is involved: the c
 | Texture images | 512 per model, 16 MB and 4096 x 4096 pixels each, 256 MB and 128 million pixels in all |
 | An array | 1,000 copies |
 | A plugin batch | 2,000 ops (and a work budget, below) |
+| Guides, dimensions | 50,000 each per model |
+| Tags | 10,000 per model |
+| Materials | 4,096 per model (512 of them with images) |
+| Scenes, section planes | 1,000 each per model |
 | Stock library | 200 stocks; kerf up to 1/2 in, trim up to 4 in; stock 1 mm to 10 m |
 | Drawing sheets | 200 sheets, 2,000 items per sheet |
 | `.shz` thumbnail | 100 KB (a larger one is left out) |
@@ -53,11 +58,13 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | `.shz` entries | `scene.json` 256 MB, `geometry.glb` 512 MB, a texture 16 MB, the thumbnail 100 KB, `plugin-data.json` 4 MB; 1 GB in all | Each is refused by the size its header declares, before it is inflated, and is inflated at most one byte past that declaration: a 2 MB file declaring 2 GB is refused in milliseconds. |
 | A declared size | must be the real size; at most 1,100 to 1 compressed | A smaller declaration is how a bomb gets past a size check; Deflate cannot compress better than about 1,032 to 1. |
 | `.shz` texture rows | 512, no path twice | Counted before any image is read (5,000 rows naming one 1 MB image used to inflate it 5,000 times). |
+| What `scene.json` lists | each list the model's limits bound (below: guides, dimensions, tags and their colours, materials, scenes and the tags each hides, section planes, sheets and their items, texture rows, solids, meshes, groups, components) | Lane 16b: counted as `scene.json` is inflated, each element skipped without being built, and refused at the first one past its limit; the rest of the entry is never inflated. 2,000,000 guides in a 5 MB file crashed the tab, and 1,000,000 materials took the browser to 6.2 GB; now each is refused in 15 to 45 ms, and the kernel's memory grows by the file and the few megabytes read before the refusal (`e2e/model-counts.spec.ts`). |
 | `.shz` names | 64 characters (objects, meshes, groups, components, tags, materials, scenes); notes 1,000; texture references 1,024 | Every edit copies the model and every answer to the window carries its names. |
 | `.shz` coordinates | mesh points, guides and dimensions within 10 km; cameras within 1,000 km and finite | A finite but huge coordinate makes infinite bounds downstream. |
 | `.shz` components | nested at most 64 deep; no definition inside itself; what they derive held to the model limits below | Counted along the definitions before anything is derived: 30 definitions each holding two copies of the next are a billion solids from a few kilobytes. |
 | `.3mf` | 4,096 entries; a model part 256 MB; 512 MB in all; model parts named by the package's relationships | Same checks as `.shz`; each part inflated once. What the build expands to through components is counted per object, once, before anything is built. |
 | `.skp` (SketchUp 2021 and later are zips) | 512 MB declared and 5,000 entries; 100,000 groups and copies, 3,000,000 points, 1,500,000 faces mapped | Checked from the archive's directory before openskp inflates anything; groups (expanded per placement, unlike components) are counted as they are expanded. |
+| `.skp` counts | the model's limits below on materials, tags (layers), scenes (pages) and the tags each hides, and section planes | Lane 16b: checked once openskp has read the file, before any of it is mapped to an import. |
 | `.skp` texture images | 16 MB, 4096 x 4096 pixels, 512; 256 MB and 128 million pixels in all | One the kernel would refuse is left out with a note, so the rest of the model still comes in. |
 | One import, any format | 1,500,000 faces; 3,000,000 points; 50,000 objects; 5,000 lines and curves with 250,000 points; component copies counted | Building a solid takes about 2 KB per triangle at its peak, and WebAssembly has 4 GB. Checked by the reader as it reads and by the kernel again before it builds. A sketch takes all of an import's lines in one pass (5,000 lines: half a second). |
 | A glTF accessor | its count and stride must fit its buffer (checked in 64-bit arithmetic); 4,000,000 values without a buffer | Checked before anything is allocated: a count of 2^31 is refused at once. |
@@ -77,6 +84,13 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | Faces | 5,000,000 | About 0.5 KB each with their edges. |
 | Points | 10,000,000 | |
 | One sketch | 20,000 edges | A sketch's edges are checked against each other whenever it changes. |
+| Guides | 50,000 | Lane 16b. Each is drawn across the whole view and offered as an inference on every pointer move. |
+| Dimensions | 50,000 | Lane 16b. Each is laid out (leaders and text) whenever the camera moves. |
+| Tags | 10,000; also the tags with a colour, and the tags one scene hides | Lane 16b. The Tags pane lists each, and every scene holds the visibility of each. |
+| Materials | 4,096 (at most 512 of them with an image of the model's own, below) | Lane 16b. The Materials pane draws a swatch for each, and each is a material on the GPU while a face shows it. |
+| Scenes | 1,000 | Lane 16b. Each is a tab with its own camera, style and hidden tags. |
+| Section planes | 1,000 | Lane 16b. Each active one adds a clipping set to every material it reaches. |
+| Drawing sheets | 200 sheets, 2,000 items per sheet | Lane 12; each item is a drawing of the model. |
 | Texture images | 512; 16 MB, 4096 x 4096 pixels each; 256 MB and 128 million pixels in all | The browser decodes an image to 4 bytes a pixel and keeps mipmaps: a 300 KB PNG can say 16384 x 16384, which is 1 GB decoded; sixteen legal 4096 x 4096 images of one colour (a few hundred kilobytes of `.shz`) were a gigabyte, and 512 of them would have been tens. The pixels of all of them together are counted, from their headers, before any is drawn. |
 | What the view decodes of them | each at most 2048 x 2048, all together within 32 million pixels (128 MB), one image at a time; the swatches in the Materials pane are small copies (96 pixels a side) | A texture tiles over a face, and a view of the whole model does not show more. A model with many large images draws each a little coarser; the file keeps them at full size. |
 | An array or copy | refused before any copy is made when the copies (and everything inside copied groups and components) would pass the limits above | |
@@ -106,14 +120,14 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | Work in flight per plugin | 64 requests; 4 batches; 4 network requests; one file dialog; one prompt or confirm | A plugin's waiting work is bounded, and all of it (queued batches, dialogs, downloads) is dropped when the plugin stops. |
 | Waiting on the person | a `file.save`, `file.open`, prompt or confirm is given up after 5 minutes (`timeout`); in the browser `file.open` needs the person's click (`user_activation`) | Lane 17: a file input opened without a click never answers, and held the plugin's one file slot for good. A request given up has its dialog closed and its picker's answer dropped. |
 | Saving files | names whose last extension runs when opened (`.exe`, `.bat`, `.js`, `.html` ... `BLOCKED_SAVE_EXTENSIONS`) or that end in a dot or space are refused; in a browser without a save dialog the app asks before each download, naming the plugin, the file and its size | Lane 17: the browser fallback downloaded at once with no dialog at all. |
-| Batches | 10 a second; 2,000 ops; ops times things in the model at most 20,000,000 | Each op costs about the size of the model it is applied to. |
+| Batches | 10 a second; 2,000 ops; ops times things in the model at most 20,000,000; the model's count limits above | Each op costs about the size of the model it is applied to. Lane 16b: what a batch would add to the guides, dimensions, tags, materials, scenes, section planes and sheets is counted before it is sent, and a batch past a limit is refused `too_large` (so is a limit the kernel refuses an op for). |
 | Storage | 256 KB per plugin and 1 MB for all plugins (this browser); 64 KB per plugin and 1 MB for all plugins (each document); JSON values only | Measured without building the text (a byte array used to be turned into a 400 MB string to be measured). |
 | Panels | 100 fields; 5,000 table cells, 256 K characters of text, 4 images of 512 KB in all per panel; images PNG, JPEG, GIF or WebP of at most 2048 x 2048 pixels (read from their headers) | Every cell is drawn; an image is decoded by the browser. SVG is refused (its size is not in a header). |
 | Tool views | 200 polylines of 5,000 points, 50,000 points in all, 100 labels | Checked once, when it arrives for the tool in use. |
 | Prompt, confirm, notify | title and label 80 characters, value 500, text 1,000, button 32, notify 500; text only | Refused when longer, never cut (a cut can keep a huge text alive). |
 | `net.fetch` | answers of 10 MB (refused on Content-Length before reading, else read as a stream and cut off at 10 MB; an answer with no stream is refused over 10 MB too); 30 s; 50 MB a minute; only the manifest's origins (scheme, host and port), no wildcard on a public suffix | Lane 17: the allowlist checked the host alone (`localhost` reached every local port), and a wildcard like `*.vercel.app` reached every tenant. |
 | The console | lines cut to 2,000 characters; 100 lines a second; 500 kept; the Plugins pane shows 600 characters of an error | |
-| Packages | 2,000 files, 50 MB, 8 MB per file (measured before reading); modules 4 MB each and 16 MB in all; at most 20 problems listed | A module of 100,000 forbidden names used to cost 100,000 scans of the whole module. A package over 256 KB is parsed and digested in a worker (60 s at most), never on the app's thread. |
+| Packages | 2,000 files, 50 MB, 8 MB per file (each refused by the size its zip declares, before it is inflated; lane 16b); modules 4 MB each and 16 MB in all; at most 20 problems listed | A module of 100,000 forbidden names used to cost 100,000 scans of the whole module. A package over 256 KB is parsed and digested in a worker (60 s at most), never on the app's thread. |
 | Package file names | no drive (`C:`), device (`con.js`), alternate stream (`a.json:x`) or trailing dot or space; no two names that differ only in case; every file exactly the size and checksum its zip says | Installed as files on the desktop; installed into a staging folder and swapped in, so a failed install leaves the old version. |
 
 ## SketchUp files that do not open

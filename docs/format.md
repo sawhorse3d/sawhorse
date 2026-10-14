@@ -301,6 +301,7 @@ A reader may refuse a file that would take unreasonable memory or time to read; 
 - more than 512 `textures` rows, or one path listed twice (checked before any image is read); images over 4096 x 4096 pixels, or over 256 MB or 128 million pixels together (read from their headers, before any is drawn);
 - a name over 64 characters, a mesh note over 1,000, a material texture reference over 1,024; a mesh point, guide or dimension more than 10 km from the origin or not a number; a scene camera more than 1,000 km away;
 - components nested more than 64 deep, a definition that contains itself, or a model whose components would derive more than the model limits (100,000 solids and meshes, 100,000 groups and instances, 20,000 definitions, 5,000,000 faces, 10,000,000 points), counted along the definitions before anything is derived.
+- (lane 16b) more than a model may hold of what `scene.json` lists: 50,000 `guides`, 50,000 `dimensions`, 10,000 `tags`, 10,000 `tag_colors`, 4,096 `materials`, 1,000 `scenes` (each hiding at most 10,000 tags), 1,000 `sections`, 200 `sheets` (each of at most 2,000 items), 512 `textures`, 100,000 `objects` or `meshes`, 100,000 `nodes`, 20,000 `definitions`. A reader counts these as it reads `scene.json`, without building them, and may stop at the first element past a limit; a file that lists more is refused as a whole.
 
 Files Sawhorse writes are always within these. `docs/LIMITS.md` lists every limit with its reason.
 
