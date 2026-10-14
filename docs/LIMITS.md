@@ -134,7 +134,7 @@ Every limit below is checked where the work it bounds starts, before memory is s
 
 `.skp` files are read by openskp 1.3.0. It reads SketchUp 2013 to 2026 saves, with these known refusals (the file is refused with openskp's message and the model is unchanged):
 
-- **A real SketchUp 2018 save** (`{18.0.16975}`): "legacy .skp parse failed: base probe: anchor resolved to null". Other saves in the 2013 to 2020 range open (2014, 2017 and 2020 have been tried). Reported upstream: [draft issue](upstream/openskp-2018-parse.md).
+- **A real SketchUp 2018 save** (`{18.0.16975}`): "legacy .skp parse failed: base probe: anchor resolved to null". Other saves in the 2013 to 2020 range open (2014, 2017 and 2020 have been tried). Draft issue written, not yet filed: [upstream/openskp-2018-parse.md](upstream/openskp-2018-parse.md).
 - **SketchUp 2012 and older** (SketchUp 3, 6 and 7 test files): outside openskp's stated range.
 
 What comes across from a file that opens, and what does not: [skp-compat.md](skp-compat.md).

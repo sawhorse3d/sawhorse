@@ -117,13 +117,17 @@ for (const must of [
 }
 for (const os of ["Windows", "macOS (Apple Silicon)", "Linux"]) if (!home.includes(`<h3>${os}</h3>`)) bad(`index.html: no ${os} download`);
 // Lane 15: the comparison, dated, with the trademark footnote; the other free options.
-for (const must of ["How it compares", "as of 12 October 2026", "SketchUp is a trademark of Trimble Inc.", "OpenCutList is the work and the name of its authors", "Other free options", "Not yet"]) {
+for (const must of ["How it compares", "as of 13 October 2026", "SketchUp is a trademark of Trimble Inc.", "OpenCutList is the work and the name of its authors", "Other free options", "Not yet"]) {
   if (!home.includes(must)) bad(`index.html: missing "${must}"`);
 }
 // Lane 15 verifier: SketchUp Pro is billed monthly or yearly (Trimble's plans page on
 // 12 October 2026 has both); "paid yearly" alone was out of date on the day it was dated.
 if (!home.includes("SketchUp Pro subscription, billed monthly or yearly")) bad('index.html: the price row should say "SketchUp Pro subscription, billed monthly or yearly"');
 if (/paid yearly/i.test(home)) bad('index.html: "paid yearly" is out of date (monthly billing exists)');
+// Lane 20: OpenCutList is free to download, open source (GPLv3) and donor-funded; "free" alone
+// says less than is true (and reads as "costs its authors nothing").
+if (!home.includes("OpenCutList free to download, open source (GPLv3), donor-funded")) bad('index.html: the price row should call OpenCutList "free to download, open source (GPLv3), donor-funded"');
+if (/OpenCutList (?:is )?free(?! to download)/i.test(home)) bad('index.html: OpenCutList is never just "free" (free to download, open source (GPLv3), donor-funded)');
 // Lane 15: the demo, above the fold (in the hero), silent and looping.
 const hero = /<section class="hero">([\s\S]*?)<\/section>/.exec(home)?.[1] ?? "";
 const video = /<video\b[^>]*>/.exec(hero)?.[0] ?? "";

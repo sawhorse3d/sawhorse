@@ -56,7 +56,7 @@ Each of these is counted in the import notes when present, never silently droppe
 
 The kernel never repairs geometry silently. For each piece it may weld vertices closer than 0.01 mm, drop faces with no area or exact repeats, turn a closed shell that is inside out the right way round, turn reversed faces on a closed shell, and separate closed solids that touch along an edge or a face; every such change is listed in the import notes. A piece that is still not a valid solid (open edges, an edge shared by three or more faces, a self-intersection, no volume) comes in as a visible non-solid mesh, tinted amber in the viewport, with its reason in the notes and in the document state (`meshes[].note`). STL and 3MF export refuse such a mesh by name; GLB, OBJ and DXF export it, marked as not solid.
 
-**Known refusals (openskp 1.3.0)**: a real SketchUp 2018 save ("base probe: anchor resolved to null"; an upstream issue is drafted in [upstream/openskp-2018-parse.md](upstream/openskp-2018-parse.md)) and files from SketchUp 2012 and older. Model-size measurements: [LIMITS.md](LIMITS.md).
+**Known refusals (openskp 1.3.0)**: a real SketchUp 2018 save ("base probe: anchor resolved to null"; draft issue written, not yet filed: [upstream/openskp-2018-parse.md](upstream/openskp-2018-parse.md)) and files from SketchUp 2012 and older. Model-size measurements: [LIMITS.md](LIMITS.md).
 
 A file openskp cannot parse is refused with its message and changes nothing ("could not read the SketchUp file: legacy .skp parse failed: ..." for openskp 1.3.0's refusals of a SketchUp 2018 save and of the pre-2013 files above).
 

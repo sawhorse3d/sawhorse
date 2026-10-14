@@ -87,6 +87,14 @@ describe("parseLength", () => {
     expect(ok(s, "mm")).toBeCloseTo(inch ? 1.5 * IN : 0.0015, 12);
   });
 
+  // Lane 20: feet, then inches with a fraction, every way they are typed: 13 1/2 in each
+  // (the release notes once said these read "like 1-1/2"", which they never did).
+  it.each([`1'-1-1/2"`, `1' 1 1/2"`, `1'1.5"`, `1' 1.5"`, `1'-1.5"`, `1'1-1/2"`, `1'-1 1/2"`, `1'1½"`, `1' 1 1/2`, `1′ 1 1/2″`, `1'1 1/2''`, `13 1/2"`, `1.125'`])("reads %j as 13 1/2 in", (s) => {
+    expect(ok(s)).toBeCloseTo(13.5 * IN, 12);
+    // Feet or an inch mark: the same in a metric model.
+    expect(ok(s, "mm")).toBeCloseTo(13.5 * IN, 12);
+  });
+
   it("reads fractions in feet-and-inches and with every unit", () => {
     expect(ok(`1'-1-1/2"`)).toBeCloseTo(13.5 * IN, 12);
     expect(ok(`1' 1 1/2"`)).toBeCloseTo(13.5 * IN, 12);
