@@ -30,6 +30,22 @@ describe("zip bombs", () => {
     expect(process.memoryUsage().arrayBuffers - heap).toBeLessThan(64 * 1024 * 1024);
   });
 
+  it("one file that declares more than 8 MB is refused by its declaration, before it is inflated (lane 16b)", () => {
+    // Its bytes are not Deflate at all: were it inflated, the refusal would be "not a readable .zip".
+    const garbage = new Uint8Array(64).fill(0xff);
+    const zip = rawZip([
+      { name: "plugin.json", method: 0, data: strToU8("{}"), size: 2, crc: crc32(strToU8("{}")) },
+      { name: "big.png", method: 8, data: garbage, size: 9 * 1024 * 1024 },
+    ]);
+    const t0 = performance.now();
+    expect(() => readPluginZip(zip)).toThrow(/big\.png is larger than 8 MB \(it says 9437184 bytes\)/);
+    expect(performance.now() - t0).toBeLessThan(100);
+    // Exactly 8 MB is still read (it is a real one, inflated and checked as before).
+    const eight = new Uint8Array(8 * 1024 * 1024);
+    const ok = readPluginZip(zipSync({ "plugin.json": strToU8("{}"), "big.bin": eight }));
+    expect(ok.other["big.bin"]).toBe(8 * 1024 * 1024);
+  });
+
   it("a SketchUp file that declares 2 GB is refused in under 100 ms, nothing inflated", () => {
     const zip = rawZip([{ name: "model.dat", method: 8, data: bomb, size: GB2 - 1 }]);
     const heap = process.memoryUsage().arrayBuffers;

@@ -96,6 +96,9 @@ export function readPluginZip(bytes: Uint8Array): { files: Record<string, string
         total += f.originalSize;
         if (count > PACKAGE_LIMITS.files) throw new PackageError(`the zip holds more than ${PACKAGE_LIMITS.files} files`);
         if (total > PACKAGE_LIMITS.bytes) throw new PackageError(`the zip unpacks to more than ${PACKAGE_LIMITS.bytes / 1024 / 1024} MB`);
+        // Lane 16b: one file over its limit is refused by what it declares, before it is
+        // inflated (the check after inflating stays, for a declared size that lies).
+        if (f.originalSize > PACKAGE_LIMITS.fileBytes) throw new PackageError(`${f.name.slice(0, 120)} is larger than ${PACKAGE_LIMITS.fileBytes / 1024 / 1024} MB (it says ${f.originalSize} bytes)`);
         return true;
       },
     });
