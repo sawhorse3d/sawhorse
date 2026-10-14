@@ -13,7 +13,7 @@ afterEach(() => {
 /** Lane 15: a render service set in Settings that answers its health check (and nothing else). */
 function renderServiceUp() {
   localStorage.setItem(RENDER_URL_KEY, "https://render.test");
-  vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response("{}", { status: 200 })) : Promise.reject(new TypeError("offline"))));
+  vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response(JSON.stringify({ ok: true, service: "sawhorse-render", version: "0.1.0" }), { status: 200 })) : Promise.reject(new TypeError("offline"))));
 }
 
 function pressed(tool: string): boolean {
@@ -108,7 +108,7 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(line.getAttribute("data-status")).toMatch(/off|unreachable/));
     expect(line.textContent).toMatch(/^Renders are off/);
     // A service that answers turns renders on.
-    vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response("{}", { status: 200 })) : Promise.reject(new TypeError("offline"))));
+    vi.stubGlobal("fetch", (url: string) => (String(url) === "https://render.test/healthz" ? Promise.resolve(new Response(JSON.stringify({ ok: true, service: "sawhorse-render", version: "0.1.0" }), { status: 200 })) : Promise.reject(new TypeError("offline"))));
     fireEvent.change(screen.getByLabelText("Render service address"), { target: { value: "https://render.test/" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(screen.getByTestId("render-gate").getAttribute("data-status")).toBe("ready"));

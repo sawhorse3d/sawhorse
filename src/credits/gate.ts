@@ -4,6 +4,11 @@
 // AND that service answers its health check when the app starts (or when the address is
 // changed). Otherwise nothing about credits is shown, and one line in Settings says why.
 //
+// Lane 20: "answers" means the render service's own answer, not any 2xx: GET <url>/healthz
+// must return JSON that names the service ({"service": "sawhorse-render", "version": ...}).
+// A catch-all server (a static host, a router's page, a proxy's sign-in page) answers 200
+// with HTML to every path; that keeps the chip and the Render pane hidden.
+//
 // The probe follows the same gate (lane 12c): with no address configured nothing is asked
 // at all (a development build no longer falls back to the local service's default address,
 // which logged a refused connection on every start), and one start asks once: React's
@@ -15,7 +20,22 @@ export const RENDER_URL_KEY = "sawhorse.renderServiceUrl";
 /** How long the health check may take before the service counts as not answering. */
 export const HEALTH_TIMEOUT_MS = 4_000;
 
-export type GateStatus = "off" | "checking" | "ready" | "unreachable";
+export type GateStatus = "off" | "checking" | "ready" | "unreachable" | "not_render";
+
+/** What the render service's health check names itself (render-service `GET /healthz`). */
+export const RENDER_SERVICE_NAME = "sawhorse-render";
+
+/** What a health check came to: the render service answered ("ok"), nothing answered in
+ * time or with a 2xx ("none"), or something else answered ("other": not the service). */
+export type HealthAnswer = "ok" | "none" | "other";
+
+/** Whether a health check's body is the render service's own answer: a JSON object with
+ * `service: "sawhorse-render"` and a non-empty string `version`. */
+export function isRenderHealth(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const b = body as Record<string, unknown>;
+  return b.service === RENDER_SERVICE_NAME && typeof b.version === "string" && b.version.trim() !== "";
+}
 
 function env(): Record<string, unknown> {
   return (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
@@ -73,28 +93,46 @@ export function checkServiceUrl(text: string): { ok: true; url: string } | { ok:
   return { ok: true, url: `${u.origin}${u.pathname}`.replace(/\/+$/, "") };
 }
 
-/** The service answers `GET /healthz` with a 2xx within the timeout. */
-export async function serviceHealthy(url: string, fetchImpl: typeof fetch = (...a) => fetch(...a), timeoutMs = HEALTH_TIMEOUT_MS): Promise<boolean> {
+/** Ask `GET /healthz` (lane 20): "ok" only for the render service's own JSON answer within
+ * the timeout; "none" for no answer, an error or a status other than 2xx; "other" for a 2xx
+ * that is not the service (HTML, other JSON, a body too large to be a health check). */
+export async function checkService(url: string, fetchImpl: typeof fetch = (...a) => fetch(...a), timeoutMs = HEALTH_TIMEOUT_MS): Promise<HealthAnswer> {
   const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = setTimeout(() => ctl?.abort(), timeoutMs);
   try {
-    const r = await fetchImpl(`${url}/healthz`, { method: "GET", signal: ctl?.signal, cache: "no-store" });
-    return r.ok;
+    const r = await fetchImpl(`${url}/healthz`, { method: "GET", signal: ctl?.signal, cache: "no-store", headers: { Accept: "application/json" } });
+    if (!r.ok) return "none";
+    const text = await r.text();
+    // The service's answer is a few hundred bytes; a page is not a health check.
+    if (text.length > 64 * 1024) return "other";
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return "other";
+    }
+    return isRenderHealth(body) ? "ok" : "other";
   } catch {
-    return false;
+    return "none";
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** The render service answers `GET /healthz` as itself within the timeout (lane 20: its own
+ * JSON, not any 2xx). */
+export async function serviceHealthy(url: string, fetchImpl: typeof fetch = (...a) => fetch(...a), timeoutMs = HEALTH_TIMEOUT_MS): Promise<boolean> {
+  return (await checkService(url, fetchImpl, timeoutMs)) === "ok";
+}
+
 /** Requests on their way, per fetch and per `url` and round of asking: a second ask for the
  * same round (React's development double mount) shares the first instead of asking again.
  * Forgotten once answered, so a later start or a Recheck asks afresh. */
-const inFlight = new WeakMap<object, Map<string, Promise<boolean>>>();
+const inFlight = new WeakMap<object, Map<string, Promise<HealthAnswer>>>();
 const DEFAULT_FETCH = {};
 
-/** {@link serviceHealthy}, asked once per `url` and `round` while the answer is on its way. */
-export function probeOnce(url: string, round: number, fetchImpl?: typeof fetch): Promise<boolean> {
+/** {@link checkService}, asked once per `url` and `round` while the answer is on its way. */
+export function probeOnce(url: string, round: number, fetchImpl?: typeof fetch): Promise<HealthAnswer> {
   const owner: object = fetchImpl ?? DEFAULT_FETCH;
   let byKey = inFlight.get(owner);
   if (!byKey) inFlight.set(owner, (byKey = new Map()));
@@ -102,7 +140,7 @@ export function probeOnce(url: string, round: number, fetchImpl?: typeof fetch):
 ${url}`;
   const going = byKey.get(key);
   if (going) return going;
-  const p = serviceHealthy(url, fetchImpl).finally(() => byKey.delete(key));
+  const p = checkService(url, fetchImpl).finally(() => byKey.delete(key));
   byKey.set(key, p);
   return p;
 }
@@ -116,6 +154,8 @@ export function gateLine(status: GateStatus, url: string | null): string {
       return `Asking the render service at ${url} if it is there…`;
     case "unreachable":
       return `Renders are off: the render service at ${url} did not answer its health check.`;
+    case "not_render":
+      return `Renders are off: ${url} answered, but not as a Sawhorse render service (its /healthz did not name the service). Check the address.`;
     case "ready":
       return `Renders are on: the render service at ${url} answered. The Credits chip and the Render pane are shown.`;
   }
@@ -141,8 +181,8 @@ export function useRenderGate(fetchImpl?: typeof fetch): RenderGate {
     }
     let alive = true;
     setStatus("checking");
-    void probeOnce(url, asked, fetchImpl).then((ok) => {
-      if (alive) setStatus(ok ? "ready" : "unreachable");
+    void probeOnce(url, asked, fetchImpl).then((a) => {
+      if (alive) setStatus(a === "ok" ? "ready" : a === "other" ? "not_render" : "unreachable");
     });
     return () => {
       alive = false;

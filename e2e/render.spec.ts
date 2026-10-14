@@ -48,6 +48,40 @@ test("no render service, or one not answering: no chip, no Render pane, Settings
   await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
 });
 
+// Lane 20: a catch-all server (a static host, a router's page, a proxy's sign-in page)
+// answers 200 with HTML to every path. Any 2xx used to count as the service: the chip and
+// the Render pane appeared for a server that could never render. Only the service's own
+// JSON ({"service": "sawhorse-render", "version": ...}) counts now.
+test("a catch-all server answering 200 with HTML is not the render service: no chip, no Render pane (lane 20)", async ({ page }) => {
+  const asked: string[] = [];
+  await page.route(`${SERVICE}/**`, (route) => {
+    asked.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><html><head><title>It works!</title></head><body><h1>It works!</h1></body></html>", headers: { "Access-Control-Allow-Origin": "*" } });
+  });
+  await page.goto("/");
+  await expect(page.locator("main.vp")).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("menuitem", { name: /Settings/ }).click();
+  const line = page.getByTestId("render-gate");
+  await expect(line).toHaveAttribute("data-status", "not_render");
+  await expect(line).toHaveText(`Renders are off: ${SERVICE} answered, but not as a Sawhorse render service (its /healthz did not name the service). Check the address.`);
+  await expect(page.locator("header.top .chip")).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
+  expect(asked, "only the health check was asked").toEqual(["/healthz"]);
+  // Other JSON (a different service's health) is not the render service either.
+  await page.unroute(`${SERVICE}/**`);
+  await page.route(`${SERVICE}/**`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, status: "healthy" }), headers: { "Access-Control-Allow-Origin": "*" } }));
+  await page.getByRole("button", { name: /Check again/ }).click();
+  await expect(line).toHaveAttribute("data-status", "not_render");
+  await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(0);
+  // The service's own answer turns renders on.
+  await page.unroute(`${SERVICE}/**`);
+  await page.route(`${SERVICE}/**`, (route) => (new URL(route.request().url()).pathname === "/healthz" ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, service: "sawhorse-render", version: "0.1.0" }), headers: { "Access-Control-Allow-Origin": "*" } }) : route.abort("connectionrefused")));
+  await page.getByRole("button", { name: /Check again/ }).click();
+  await expect(line).toHaveAttribute("data-status", "ready");
+  await expect(page.getByRole("tab", { name: "Render" })).toHaveCount(1);
+});
+
 test("a service set: the app asks its health once at startup (lane 12c)", async ({ page }) => {
   let health = 0;
   await page.route(`${SERVICE}/**`, (route) => {
@@ -61,7 +95,7 @@ test("a service set: the app asks its health once at startup (lane 12c)", async 
 });
 
 test("set and answering, but the balance call fails: the chip shows a dash and Render explains, nothing is charged", async ({ page }) => {
-  await page.route(`${SERVICE}/**`, (route) => (new URL(route.request().url()).pathname === "/healthz" ? route.fulfill({ status: 200, body: "{}", headers: { "Access-Control-Allow-Origin": "*" } }) : route.abort("connectionrefused")));
+  await page.route(`${SERVICE}/**`, (route) => (new URL(route.request().url()).pathname === "/healthz" ? route.fulfill({ status: 200, body: JSON.stringify({ ok: true, service: "sawhorse-render", version: "0.1.0" }), headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" } }) : route.abort("connectionrefused")));
   await page.goto("/");
   const chip = page.locator("header.top .chip");
   await expect(chip).toHaveAttribute("data-state", "unreachable");
