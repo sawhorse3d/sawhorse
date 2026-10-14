@@ -832,14 +832,10 @@ fn cap_rings(
         arr.insert_between(ids[a], ids[c], 1, i);
     }
     arr.settle();
-    let mut rings = Vec::new();
-    for r in arr.material_rings() {
-        let pts = tidy_ring(r);
-        if pts.len() >= 3 && sawhorse_tessellate::signed_area(&pts).abs() > RING_FLOOR {
-            rings.push(pts);
-        }
-    }
-    rings
+    tidy_rings(arr.material_rings())
+        .into_iter()
+        .filter(|r| r.len() >= 3 && sawhorse_tessellate::signed_area(r).abs() > RING_FLOOR)
+        .collect()
 }
 
 /// The size a solid's coordinates reach, at least 1 (metres): what the cut's tolerances are
@@ -1078,7 +1074,14 @@ pub(crate) fn representable(ring: &[DVec2], scale: f64) -> Vec<Vec<DVec2>> {
 /// Drop repeated points and points on one line with their neighbours: between them, or
 /// the tip of a zero-width spike (a ring that runs out along a line and back, as one
 /// through a vertex touching the plane can).
-fn tidy_ring(mut pts: Vec<DVec2>) -> Vec<DVec2> {
+#[cfg(test)]
+fn tidy_ring(pts: Vec<DVec2>) -> Vec<DVec2> {
+    tidy_ring_keeping(pts, &BTreeSet::new())
+}
+
+/// [`tidy_ring`], leaving every point in `keep` (as bits) where it is, unless it repeats
+/// its neighbour.
+fn tidy_ring_keeping(mut pts: Vec<DVec2>, keep: &BTreeSet<[u64; 2]>) -> Vec<DVec2> {
     let mut changed = true;
     while changed && pts.len() >= 3 {
         changed = false;
@@ -1088,7 +1091,7 @@ fn tidy_ring(mut pts: Vec<DVec2>) -> Vec<DVec2> {
             let same = p.distance(a) <= 1e-12;
             let in_line =
                 (p - a).perp_dot(c - p).abs() <= 1e-18 * (1.0 + a.distance(p) + p.distance(c));
-            if same || in_line {
+            if same || (in_line && !keep.contains(&bits(p))) {
                 pts.remove(i);
                 changed = true;
                 break;
@@ -1096,6 +1099,38 @@ fn tidy_ring(mut pts: Vec<DVec2>) -> Vec<DVec2> {
         }
     }
     pts
+}
+
+/// A point as its two coordinates' bits.
+fn bits(p: DVec2) -> [u64; 2] {
+    [p.x.to_bits(), p.y.to_bits()]
+}
+
+/// [`tidy_ring`] for rings that may touch each other (a cap's outer ring and a hole that
+/// meet at a corner, two caps pinched apart at one): a point that more than one of them
+/// passes stays in each, even where it lies in line with its neighbours in one of them.
+/// Dropped from one ring only, that ring's edge would run straight past the other ring's
+/// corner, a rounding error to one side of it or the other, and the rings would cross there
+/// (lane 19c's property runs, seed 2026101953: a hole touching its cap's outer ring at a
+/// crossing on its straight edge, the corner dropped from the outer ring and the hole's
+/// first edge then crossing it by a rounding error).
+fn tidy_rings(rings: Vec<Vec<DVec2>>) -> Vec<Vec<DVec2>> {
+    let mut seen: BTreeMap<[u64; 2], usize> = BTreeMap::new();
+    for r in &rings {
+        let mine: BTreeSet<[u64; 2]> = r.iter().map(|p| bits(*p)).collect();
+        for k in mine {
+            *seen.entry(k).or_default() += 1;
+        }
+    }
+    let shared: BTreeSet<[u64; 2]> = seen
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(k, _)| k)
+        .collect();
+    rings
+        .into_iter()
+        .map(|r| tidy_ring_keeping(r, &shared))
+        .collect()
 }
 
 /// Outer rings with the holes inside them: positive rings are outers, negative ones holes
@@ -1317,26 +1352,36 @@ impl Model {
                 .map(|x| HalfPlane::of(&frame, &self.sections[from_public::<SectionId>(x)]))
                 .collect();
             let scale = solid_scale(obj);
-            for (outer, holes) in assemble(solid_rings(obj, &frame)) {
-                let mut outer = outer;
-                let mut holes = holes;
-                for h in &others {
-                    outer = clip(&outer, h);
-                    holes = holes.iter().map(|r| clip(r, h)).collect();
-                }
-                // Lane 18: every cap exactly as the plane cuts it, never thinned out for the
-                // slice (the halves, the fill and the cross-section read these rings); only
-                // what other planes clip away to nothing goes. Whether the slice can draw it
-                // is the cap's flag (`representable`).
-                let outer = tidy_ring(outer);
+            let clipped: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = assemble(solid_rings(obj, &frame))
+                .into_iter()
+                .map(|(mut outer, mut holes)| {
+                    for h in &others {
+                        outer = clip(&outer, h);
+                        holes = holes.iter().map(|r| clip(r, h)).collect();
+                    }
+                    (outer, holes)
+                })
+                .collect();
+            // Lane 18: every cap exactly as the plane cuts it, never thinned out for the
+            // slice (the halves, the fill and the cross-section read these rings); only what
+            // other planes clip away to nothing goes. Whether the slice can draw it is the
+            // cap's flag (`representable`). Lane 19c: the rings of all the solid's caps are
+            // tidied together, so a corner where two of them touch stays in both.
+            let counts: Vec<usize> = clipped.iter().map(|(_, hs)| hs.len()).collect();
+            let mut tidied = tidy_rings(
+                clipped
+                    .into_iter()
+                    .flat_map(|(outer, holes)| std::iter::once(outer).chain(holes))
+                    .collect(),
+            )
+            .into_iter();
+            for n in counts {
+                let outer = tidied.next().expect("every cap has its outer ring");
+                let holes: Vec<Vec<DVec2>> =
+                    tidied.by_ref().take(n).filter(|r| r.len() >= 3).collect();
                 if outer.len() < 3 {
                     continue;
                 }
-                let holes: Vec<Vec<DVec2>> = holes
-                    .into_iter()
-                    .map(tidy_ring)
-                    .filter(|r| r.len() >= 3)
-                    .collect();
                 let area = sawhorse_tessellate::signed_area(&outer)
                     + holes
                         .iter()
@@ -1894,6 +1939,38 @@ mod tests {
             DVec2::new(0.0, 2.0),
         ];
         assert_eq!(tidy_ring(r).len(), 4);
+    }
+
+    /// Lane 19c: a hole that touches its outer ring at a point of the outer ring's straight
+    /// edge keeps that corner in both rings (tidied alone, the outer ring would drop it as a
+    /// point in line with its neighbours, and the hole's edges would then run past the outer
+    /// ring's edge by a rounding error); a corner in line on one ring only still goes.
+    #[test]
+    fn touching_rings_keep_the_corner_they_share() {
+        let v = DVec2::new;
+        let outer = vec![
+            v(0.0, 0.0),
+            v(2.0, 0.0),
+            v(2.0, 2.0),
+            v(1.0, 2.0),
+            v(0.0, 2.0),
+        ];
+        let hole = vec![v(1.0, 2.0), v(1.5, 1.0), v(0.5, 1.0)];
+        let lone = vec![
+            v(5.0, 0.0),
+            v(6.0, 0.0),
+            v(7.0, 0.0),
+            v(7.0, 1.0),
+            v(5.0, 1.0),
+        ];
+        let t = tidy_rings(vec![outer.clone(), hole.clone(), lone]);
+        assert_eq!(t[0], outer);
+        assert_eq!(t[1], hole);
+        assert_eq!(
+            t[2],
+            vec![v(5.0, 0.0), v(7.0, 0.0), v(7.0, 1.0), v(5.0, 1.0)]
+        );
+        assert_eq!(tidy_ring(outer).len(), 4);
     }
 
     fn a_box() -> Object {

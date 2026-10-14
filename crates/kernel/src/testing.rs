@@ -79,10 +79,12 @@ pub fn check_model(m: &Model) -> Result<(), String> {
 
 /// Every section plane's cut (lane 12) of any committed model: it never fails, it is
 /// deterministic, its caps are closed simple rings with the material on the left (outers
-/// counter-clockwise, holes clockwise, holes inside their outer, no point twice), its area
-/// is the caps' sum, its outline has an edge per ring edge (less those lying on another
-/// plane's cut), each half a plane and its flip keep is a closed surface (lane 12c: its
-/// vector area cancels), and the two halves add up to the solids it reaches.
+/// counter-clockwise, holes clockwise, holes inside their outer, no point twice, no two
+/// edges of a cap crossing), its area is the caps' sum, its outline has an edge per ring
+/// edge (less those lying on another plane's cut), Create Group from Slice succeeds exactly
+/// when a cap is representable, each half a plane and its flip keep is a closed surface
+/// (lane 12c: its vector area cancels), the two halves add up to the solids it reaches, and
+/// (lane 19c) every solid's caps are the cross-section of its own triangles.
 pub fn check_sections(m: &Model) -> Result<(), String> {
     use glam::DVec2;
     for (id, s) in m.sections() {
@@ -104,6 +106,37 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
                     .all(|p| seen.insert((p[0].to_bits(), p[1].to_bits())))
                 {
                     return Err(format!("section {id}: a cap ring passes a point twice"));
+                }
+            }
+            // Lane 19c: and no two edges of a cap's rings cross (a ring and a hole that touch
+            // meet at a corner of both, never with one running past the other's corner).
+            let edges: Vec<(usize, usize, DVec2, DVec2)> = std::iter::once(&c.outer)
+                .chain(&c.holes)
+                .enumerate()
+                .flat_map(|(k, r)| {
+                    (0..r.len()).map(move |i| {
+                        (
+                            k,
+                            i,
+                            DVec2::from_array(r[i]),
+                            DVec2::from_array(r[(i + 1) % r.len()]),
+                        )
+                    })
+                })
+                .collect();
+            for (x, &(k1, i1, a, b)) in edges.iter().enumerate() {
+                for &(k2, i2, p, q) in &edges[x + 1..] {
+                    let n = if k1 == 0 {
+                        c.outer.len()
+                    } else {
+                        c.holes[k1 - 1].len()
+                    };
+                    let next = k1 == k2 && ((i1 + 1) % n == i2 || (i2 + 1) % n == i1);
+                    if !next && crate::sketch::proper_cross(a, b, p, q) {
+                        return Err(format!(
+                            "section {id}: cap edges cross (ring {k1} edge {i1}, ring {k2} edge {i2})"
+                        ));
+                    }
                 }
             }
             let outer: Vec<DVec2> = c.outer.iter().map(|p| DVec2::from_array(*p)).collect();
