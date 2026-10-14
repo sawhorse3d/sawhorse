@@ -15,15 +15,17 @@ const dir = path.join("tests", "fixtures", "skp-ccby");
 // parts / notSolid: the Cut list's parts and how many are flagged (benches: after Make parts
 // from loose faces). meshes: amber meshes the import makes.
 // uncounted: "name:why" of parts listed but counted nowhere (lane 15 fixes); sheets: 4x8s.
-const FILES: { file: string; sha256: string; parts: number; notSolid: number; meshes: number; loose?: boolean; uncounted: string[]; sheets: number }[] = [
+// boardFeet (lane 20): the board feet counted, when the file says: coffee tables.skp counted
+// 128 for coffee table 6, a closed 16 x 24 x 48 in block (a whole piece, not a board).
+const FILES: { file: string; sha256: string; parts: number; notSolid: number; meshes: number; loose?: boolean; uncounted: string[]; sheets: number; boardFeet?: number }[] = [
   { file: "benches.skp", sha256: "c9f1cc7486aacf897e3d9d44107954bad0d6b4ba20012192e47a4b8cddacc994", parts: 3, notSolid: 3, meshes: 1, loose: true, uncounted: ["benches 1:not_a_board", "benches 2:not_a_board", "benches 3:not_a_board"], sheets: 0 },
-  { file: "coffee tables.skp", sha256: "91d7321550b78147cda25b436275e3ae1ac60ae39bf52b7c6f1b8def7ef0359d", parts: 10, notSolid: 9, meshes: 10, uncounted: ["coffee table 1:not_a_board", "coffee table 2:not_a_board", "coffee table 3:not_a_board", "coffee table 4:not_a_board", "coffee table 5:not_a_board", "coffee table 7:not_a_board", "coffee table 8:not_a_board", "coffee table 9:not_a_board", "coffee table 10:not_a_board"], sheets: 0 },
+  { file: "coffee tables.skp", sha256: "91d7321550b78147cda25b436275e3ae1ac60ae39bf52b7c6f1b8def7ef0359d", parts: 10, notSolid: 9, meshes: 10, uncounted: ["coffee table 1:not_a_board", "coffee table 2:not_a_board", "coffee table 3:not_a_board", "coffee table 4:not_a_board", "coffee table 5:not_a_board", "coffee table 6:whole_piece", "coffee table 7:not_a_board", "coffee table 8:not_a_board", "coffee table 9:not_a_board", "coffee table 10:not_a_board"], sheets: 0, boardFeet: 0 },
   { file: "cupboard.skp", sha256: "63431b71863688994d987e9dc90f7d369df336ecafc9a7cca2db4018432c372e", parts: 4, notSolid: 4, meshes: 8, uncounted: ["Group:not_a_board", "Rodeo#2:flat"], sheets: 0 },
   { file: "desk.skp", sha256: "6d370f9ce838b5a0c0abde9271cec7e7850f895f88a8438e8d5cbd50ce909301", parts: 1, notSolid: 1, meshes: 1, uncounted: ["desk 1:not_a_board"], sheets: 0 },
   { file: "side table.skp", sha256: "eddaf9709e8027e419207d5507a7bba3085b9c5f1dd4f322b46489aa4c28bf99", parts: 1, notSolid: 1, meshes: 1, uncounted: ["side table 2:not_a_board"], sheets: 0 },
 ];
 
-type CutRow = { name: string; qty: number; not_solid: boolean; size: number[]; uncounted?: "flat" | "not_a_board"; board_feet: number; sheet: boolean };
+type CutRow = { name: string; qty: number; not_solid: boolean; size: number[]; uncounted?: "flat" | "not_a_board" | "whole_piece" | "hollow" | "too_wide"; board_feet: number; sheet: boolean };
 type Cut = {
   rows: CutRow[];
   totals: { parts: number; not_solid: number; loose_faces: number; loose_here: number; loose_places: { node: number | null; name: string; faces: number }[]; uncounted: number; board_feet: number; sheet_count: number };
@@ -80,10 +82,19 @@ for (const f of FILES) {
     const uncounted = cut.rows.filter((r) => r.uncounted);
     expect(uncounted.map((r) => `${r.name}:${r.uncounted}`).sort(), "parts counted nowhere, and why").toEqual([...f.uncounted].sort());
     for (const r of uncounted) expect([r.board_feet, r.sheet], r.name).toEqual([0, false]);
-    // (A closed solid is what was drawn and keeps its board feet however thick: coffee table 6.)
+    // Lane 20: a closed solid that is a whole piece (coffee table 6, 16 x 24 x 48 in) counts
+    // nowhere either: whatever is counted is no thicker than a board, or narrow and full.
+    for (const r of cut.rows.filter((x) => !x.uncounted && !x.sheet)) expect(r.size[0] <= 4 * 0.0254 + 1e-9 || r.size[1] <= 12 * 0.0254 + 1e-9, `${r.name} is not a whole piece: ${r.size.map((s) => (s / 0.0254).toFixed(2)).join(" x ")} in`).toBe(true);
     for (const r of cut.rows.filter((x) => x.not_solid && !x.uncounted && !x.sheet)) expect(r.size[0], `${r.name}, open faces, is no thicker than a board`).toBeLessThanOrEqual(4 * 0.0254 + 1e-9);
     expect(cut.totals.sheet_count, "sheets 4x8").toBe(f.sheets);
-    if (uncounted.length) await expect(page.locator(".cutlist tbody tr[data-uncounted] small").first()).toContainText("(not counted)");
+    if (f.boardFeet !== undefined) expect(cut.totals.board_feet, "board feet counted").toBeCloseTo(f.boardFeet, 6);
+    if (uncounted.length) {
+      await expect(page.locator(".cutlist tbody tr[data-uncounted] small").first()).toContainText("(not counted)");
+      // The header says how many pieces and why; each part says why in its notes.
+      const pieces = uncounted.reduce((n, r) => n + r.qty, 0);
+      await expect(page.getByTestId("cutlist-geometry")).toContainText(`${pieces} ${pieces === 1 ? "piece" : "pieces"} not counted`);
+      for (const r of uncounted) await expect(page.locator(`.cutlist tbody tr[data-part="${r.name}"] small`).first()).toContainText("(not counted)");
+    }
     // Faces outside parts that sit inside an assembly: the pane says where and offers to open
     // it, never a Make parts link that would refuse.
     if (cut.totals.loose_faces > 0 && cut.totals.loose_here === 0) {

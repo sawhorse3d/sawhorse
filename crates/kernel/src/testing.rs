@@ -520,11 +520,8 @@ pub fn check_nesting_of(
         }
         // Lane 15 fixes: a flat face or an open piece thicker than any board is reported
         // as exactly that, and nothing else is.
-        let says = row.uncounted.map(|x| match x {
-            crate::cutlist::Uncounted::Flat => UnplacedReason::Flat,
-            crate::cutlist::Uncounted::NotABoard => UnplacedReason::NotABoard,
-        });
-        let reason_uncounted = matches!(u.reason, UnplacedReason::Flat | UnplacedReason::NotABoard);
+        let says = row.uncounted.map(UnplacedReason::from);
+        let reason_uncounted = u.reason.is_uncounted();
         if says.is_some() != reason_uncounted || says.is_some_and(|r| r != u.reason) {
             return Err(format!(
                 "unplaced {} reported {:?}, its row says {:?}",
@@ -849,6 +846,14 @@ pub fn check_cut_list(m: &Model) -> Result<(), String> {
             crate::cutlist::Uncounted::NotABoard => {
                 row.not_solid && row.size[0] > crate::cutlist::THICKEST_LUMBER
             }
+            crate::cutlist::Uncounted::WholePiece => {
+                row.size[0] > crate::cutlist::THICKEST_LUMBER
+                    && row.size[1] > crate::cutlist::BROADEST_BOARD
+            }
+            crate::cutlist::Uncounted::Hollow => {
+                !row.not_solid && row.size[0] > crate::cutlist::THICKEST_LUMBER
+            }
+            crate::cutlist::Uncounted::TooWide => row.size[1] > crate::cutlist::WIDEST_BOARD,
         };
         if !ok {
             return Err(format!("cut list: {} is {u:?} but it is not", row.name));

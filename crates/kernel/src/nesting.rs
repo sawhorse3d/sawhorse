@@ -178,6 +178,43 @@ pub enum UnplacedReason {
     /// Lane 15 fixes: open faces thicker than any board, sized as a whole
     /// ([`crate::cutlist::Uncounted::NotABoard`]): split it into its boards first.
     NotABoard,
+    /// Lane 20: a whole piece drawn as one block, thicker than any board and over 12 in
+    /// both ways ([`crate::cutlist::Uncounted::WholePiece`]).
+    WholePiece,
+    /// Lane 20: a solid thicker than any board, more than 30% of its box empty
+    /// ([`crate::cutlist::Uncounted::Hollow`]).
+    Hollow,
+    /// Lane 20: lumber wider than 4 ft and than every board
+    /// ([`crate::cutlist::Uncounted::TooWide`]).
+    TooWide,
+}
+
+impl From<crate::cutlist::Uncounted> for UnplacedReason {
+    /// The nesting's word for a row the cut list counts nowhere: the same reason.
+    fn from(u: crate::cutlist::Uncounted) -> UnplacedReason {
+        use crate::cutlist::Uncounted as U;
+        match u {
+            U::Flat => UnplacedReason::Flat,
+            U::NotABoard => UnplacedReason::NotABoard,
+            U::WholePiece => UnplacedReason::WholePiece,
+            U::Hollow => UnplacedReason::Hollow,
+            U::TooWide => UnplacedReason::TooWide,
+        }
+    }
+}
+
+impl UnplacedReason {
+    /// A row counted nowhere by the cut list, reported with its reason (never stocked).
+    pub fn is_uncounted(self) -> bool {
+        matches!(
+            self,
+            UnplacedReason::Flat
+                | UnplacedReason::NotABoard
+                | UnplacedReason::WholePiece
+                | UnplacedReason::Hollow
+                | UnplacedReason::TooWide
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -399,13 +436,7 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
         }
         // Listed but counted nowhere (lane 15 fixes): reported with the reason, never stocked.
         if let Some(u) = row.uncounted {
-            out[i] = Some(Err((
-                match u {
-                    crate::cutlist::Uncounted::Flat => UnplacedReason::Flat,
-                    crate::cutlist::Uncounted::NotABoard => UnplacedReason::NotABoard,
-                },
-                None,
-            )));
+            out[i] = Some(Err((u.into(), None)));
             continue;
         }
         let t = row.size[0];

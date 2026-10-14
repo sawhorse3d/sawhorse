@@ -129,6 +129,12 @@ export function reasonText(u: Unplaced): string {
       return "a flat face with no thickness, not a piece of wood; give it a thickness (Push/Pull) or leave it out";
     case "not_a_board":
       return "open faces thicker than any board, sized as one piece: likely several parts drawn as one; group each board on its own";
+    case "whole_piece":
+      return "thicker than any board and over 12 in both ways: a whole piece drawn as one block; draw each board as its own part";
+    case "hollow":
+      return "a solid thicker than any board with more than 30% of its box empty: a whole piece, not a blank; draw each board as its own part";
+    case "too_wide":
+      return "wider than 4 ft and than any board; mark it sheet goods if it is a sheet, or draw the boards of the glue-up";
   }
 }
 

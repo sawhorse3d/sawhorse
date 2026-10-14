@@ -121,7 +121,39 @@ export const LEFT_OUT_NOTE = "left out of the totals";
 export const UNCOUNTED_NOTES: Record<Uncounted, string> = {
   flat: "flat face, no thickness (not counted)",
   not_a_board: "thicker than any board: several parts drawn as one? (not counted)",
+  // Lane 20: whole pieces of furniture drawn as one closed block, and lumber no board is.
+  whole_piece: "thicker than any board and over 12 in both ways: a whole piece drawn as one block? (not counted)",
+  hollow: "a solid thicker than any board, more than 30% of its box empty: a whole piece, not a blank? (not counted)",
+  too_wide: "wider than 4 ft: no board is that wide; mark it sheet goods if it is a sheet (not counted)",
 };
+
+/** Lane 20: why parts count nowhere, in a few words each, for the list's header line: one
+ * and many. */
+export const UNCOUNTED_WHY: Record<Uncounted, [string, string]> = {
+  flat: ["flat face", "flat faces"],
+  not_a_board: ["open faces thicker than any board", "open faces thicker than any board"],
+  whole_piece: ["whole piece (thicker than any board, over 12 in both ways)", "whole pieces (thicker than any board, over 12 in both ways)"],
+  hollow: ["hollow solid (thicker than any board, over 30% empty)", "hollow solids (thicker than any board, over 30% empty)"],
+  too_wide: ["wider than 4 ft", "wider than 4 ft"],
+};
+
+const UNCOUNTED_ORDER: Uncounted[] = ["flat", "not_a_board", "whole_piece", "hollow", "too_wide"];
+
+/** Lane 20: how many pieces count nowhere and why, for the list's header: "3 pieces not
+ * counted (2 parts): 1 flat face; 2 whole pieces (thicker than any board, over 12 in both
+ * ways)". Empty when every part counts. Pieces are the rows' quantities (hidden ones too,
+ * unless Visible only), the same pieces the totals would have had. */
+export function uncountedNote(list: CutList): string {
+  const rows = list.rows.filter((r) => r.uncounted);
+  if (!rows.length) return "";
+  const pieces = rows.reduce((n, r) => n + r.qty, 0);
+  const why = UNCOUNTED_ORDER.flatMap((u) => {
+    const k = rows.filter((r) => r.uncounted === u).reduce((n, r) => n + r.qty, 0);
+    return k ? [`${k} ${UNCOUNTED_WHY[u][k === 1 ? 0 : 1]}`] : [];
+  });
+  const parts = rows.length === pieces ? "" : ` (${rows.length} ${rows.length === 1 ? "part" : "parts"})`;
+  return `${pieces} ${pieces === 1 ? "piece" : "pieces"} not counted${parts}: ${why.join("; ")}`;
+}
 
 /** Plain-language notes for a row, the same in the pane, the CSV, the print view, the PDF
  * and the labels: left out of the totals, not solid (sized from its bounds), a grain set
@@ -212,7 +244,8 @@ export function geometryNote(list: CutList): string {
   const bits: string[] = [];
   const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
   if (t.not_solid) bits.push(`${n(t.not_solid, "part", "parts")} not solid (sizes from bounds)`);
-  if (t.uncounted) bits.push(`${n(t.uncounted, "part", "parts")} not counted (flat, or thicker than any board)`);
+  const why = uncountedNote(list);
+  if (why) bits.push(why);
   if (t.loose_faces) bits.push(`${n(t.loose_faces, "face", "faces")} outside parts${looseWhere(t)}`);
   if (t.excluded) bits.push(`${n(t.excluded, "part", "parts")} left out of the totals`);
   return bits.join(" · ");

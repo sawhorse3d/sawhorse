@@ -100,6 +100,20 @@ pub const NO_THICKNESS: f64 = crate::tolerance::POINT_MERGE;
 /// its bounds thicker than this and than every board in the library, is not one board
 /// ([`Uncounted::NotABoard`]).
 pub const THICKEST_LUMBER: f64 = 4.0 * M_PER_IN;
+/// Lane 20: a part thicker than any lumber ([`THICKEST_LUMBER`] and every board in the
+/// library) whose width and length are both over this (12 in) is a whole piece of
+/// furniture, solid or not (a coffee table drawn as one closed block, 16 x 24 x 48 in, once
+/// counted 128 board feet): [`Uncounted::WholePiece`].
+pub const BROADEST_BOARD: f64 = 12.0 * M_PER_IN;
+/// Lane 20: a solid thicker than any lumber that fills less than this share of its box
+/// (more than 30% of it empty: legs under a top, a lamp, a turned post's coves) is a whole
+/// piece, not a blank: [`Uncounted::Hollow`]. Parts up to 4 in thick never take this test:
+/// a cabriole leg, a gusset or a curved rail is bought as the blank its box is.
+pub const SOLID_FILL: f64 = 0.7;
+/// Lane 20: a lumber part wider than this (4 ft) and than every board in the library is
+/// not a board (a 98 x 150 in floor counted 102 board feet): [`Uncounted::TooWide`]. Mark
+/// it sheet goods if it is a sheet.
+pub const WIDEST_BOARD: f64 = 48.0 * M_PER_IN;
 /// Directions closer than this (1 - |cos|) are the same direction.
 const PARALLEL: f64 = 1e-9;
 /// Most face directions tried for a shaped part's box (largest faces first).
@@ -300,6 +314,15 @@ pub enum Uncounted {
     /// every board in the library): almost always several parts drawn as one piece of
     /// faces (a whole bench, a desk). Its size is that of the whole, not of a board.
     NotABoard,
+    /// Lane 20: thicker than any board and over [`BROADEST_BOARD`] (12 in) both ways, solid
+    /// or not: a whole piece of furniture drawn as one block (a coffee table, a carcass).
+    WholePiece,
+    /// Lane 20: a solid thicker than any board that fills less than [`SOLID_FILL`] of its
+    /// box (more than 30% of it empty): a whole piece (a lamp, a stool), not a blank.
+    Hollow,
+    /// Lane 20: lumber wider than [`WIDEST_BOARD`] (4 ft) and than every board in the
+    /// library: no board is that wide (a floor, a glued-up slab, a sheet not marked as one).
+    TooWide,
 }
 
 impl Uncounted {
@@ -307,6 +330,9 @@ impl Uncounted {
         match self {
             Uncounted::Flat => 1,
             Uncounted::NotABoard => 2,
+            Uncounted::WholePiece => 3,
+            Uncounted::Hollow => 4,
+            Uncounted::TooWide => 5,
         }
     }
 }
@@ -1096,6 +1122,41 @@ impl Model {
             .collect()
     }
 
+    /// Lane 20: the enclosed volume of a piece made only of solids (cubic metres, in the
+    /// world: a copy's placement scales its definition's), or `None` when any of it is faces
+    /// (a mesh, healed or not: no volume is read from faces). Overlapping solids in one part
+    /// add up, so a glue-up never reads emptier than it is.
+    fn piece_volume(&self, kids: &Kids, p: &Piece) -> Option<f64> {
+        let sum = |solids: &[&Object]| solids.iter().map(|o| o.volume().abs()).sum::<f64>();
+        let faces = |meshes: &[&LooseMesh]| meshes.iter().any(|m| !m.faces.is_empty());
+        match p.item {
+            Item::Object(oid) => {
+                let o = &self.objects[from_public::<ObjectId>(oid)];
+                match (o.member.slot, self.member_def(o.member.parent)) {
+                    (Some(slot), Some((d, i))) => {
+                        let template = match self.defs[d].members.get(&slot).map(|m| &m.kind) {
+                            Some(MemberKind::Solid(g)) => &**g,
+                            _ => o,
+                        };
+                        Some(template.volume().abs() * self.nodes[i].xform.determinant().abs())
+                    }
+                    _ => Some(o.volume().abs()),
+                }
+            }
+            Item::Node(nid) => {
+                let n = from_public::<NodeId>(nid);
+                match self.nodes[n].kind {
+                    NodeKind::Instance(d) => (!faces(&self.template_meshes(d))).then(|| {
+                        sum(&self.template_solids(d)) * self.nodes[n].xform.determinant().abs()
+                    }),
+                    NodeKind::Group => {
+                        (!faces(&self.meshes_in(kids, n))).then(|| sum(&self.solids_in(kids, n)))
+                    }
+                }
+            }
+        }
+    }
+
     /// A container's Outliner name: a group's or instance's own name, else its definition's
     /// ("Group" for an unnamed group), or "the model" at the top level.
     fn container_name(&self, c: Option<NodeId>) -> String {
@@ -1404,6 +1465,14 @@ impl Model {
             *sizes_per_key.entry(*k).or_default() += 1;
         }
         let r = opts.rounding;
+        // The tree again, only when a thick solid's volume is asked for (lane 20).
+        let mut kids: Option<Kids> = None;
+        let widest_board = library
+            .stocks
+            .iter()
+            .filter(|s| s.kind == StockKind::Board)
+            .map(|s| s.width)
+            .fold(WIDEST_BOARD, f64::max);
         let mut rows = Vec::new();
         for k in &order {
             let idx = &groups[k];
@@ -1444,13 +1513,34 @@ impl Model {
                 Some(b) => (b.nominal_inches(), b.nominal.clone()),
                 None => (inches[0], None),
             };
+            // Lane 20: thicker than any lumber (4 in, and no board in the library this thick),
+            // whatever the part says it is.
+            // For lumber this is exactly "no board for it" (`board` is `None`).
+            let beyond_lumber = size[0] > THICKEST_LUMBER + STOCK_EPSILON
+                && !library
+                    .stocks
+                    .iter()
+                    .any(|s| s.kind == StockKind::Board && s.thickness >= size[0] - STOCK_EPSILON);
             let uncounted = if flat {
                 Some(Uncounted::Flat)
-            } else if not_solid && !sheet && board.is_none() && size[0] > THICKEST_LUMBER {
+            } else if not_solid && !sheet && beyond_lumber {
                 Some(Uncounted::NotABoard)
+            } else if beyond_lumber && size[1] > BROADEST_BOARD + STOCK_EPSILON {
+                Some(Uncounted::WholePiece)
+            } else if beyond_lumber
+                && !not_solid
+                && self
+                    .piece_volume(kids.get_or_insert_with(|| self.kids()), first)
+                    .is_some_and(|v| v < SOLID_FILL * size[0] * size[1] * size[2])
+            {
+                Some(Uncounted::Hollow)
+            } else if !sheet && size[1] > widest_board + STOCK_EPSILON {
+                Some(Uncounted::TooWide)
             } else {
                 None
             };
+            // A part counted nowhere is not sheet goods either (it adds no sheet).
+            let sheet = sheet && uncounted.is_none();
             let board_feet = if sheet || uncounted.is_some() {
                 0.0
             } else {

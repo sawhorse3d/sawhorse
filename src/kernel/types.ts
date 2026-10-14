@@ -989,7 +989,10 @@ export interface CutRow {
   /** Lane 15: counted in the totals and nested (false: dropped by the person, still listed). */
   included: boolean;
   /** Lane 15 fixes: listed but counted nowhere and not nested: a flat face with no
-   * thickness, or open faces thicker than any board (the whole of something, not a board). */
+   * thickness, or open faces thicker than any board (the whole of something, not a board).
+   * Lane 20: also a whole piece drawn as one block (thicker than any board and over 12 in
+   * both ways), a solid thicker than any board more than 30% empty, and lumber wider than
+   * 4 ft. */
   uncounted?: Uncounted;
   /** Lane 15: the nominal (rough) thickness board feet are counted on, metres (4/4: 1 in). */
   nominal_thickness?: number;
@@ -1007,7 +1010,7 @@ export interface CutRow {
 }
 
 /** Lane 15 fixes: why a listed part counts nowhere. */
-export type Uncounted = "flat" | "not_a_board";
+export type Uncounted = "flat" | "not_a_board" | "whole_piece" | "hollow" | "too_wide";
 
 /** Lane 15 fixes: a group or instance holding faces outside any part. */
 export interface LoosePlace {
@@ -1147,7 +1150,7 @@ export interface StockPiece {
   efficiency: number;
 }
 
-export type UnplacedReason = "no_stock" | "thickness" | "too_large" | "grain" | "flat" | "not_a_board";
+export type UnplacedReason = "no_stock" | "thickness" | "too_large" | "grain" | "flat" | "not_a_board" | "whole_piece" | "hollow" | "too_wide";
 
 export interface Unplaced {
   row: number;

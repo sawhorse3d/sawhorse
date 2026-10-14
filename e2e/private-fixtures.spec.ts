@@ -641,6 +641,38 @@ test.describe("private SketchUp fixtures: furniture that is not solid (lane 15)"
     await expect.poll(async () => (await cutListOf(page)).totals.loose_faces, { timeout: 30_000 }).toBe(before.totals.loose_faces);
     expect.soft(errors, "no page errors or console errors").toEqual([]);
   });
+
+  // Lane 20: a whole piece drawn as one closed solid is not a board either. coffee table 6
+  // (a closed 16 x 24 x 48 in block) counted 128 board feet of 4/4; the gondola's
+  // Agrupar#8 (open faces 0.39 x 98 x 150 in, a floor) counted 102. Both are now listed,
+  // counted nowhere, with their reason in the row and in the header.
+  for (const [file, part, why, label] of [
+    [`${CORYNTH}/coffee tables.skp`, "coffee table 6", "whole_piece", "whole piece"],
+    ["openskp-repo/gondola_v20.skp", "Agrupar#8", "too_wide", "wider than 4 ft"],
+  ] as const) {
+    test(`${file.split("/").pop()}: ${part} is not a board (lane 20)`, async ({ page }, info) => {
+      test.skip(!have(file), `${file} is not in the fixtures directory`);
+      test.setTimeout(120_000);
+      const errors = watchErrors(page);
+      await open(page);
+      const { refused, title } = await importFile(page, file);
+      expect.soft(refused, `IMPORT: refused (${title})`).toBe(false);
+      await page.getByRole("tab", { name: "Cut list" }).click();
+      await expect(page.locator(".cutlist table")).toBeVisible();
+      type Row = CutRowLite & { uncounted?: string; board_feet: number; sheet: boolean };
+      const cut = (await cutListOf(page)) as unknown as { rows: Row[]; totals: { board_feet: number; uncounted: number } };
+      const row = cut.rows.find((r) => r.name === part);
+      expect.soft(row?.uncounted, `IMPORT: ${part} counts nowhere: ${JSON.stringify(row)}`).toBe(why);
+      expect.soft([row?.board_feet, row?.sheet], `IMPORT: ${part} carries no board feet and no sheet`).toEqual([0, false]);
+      await expect.soft(page.locator(`.cutlist tbody tr[data-part="${part}"] small`).first()).toContainText("(not counted)");
+      await expect.soft(page.getByTestId("cutlist-geometry")).toContainText(label);
+      await expect.soft(page.getByTestId("cutlist-geometry")).toContainText("not counted");
+      const shot = await capture(page, `lane20-${part.replace(/[^A-Za-z0-9]+/g, "-")}-cutlist`);
+      info.annotations.push({ type: "capture", description: shot });
+      console.log(`[private-fixtures] ${file}: ${part} ${row?.uncounted}; ${cut.totals.uncounted} rows not counted; ${cut.totals.board_feet.toFixed(2)} board feet counted`);
+      expect.soft(errors, "no page errors or console errors").toEqual([]);
+    });
+  }
 });
 
 // ---- part 2: every .skp under the directory ------------------------------------------------

@@ -918,3 +918,208 @@ fn the_cut_list_golden_is_this_bookshelf() {
     assert_eq!(row(&l, "Side").handed, 1);
     assert_eq!(row(&l, "Shelf").hidden, 1);
 }
+
+/// A prism: the closed outline `pts` (inches, on the plane z = 0) pulled up `h` inches, made
+/// a component named `name`. Returns the definition.
+fn prism(doc: &mut Document, name: &str, pts: &[[f64; 2]], h: f64) -> u64 {
+    let out = ok(
+        doc,
+        Op::Draw {
+            target: DrawTarget::Plane {
+                origin: [0.0, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            points: pts.iter().map(|p| [p[0] * IN, p[1] * IN, 0.0]).collect(),
+            closed: true,
+        },
+    );
+    let OpOutcome::Drawn {
+        sketch: Some(sketch),
+        inside: Some(region),
+        ..
+    } = out
+    else {
+        panic!("{out:?}")
+    };
+    let o = match ok(
+        doc,
+        Op::Extrude {
+            sketch,
+            region,
+            distance: h * IN,
+        },
+    ) {
+        OpOutcome::ObjectCreated { object } => object,
+        o => panic!("{o:?}"),
+    };
+    match ok(
+        doc,
+        Op::MakeComponent {
+            items: vec![Item::Object(o)],
+            name: name.into(),
+        },
+    ) {
+        OpOutcome::ComponentCreated { definition, .. } => definition,
+        o => panic!("{o:?}"),
+    }
+}
+
+/// Lane 20: a closed solid that is a whole piece of furniture is not a board. Thicker than
+/// any lumber and over 12 in both ways: a whole piece; thicker than any lumber and more than
+/// 30% empty: hollow; lumber wider than 4 ft: too wide. Boards, sheets, posts and the
+/// profile-cut parts a woodworker buys as a blank all stay counted.
+#[test]
+fn whole_pieces_drawn_as_solids_are_not_boards() {
+    use sawhorse_kernel::cutlist::Uncounted;
+    use sawhorse_kernel::nesting::{NestOptions, UnplacedReason};
+    let mut d = Document::with_ground_sketch();
+    // The edges of the rule.
+    part(&mut d, "Board", None, [0.0, 0.0, 0.0, 12.0, 96.0, 2.0]);
+    let (_, sheet) = part(&mut d, "Sheet", None, [20.0, 0.0, 0.0, 48.0, 96.0, 1.0]);
+    part(&mut d, "Carcass", None, [80.0, 0.0, 0.0, 24.0, 24.0, 18.0]);
+    // A post thicker than any board but narrow and full: one (glued-up) blank.
+    part(&mut d, "Post", None, [110.0, 0.0, 0.0, 6.0, 6.0, 96.0]);
+    // Just over and just at 12 in: the second dimension decides.
+    part(&mut d, "Beam", None, [120.0, 0.0, 0.0, 12.01, 96.0, 6.0]);
+    part(&mut d, "Timber", None, [140.0, 0.0, 0.0, 12.0, 96.0, 6.0]);
+    // Lumber wider than 4 ft is no board; exactly 4 ft is.
+    let (_, top) = part(
+        &mut d,
+        "Tabletop",
+        None,
+        [160.0, 0.0, 0.0, 60.0, 96.0, 0.75],
+    );
+    part(&mut d, "Panel", None, [230.0, 0.0, 0.0, 48.0, 96.0, 0.75]);
+    // An L 10 x 10 with 1 1/2 in arms, 30 in tall: thicker than any board, 28% of its box.
+    prism(
+        &mut d,
+        "Bracket",
+        &[
+            [0.0, -50.0],
+            [10.0, -50.0],
+            [10.0, -48.5],
+            [1.5, -48.5],
+            [1.5, -40.0],
+            [0.0, -40.0],
+        ],
+        30.0,
+    );
+    // The same L only 3 in thick (a cabriole blank, a corner block): bought as its box.
+    prism(
+        &mut d,
+        "Corner block",
+        &[
+            [20.0, -50.0],
+            [30.0, -50.0],
+            [30.0, -48.5],
+            [21.5, -48.5],
+            [21.5, -40.0],
+            [20.0, -40.0],
+        ],
+        3.0,
+    );
+    // A triangular gusset, half its box: counted.
+    prism(
+        &mut d,
+        "Gusset",
+        &[[40.0, -50.0], [46.0, -50.0], [40.0, -44.0]],
+        0.75,
+    );
+    let l = list(d.model());
+    let why = |n: &str| row(&l, n).uncounted;
+    assert_eq!(why("Board"), None, "a 2 x 12 x 96 board stays counted");
+    assert!(row(&l, "Board").board_feet > 0.0);
+    assert_eq!(why("Sheet"), None, "a 1 x 48 x 96 piece is no whole piece");
+    assert_eq!(
+        why("Carcass"),
+        Some(Uncounted::WholePiece),
+        "a 24 x 24 x 18 carcass"
+    );
+    assert_eq!(
+        row(&l, "Carcass")
+            .size
+            .map(|s| (s / IN * 100.0).round() / 100.0),
+        [18.0, 24.0, 24.0]
+    );
+    assert_eq!(why("Post"), None, "a 6 x 6 post is one blank");
+    assert_eq!(
+        why("Beam"),
+        Some(Uncounted::WholePiece),
+        "over 12 in both ways"
+    );
+    assert_eq!(why("Timber"), None, "12 in is not over 12 in");
+    assert_eq!(why("Tabletop"), Some(Uncounted::TooWide));
+    assert_eq!(why("Panel"), None, "4 ft wide is still a board");
+    assert_eq!(why("Bracket"), Some(Uncounted::Hollow));
+    assert_eq!(
+        why("Corner block"),
+        None,
+        "a 3 in profile is bought as its box"
+    );
+    assert_eq!(why("Gusset"), None);
+    assert!(row(&l, "Gusset").board_feet > 0.0);
+    for n in ["Carcass", "Beam", "Tabletop", "Bracket"] {
+        let r = row(&l, n);
+        assert!(!r.not_solid && r.included, "{n} is a solid, listed");
+        assert_eq!(
+            (r.board_feet, r.area_m2, r.sheet),
+            (0.0, 0.0, false),
+            "{n} counts nowhere"
+        );
+    }
+    assert_eq!(l.totals.uncounted, 4);
+    let counted: f64 = l
+        .rows
+        .iter()
+        .filter(|r| r.uncounted.is_none())
+        .map(|r| r.board_feet)
+        .sum();
+    assert_eq!(l.totals.board_feet, counted);
+    // The nesting reports each with the same reason.
+    let n = d.model().nest(&NestOptions::default());
+    let unplaced = |name: &str| n.unplaced.iter().find(|u| u.name == name).map(|u| u.reason);
+    assert_eq!(unplaced("Carcass"), Some(UnplacedReason::WholePiece));
+    assert_eq!(unplaced("Bracket"), Some(UnplacedReason::Hollow));
+    assert_eq!(unplaced("Tabletop"), Some(UnplacedReason::TooWide));
+    // Marked sheet goods, the 1 x 48 x 96 piece is a sheet and counted as one; so is the
+    // 5 ft top once it is called a sheet (the nesting then says it is larger than a sheet).
+    for def in [sheet, top] {
+        ok(
+            &mut d,
+            Op::SetStock {
+                part: PartRef::Definition(def),
+                stock: Some("Birch ply".into()),
+                sheet: Some(true),
+            },
+        );
+    }
+    let l = list(d.model());
+    let s = row(&l, "Sheet");
+    assert!(s.sheet && s.uncounted.is_none() && s.area_m2 > 0.0, "{s:?}");
+    let t = row(&l, "Tabletop");
+    assert!(t.sheet && t.uncounted.is_none() && t.area_m2 > 0.0, "{t:?}");
+    assert_eq!(l.totals.uncounted, 3);
+    // A library board that thick and that wide takes the carcass and the top back.
+    ok(
+        &mut d,
+        Op::DefineStock {
+            stock: sawhorse_kernel::stock::StockDef {
+                name: "Slab 20 x 72 x 120".into(),
+                kind: sawhorse_kernel::stock::StockKind::Board,
+                length: 120.0 * IN,
+                width: 72.0 * IN,
+                thickness: 20.0 * IN,
+                nominal: None,
+                grain: sawhorse_kernel::stock::StockGrain::Length,
+            },
+            replace: None,
+        },
+    );
+    let l = list(d.model());
+    assert_eq!(
+        row(&l, "Carcass").uncounted,
+        None,
+        "a board that thick exists now"
+    );
+    assert_eq!(row(&l, "Bracket").uncounted, None);
+}

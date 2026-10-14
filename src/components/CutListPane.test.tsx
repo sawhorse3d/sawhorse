@@ -4,7 +4,7 @@ import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
 import { columnWidths, CutListPane, pickRows, rowKey, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
-import { REPORT_COLUMNS, reportCells } from "../cutlist/format";
+import { REPORT_COLUMNS, reportCells, UNCOUNTED_NOTES, uncountedNote } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
 import { reportPdf } from "../cutlist/documents";
 import { cutListCsv } from "../cutlist/csv";
@@ -350,9 +350,35 @@ describe("Parts that are not solids (lane 15)", () => {
     expect(flat.querySelector("small")!.textContent).toContain("flat face, no thickness (not counted)");
     const bench = screen.getByText("benches 1").closest("tr")!;
     expect(bench.querySelector("small")!.textContent).toContain("thicker than any board: several parts drawn as one? (not counted)");
-    expect(screen.getByTestId("cutlist-geometry").textContent).toContain("2 parts not counted (flat, or thicker than any board)");
+    expect(screen.getByTestId("cutlist-geometry").textContent).toContain(`${list.rows[1].qty + list.rows[2].qty} pieces not counted`);
+    expect(screen.getByTestId("cutlist-geometry").textContent).toContain("flat face");
+    expect(screen.getByTestId("cutlist-geometry").textContent).toContain("open faces thicker than any board");
     const csv = cutListCsv(list);
     expect(csv).toContain("Not counted");
+  });
+
+  // Lane 20: a closed solid that is a whole piece of furniture (a coffee table at 128 board
+  // feet), a hollow solid, and lumber wider than 4 ft (a floor at 102) count nowhere either,
+  // and the header says how many pieces and why.
+  it("says how many pieces count nowhere and why, each reason in its part's notes", () => {
+    const list = mixed();
+    list.rows[0] = { ...list.rows[0], name: "coffee table 6", qty: 1, not_solid: false, uncounted: "whole_piece", board_feet: 0, area_m2: 0, sheet: false };
+    list.rows[1] = { ...list.rows[1], name: "Agrupar#8", qty: 2, not_solid: true, uncounted: "too_wide", board_feet: 0, area_m2: 0, sheet: false };
+    list.rows[2] = { ...list.rows[2], name: "lamp 2", qty: 1, not_solid: false, uncounted: "hollow", board_feet: 0, area_m2: 0, sheet: false };
+    list.totals = { ...list.totals, uncounted: 3 };
+    expect(uncountedNote(list)).toBe("4 pieces not counted (3 parts): 1 whole piece (thicker than any board, over 12 in both ways); 1 hollow solid (thicker than any board, over 30% empty); 2 wider than 4 ft");
+    render(<CutListPane {...props({ list })} />);
+    expect(screen.getByTestId("cutlist-geometry").textContent).toContain("4 pieces not counted (3 parts)");
+    for (const [name, u] of [["coffee table 6", "whole_piece"], ["Agrupar#8", "too_wide"], ["lamp 2", "hollow"]] as const) {
+      const tr = screen.getByText(name).closest("tr")!;
+      expect(tr.getAttribute("data-uncounted")).toBe(u);
+      expect(tr.querySelector("small")!.textContent).toContain(UNCOUNTED_NOTES[u]);
+    }
+    expect(cutListCsv(list)).toContain(UNCOUNTED_NOTES.too_wide);
+    const one = mixed();
+    one.rows[0] = { ...one.rows[0], qty: 1, uncounted: "flat", board_feet: 0, area_m2: 0, sheet: false };
+    expect(uncountedNote(one)).toBe("1 piece not counted: 1 flat face");
+    expect(uncountedNote(mixed())).toBe("");
   });
 
   it("flags the part in the pane, says what is outside parts, and offers to make parts of it", () => {
