@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
+import { goldenPanelWidth, MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
 
 // The .skp corpus through the real browser build: every file in tests/corpus/skp/ (made by
 // `npm run corpus:skp`) is imported through File > Import's input, framed in the Iso view
@@ -87,6 +87,8 @@ test.describe("skp corpus", () => {
   test.skip(!files.length, "no corpus: run npm run corpus:skp");
   // A smaller window keeps the committed reference images small (about 60 KB each).
   test.use({ viewport: { width: 1000, height: 720 } });
+  // The canvas the reference images were taken at (a 300 px side panel).
+  test.beforeEach(({ page }) => goldenPanelWidth(page));
   mkdirSync(outDir, { recursive: true });
 
   for (let start = 0; start < Math.max(files.length, 1); start += CHUNK) {

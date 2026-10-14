@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { at, box, clickAt, hover, ready, type V3 } from "./helpers";
-import { MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
+import { goldenPanelWidth, MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
 
 // Materials, paint, texture positioning, styles and shadows (lane 10) through the browser
 // build: the library, the Paint tool (B) with Alt+click sampling, the texture handles, the
@@ -141,6 +141,7 @@ test("a painted cabinet renders like its golden image", async ({ page }) => {
   const shz: Uint8Array = doc.save_shz("frac-in", new Uint8Array());
   doc.free();
   await page.setViewportSize({ width: 1000, height: 720 });
+  await goldenPanelWidth(page);
   await page.goto("/?io=basic&theme=light&autosave=0");
   await expect(page.locator("main.vp")).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
   await page.addStyleTag({ content: ".vp .hud,.vp .tip,.vp .axes,.vp .legend,.import-report,.drop-hint{visibility:hidden!important}.scenes{display:none!important}" });

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { at, box, hover, ready, type V3 } from "./helpers";
-import { MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
+import { goldenPanelWidth, MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
 
 // Soft, smooth and hidden edges (lane 15) through the browser build: the Eraser's modifiers
 // exactly as its hint says (Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens),
@@ -108,6 +108,7 @@ test("a softened cylinder renders like its golden image", async ({ page }) => {
   test.setTimeout(90_000);
   test.skip(!existsSync(path.join("src", "wasm", "pkg", "sawhorse_wasm.js")), "kernel WASM not built");
   await page.setViewportSize({ width: 1000, height: 720 });
+  await goldenPanelWidth(page);
   await page.goto("/?io=basic&theme=light&autosave=0");
   await expect(page.locator("main.vp")).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
   await page.addStyleTag({ content: ".vp .hud,.vp .tip,.vp .axes,.vp .legend,.import-report,.drop-hint{visibility:hidden!important}.scenes{display:none!important}" });

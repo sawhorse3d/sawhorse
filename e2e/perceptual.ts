@@ -65,3 +65,17 @@ export async function perceptual(page: Page, a: Buffer, b: Buffer) {
   );
 }
 
+/**
+ * Lane 20b: the golden images were taken with the side panel at 300 px (its width before the
+ * usual became 360), so the model's canvas keeps that size: a wider panel is a narrower
+ * canvas, and the same model drawn in a different shape. Call before the page loads.
+ */
+export async function goldenPanelWidth(page: Page) {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("sawhorse.sideWidth", "300");
+    } catch {
+      /* storage blocked: the panel keeps its usual width */
+    }
+  });
+}
