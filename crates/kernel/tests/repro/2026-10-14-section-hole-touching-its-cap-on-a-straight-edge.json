@@ -1,6 +1,6 @@
 {
   "name": "2026-10-14-section-hole-touching-its-cap-on-a-straight-edge",
-  "error": "section 1: cap edges cross: ring 0 edge 1 and ring 1 edge 0 (lane-19c property run, planes_on_a_nudged_face_drawn_on, PROPTEST_CASES=100000 PROPTEST_RNG_SEED=2026101953, failed after 35,548 cases, shrunk; plane snapping off; the flipped plane's cap: a hole touching its outer ring at a crossing on a straight edge, that corner tidied out of the outer ring only)",
+  "error": "section 1: cap edges cross: ring 0 edge 1 and ring 1 edge 0 (lane-19c property run, planes_on_a_nudged_face_drawn_on, PROPTEST_CASES=100000 PROPTEST_RNG_SEED=2026101953, failed after 35,548 cases, shrunk; plane snapping off; the flipped plane's cap: a hole touching its outer ring at a crossing on a straight edge, that corner tidied out of the outer ring only; the lane-19b kernel's caps cross there too, on both sides of the plane)",
   "plane_snap": false,
   "ops": [
     {

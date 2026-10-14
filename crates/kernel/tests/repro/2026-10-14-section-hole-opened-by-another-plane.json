@@ -1,0 +1,239 @@
+{
+  "name": "2026-10-14-section-hole-opened-by-another-plane",
+  "error": "op 15 AddSection { origin: [-0.25, -0.25, 0.5], normal: [0.0, -0.34657937533857053, -0.47348422510144816], name: None, active: false, hidden: false }: section 2: cap edges cross (ring 0 edge 3, ring 1 edge 0) (lane-19c fuzz, scripts/fuzz-shards.sh 12500 20267300 1, seed 20267302, snapping on, on the lane's second commit; an inactive plane's cap with a hole, clipped by the active plane's line through the hole: clipped ring by ring, the hole's clipped edge lay along the outer ring's and their edges crossed by rounding errors; the lane-19b kernel's clipped caps cross there too: ring-by-ring clipping is lane 12's)",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.25,
+      "y": -1.5,
+      "w": 1.75,
+      "h": 2.0
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.75
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 2,
+      "path": [
+        [
+          0.46875,
+          -1.5,
+          0.75
+        ],
+        [
+          2.0,
+          -1.25,
+          0.75
+        ]
+      ]
+    },
+    {
+      "op": "split_face",
+      "object": 1,
+      "face": 4,
+      "path": [
+        [
+          2.0,
+          -1.28125,
+          0.75
+        ],
+        [
+          2.0,
+          -1.5,
+          0.65625
+        ]
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 5,
+      "points": [
+        [
+          1.7374999999999998,
+          0.5,
+          0.11250000000000004
+        ],
+        [
+          1.65,
+          0.5,
+          0.11250000000000004
+        ],
+        [
+          1.65,
+          0.5,
+          0.30000000000000004
+        ],
+        [
+          1.7374999999999998,
+          0.5,
+          0.30000000000000004
+        ]
+      ]
+    },
+    {
+      "op": "push_pull_new_face",
+      "object": 1,
+      "face": 9,
+      "distance": -0.8429559530592207
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -0.5525025887629182
+      ]
+    },
+    {
+      "op": "imprint",
+      "object": 1,
+      "face": 1,
+      "points": [
+        [
+          1.7374999999999998,
+          -1.2000000000000002,
+          0.0
+        ],
+        [
+          1.65,
+          -1.2000000000000002,
+          0.0
+        ],
+        [
+          1.65,
+          -1.1,
+          0.0
+        ],
+        [
+          1.7374999999999998,
+          -1.1,
+          0.0
+        ]
+      ]
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "place_section",
+      "section": 1,
+      "origin": [
+        0.0,
+        0.0,
+        0.250004
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        -0.25,
+        -0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        -0.34657937533857053,
+        -0.47348422510144816
+      ],
+      "active": false
+    }
+  ]
+}

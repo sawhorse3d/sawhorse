@@ -1199,6 +1199,145 @@ fn clip(ring: &[DVec2], h: &HalfPlane) -> Vec<DVec2> {
     out
 }
 
+/// A cap (its outer ring and holes) clipped by other planes' half-planes `others`, as simple
+/// rings (lane 19c). Each ring is clipped on its own (Sutherland and Hodgman) first, which is
+/// exact for a convex ring, and that answer stands when its rings are simple ([`simple`]):
+/// every cut clipped by another plane before lane 19c is clipped the same way, and every
+/// golden hashes as before. Where it is not (the fuzzer's finds, seeds 20267302 and
+/// 20267307: a hole clipped by the line of another plane's cut lay along the outer ring's
+/// clipped edge, and a ring the line crossed four times ran back along it past its own
+/// corners, its edges crossing by rounding errors), the cap is cut again on a planar
+/// arrangement ([`clip_exactly`]), which gives the region itself.
+fn clip_cap(
+    outer: Vec<DVec2>,
+    holes: Vec<Vec<DVec2>>,
+    others: &[HalfPlane],
+    tol: f64,
+) -> Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> {
+    if others.is_empty() {
+        return vec![(outer, holes)];
+    }
+    let mut o = outer.clone();
+    let mut hs = holes.clone();
+    for h in others {
+        o = clip(&o, h);
+        hs = hs.iter().map(|r| clip(r, h)).collect();
+    }
+    // Judged tidied (a corner on the line comes out twice), returned as clipped: the cut
+    // tidies all of a solid's rings together.
+    let tidied = tidy_rings(
+        std::iter::once(o.clone())
+            .chain(hs.iter().cloned())
+            .collect(),
+    );
+    if simple(&tidied) {
+        return vec![(o, hs)];
+    }
+    let rings: Vec<Vec<DVec2>> = std::iter::once(outer).chain(holes).collect();
+    assemble(clip_exactly(&rings, others, tol))
+}
+
+/// Whether `rings` (a cap's: an outer ring and its holes, or any rings) are simple and meet
+/// only at corners: no ring passes a point twice, no edge crosses another, and no corner lies
+/// on another ring's edge or on a non-adjacent edge of its own (exactly, by the robust
+/// orientation). Rings of fewer than three points are left out (they are dropped anyway).
+fn simple(rings: &[Vec<DVec2>]) -> bool {
+    use crate::sketch::{orient, proper_cross};
+    let rings: Vec<&Vec<DVec2>> = rings.iter().filter(|r| r.len() >= 3).collect();
+    for r in &rings {
+        let pts: BTreeSet<[u64; 2]> = r.iter().map(|p| bits(*p)).collect();
+        if pts.len() != r.len() {
+            return false;
+        }
+    }
+    let edges: Vec<(usize, usize, DVec2, DVec2)> = rings
+        .iter()
+        .enumerate()
+        .flat_map(|(k, r)| (0..r.len()).map(move |i| (k, i, r[i], r[(i + 1) % r.len()])))
+        .collect();
+    for (x, &(k1, i1, a, b)) in edges.iter().enumerate() {
+        for &(k2, i2, p, q) in &edges[x + 1..] {
+            let n = rings[k1].len();
+            let next = k1 == k2 && ((i1 + 1) % n == i2 || (i2 + 1) % n == i1);
+            if !next && proper_cross(a, b, p, q) {
+                return false;
+            }
+        }
+        // A corner lying exactly on this edge, other than its own two ends.
+        for r in &rings {
+            for &c in r.iter() {
+                if c == a || c == b || orient(a, b, c) != 0.0 {
+                    continue;
+                }
+                let t = (c - a).dot(b - a);
+                if t > 0.0 && t < (b - a).length_squared() {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `rings` (outer rings counter-clockwise, holes clockwise: material on their left) clipped
+/// by `others`, exactly: the rings laid on a planar arrangement with their votes, each other
+/// plane's line across them laid with none, and the material faces kept where every
+/// half-plane keeps them (a face lies wholly on one side of each line; its corner farthest
+/// from the line says which). Simple rings with the material on their left, as the cut's own.
+fn clip_exactly(rings: &[Vec<DVec2>], others: &[HalfPlane], tol: f64) -> Vec<Vec<DVec2>> {
+    let mut arr = crate::arrangement::Arrangement::new(tol);
+    let mut first = 0;
+    let (mut lo, mut hi) = (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY));
+    for r in rings.iter().filter(|r| r.len() >= 3) {
+        let ids: Vec<usize> = r.iter().map(|p| arr.vertex(*p)).collect();
+        for i in 0..ids.len() {
+            arr.insert_between(ids[i], ids[(i + 1) % ids.len()], 1, first);
+            first += 1;
+        }
+        for p in r {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
+        }
+    }
+    if !lo.is_finite() {
+        return Vec::new();
+    }
+    // Each line across the rings' box, a margin beyond it: every face it passes through is
+    // split by it.
+    let centre = (lo + hi) * 0.5;
+    let reach = (hi - lo).length() + 1.0;
+    for h in others {
+        let g = DVec2::new(h.0[1], h.0[2]);
+        let len2 = g.length_squared();
+        if len2 < 1e-24 {
+            continue; // parallel: it keeps everything or nothing, which the faces' test says
+        }
+        let foot = centre - g * (h.at(centre) / len2);
+        if foot.distance(centre) > reach {
+            continue; // misses the rings
+        }
+        let along = g.perp() / len2.sqrt();
+        let (a, b) = (
+            arr.vertex(foot - along * reach),
+            arr.vertex(foot + along * reach),
+        );
+        arr.insert_between(a, b, 0, first);
+        first += 1;
+    }
+    arr.settle();
+    arr.material_rings_where(|face| {
+        others.iter().all(|h| {
+            face.iter()
+                .map(|p| h.at(*p))
+                .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+                .is_none_or(|d| d >= 0.0)
+        })
+    })
+    .into_iter()
+    .filter(|r| r.len() >= 3 && sawhorse_tessellate::signed_area(r).abs() > RING_FLOOR)
+    .collect()
+}
+
 /// What `frame` keeps of solid `o` under the distances `dist` (one per vertex; [`distances`]
 /// gives the tie rule's), as a closed surface: the kept part of every face (its kept
 /// triangles merged back into rings, [`clip_solid`]) plus the cap facing `-normal`, laid from
@@ -1352,15 +1491,10 @@ impl Model {
                 .map(|x| HalfPlane::of(&frame, &self.sections[from_public::<SectionId>(x)]))
                 .collect();
             let scale = solid_scale(obj);
+            let tol = ARRANGE_TOL * scale;
             let clipped: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = assemble(solid_rings(obj, &frame))
                 .into_iter()
-                .map(|(mut outer, mut holes)| {
-                    for h in &others {
-                        outer = clip(&outer, h);
-                        holes = holes.iter().map(|r| clip(r, h)).collect();
-                    }
-                    (outer, holes)
-                })
+                .flat_map(|(outer, holes)| clip_cap(outer, holes, &others, tol))
                 .collect();
             // Lane 18: every cap exactly as the plane cuts it, never thinned out for the
             // slice (the halves, the fill and the cross-section read these rings); only what
@@ -1939,6 +2073,60 @@ mod tests {
             DVec2::new(0.0, 2.0),
         ];
         assert_eq!(tidy_ring(r).len(), 4);
+    }
+
+    /// Lane 19c: a cap clipped by another plane's line comes out as simple rings. Convex, the
+    /// ring-by-ring clip stands as it always did. A hole the line passes through opens into a
+    /// notch of one ring (clipped ring by ring, the hole's clipped edge lay along the outer
+    /// ring's, the fuzzer's seed 20267302); a U the line crosses four times comes out as its
+    /// two arms (ring by ring, it ran back along the line, seed 20267307).
+    #[test]
+    fn another_plane_clips_a_cap_into_simple_rings() {
+        let v = DVec2::new;
+        let area = |caps: &[(Vec<DVec2>, Vec<Vec<DVec2>>)]| -> f64 {
+            caps.iter()
+                .map(|(o, hs)| {
+                    sawhorse_tessellate::signed_area(o)
+                        + hs.iter()
+                            .map(|h| sawhorse_tessellate::signed_area(h))
+                            .sum::<f64>()
+                })
+                .sum()
+        };
+        // y >= 1
+        let above = [HalfPlane([-1.0, 0.0, 1.0])];
+        let caps = clip_cap(square(0.0, 0.0, 4.0, 3.0), vec![], &above, 1e-12);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].0.len(), 4);
+        assert!((area(&caps) - 8.0).abs() < 1e-12);
+        // A hole from y = 0.5 to 2: opened by the line into a notch.
+        let mut hole = square(1.0, 0.5, 2.0, 2.0);
+        hole.reverse();
+        let caps = clip_cap(square(0.0, 0.0, 4.0, 3.0), vec![hole], &above, 1e-12);
+        assert_eq!(caps.len(), 1, "{caps:?}");
+        assert!(caps[0].1.is_empty(), "{caps:?}");
+        assert_eq!(caps[0].0.len(), 8, "{caps:?}");
+        assert!((area(&caps) - (8.0 - 1.0)).abs() < 1e-12);
+        assert!(simple(std::slice::from_ref(&caps[0].0)));
+        // A U (arms x 0..1 and 3..4, joined below y = 1): the line y = 2 keeps the arms' tops.
+        let u = vec![
+            v(0.0, 0.0),
+            v(4.0, 0.0),
+            v(4.0, 3.0),
+            v(3.0, 3.0),
+            v(3.0, 1.0),
+            v(1.0, 1.0),
+            v(1.0, 3.0),
+            v(0.0, 3.0),
+        ];
+        let line = [HalfPlane([-2.0, 0.0, 1.0])];
+        let caps = clip_cap(u, vec![], &line, 1e-12);
+        assert_eq!(caps.len(), 2, "{caps:?}");
+        assert!((area(&caps) - 2.0).abs() < 1e-12);
+        for (o, hs) in &caps {
+            assert!(hs.is_empty());
+            assert!(simple(std::slice::from_ref(o)), "{o:?}");
+        }
     }
 
     /// Lane 19c: a hole that touches its outer ring at a point of the outer ring's straight

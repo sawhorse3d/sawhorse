@@ -370,6 +370,14 @@ impl Arrangement {
     /// see the module docs), and the boundary of their union as rings of vertices with the
     /// material on their left.
     pub(crate) fn material_rings(&self) -> Vec<Vec<DVec2>> {
+        self.material_rings_where(|_| true)
+    }
+
+    /// [`Arrangement::material_rings`], with only the material faces `keep` accepts, given
+    /// each face's outer boundary (its corners, counter-clockwise). For cutting the material
+    /// by lines laid without a vote (`section`: other planes' cuts), each face lying wholly on
+    /// one side of each line.
+    pub(crate) fn material_rings_where(&self, keep: impl Fn(&[DVec2]) -> bool) -> Vec<Vec<DVec2>> {
         if self.edges.is_empty() {
             return Vec::new();
         }
@@ -413,7 +421,7 @@ impl Arrangement {
                     .min_by(|&x, &y| area[x].total_cmp(&area[y]).then(x.cmp(&y)))
             })
             .collect();
-        let material = self
+        let mut material = self
             .windings(&circuits, &face_of)
             .map(|w| {
                 outers
@@ -422,6 +430,9 @@ impl Arrangement {
                     .collect::<BTreeMap<usize, bool>>()
             })
             .unwrap_or_else(|| self.by_votes(&circuits, &face_of, &outers));
+        for (f, m) in material.iter_mut() {
+            *m = *m && keep(&rings[*f]);
+        }
         // Each directed edge's side: material on its left?
         let mut left: BTreeMap<(usize, usize), bool> = BTreeMap::new();
         for (i, c) in circuits.iter().enumerate() {

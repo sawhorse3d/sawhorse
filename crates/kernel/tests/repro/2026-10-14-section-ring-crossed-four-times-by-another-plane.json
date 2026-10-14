@@ -1,0 +1,184 @@
+{
+  "name": "2026-10-14-section-ring-crossed-four-times-by-another-plane",
+  "error": "op 9 PushPull { object: 2, face: 8, distance: 0.5 }: section 2: cap edges cross (ring 0 edge 2, ring 0 edge 4) (lane-19c fuzz, scripts/fuzz-shards.sh 12500 20267300 1, seed 20267307, snapping on, on the lane's second commit; an inactive plane's cap whose ring the active plane's line crosses four times: clipped ring by ring, it ran back along the line past its own corners and its edges crossed by rounding errors; the lane-19b kernel's clipped caps cross there too: ring-by-ring clipping is lane 12's)",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.5,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.25,
+        0.250004,
+        -0.5
+      ],
+      "normal": [
+        -0.757425993072468,
+        -0.7055274488490691,
+        -0.2420935727463776
+      ],
+      "active": false
+    },
+    {
+      "op": "make_group",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Fuzz group"
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          1.654378391011769
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          1.654378391011769
+        ],
+        [
+          0.0,
+          0.5,
+          1.654378391011769
+        ],
+        [
+          -0.25,
+          0.5,
+          1.654378391011769
+        ],
+        [
+          -0.75,
+          -0.5,
+          1.654378391011769
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "extrude",
+      "sketch": 2,
+      "region": 1,
+      "distance": -1.2273728801219188
+    },
+    {
+      "op": "transform_geometry",
+      "object": 2,
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.4270055108898503
+        ],
+        [
+          0.0,
+          0.5,
+          0.4270055108898503
+        ],
+        [
+          0.0,
+          0.5,
+          1.654378391011769
+        ],
+        [
+          0.0,
+          0.0,
+          1.654378391011769
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.5,
+          1.0,
+          0.25
+        ]
+      },
+      "autofold": true
+    },
+    {
+      "op": "push_pull",
+      "object": 2,
+      "face": 8,
+      "distance": 0.5
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}

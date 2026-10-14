@@ -1056,7 +1056,7 @@ fn the_section_finds_cut_cleanly() {
         });
         seen += 1;
     }
-    assert!(seen >= 29, "{seen} section repros");
+    assert!(seen >= 31, "{seen} section repros");
 }
 
 /// The two lane-12c verification finds, exactly: the frame's cut-away half has its notch
