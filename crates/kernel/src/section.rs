@@ -2480,6 +2480,71 @@ mod tests {
         assert!(checked > 300, "{checked}");
     }
 
+    /// Lane 19c: the two halves of a plane share every point of the cut. A plane and its flip
+    /// give every vertex the same distance with its sign turned (exactly: negating the normal
+    /// negates every term of the dot product), so the same vertices are on the plane; every
+    /// crossing is worked out from its segment's two vertices alone, so it is the same point,
+    /// to the bit, for the half kept and the half cut away; and the crossings on the solid's own
+    /// edges, where the caps' corners are, are the ends of both halves' chords, the same nodes.
+    #[test]
+    fn both_halves_share_every_point_of_the_cut() {
+        let mut crossings = 0;
+        for (name, o, planes) in hostile() {
+            let b = o.brep();
+            let tol = ARRANGE_TOL * solid_scale(&o);
+            for (k, plane) in planes.iter().enumerate() {
+                let flip = Plane::new(plane.origin, -plane.normal).unwrap();
+                let (kept, away) = (distances(b, plane), distances(b, &flip));
+                for (v, _) in b.vertices() {
+                    assert_eq!(away[v], -kept[v], "{name}, plane {k}: vertex distances");
+                }
+                // The crossings on the solid's own edges.
+                let want: BTreeSet<Node> = b
+                    .edges()
+                    .filter_map(|(e, _)| {
+                        let he = b.edges[e].he;
+                        let (p, q) = (b.half_edges[he].origin, b.dest(he));
+                        (kept[p] * kept[q] < 0.0).then(|| edge_node(p, q))
+                    })
+                    .collect();
+                let ends = |frame: &Plane, dist: &Distances| -> BTreeSet<Node> {
+                    clip_solid(b, frame, dist, tol)
+                        .chords
+                        .iter()
+                        .flat_map(|&(a, c)| [a, c])
+                        .filter(|n| want.contains(n))
+                        .collect()
+                };
+                assert_eq!(
+                    ends(plane, &kept),
+                    want,
+                    "{name}, plane {k}: the kept half's corners"
+                );
+                assert_eq!(
+                    ends(&flip, &away),
+                    want,
+                    "{name}, plane {k}: the cut-away half's corners"
+                );
+                for (a, c) in clip_solid(b, plane, &kept, tol)
+                    .chords
+                    .into_iter()
+                    .chain(clip_solid(b, &flip, &away, tol).chords)
+                {
+                    for n in [a, c] {
+                        let (x, y) = (node_point(b, &kept, n), node_point(b, &away, n));
+                        assert_eq!(
+                            x.to_array().map(f64::to_bits),
+                            y.to_array().map(f64::to_bits),
+                            "{name}, plane {k}: node {n:?}"
+                        );
+                        crossings += usize::from(n.0 != n.1);
+                    }
+                }
+            }
+        }
+        assert!(crossings > 1000, "{crossings}");
+    }
+
     /// Lane 19c: the half a plane keeps, laid as faces plus the cap from their chords, is
     /// closed: along the normal to rounding, across it to the farthest a corner sits off the
     /// plane at the distance it was given times the seam. Under the tie rule's distances and
