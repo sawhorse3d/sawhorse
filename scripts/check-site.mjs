@@ -136,6 +136,21 @@ if (video) {
   if (!/<source src="[^"]+\.webm" type="video\/webm">/.test(hero)) bad("index.html: the demo video has no WebM source");
 } else if (!/<img[^>]+src="[^"]*demo\.webp"/.test(hero)) bad("index.html: no demo video (or animated WebP) in the hero");
 if (downloads.size < 3) bad(`index.html: ${downloads.size} download links (want at least 3)`);
+// Lane 20: every download is a file of this version's release (package.json), named with the
+// version as the release workflow names it: no older tag's files, no guessed rpm name
+// ("0.1.0~alpha.2" was a guess; the bundler keeps the "-").
+const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+for (const url of downloads) {
+  const file = url.split("/").pop() ?? "";
+  if (!url.includes(`/releases/download/v${version}/`)) bad(`index.html: download ${url} is not in the v${version} release`);
+  else if (!file.includes(version)) bad(`index.html: download ${file} does not carry the version ${version} in its name`);
+}
+for (const f of pages) {
+  const name = rel(f);
+  const html = readFileSync(f, "utf8");
+  if (/~alpha/.test(html)) bad(`${name}: a guessed "~alpha" file name (the release keeps the "-")`);
+  if (/prepared, not tagged/.test(html)) bad(`${name}: says a published release is "not tagged"`);
+}
 
 // ---- images ---------------------------------------------------------------------------
 for (const f of files.filter((f) => /\.(png|jpe?g|webp)$/i.test(f) && !rel(f).startsWith("app/"))) {

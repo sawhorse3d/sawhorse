@@ -1,6 +1,6 @@
 # Sawhorse
 
-**[sawhorse3d.com](https://sawhorse3d.com)** · **[Try it in your browser](https://sawhorse3d.com/app/)** (nothing to install, nothing uploaded) · [Download the desktop app](https://github.com/sawhorse3d/sawhorse/releases) (alpha, unsigned for now) · [User guide](https://sawhorse3d.com/guide/)
+**[sawhorse3d.com](https://sawhorse3d.com)** · **[Try it in your browser](https://sawhorse3d.com/app/)** (nothing to install, nothing uploaded) · [Download the desktop app](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.2) (0.1.0-alpha.2, unsigned for now) · [User guide](https://sawhorse3d.com/guide/)
 
 A free, local-first, open-source push/pull 3D modeler for woodworkers and makers. Draw a rectangle, push it up, type `3/4` and press Enter. Sawhorse keeps the keys your hands already know, works out a cut list and lays your parts out on real sheets and boards as you draw, opens SketchUp files, and exports watertight files for printing and CNC. It runs in a browser tab with nothing to install, or as a desktop app on Windows, macOS and Linux. No account, no subscription, no tracking.
 
