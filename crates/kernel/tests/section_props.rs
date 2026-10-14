@@ -1854,3 +1854,30 @@ fn the_lane_19b_verification_find() {
         assert!(p.cap_length > 0.7, "{name}: {p:?}");
     }
 }
+
+/// Lane 19c, resumed: the resumed run's find (`PROPTEST_RNG_SEED` 2026102001, after 48,791
+/// cases; `2026-10-14-section-side-face-sliver-folded-over-the-plane`): a plane on a box's
+/// end face (x = 0), a rectangle drawn across its edge first, one corner pushed 1 micrometre
+/// into the box and another moved 74 nm and 0.88 micrometres along the face (0.34 nm off
+/// it), no autofold. The side face's tessellation had a triangle 0.34 nm wide in its frame,
+/// standing across the face and lying folded flat over the end face; the flipped plane's
+/// chords wound -1 round it and the cut-away half was open by 3.1e-9 m2. With the face's
+/// triangles laid down, the plane facing into the box cuts nothing, and the flipped plane
+/// keeps the parts of the end face that lie on the plane (the drawn rectangle and the part
+/// above it, 0.0197522461 m2), sheets of no volume closed by a cap of the same area.
+#[test]
+fn the_lane_19c_resumed_find() {
+    let d = replay("2026-10-14-section-side-face-sliver-folded-over-the-plane.json");
+    let section = d.model().sections()[0].0;
+    let [(cap_in, open_in, kept_in), (cap_out, open_out, kept_out)] = halves(&d, section);
+    let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
+    assert!(cap_in == 0.0, "{cap_in}");
+    assert!(open_in.length() < 1e-15, "{open_in}");
+    // The kept half is the whole box: its volume measured over the faces' stored planes,
+    // the whole's over its triangles, 2e-9 m3 apart (the faces bend by up to 1 micrometre).
+    assert!((kept_in - whole).abs() < 1e-8, "{kept_in} {whole}");
+    assert!((cap_out - 0.019_752_246).abs() < 1e-9, "{cap_out}");
+    assert!(open_out.length() < 1e-15, "{open_out}");
+    // No volume, measured over the bent end face's stored plane: 1e-9 m3.
+    assert!(kept_out.abs() < 1e-8, "{kept_out}");
+}

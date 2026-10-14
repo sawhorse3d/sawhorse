@@ -20,6 +20,141 @@ use crate::plane::Plane;
 use crate::tolerance::{MIN_EXTRUDE, in_bounds};
 use crate::validate::{TopologyError, TopologyReport, Violation, validate};
 
+/// **A face's triangles** (lane 19c), in the face's own turn: the tessellator's, in the face's
+/// own frame (`loops` are its loops' vertices, outer first), with **no triangle standing off
+/// the face** where a flip of its diagonal lays it down. These are the triangles the solid
+/// is measured, exported, combined and section-cut by ([`Object::tri_solid`],
+/// `section::clip_solid`), so all of them see one surface.
+///
+/// Why the flips. A face is planar only to within its tolerance, and the tessellator works
+/// in the face's plane: where corners lie nearly in a line there (a corner moved a fraction
+/// of a micrometre along a box edge that a stroke drawn on the face beside it had split),
+/// it can clip an ear a nanometre wide in the face's frame whose corners lie tens of
+/// nanometres apart across it. That triangle stands across its face instead of lying in it,
+/// and can lie folded flat over the face beyond the edge: the solid's triangles then cover a
+/// sliver of that face twice, or once the wrong way. The section cut closes each half by
+/// laying its cap on the chords its kept triangles leave open, and the cap is material where
+/// those chords wind round once; such a sliver lying in a section plane makes them wind -1
+/// or 2 times there, and the half is open by the sliver (lane 19c's resumed 100,000-case
+/// property run, seed 2026102001: a sliver of a box's side face 74 nm by 20 cm folded over
+/// its end face, the cut-away half open by 3.1e-9 m2). So a triangle leaning more than 60
+/// degrees off its face (the cosine between its normal and the face's at most [`STANDING`])
+/// has its diagonals flipped, one at a time, wherever the flip is legal (both new triangles
+/// strictly counter-clockwise in the face's frame, by the robust orientation) and leaves the
+/// two triangles it replaces leaning less than they did. A face flat to rounding has every
+/// triangle lying in it, so it keeps the tessellator's triangles exactly.
+pub(crate) fn face_triangles(
+    b: &Brep,
+    f: &crate::brep::Face,
+    loops: &[Vec<VertexId>],
+) -> Result<Vec<[VertexId; 3]>, TessellateError> {
+    let flat: Vec<VertexId> = loops.iter().flatten().copied().collect();
+    let pos: Vec<DVec3> = flat.iter().map(|v| b.vertices[*v].pos).collect();
+    let pts: Vec<DVec2> = pos.iter().map(|p| f.plane.to_local(*p)).collect();
+    let mut rings: Vec<Vec<DVec2>> = Vec::with_capacity(loops.len());
+    let mut at = 0;
+    for l in loops {
+        rings.push(pts[at..at + l.len()].to_vec());
+        at += l.len();
+    }
+    let mut tris = triangulate(&rings[0], &rings[1..])?;
+    if tris
+        .iter()
+        .any(|t| lean(&pos, *t, f.plane.normal).is_some_and(|c| c <= STANDING))
+    {
+        // The face's own edges, which no flip may take away.
+        let mut boundary: BTreeSet<(u32, u32)> = BTreeSet::new();
+        let mut at = 0;
+        for l in loops {
+            let n = l.len();
+            for i in 0..n {
+                boundary.insert(undirected((at + i) as u32, (at + (i + 1) % n) as u32));
+            }
+            at += n;
+        }
+        lay_down(&pos, &pts, f.plane.normal, &boundary, &mut tris);
+    }
+    Ok(tris
+        .into_iter()
+        .map(|t| t.map(|i| flat[i as usize]))
+        .collect())
+}
+
+/// A triangle of a face whose normal is this or less in cosine from the face's stands off it
+/// (60 degrees; [`face_triangles`]). A triangle of a face flat to rounding is at 1.
+pub(crate) const STANDING: f64 = 0.5;
+
+fn undirected(p: u32, q: u32) -> (u32, u32) {
+    if p < q { (p, q) } else { (q, p) }
+}
+
+/// How a triangle lies on its face: the cosine between its normal and the face's (1 in the
+/// face, 0 standing across it, below 0 turned over); `None` when it has no area.
+pub(crate) fn lean(pos: &[DVec3], t: [u32; 3], normal: DVec3) -> Option<f64> {
+    let [a, b, c] = t.map(|i| pos[i as usize]);
+    let n = (b - a).cross(c - a);
+    let l = n.length();
+    (l > 0.0).then(|| n.dot(normal) / l)
+}
+
+/// Flip the diagonals of the triangles standing off their face ([`face_triangles`]). Each
+/// flip replaces two triangles by two whose least lean is greater than theirs, so the leans
+/// of the face, sorted, rise with every flip and no triangulation comes back: it ends, and
+/// the bound on the passes is only a guard.
+fn lay_down(
+    pos: &[DVec3],
+    pts: &[DVec2],
+    normal: DVec3,
+    boundary: &BTreeSet<(u32, u32)>,
+    tris: &mut [[u32; 3]],
+) {
+    let leans = |t: [u32; 3]| lean(pos, t, normal).unwrap_or(1.0);
+    let ccw = |t: [u32; 3]| {
+        let [a, b, c] = t.map(|x| pts[x as usize]);
+        crate::sketch::orient(a, b, c) > 0.0
+    };
+    for _ in 0..4 * tris.len() + 16 {
+        let mut flipped = false;
+        'standing: for i in 0..tris.len() {
+            if leans(tris[i]) > STANDING {
+                continue;
+            }
+            for k in 0..3 {
+                let (p, q, r) = (tris[i][k], tris[i][(k + 1) % 3], tris[i][(k + 2) % 3]);
+                if boundary.contains(&undirected(p, q)) {
+                    continue;
+                }
+                // The triangle across the diagonal walks it the other way: (q, p, s).
+                let Some((j, m)) = (0..tris.len()).filter(|&j| j != i).find_map(|j| {
+                    (0..3)
+                        .find(|&m| tris[j][m] == q && tris[j][(m + 1) % 3] == p)
+                        .map(|m| (j, m))
+                }) else {
+                    continue;
+                };
+                let s = tris[j][(m + 2) % 3];
+                // The quad p, s, q, r (counter-clockwise) cut the other way, along s-r.
+                let (n1, n2) = ([p, s, r], [s, q, r]);
+                if !ccw(n1) || !ccw(n2) {
+                    continue;
+                }
+                let (Some(l1), Some(l2)) = (lean(pos, n1, normal), lean(pos, n2, normal)) else {
+                    continue;
+                };
+                if l1.min(l2) > leans(tris[i]).min(leans(tris[j])) {
+                    tris[i] = n1;
+                    tris[j] = n2;
+                    flipped = true;
+                    break 'standing;
+                }
+            }
+        }
+        if !flipped {
+            return;
+        }
+    }
+}
+
 /// Where a solid came from, so collapsing it can return its footprint to that sketch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
@@ -665,16 +800,8 @@ impl Object {
         let mut face_ids = Vec::new();
         for (fi, (_, f)) in b.faces.iter().enumerate() {
             let loops: Vec<Vec<VertexId>> = f.loops().map(|l| b.loop_vertices(l)).collect();
-            let flat: Vec<VertexId> = loops.iter().flatten().copied().collect();
-            let ring2 = |l: &Vec<VertexId>| {
-                l.iter()
-                    .map(|v| f.plane.to_local(b.vertices[*v].pos))
-                    .collect::<Vec<_>>()
-            };
-            let outer = ring2(&loops[0]);
-            let holes: Vec<Vec<DVec2>> = loops[1..].iter().map(ring2).collect();
-            for t in triangulate(&outer, &holes)? {
-                triangles.push(t.map(|i| vindex[&flat[i as usize]]));
+            for t in face_triangles(b, f, &loops)? {
+                triangles.push(t.map(|v| vindex[&v]));
                 face_ids.push(fi as u32);
             }
         }

@@ -1,0 +1,150 @@
+{
+  "name": "2026-10-14-section-side-face-sliver-folded-over-the-plane",
+  "error": "section 1: the cut-away half is not closed (vector area 3.1234504172094092e-9 of 0.03950448997397314 m2; faces bend 3.33e-7, cap 0.794 m around) (lane 19c resumed, PROPTEST_CASES=100000 PROPTEST_RNG_SEED=2026102001, planes_on_a_nudged_face_drawn_on after 48,791 cases, shrunk; plane snapping off): a box's -x face split by a rectangle drawn across its edge, one corner of that face pushed 1 micrometre into the box and another moved 74 nm and 0.88 micrometres along it, no autofold; the side face's tessellation clipped an ear 0.34 nm wide whose corners lay 74 nm apart across the face, and that triangle lay folded flat in the plane over the end face, so the flipped plane's chords wound -1 round it",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.125,
+      "h": 0.125
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.5
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "face",
+        "object": 1,
+        "face": 6
+      },
+      "points": [
+        [
+          0.0,
+          -0.019829579905211336,
+          0.19773446874146045
+        ],
+        [
+          0.0,
+          0.044829579905211345,
+          0.19773446874146045
+        ],
+        [
+          0.0,
+          0.044829579905211345,
+          0.34528434935936764
+        ],
+        [
+          0.0,
+          -0.019829579905211336,
+          0.34528434935936764
+        ]
+      ],
+      "closed": true
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          0.125,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          1e-06,
+          0.0,
+          0.0
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "transform_geometry",
+      "object": 1,
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          3.440510734037456e-10,
+          7.392762301302859e-08,
+          8.752609969823756e-07
+        ]
+      },
+      "autofold": false
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        1.0,
+        -0.0,
+        -0.0
+      ]
+    }
+  ]
+}

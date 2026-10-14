@@ -346,28 +346,19 @@ fn node_point(b: &Brep, dist: &Distances, n: Node) -> DVec3 {
     pl + (ph - pl) * (dl / (dl - dh))
 }
 
-/// A face's triangles, in the face's own turn: the tessellator's, in the face's own frame,
-/// exactly the ones `Object::tri_solid` measures the solid by. For a face the tessellator
-/// refuses (a committed solid has none: the validator refuses such a solid first), a fan from
-/// the first corner of each loop. Either way they are a 2-chain whose boundary is the face's
-/// loops (every diagonal is walked once each way), which is all the cut needs.
+/// A face's triangles, in the face's own turn: exactly the ones `Object::tri_solid` measures
+/// the solid by ([`crate::object::face_triangles`]: the tessellator's, in the face's own
+/// frame, with no triangle standing off the face). For a face the tessellator refuses (a
+/// committed solid has none: the validator refuses such a solid first), a fan from the first
+/// corner of each loop. Either way they are a 2-chain whose boundary is the face's loops
+/// (every diagonal is walked once each way), which is all the cut needs.
 fn face_triangles(b: &Brep, f: &Face, loops: &[Vec<VertexId>]) -> Vec<[VertexId; 3]> {
-    let flat: Vec<VertexId> = loops.iter().flatten().copied().collect();
-    let rings: Vec<Vec<DVec2>> = loops
-        .iter()
-        .map(|l| {
-            l.iter()
-                .map(|v| f.plane.to_local(b.vertices[*v].pos))
-                .collect()
-        })
-        .collect();
-    match sawhorse_tessellate::triangulate(&rings[0], &rings[1..]) {
-        Ok(ts) => ts.iter().map(|t| t.map(|i| flat[i as usize])).collect(),
-        Err(_) => loops
+    crate::object::face_triangles(b, f, loops).unwrap_or_else(|_| {
+        loops
             .iter()
             .flat_map(|l| (1..l.len().saturating_sub(1)).map(move |i| [l[0], l[i], l[i + 1]]))
-            .collect(),
-    }
+            .collect()
+    })
 }
 
 /// What one triangle keeps ([`clip_triangle`]).
@@ -2289,6 +2280,12 @@ mod tests {
                 include_str!("../tests/repro/2026-10-14-section-poked-corner-facets.json"),
             ),
             (
+                "side face sliver folded over the plane",
+                include_str!(
+                    "../tests/repro/2026-10-14-section-side-face-sliver-folded-over-the-plane.json"
+                ),
+            ),
+            (
                 "tie rule on an imprinted tilted face",
                 include_str!(
                     "../tests/repro/2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json"
@@ -2581,6 +2578,91 @@ mod tests {
             }
         }
         assert!(tried > 200, "{tried}");
+    }
+
+    /// Lane 19c, resumed: no triangle of a face stands off it. In the resumed run's find
+    /// (`2026-10-14-section-side-face-sliver-folded-over-the-plane`) the tessellator clips an
+    /// ear 0.34 nm wide in the side face's frame across a nearly straight run of its corners,
+    /// whose corners lie 74 nm apart across the face: a triangle standing across its face
+    /// (cosine 0.005 with it) that lies folded flat over the end face. The face's triangles
+    /// ([`crate::object::face_triangles`]) lay it down by flipping diagonals: none leans more
+    /// than 60 degrees off its face, they still cover the face exactly once in its own frame
+    /// (each counter-clockwise, their areas summing to the face's), and every diagonal is
+    /// walked once each way, so their boundary is the face's loops. A planar face keeps the
+    /// tessellator's triangles exactly.
+    #[test]
+    fn no_triangle_stands_off_its_face() {
+        let d = replay(include_str!(
+            "../tests/repro/2026-10-14-section-side-face-sliver-folded-over-the-plane.json"
+        ));
+        let m = d.model();
+        let (_, o) = m.objects()[0];
+        let b = o.brep();
+        let mut stood = 0;
+        for (_, f) in b.faces() {
+            let loops: Vec<Vec<VertexId>> = f.loops().map(|l| b.loop_vertices(l)).collect();
+            let flat: Vec<VertexId> = loops.iter().flatten().copied().collect();
+            let pos: Vec<DVec3> = flat.iter().map(|v| b.vertices[*v].pos).collect();
+            let pts: Vec<DVec2> = pos.iter().map(|p| f.plane.to_local(*p)).collect();
+            let rings: Vec<Vec<DVec2>> = loops
+                .iter()
+                .scan(0, |at, l| {
+                    let r = pts[*at..*at + l.len()].to_vec();
+                    *at += l.len();
+                    Some(r)
+                })
+                .collect();
+            let raw = sawhorse_tessellate::triangulate(&rings[0], &rings[1..]).unwrap();
+            let standing = |t: &[u32; 3]| {
+                crate::object::lean(&pos, *t, f.plane.normal)
+                    .is_some_and(|c| c <= crate::object::STANDING)
+            };
+            stood += raw.iter().filter(|t| standing(t)).count();
+            let tris = crate::object::face_triangles(b, f, &loops).unwrap();
+            assert_eq!(tris.len(), raw.len());
+            let index = |v: VertexId| flat.iter().position(|x| *x == v).unwrap() as u32;
+            let mut area = 0.0;
+            let mut walked: BTreeMap<(VertexId, VertexId), i32> = BTreeMap::new();
+            for t in &tris {
+                let ti = t.map(index);
+                assert!(!standing(&ti), "{t:?} stands off its face");
+                let [p, q, r] = ti.map(|i| pts[i as usize]);
+                assert!(crate::sketch::orient(p, q, r) > 0.0);
+                area += sawhorse_tessellate::signed_area(&[p, q, r]);
+                for k in 0..3 {
+                    *walked.entry((t[k], t[(k + 1) % 3])).or_default() += 1;
+                    *walked.entry((t[(k + 1) % 3], t[k])).or_default() -= 1;
+                }
+            }
+            let face: f64 = rings
+                .iter()
+                .map(|r| sawhorse_tessellate::signed_area(r))
+                .sum();
+            assert!(
+                (area - face).abs() <= 1e-15 * (1.0 + face.abs()),
+                "{area} {face}"
+            );
+            let mut edges: BTreeMap<(VertexId, VertexId), i32> = BTreeMap::new();
+            for l in &loops {
+                for i in 0..l.len() {
+                    let (p, q) = (l[i], l[(i + 1) % l.len()]);
+                    *edges.entry((p, q)).or_default() += 1;
+                    *edges.entry((q, p)).or_default() -= 1;
+                }
+            }
+            walked.retain(|_, n| *n != 0);
+            edges.retain(|_, n| *n != 0);
+            assert_eq!(walked, edges, "the triangles' boundary is the face's loops");
+            if raw.iter().all(|t| !standing(t)) {
+                let raw: Vec<[VertexId; 3]> =
+                    raw.iter().map(|t| t.map(|i| flat[i as usize])).collect();
+                assert_eq!(
+                    tris, raw,
+                    "a face with nothing standing keeps its triangles"
+                );
+            }
+        }
+        assert!(stood > 0, "the find's tessellation has a standing triangle");
     }
 
     /// Lane 19c: a planar face cut by the plane gives one chord, from the crossing on one of
