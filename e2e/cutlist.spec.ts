@@ -10,6 +10,7 @@ import { IN, type } from "./helpers";
 import { buildBookshelf, component, escapeAll, hint, ready } from "./bookshelf-build";
 import { csvCellText, parseCsv } from "../src/cutlist/csv";
 import { buildShz, openShz } from "./shz";
+import { dragPanelTo, layoutOf, tableClipped } from "./cutlist-fit";
 import { UNCOUNTED_NOTES } from "../src/cutlist/format";
 
 async function cutRows(page: Page): Promise<string[][]> {
@@ -187,10 +188,14 @@ test("the cut list fits the 300 px pane at every rounding, unit and grain, with 
   await dialog.getByRole("button", { name: "Set stock" }).click();
   await expect(row.locator("td.mat")).toHaveAttribute("title", "Quartersawn white oak, select and better, kiln dried");
 
+  // Lane 20b: the panel is 360 px by default; 300 (the mock's, the narrowest) by its edge.
   const side = await page.locator(".side").boundingBox();
-  expect(Math.round(side!.width)).toBe(300);
-  const fits = () =>
-    page.evaluate(() => {
+  expect(Math.round(side!.width)).toBe(360);
+  await dragPanelTo(page, 300);
+  await expect.poll(() => layoutOf(page)).toBe("two-line");
+  // Nothing scrolls sideways, and (lane 20b) nothing in the table is cut off or ends in "...".
+  const fits = async () => {
+    const over = await page.evaluate(() => {
       const els = [".cutlist", ".cutlist .tablewrap", "#pane-cutlist"].map((q) => document.querySelector(q) as HTMLElement);
       const over = els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => `${e.className || e.id}: ${e.scrollWidth} > ${e.clientWidth}`);
       const t = document.querySelector(".cutlist table") as HTMLElement;
@@ -198,6 +203,8 @@ test("the cut list fits the 300 px pane at every rounding, unit and grain, with 
       if (t.getBoundingClientRect().width > w.getBoundingClientRect().width + 0.5) over.push(`table ${t.getBoundingClientRect().width} > ${w.getBoundingClientRect().width}`);
       return over;
     });
+    return [...over, ...(await tableClipped(page))];
+  };
   const grains = [/along the length/, /across/, /No grain/];
   for (const rounding of ["follow", "sixteenth", "thirty_second", "half_mm"]) {
     await page.getByLabel("Round sizes to").selectOption(rounding);
@@ -254,10 +261,11 @@ test("long part names and the reason a part is not counted read in full; the pan
   await openShz(page, shz, 2, "lane20.shz");
   await page.getByRole("tab", { name: "Cut list" }).click();
   const side = page.locator("aside.side").first();
-  expect(Math.round((await side.boundingBox())!.width), "the default width").toBe(300);
+  expect(Math.round((await side.boundingBox())!.width), "the default width").toBe(360);
   // Read in full: nothing in the Part cell is clipped (no ellipsis, no overflow), and each
   // line lies inside the panel.
-  const clipped = () =>
+  const clipped = async () => [...(await partClipped()), ...(await tableClipped(page))];
+  const partClipped = () =>
     page.evaluate(() => {
       const out: string[] = [];
       const pane = document.querySelector("aside.side")!.getBoundingClientRect();
@@ -292,7 +300,7 @@ test("long part names and the reason a part is not counted read in full; the pan
   await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(600);
   expect(await clipped(), "wide").toEqual([]);
   await wide.click();
-  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(300);
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(360);
   // The left edge drags (and the width is kept for next time).
   const grip = page.getByTestId("side-grip");
   const g = (await grip.boundingBox())!;
@@ -300,15 +308,19 @@ test("long part names and the reason a part is not counted read in full; the pan
   await page.mouse.down();
   await page.mouse.move(g.x + g.width / 2 - 150, g.y + 200, { steps: 5 });
   await page.mouse.up();
-  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(450);
-  await expect(grip).toHaveAttribute("aria-valuenow", "450");
-  expect(await page.evaluate(() => localStorage.getItem("sawhorse.sideWidth"))).toBe("450");
-  // The keyboard moves it too; double-click puts it back.
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(510);
+  await expect(grip).toHaveAttribute("aria-valuenow", "510");
+  expect(await page.evaluate(() => localStorage.getItem("sawhorse.sideWidth"))).toBe("510");
+  // The keyboard moves it too (Home: the narrowest, 300); double-click puts it back to 360.
   await grip.focus();
   await page.keyboard.press("ArrowRight");
-  await expect(grip).toHaveAttribute("aria-valuenow", "430");
+  await expect(grip).toHaveAttribute("aria-valuenow", "490");
+  await page.keyboard.press("Home");
+  await expect(grip).toHaveAttribute("aria-valuenow", "300");
+  expect(await clipped(), "at 300 px").toEqual([]);
   await grip.dblclick();
-  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(300);
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(360);
+  expect(await page.evaluate(() => localStorage.getItem("sawhorse.sideWidth")), "the usual width is not stored").toBeNull();
   // The model still fills the rest of the window.
   const vp = (await page.locator("main.vp").boundingBox())!;
   expect(vp.width).toBeGreaterThan(900);

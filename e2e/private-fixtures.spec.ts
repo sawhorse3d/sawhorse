@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import path from "node:path";
 import { parseSkp, type Definition, type SkpModel } from "openskp";
 import { IN, solids, type Solid } from "./helpers";
+import { checkCutListFits, dragPanelTo, panelWidth } from "./cutlist-fit";
 
 // Real SketchUp-authored files through Sawhorse's own .skp import (File > Import's input,
 // src/io/skp.ts, the kernel worker), checked against what is in each file. The files are
@@ -673,6 +674,47 @@ test.describe("private SketchUp fixtures: furniture that is not solid (lane 15)"
       expect.soft(errors, "no page errors or console errors").toEqual([]);
     });
   }
+});
+
+// Lane 20b: the lane-20 verifier found the gondola's Cut list cut short at 300 px and at Wide:
+// "22 13/16" as "22 13/...", a part's notes ending in "shap...", and names broken inside
+// words four or five lines tall in a 35 px Part column. At 300 px (dragged), the usual 360
+// px and 600 px (Wide), nothing in the table is wider than its box or ends in an ellipsis,
+// "22 13/16" and "(3D)shelf2B" are whole tokens, and the layout is two lines a part under
+// 440 px, one line (Part at least 120 px) at 600. Screenshots: <captures>/<prefix>private-
+// fixture-cutlist-gondola-<width>.png.
+test.describe("private SketchUp fixtures: the Cut list reads in full (lane 20b)", () => {
+  test.skip(!dir, "SAWHORSE_PRIVATE_FIXTURES is not set (or the directory does not exist)");
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const GONDOLA = "openskp-repo/gondola_v20.skp";
+  test("gondola_v20.skp: the Cut list reads in full at 300, 360 and 600 px", async ({ page }, info) => {
+    test.skip(!have(GONDOLA), `${GONDOLA} is not in the fixtures directory`);
+    test.setTimeout(120_000);
+    const errors = watchErrors(page);
+    await open(page);
+    const { refused, title } = await importFile(page, GONDOLA);
+    expect(refused, `IMPORT: refused (${title})`).toBe(false);
+    await page.getByRole("button", { name: "Close the import report" }).click();
+    await page.getByRole("tab", { name: "Cut list" }).click();
+    await expect(page.locator(".cutlist table")).toBeVisible();
+    const opts = {
+      tokens: ["22 13/16", "(3D)shelf2B", "Agrupar#8", "149 9/16", "13/16"],
+      outputPath: (n: string) => info.outputPath(n),
+      capturesDir: capturesOff ? undefined : capturesDir,
+      capturePrefix: `${capturePrefix}private-fixture-`,
+    };
+    expect(await panelWidth(page), "the usual width").toBe(360);
+    await checkCutListFits(page, { ...opts, layout: "two-line", shot: "cutlist-gondola-360" });
+    await dragPanelTo(page, 300);
+    await checkCutListFits(page, { ...opts, layout: "two-line", shot: "cutlist-gondola-300" });
+    await page.locator(".cutlist .cut-controls").getByRole("button", { name: "Wide" }).click();
+    await expect.poll(() => panelWidth(page)).toBe(600);
+    await checkCutListFits(page, { ...opts, layout: "one-line", shot: "cutlist-gondola-600" });
+    // The notes under a name read in full (the verifier saw "... · shap..."): every note of
+    // (3D)shelf2B is written, the last one included.
+    await expect(page.locator('.cutlist tbody tr[data-part="(3D)shelf2B"] td.part small').first()).toContainText("shaped · handed · scaled");
+    expect(errors, "no page errors or console errors").toEqual([]);
+  });
 });
 
 // ---- part 2: every .skp under the directory ------------------------------------------------

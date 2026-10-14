@@ -6,9 +6,10 @@
 // model (Shift picks a range of rows, Ctrl toggles one); right-click sets the grain or the
 // stock of the row, or of every picked row at once. The Nesting button opens the Nesting
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
-import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
 import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, UNCOUNTED_NOTES, type RoundingChoice } from "../cutlist/format";
+import { nameRuns, sizeChars, sizePieces } from "../cutlist/wrap";
 
 export interface CutListPaneProps {
   list: CutList | null;
@@ -53,6 +54,9 @@ export interface CutListPaneProps {
   wide?: boolean;
   /** Lane 20: switch the panel's wide mode (the Wide button); none hides the button. */
   onWide?: (wide: boolean) => void;
+  /** Lane 20b: the panel's width as set (px), so the table's layout follows a drag, a key or
+   * Wide before the browser paints (the width itself is measured). */
+  panelWidth?: number;
 }
 
 /** A stable key for a row (its part and its size). */
@@ -96,34 +100,114 @@ export function pickRows(rows: CutRow[], selected: Set<string>, clicked: CutRow,
   return rows.filter((r) => next.has(rowKey(r)));
 }
 
-/** Widest a size column grows (characters); longer sizes end in an ellipsis, in full in
- * their tooltip. Sixteenths up to 99 in fit ("99 15/16", 8; lengths to "999 15/16"), and
- * metres of mm ("2438.5"). */
-const SIZE_CAP: [number, number, number] = [7, 8, 9];
+/** Widest a size column grows (characters) before a longer size wraps between its whole
+ * number and its fraction ("113" over "31/32"). Sixteenths up to 99 in fit on one line in
+ * every column ("22 13/16", "99 15/16": 8; lengths to "999 15/16"), and metres of mm
+ * ("2438.5"). A column is never narrower than the widest unit of a size in it, so no unit
+ * is ever cut. */
+const SIZE_CAP: [number, number, number] = [8, 8, 9];
 /** A numeric cell's side padding (6 + 3 px) plus a pixel, and the grain mark beside a size (px). */
 const PAD = 10;
 const MARK = 11;
 
-/** Fixed column widths for the pane (`table-layout: fixed`): Qty and the sizes as wide as
- * their longest value in this list (in `ch`, the table's monospace digits), capped; Part
- * and Material share what is left and end in an ellipsis. So the table never scrolls
- * sideways in the 300 px pane, at any rounding, units or grain. */
+/** Lane 20b: the Part column is never narrower than this (px) with the sizes beside it;
+ * where it would be, each part takes two lines (its name, then its sizes). */
+export const PART_MIN = 120;
+/** Lane 20b: a panel narrower than this (px) shows each part on two lines. */
+export const STACK_BELOW = 440;
+
+/** Fixed column widths for the pane: Qty and the sizes as wide as their longest value in
+ * this list (in `ch`, the table's monospace digits), a size column capped at `SIZE_CAP` but
+ * never narrower than the widest unit of a size ("13/16"), Qty at least "QTY" wide; Part and
+ * Material share what is left. So the table never scrolls sideways and no value is cut, at
+ * any rounding, units or grain. */
 export function columnWidths(list: CutList, style: ReturnType<typeof listStyle>): string[] {
   const r = list.rounding;
-  // Qty: three digits ("QTY" is as wide); a thousand pieces would end in an ellipsis.
-  const qty = 3;
-  const sizes = [0, 1, 2].map((k) => Math.min(SIZE_CAP[k], Math.max(1, ...list.rows.map((x) => formatSteps(x.steps[k], r, style).length))));
+  const qty = Math.max(3, ...list.rows.map((x) => String(x.qty).length));
+  const sizes = [0, 1, 2].map((k) => Math.max(1, ...list.rows.map((x) => sizeChars(formatSteps(x.steps[k], r, style), SIZE_CAP[k]))));
   const mark = (k: number) => (k === 1 && list.rows.some((x) => x.grain === "width")) || (k === 2 && list.rows.some((x) => x.grain === "length")) ? MARK : 0;
   return [`calc(${qty}ch + ${PAD}px)`, ...sizes.map((n, k) => `calc(${n}ch + ${PAD + mark(k)}px)`)];
 }
 
-/** Lane 20: the Material column's width (px) in a table `table` px wide whose number
- * columns take `numbers` px: a third of what they leave (at least 28 px), so the Part column
- * (the other two thirds) has room for names to wrap between words in the 300 px pane. A long
- * material ends in an ellipsis, in full in its tooltip. (A `calc()` with a percentage would
- * say this in CSS, but a fixed-layout table treats such a column width as auto.) */
+/** The Material column's width (px) in a table `table` px wide whose number columns take
+ * `numbers` px: a third of what they leave, at least 28 px, and never so much that the Part
+ * column (the rest) falls under `PART_MIN`. (A `calc()` with a percentage would say this in
+ * CSS, but a fixed-layout table treats such a column width as auto.) */
 export function materialWidth(table: number, numbers: number): number {
-  return Math.max(28, Math.floor((table - numbers) / 3));
+  const rest = table - numbers;
+  return Math.max(28, Math.min(Math.floor(rest / 3), rest - PART_MIN));
+}
+
+/** Lane 20b: each part on two lines (name, then sizes) in a panel `panel` px wide: under
+ * `STACK_BELOW`, or when the Part column would be under `PART_MIN` beside the sizes. */
+export function stacked(panel: number, table: number, numbers: number): boolean {
+  return panel < STACK_BELOW || table - numbers - materialWidth(table, numbers) < PART_MIN;
+}
+
+/** Elements of `root` whose content is wider than their box (cut off, or spilling out). */
+export function overflowing(root: Element): Element[] {
+  const out: Element[] = [];
+  for (const el of Array.from(root.querySelectorAll("*"))) if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 0.5) out.push(el);
+  return out;
+}
+
+/** A name or a material, wrapping between words and at the joints of `nameBreaks` (a
+ * `<wbr>`), a token of 30 or more characters anywhere as the last resort (`.long`). */
+function Wrapped({ text }: { text: string }) {
+  return (
+    <>
+      {nameRuns(text).map((run, i) => {
+        const pieces = run.pieces.map((x, k) => (
+          <Fragment key={k}>
+            {k ? <wbr /> : null}
+            {x}
+          </Fragment>
+        ));
+        return run.long ? (
+          <span key={i} className="long">
+            {pieces}
+          </span>
+        ) : (
+          <Fragment key={i}>{pieces}</Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+/** A size: its whole number and its fraction each kept on one line ("22", "13/16"), the
+ * grain mark kept with the last. */
+function Size({ text, mark }: { text: string; mark: ReactNode }) {
+  const units = sizePieces(text);
+  return (
+    <span className="v">
+      {units.map((u, k) => (
+        <Fragment key={k}>
+          {k ? " " : null}
+          <span className="u">
+            {u}
+            {k === units.length - 1 ? mark : null}
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
+/** A part's notes, " · " between them; a line breaks between notes (the dot stays with the
+ * note before it) or between the words of one. */
+function Notes({ notes }: { notes: string[] }) {
+  return (
+    <small>
+      {notes.map((x, k) => (
+        <Fragment key={k}>
+          {k ? " " : null}
+          <span className="nt">{x}</span>
+          {k < notes.length - 1 ? <span className="sep"> ·</span> : null}
+        </Fragment>
+      ))}
+    </small>
+  );
 }
 
 /** Rows the pane draws at first, and how many more each "Show more" adds (lane 16). */
@@ -180,28 +264,81 @@ export function CutListPane(p: CutListPaneProps) {
   const [shown, setShown] = useState(CUT_ROWS_SHOWN);
   const rowCount = list?.rows.length ?? 0;
   const widths = useMemo(() => (list ? columnWidths(list, style) : []), [list, style]);
-  // Lane 20: the Material column's width, from the table's width as laid out (and again
-  // whenever the panel is widened); until it is measured, Part and Material share equally.
+  // Lane 20b: how the table is laid out, from the panel's width as laid out (and again
+  // whenever the panel is widened or narrowed, or the fonts arrive). One line per part when
+  // the panel is 440 px or wider, the Part column at least 120 px beside the sizes and every
+  // cell fits; otherwise two lines per part (the name across the table, then the sizes).
+  // `mat`: the Material column's width (px) on one line; until it is measured, Part and
+  // Material share equally. Measured before the browser paints, so neither layout flashes.
+  const rootRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
-  const [matPx, setMatPx] = useState<number | null>(null);
-  useEffect(() => {
+  const [fit, setFit] = useState<{ stack: boolean; mat: number | null }>({ stack: false, mat: null });
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  // The width and contents where one line did not fit: two lines there, until either changes.
+  const forced = useRef<string | null>(null);
+  const contentKey = `${widths.join(",")}|${rowCount}|${shown}|${list?.rows.map((x) => x.name.length).join(",") ?? ""}`;
+  const keyRef = useRef(contentKey);
+  keyRef.current = contentKey;
+  const measure = useCallback(() => {
     const t = tableRef.current;
-    if (!t || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      const ths = t.querySelectorAll("thead th");
-      if (ths.length < 6 || t.clientWidth <= 0) return;
-      let numbers = 0;
-      for (let k = 1; k <= 4; k++) numbers += (ths[k] as HTMLElement).offsetWidth;
-      setMatPx(materialWidth(t.clientWidth, numbers));
+    const root = rootRef.current;
+    if (!t || !root) return;
+    const host = (root.closest("aside") as HTMLElement | null) ?? root;
+    const panel = Math.round(host.getBoundingClientRect().width);
+    if (panel <= 0) return;
+    const cur = fitRef.current;
+    const set = (next: { stack: boolean; mat: number | null }) => {
+      if (next.stack === cur.stack && next.mat === cur.mat) return;
+      fitRef.current = next;
+      setFit(next);
     };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(t);
-    return () => ro.disconnect();
-  }, [widths, list === null, empty]);
+    const key = `${panel}|${keyRef.current}`;
+    if (panel < STACK_BELOW || forced.current === key) return set({ stack: true, mat: null });
+    // Lay it out on one line first (measured again once it is), then check that it fits.
+    if (cur.stack) return set({ stack: false, mat: null });
+    const ths = t.querySelectorAll("thead th");
+    if (ths.length < 6 || t.clientWidth <= 0) return;
+    let numbers = 0;
+    for (let k = 1; k <= 4; k++) numbers += (ths[k] as HTMLElement).offsetWidth;
+    if (stacked(panel, t.clientWidth, numbers)) {
+      forced.current = key;
+      return set({ stack: true, mat: null });
+    }
+    const mat = materialWidth(t.clientWidth, numbers);
+    if (mat !== cur.mat) return set({ stack: false, mat });
+    if (overflowing(t).length) {
+      forced.current = key;
+      set({ stack: true, mat: null });
+    }
+  }, []);
+  useLayoutEffect(measure, [measure, fit, list, widths, shown, empty, p.panelWidth]);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    // A frame later, so a layout change it makes is not part of the same observation.
+    let frame = 0;
+    const later = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    const ro = new ResizeObserver(later);
+    ro.observe(root);
+    const host = root.closest("aside");
+    if (host) ro.observe(host);
+    if (tableRef.current) ro.observe(tableRef.current);
+    let live = true;
+    void (typeof document !== "undefined" ? document.fonts?.ready : undefined)?.then(() => live && later());
+    return () => {
+      live = false;
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [measure, list === null, empty]);
+  const tableStyle = { "--cut-q": widths[0], "--cut-t": widths[1], "--cut-w": widths[2], "--cut-l": widths[3] } as CSSProperties;
 
   return (
-    <div className="cutlist" data-testid="cutlist">
+    <div className="cutlist" data-testid="cutlist" ref={rootRef}>
       <div className="cut-controls">
         <label title="How finished sizes are rounded">
           <span>Round to</span>
@@ -275,25 +412,39 @@ export function CutListPane(p: CutListPaneProps) {
       ) : (
         <>
           <div className="tablewrap">
-            <table aria-label="Cut list" className="fit" ref={tableRef}>
+            <table aria-label="Cut list" role="table" className={fit.stack ? "fit stack" : "fit"} data-layout={fit.stack ? "two-line" : "one-line"} ref={tableRef} style={tableStyle}>
               <colgroup>
                 <col className="c-part" />
                 {widths.map((w, k) => (
                   <col key={k} style={{ width: w }} />
                 ))}
-                <col className="c-mat" style={matPx === null ? undefined : { width: `${matPx}px` }} />
+                <col className="c-mat" style={fit.mat === null ? undefined : { width: `${fit.mat}px` }} />
               </colgroup>
-              <thead>
-                <tr>
-                  <th>Part</th>
-                  <th className="n">Qty</th>
-                  <th className="n">T</th>
-                  <th className="n">W</th>
-                  <th className="n">L</th>
-                  <th>Material</th>
+              {/* Explicit roles: the two-line layout lays rows out as flex boxes, and the table
+                  stays a table to a screen reader whatever its CSS display. */}
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" className="part">
+                    Part
+                  </th>
+                  <th role="columnheader" className="n">
+                    Qty
+                  </th>
+                  <th role="columnheader" className="n">
+                    T
+                  </th>
+                  <th role="columnheader" className="n">
+                    W
+                  </th>
+                  <th role="columnheader" className="n">
+                    L
+                  </th>
+                  <th role="columnheader" className="mat">
+                    Material
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {list.rows.slice(0, shown).map((row) => {
                   const k = rowKey(row);
                   // Lane 20: the reason a part counts nowhere is written in full on a line of
@@ -308,6 +459,7 @@ export function CutListPane(p: CutListPaneProps) {
                   return (
                     <Fragment key={k}>
                       <tr
+                        role="row"
                         data-row={k}
                         data-part={row.name}
                         aria-selected={sel}
@@ -319,7 +471,7 @@ export function CutListPane(p: CutListPaneProps) {
                         onContextMenu={(e) => openMenu(e, row)}
                         title="Click to select its pieces in the model (Shift: a range of rows, Ctrl: one more). Right-click to set the grain or the stock of the picked rows."
                       >
-                        <td className="part" title={notes.length ? `${row.name} (${[why, ...notes.filter((x) => x !== "not counted")].filter(Boolean).join(", ")})` : row.name}>
+                        <td role="cell" className="part" title={notes.length ? `${row.name} (${[why, ...notes.filter((x) => x !== "not counted")].filter(Boolean).join(", ")})` : row.name}>
                           {p.onInclude ? (
                             <input
                               type="checkbox"
@@ -331,31 +483,36 @@ export function CutListPane(p: CutListPaneProps) {
                               onChange={(e) => p.onInclude?.([row], e.currentTarget.checked)}
                             />
                           ) : null}
-                          <span className="name">{row.name}</span>
-                          {notes.length ? <small>{notes.join(" · ")}</small> : null}
+                          <span className="name">
+                            <Wrapped text={row.name} />
+                          </span>
+                          {notes.length ? <Notes notes={notes} /> : null}
                         </td>
-                        <td className="n">{row.qty}</td>
+                        <td role="cell" className="n">
+                          {row.qty}
+                        </td>
                         {[0, 1, 2].map((k) => {
                           const t = formatSteps(row.steps[k], r, style);
                           const m = k ? mark(k as 1 | 2) : null;
                           return (
                             <td
                               key={k}
+                              role="cell"
                               className={m ? "n mk" : "n"}
                               data-nominal={k === 0 && nominalText(row) ? row.nominal : undefined}
                               title={k === 0 && nominalText(row) ? `${t} ${sizeUnit(r)} finished; board feet on ${nominalText(row)}` : t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}
                             >
-                              <span className="v">{t}</span>
-                              {m}
+                              <Size text={t} mark={m} />
                             </td>
                           );
                         })}
-                        <td className={`mat${row.stock_set ? " set" : ""}`} title={row.material ?? "No material or stock set"}>
-                          {materialText(row)}
+                        <td role="cell" className={`mat${row.stock_set ? " set" : ""}`} title={row.material ?? "No material or stock set"}>
+                          <Wrapped text={materialText(row)} />
                         </td>
                       </tr>
                       {why ? (
                         <tr
+                          role="row"
                           className={`why ${rowClass}`}
                           data-why-for={row.name}
                           aria-selected={sel}
@@ -363,7 +520,7 @@ export function CutListPane(p: CutListPaneProps) {
                           onClick={(e) => clickRow(e, row)}
                           onContextMenu={(e) => openMenu(e, row)}
                         >
-                          <td colSpan={6}>
+                          <td role="cell" colSpan={6}>
                             <small className="why">{why}</small>
                           </td>
                         </tr>

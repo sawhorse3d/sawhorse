@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
-import { columnWidths, CutListPane, materialWidth, pickRows, rowKey, type CutListPaneProps } from "./CutListPane";
+import { columnWidths, CutListPane, materialWidth, overflowing, PART_MIN, pickRows, rowKey, STACK_BELOW, stacked, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
 import { REPORT_COLUMNS, reportCells, UNCOUNTED_NOTES, uncountedNote } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
@@ -196,19 +196,76 @@ describe("Cut list pane fit (300 px)", () => {
     const list = bookshelf();
     // 3/4, 11 1/4, 71 1/4: 3, 6 and 6 characters; the grain mark beside W (the top) and L.
     expect(columnWidths(list, "fraction")).toEqual(["calc(3ch + 10px)", "calc(3ch + 10px)", "calc(6ch + 21px)", "calc(6ch + 21px)"]);
-    // Thirty-seconds over 100 in are capped; the full size is in the cell's tooltip.
+    // Thirty-seconds over 100 in are capped (they wrap between the whole number and the
+    // fraction); Qty is as wide as its longest count (lane 20b: 12345 was cut to "123...").
     const long = { ...list, rounding: "thirty_second" as const, rows: [{ ...list.rows[0], grain: "none" as const, qty: 12345, steps: [47, 3647, 3231] as [number, number, number] }] };
-    expect(columnWidths(long, "fraction")).toEqual(["calc(3ch + 10px)", "calc(7ch + 10px)", "calc(8ch + 10px)", "calc(9ch + 10px)"]);
-    // Lane 20: Material takes a third of what the numbers leave (28 px at least); Part, the rest.
+    expect(columnWidths(long, "fraction")).toEqual(["calc(5ch + 10px)", "calc(7ch + 10px)", "calc(8ch + 10px)", "calc(9ch + 10px)"]);
+    // Lane 20b: a size column is never narrower than a size's widest unit (a whole mm value).
+    const mm = { ...list, rounding: "half_mm" as const, rows: [{ ...list.rows[0], grain: "none" as const, steps: [2469137, 38, 4876] as [number, number, number] }] };
+    expect(columnWidths(mm, "fraction")).toEqual(["calc(3ch + 10px)", "calc(9ch + 10px)", "calc(2ch + 10px)", "calc(4ch + 10px)"]);
+    // Material takes a third of what the numbers leave (28 px at least), never leaving Part
+    // under 120 px when there is room for that; Part, the rest.
+    expect(PART_MIN).toBe(120);
     expect(materialWidth(275, 189)).toBe(28);
-    expect(materialWidth(275, 150)).toBe(41);
+    expect(materialWidth(275, 120)).toBe(35);
     expect(materialWidth(575, 150)).toBe(141);
+    expect(materialWidth(415, 240)).toBe(55);
     render(<CutListPane {...props({ list: long, rounding: "thirty_second" })} />);
     const cells = [...screen.getByText("Side").closest("tr")!.querySelectorAll("td")];
+    expect(cells[1].textContent).toBe("12345");
     expect(cells[3].textContent).toBe("113 31/32");
     expect(cells[3].getAttribute("title")).toBe("113 31/32 in");
     expect(cells[4].getAttribute("title")).toBeNull();
     expect(screen.getByRole("table", { name: "Cut list" }).className).toContain("fit");
+  });
+
+  // Lane 20b: nothing in the table ends in an ellipsis. A size wraps only between its whole
+  // number and its fraction; a name only between words or at a joint (a <wbr>); the notes
+  // between notes; under 440 px (or a Part column under 120 px) each part takes two lines.
+  it("lays a part out on two lines in a panel under 440 px, or where Part would be under 120 px", () => {
+    expect(STACK_BELOW).toBe(440);
+    expect(stacked(300, 276, 150)).toBe(true);
+    expect(stacked(439, 415, 150)).toBe(true);
+    expect(stacked(440, 416, 150)).toBe(false);
+    expect(stacked(600, 576, 189)).toBe(false);
+    // Room for 28 px of Material but not for 120 px of Part beside 280 px of sizes.
+    expect(stacked(440, 416, 280)).toBe(true);
+  });
+
+  it("writes a size as units that never break, a name with breaks only at joints, notes that wrap between notes", () => {
+    const list = bookshelf();
+    list.rows[0] = { ...list.rows[0], name: "Agrupar#8 drawerFront", hidden: 1, sheet: true, steps: [365, 13, 16] as [number, number, number] };
+    render(<CutListPane {...props({ list })} />);
+    const row = screen.getByText("Agrupar#8 drawerFront").closest("tr")!;
+    // The name: text with a <wbr> before "#8" and before "Front"; the table keeps its roles.
+    expect(row.querySelector(".name")!.innerHTML).toBe("Agrupar<wbr>#8 drawer<wbr>Front");
+    expect(row.getAttribute("role")).toBe("row");
+    expect(row.querySelector("td")!.getAttribute("role")).toBe("cell");
+    // 365/16 in: "22 13/16", the whole number and the fraction each a unit of their own.
+    const t = row.querySelectorAll("td")[2];
+    expect(t.textContent).toBe("22 13/16");
+    expect([...t.querySelectorAll(".v .u")].map((x) => x.textContent)).toEqual(["22", "13/16"]);
+    // The notes: the dot stays with the note before it (.sep); the text reads as before.
+    const small = row.querySelector("td.part small")!;
+    expect(small.textContent).toBe("sheet · 1 hidden");
+    expect([...small.querySelectorAll(".nt")].map((x) => x.textContent)).toEqual(["sheet", "1 hidden"]);
+    expect([...small.querySelectorAll(".sep")].map((x) => x.textContent)).toEqual([" ·"]);
+    // jsdom lays nothing out: one line per part, nothing measured as cut off.
+    const table = screen.getByRole("table", { name: "Cut list" });
+    expect(table.getAttribute("data-layout")).toBe("one-line");
+    expect(overflowing(table)).toEqual([]);
+    // The column widths reach the two-line layout's CSS as custom properties.
+    expect(table.getAttribute("style")).toContain("--cut-q: calc(3ch + 10px)");
+  });
+
+  it("a grain mark stays with the last unit of its size", () => {
+    const list = bookshelf();
+    list.rows[0] = { ...list.rows[0], grain: "length", steps: [12, 182, 365] as [number, number, number] };
+    render(<CutListPane {...props({ list })} />);
+    const l = screen.getByText("Side").closest("tr")!.querySelectorAll("td")[4];
+    const units = [...l.querySelectorAll(".v .u")];
+    expect(units.map((x) => x.textContent)).toEqual(["22", "13/16"]);
+    expect(units[1].querySelector("i.grain")).not.toBeNull();
   });
 
   it("Part and Material carry their full text as a tooltip; tabular figures", () => {

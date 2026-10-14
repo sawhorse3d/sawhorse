@@ -16,9 +16,12 @@ import { TagsPane, type TagsPaneProps } from "./TagsPane";
 
 export type PaneId = "outliner" | "tags" | "cutlist" | "materials" | "styles" | "render" | "plugins";
 
-/** Lane 20: the panel's width (px): the mock's 300 by default, wider by dragging its left
- * edge (or the arrow keys on it) or with the Cut list's Wide button; kept on this device. */
-export const SIDE_WIDTH = 300;
+/** Lane 20b: the panel's usual width (px), 360 (the mock's 300 left the Cut list's Part
+ * column about 35 px); wider or narrower by dragging its left edge (or the arrow keys on it),
+ * wider with the Cut list's Wide button; kept on this device. */
+export const SIDE_WIDTH = 360;
+/** The narrowest the panel goes (px): the mock's width. */
+export const SIDE_MIN = 300;
 /** The Wide button's width (px), when the window has room for it. */
 export const SIDE_WIDE = 600;
 /** Where the width is kept (this browser or this desktop app only). */
@@ -29,12 +32,12 @@ const RAIL = 56;
 
 /** The widest the panel may be in a window this wide: room is left for the model. */
 export function maxSideWidth(windowWidth: number): number {
-  return Math.max(SIDE_WIDTH, Math.min(1000, windowWidth - RAIL - VIEW_ROOM));
+  return Math.max(SIDE_MIN, Math.min(1000, windowWidth - RAIL - VIEW_ROOM));
 }
 
 /** A width clamped to what the window allows, whole pixels. */
 export function clampSideWidth(w: number, windowWidth: number): number {
-  return Math.round(Math.min(maxSideWidth(windowWidth), Math.max(SIDE_WIDTH, Number.isFinite(w) ? w : SIDE_WIDTH)));
+  return Math.round(Math.min(maxSideWidth(windowWidth), Math.max(SIDE_MIN, Number.isFinite(w) ? w : SIDE_WIDTH)));
 }
 
 function storedSideWidth(): number {
@@ -130,7 +133,7 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
     const step = e.shiftKey ? 100 : 20;
     if (e.key === "ArrowLeft") setWidth(width + step);
     else if (e.key === "ArrowRight") setWidth(width - step);
-    else if (e.key === "Home") setWidth(SIDE_WIDTH);
+    else if (e.key === "Home") setWidth(SIDE_MIN);
     else if (e.key === "End") setWidth(maxSideWidth(windowWidth()));
     else return;
     e.preventDefault();
@@ -189,11 +192,11 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
         role="separator"
         aria-orientation="vertical"
         aria-label="Panel width"
-        aria-valuemin={SIDE_WIDTH}
+        aria-valuemin={SIDE_MIN}
         aria-valuemax={maxSideWidth(windowWidth())}
         aria-valuenow={width}
         tabIndex={0}
-        title="Drag to widen the panel (arrow keys too; double-click for the usual width)"
+        title="Drag to widen or narrow the panel (arrow keys too; double-click for the usual width)"
         data-testid="side-grip"
         onPointerDown={gripDown}
         onPointerMove={gripMove}
@@ -246,7 +249,7 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
         <h3>
           Cut list <small>from components</small>
         </h3>
-        <CutListPane {...cutlist} wide={wide} onWide={wideWidth > SIDE_WIDTH ? (w) => setWidth(w ? wideWidth : SIDE_WIDTH) : undefined} />
+        <CutListPane {...cutlist} wide={wide} panelWidth={width} onWide={wideWidth > SIDE_WIDTH ? (w) => setWidth(w ? wideWidth : SIDE_WIDTH) : undefined} />
       </section>
 
       <section className="pane" id="pane-materials" role="tabpanel" aria-labelledby="tab-materials" hidden={pane !== "materials"}>

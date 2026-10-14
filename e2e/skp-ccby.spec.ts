@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { checkCutListFits, dragPanelTo, panelWidth } from "./cutlist-fit";
 
 // Public SketchUp-authored fixtures (lane 15): five furniture models by Corynth (CC BY 4.0,
 // unmodified; tests/fixtures/skp-ccby/ATTRIBUTION.md), the kind of hand-made furniture most
@@ -111,3 +112,34 @@ for (const f of FILES) {
     expect(errors, "no page or console errors").toEqual([]);
   });
 }
+
+// Lane 20b: the Cut list reads in full at every panel width. At 300 px (the narrowest, set
+// by dragging the panel's edge) and the usual 360 px each part takes two lines (its name,
+// then its sizes); at 600 px (Wide) one, the Part column at least 120 px. Nothing in the
+// table is wider than its box or ends in an ellipsis, and "Rodeo#2" and each size are on
+// one line. SAWHORSE_CAPTURES (a directory) also receives the screenshots, named
+// <SAWHORSE_CAPTURE_PREFIX>cutlist-cupboard-<width>.png.
+test("cupboard.skp: the Cut list reads in full at 300, 360 and 600 px (lane 20b)", async ({ page }, info) => {
+  test.setTimeout(90_000);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  await page.goto("/?io=basic&theme=light&autosave=0");
+  await expect(page.locator("main.vp")).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
+  await page.getByTestId("file-input").setInputFiles(path.join(dir, "cupboard.skp"));
+  await expect(page.getByTestId("import-report")).toContainText("cupboard.skp", { timeout: 30_000 });
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist tbody tr[data-part]")).toHaveCount(4);
+  // The import report sits over the model, not the panel; closed, the shots show the model.
+  await page.getByRole("button", { name: "Close the import report" }).click();
+  const tokens = ["Rodeo#2", "8 15/16", "19 5/8", "2 15/16", "2 3/16"];
+  const opts = { tokens, outputPath: (n: string) => info.outputPath(n), capturesDir: process.env.SAWHORSE_CAPTURES, capturePrefix: process.env.SAWHORSE_CAPTURE_PREFIX };
+  expect(await panelWidth(page), "the usual width").toBe(360);
+  await checkCutListFits(page, { ...opts, layout: "two-line", shot: "cutlist-cupboard-360" });
+  await dragPanelTo(page, 300);
+  await checkCutListFits(page, { ...opts, layout: "two-line", shot: "cutlist-cupboard-300" });
+  await page.locator(".cutlist .cut-controls").getByRole("button", { name: "Wide" }).click();
+  await expect.poll(() => panelWidth(page)).toBe(600);
+  await checkCutListFits(page, { ...opts, layout: "one-line", shot: "cutlist-cupboard-600" });
+  expect(errors, "no page or console errors").toEqual([]);
+});
