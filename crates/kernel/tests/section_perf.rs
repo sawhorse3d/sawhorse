@@ -10,10 +10,14 @@
 //!
 //! - the lane-9 bookshelf of the section golden (`tests/golden/section.json`), its two planes;
 //! - when `SAWHORSE_PERF_OP` names a JSON file holding one kernel op (an import: the op the
-//!   app sends for a `.skp` file, written by the `.skp` import's own code), that model, cut by
-//!   four planes through its bounding box (a vertical plane across x, one across y, and plan
-//!   cuts at a third and a tenth of its height). The file is never part of the repository: the
-//!   models measured are private SketchUp files (docs/DEVELOPMENT.md, "Private fixtures").
+//!   app sends for a `.skp` file, written by the `.skp` import's own code with
+//!   `node scripts/skp-op.mjs <file.skp> <out.json>`), that model, cut by four planes through
+//!   its bounding box (a vertical plane across x, one across y, and plan cuts at a third and a
+//!   tenth of its height). The file is never part of the repository: the models measured are
+//!   private SketchUp files (docs/DEVELOPMENT.md). Cargo in WSL does not see a variable set
+//!   in Git Bash (`scripts/cargo.sh` forwards only its own list), so set it inside:
+//!   `wsl.exe bash -lc "cd <checkout>/crates && . ../scripts/env.sh && SAWHORSE_PERF_OP=<op>
+//!   cargo test --release -p sawhorse-kernel --test section_perf -- --ignored --nocapture"`.
 //!
 //! Each line gives the median of the runs in milliseconds, the caps and their area, so two
 //! kernels can be compared on the same machine and checked to cut the same thing.
