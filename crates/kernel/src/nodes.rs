@@ -1489,6 +1489,12 @@ impl Model {
 
     fn check_scene(&self, sc: &SceneDef) -> Result<(), KernelError> {
         check_name(&sc.name)?;
+        // Lane 16b: before the scene (and its list) is copied into the model.
+        crate::limits::count(
+            "tags hidden by one scene",
+            sc.hidden_tags.len(),
+            crate::limits::MAX_TAGS,
+        )?;
         let finite = sc
             .eye
             .iter()

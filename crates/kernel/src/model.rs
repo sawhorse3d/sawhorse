@@ -2520,6 +2520,41 @@ impl Model {
         id
     }
 
+    /// Lane 16b: an import's materials (those the model does not hold yet), scenes and
+    /// hidden tags, counted against the model's limits before any is added.
+    fn import_counts(
+        &self,
+        materials: &[MaterialDef],
+        scenes: &[SceneDef],
+        hidden_tags: &[String],
+    ) -> Result<(), crate::limits::LimitError> {
+        use crate::limits as l;
+        l::count("tags hidden by the import", hidden_tags.len(), l::MAX_TAGS)?;
+        l::count(
+            "scenes",
+            self.scenes.len().saturating_add(scenes.len()),
+            l::MAX_SCENES,
+        )?;
+        for sc in scenes {
+            l::count(
+                "tags hidden by one scene",
+                sc.hidden_tags.len(),
+                l::MAX_TAGS,
+            )?;
+        }
+        l::count("materials", materials.len(), l::MAX_MATERIALS)?;
+        let new: std::collections::BTreeSet<&str> = materials
+            .iter()
+            .map(|m| m.name.as_str())
+            .filter(|n| !self.materials.contains_key(*n))
+            .collect();
+        l::count(
+            "materials",
+            self.materials.len() + new.len(),
+            l::MAX_MATERIALS,
+        )
+    }
+
     /// [`Op::Import`]: everything or nothing (the caller validates and commits). Everything
     /// goes into the open context.
     #[allow(clippy::too_many_arguments)]
@@ -2536,6 +2571,8 @@ impl Model {
         // Lane 16: what the import expands to (component copies included), counted before
         // anything is built, whoever made the op (a reader, openskp, a plugin).
         import_budget(items, strokes, definitions, nodes)?;
+        // Lane 16b: and its materials, scenes and hidden tags against the model's limits.
+        self.import_counts(materials, scenes, hidden_tags)?;
         let mut notes = Vec::new();
         for m in materials {
             let mut mat = m.material();

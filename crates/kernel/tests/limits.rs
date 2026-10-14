@@ -271,3 +271,200 @@ fn twenty_thousand_disjoint_triangles_are_classified_in_linear_time() {
     assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
     assert!(built.solids.is_empty() && built.loose.is_some());
 }
+
+// ---- lane 16b: guides, dimensions, tags, materials, scenes, section planes, sheets ----------
+
+use sawhorse_kernel::limits::{self as l, LimitError};
+use sawhorse_kernel::snapshot::{SnapDimension, SnapGuide};
+
+/// A document holding `guides` guides and `dims` dimensions, restored from a snapshot (the
+/// way a file brings them; one op each would take minutes).
+fn annotated(guides: usize, dims: usize) -> Document {
+    let mut s = boxed().model().snapshot();
+    s.guides = (0..guides)
+        .map(|i| SnapGuide {
+            point: [(i % 1000) as f64 * 1e-3, (i / 1000) as f64 * 1e-3, 0.0],
+            dir: Some([0.0, 1.0, 0.0]),
+        })
+        .collect();
+    s.dimensions = (0..dims)
+        .map(|i| SnapDimension {
+            a: [i as f64 * 1e-4, 0.0, 0.0],
+            b: [i as f64 * 1e-4, 1.0, 0.0],
+            offset: [0.0, 0.0, 0.1],
+        })
+        .collect();
+    Document::open(s).unwrap()
+}
+
+fn count_error(e: &sawhorse_kernel::KernelError) -> Option<(&'static str, usize)> {
+    match e {
+        sawhorse_kernel::KernelError::Limit(LimitError::Count { what, max, .. }) => {
+            Some((what, *max))
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn guides_and_dimensions_stop_at_the_model_limit() {
+    let mut d = annotated(l::MAX_GUIDES, l::MAX_DIMENSIONS);
+    let h = d.hash();
+    let t = Instant::now();
+    let e = d
+        .apply(&op(
+            json!({"op":"add_guide","point":[0,0,0.5],"dir":[1,0,0]}),
+        ))
+        .unwrap_err();
+    assert!(t.elapsed().as_millis() < 2000, "{:?}", t.elapsed());
+    assert_eq!(count_error(&e), Some(("guides", 50_000)), "{e}");
+    assert!(e.to_string().contains("50001 guides; at most 50000"), "{e}");
+    let e = d
+        .apply(&op(
+            json!({"op":"add_dimension","a":[0,0,0],"b":[1,0,0],"offset":[0,0,0.1]}),
+        ))
+        .unwrap_err();
+    assert_eq!(count_error(&e), Some(("dimensions", 50_000)), "{e}");
+    assert_eq!(d.hash(), h, "nothing changed");
+    // One fewer: the next one goes in.
+    let mut d = annotated(l::MAX_GUIDES - 1, 0);
+    d.apply(&op(
+        json!({"op":"add_guide","point":[0,0,0.5],"dir":[1,0,0]}),
+    ))
+    .unwrap();
+    assert_eq!(d.model().snapshot().guides.len(), l::MAX_GUIDES);
+}
+
+#[test]
+fn a_snapshot_over_any_count_is_refused_before_it_is_built() {
+    let base = boxed().model().snapshot();
+    let over = |f: &dyn Fn(&mut sawhorse_kernel::snapshot::Snapshot)| {
+        let mut s = base.clone();
+        f(&mut s);
+        let t = Instant::now();
+        let e = Document::open(s).map(|_| ()).unwrap_err();
+        assert!(t.elapsed().as_millis() < 2000, "{:?}", t.elapsed());
+        count_error(&e).unwrap_or_else(|| panic!("not a count: {e}"))
+    };
+    let g = SnapGuide {
+        point: [0.0; 3],
+        dir: None,
+    };
+    assert_eq!(
+        over(&|s| s.guides = vec![g.clone(); l::MAX_GUIDES + 1]).0,
+        "guides"
+    );
+    let dm = SnapDimension {
+        a: [0.0; 3],
+        b: [1.0, 0.0, 0.0],
+        offset: [0.0; 3],
+    };
+    assert_eq!(
+        over(&|s| s.dimensions = vec![dm.clone(); l::MAX_DIMENSIONS + 1]).0,
+        "dimensions"
+    );
+    assert_eq!(
+        over(&|s| s.tags = (0..=l::MAX_TAGS).map(|i| (format!("t{i}"), true)).collect()).0,
+        "tags"
+    );
+    assert_eq!(
+        over(&|s| s.tag_colors = (0..=l::MAX_TAGS)
+            .map(|i| (format!("t{i}"), "#aabbcc".to_string()))
+            .collect())
+        .0,
+        "tag colours"
+    );
+    let mat = |i: usize| {
+        serde_json::from_value(json!({"name": format!("m{i}"), "color": [1, 2, 3, 255]})).unwrap()
+    };
+    assert_eq!(
+        over(&|s| s.materials = (0..=l::MAX_MATERIALS).map(mat).collect()).0,
+        "materials"
+    );
+    let scene = |i: usize| {
+        serde_json::from_value(
+            json!({"name": format!("s{i}"), "eye": [1,1,1], "target": [0,0,0], "up": [0,0,1]}),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        over(&|s| s.scenes = (0..=l::MAX_SCENES).map(scene).collect()).0,
+        "scenes"
+    );
+    let hiding: sawhorse_kernel::model::SceneDef = serde_json::from_value(
+        json!({"name": "s", "eye": [1,1,1], "target": [0,0,0], "up": [0,0,1], "hidden_tags": (0..=l::MAX_TAGS).map(|i| format!("t{i}")).collect::<Vec<_>>()}),
+    )
+    .unwrap();
+    assert_eq!(
+        over(&|s| s.scenes = vec![hiding.clone()]).0,
+        "tags hidden by one scene"
+    );
+}
+
+#[test]
+fn an_import_brings_no_more_materials_scenes_or_hidden_tags_than_the_model_holds() {
+    let mut d = boxed();
+    let h = d.hash();
+    let mats: Vec<_> = (0..=l::MAX_MATERIALS)
+        .map(|i| json!({"name": format!("m{i}"), "color": [1, 2, 3, 255]}))
+        .collect();
+    let t = Instant::now();
+    let e = d
+        .apply(&op(json!({"op": "import", "materials": mats})))
+        .unwrap_err();
+    assert!(t.elapsed().as_millis() < 1000, "{:?}", t.elapsed());
+    assert_eq!(
+        count_error(&e),
+        Some(("materials", l::MAX_MATERIALS)),
+        "{e}"
+    );
+    let scenes: Vec<_> = (0..=l::MAX_SCENES)
+        .map(|i| json!({"name": format!("s{i}"), "eye": [1,1,1], "target": [0,0,0], "up": [0,0,1]}))
+        .collect();
+    let e = d
+        .apply(&op(json!({"op": "import", "scenes": scenes})))
+        .unwrap_err();
+    assert_eq!(count_error(&e), Some(("scenes", l::MAX_SCENES)), "{e}");
+    let hidden: Vec<_> = (0..=l::MAX_TAGS).map(|i| format!("t{i}")).collect();
+    let e = d
+        .apply(&op(json!({"op": "import", "hidden_tags": hidden})))
+        .unwrap_err();
+    assert_eq!(count_error(&e).map(|c| c.1), Some(l::MAX_TAGS), "{e}");
+    let e = d
+        .apply(&op(json!({"op": "add_scene", "scene": {"name": "S", "eye": [1,1,1], "target": [0,0,0], "up": [0,0,1], "hidden_tags": hidden}})))
+        .unwrap_err();
+    assert_eq!(
+        count_error(&e),
+        Some(("tags hidden by one scene", l::MAX_TAGS)),
+        "{e}"
+    );
+    assert_eq!(d.hash(), h, "nothing changed");
+    // Materials the model already holds are not counted twice.
+    let some: Vec<_> = (0..10)
+        .map(|i| json!({"name": format!("m{i}"), "color": [1, 2, 3, 255]}))
+        .collect();
+    d.apply(&op(json!({"op": "import", "materials": some.clone()})))
+        .unwrap();
+    d.apply(&op(json!({"op": "import", "materials": some})))
+        .unwrap();
+}
+
+#[test]
+fn the_limits_are_the_documented_numbers() {
+    // docs/LIMITS.md states these; src/kernel/limits.ts mirrors them (its test reads this file).
+    assert_eq!(
+        (
+            l::MAX_GUIDES,
+            l::MAX_DIMENSIONS,
+            l::MAX_TAGS,
+            l::MAX_MATERIALS,
+            l::MAX_SCENES,
+            l::MAX_SECTIONS,
+            l::MAX_SHEETS,
+            l::MAX_SHEET_ITEMS
+        ),
+        (50_000, 50_000, 10_000, 4_096, 1_000, 1_000, 200, 2_000)
+    );
+    assert_eq!(sawhorse_kernel::looks::MAX_TEXTURES, 512);
+    const { assert!(sawhorse_kernel::looks::MAX_TEXTURES <= l::MAX_MATERIALS) };
+}

@@ -31,6 +31,9 @@ pub struct RunSummary {
     pub accepted: usize,
     pub refused: usize,
     pub objects: usize,
+    /// Lane 16b: the most of each thing the model held after any op (the sequence fuzzer's
+    /// generators must stay well inside the model's limits, so a limit never hides a bug).
+    pub peak: crate::limits::Counts,
 }
 
 fn panic_message(p: Box<dyn std::any::Any + Send>) -> String {
@@ -933,6 +936,7 @@ pub fn check_sequence(ops: &[Op]) -> Result<RunSummary, String> {
                         return Err(format!("op {i} {op:?}: redo did not return to the state"));
                     }
                 }
+                summary.peak.raise(&crate::limits::Counts::of(next.model()));
                 d = next;
                 summary.accepted += 1;
             }

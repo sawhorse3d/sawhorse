@@ -48,6 +48,34 @@ pub const MAX_TEXTURE_PIXELS_TOTAL: u64 = 128 * 1024 * 1024;
 /// changes; a shell with more faces stays a mesh, with a note.
 pub const MAX_SOLID_FACES: usize = 250_000;
 
+// Lane 16b: the model's other entities. Each is a few dozen bytes in a file, so a file's
+// size bounds none of them: 2,000,000 guides in a 5 MB `.shz` took the tab down, and
+// 1,000,000 materials took the browser to 6.2 GB. Readers count them before parsing them
+// (`sawhorse_shz` counts what `scene.json` declares as it inflates, and stops at the first
+// past its limit), imports and plugin batches before building, and every edit again
+// before it commits (`check_model`).
+
+/// Guide lines and points in one model: each is drawn across the whole view and offered as
+/// an inference on every pointer move.
+pub const MAX_GUIDES: usize = 50_000;
+/// Dimensions in one model: each is laid out (leaders, text) whenever the camera moves.
+pub const MAX_DIMENSIONS: usize = 50_000;
+/// Tags in one model; also the tags with a colour, and the tags one scene hides. The Tags
+/// pane lists each, and every scene holds the visibility of each.
+pub const MAX_TAGS: usize = 10_000;
+/// Materials in one model: the Materials pane draws a swatch for each, and each is a
+/// material on the GPU while a face shows it. At most `looks::MAX_TEXTURES` (512) of them
+/// have a texture image of the model's own.
+pub const MAX_MATERIALS: usize = 4_096;
+/// Saved scenes (views) in one model: each is a tab with its own camera, style and hidden tags.
+pub const MAX_SCENES: usize = 1_000;
+/// Section planes in one model: each active one adds a clipping set to every material it reaches.
+pub const MAX_SECTIONS: usize = 1_000;
+/// Drawing sheets in one model, and items on one sheet (each item a drawing of the model):
+/// the limits `crate::sheets` has kept since lane 12, stated here with the others.
+pub const MAX_SHEETS: usize = crate::sheets::MAX_SHEETS;
+pub const MAX_SHEET_ITEMS: usize = crate::sheets::MAX_ITEMS;
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LimitError {
     #[error("the model would hold {0} solids and meshes; at most {MAX_OBJECTS}")]
@@ -72,6 +100,17 @@ pub enum LimitError {
     TextureBytes(usize),
     #[error("the model's texture images would hold {0} million pixels; at most {max} million (eight images of 4096 x 4096)", max = MAX_TEXTURE_PIXELS_TOTAL / 1024 / 1024)]
     TexturePixels(u64),
+    /// Lane 16b: guides, dimensions, tags, materials, scenes, section planes, sheets.
+    #[error("the model would hold {count} {what}; at most {max}")]
+    Count {
+        what: &'static str,
+        count: usize,
+        max: usize,
+    },
+    /// Lane 16b: a file declares more of something than a model may hold (counted as the
+    /// file is read, before any of it is parsed).
+    #[error("the file holds more than {max} {what}; a model holds at most {max}")]
+    Declared { what: &'static str, max: usize },
     #[error("{0}")]
     Other(String),
 }
@@ -84,6 +123,18 @@ pub struct Counts {
     pub definitions: usize,
     pub faces: usize,
     pub points: usize,
+    pub guides: usize,
+    pub dimensions: usize,
+    pub tags: usize,
+    pub tag_colors: usize,
+    pub materials: usize,
+    pub scenes: usize,
+    /// The most tags one scene hides.
+    pub scene_hidden_tags: usize,
+    pub sections: usize,
+    pub sheets: usize,
+    /// The most items on one sheet.
+    pub sheet_items: usize,
 }
 
 impl Counts {
@@ -94,6 +145,21 @@ impl Counts {
             definitions: m.defs.len(),
             faces: 0,
             points: 0,
+            guides: m.guides.len(),
+            dimensions: m.dimensions.len(),
+            tags: m.tags.len(),
+            tag_colors: m.tag_colors.len(),
+            materials: m.materials.len(),
+            scenes: m.scenes.len(),
+            scene_hidden_tags: m
+                .scenes
+                .iter()
+                .map(|s| s.hidden_tags.len())
+                .max()
+                .unwrap_or(0),
+            sections: m.sections.len(),
+            sheets: m.sheets.len(),
+            sheet_items: m.sheets.values().map(|s| s.items.len()).max().unwrap_or(0),
         };
         for (_, o) in &m.objects {
             c.faces += o.brep.faces.len();
@@ -104,6 +170,48 @@ impl Counts {
             c.points += x.positions.len();
         }
         c
+    }
+}
+
+impl Counts {
+    /// Raise each count to `other`'s where that is more (the peak over a run).
+    pub fn raise(&mut self, other: &Counts) {
+        let pairs = [
+            (&mut self.objects, other.objects),
+            (&mut self.nodes, other.nodes),
+            (&mut self.definitions, other.definitions),
+            (&mut self.faces, other.faces),
+            (&mut self.points, other.points),
+            (&mut self.guides, other.guides),
+            (&mut self.dimensions, other.dimensions),
+            (&mut self.tags, other.tags),
+            (&mut self.tag_colors, other.tag_colors),
+            (&mut self.materials, other.materials),
+            (&mut self.scenes, other.scenes),
+            (&mut self.scene_hidden_tags, other.scene_hidden_tags),
+            (&mut self.sections, other.sections),
+            (&mut self.sheets, other.sheets),
+            (&mut self.sheet_items, other.sheet_items),
+        ];
+        for (a, b) in pairs {
+            *a = (*a).max(b);
+        }
+    }
+
+    /// The lane 16b counts with their limits: (what, count, limit).
+    pub fn bounded(&self) -> [(&'static str, usize, usize); 10] {
+        [
+            ("guides", self.guides, MAX_GUIDES),
+            ("dimensions", self.dimensions, MAX_DIMENSIONS),
+            ("tags", self.tags, MAX_TAGS),
+            ("tag colours", self.tag_colors, MAX_TAGS),
+            ("materials", self.materials, MAX_MATERIALS),
+            ("scenes", self.scenes, MAX_SCENES),
+            ("tags hidden by one scene", self.scene_hidden_tags, MAX_TAGS),
+            ("section planes", self.sections, MAX_SECTIONS),
+            ("sheets", self.sheets, MAX_SHEETS),
+            ("items on one sheet", self.sheet_items, MAX_SHEET_ITEMS),
+        ]
     }
 }
 
@@ -125,12 +233,31 @@ pub fn check_model(m: &Model) -> Result<(), LimitError> {
     if c.points > MAX_POINTS {
         return Err(LimitError::Points(c.points));
     }
+    check_counts(&c)?;
     for (_, s) in &m.sketches {
         if s.edge_count() > MAX_SKETCH_EDGES {
             return Err(LimitError::SketchEdges(s.edge_count()));
         }
     }
     check_textures(m.textures.values())
+}
+
+/// One count against its limit (lane 16b).
+pub fn count(what: &'static str, count: usize, max: usize) -> Result<(), LimitError> {
+    if count > max {
+        Err(LimitError::Count { what, count, max })
+    } else {
+        Ok(())
+    }
+}
+
+/// Refuse guides, dimensions, tags, materials, scenes, section planes and sheets over their
+/// limits (lane 16b).
+pub fn check_counts(c: &Counts) -> Result<(), LimitError> {
+    for (what, n, max) in c.bounded() {
+        count(what, n, max)?;
+    }
+    Ok(())
 }
 
 /// Refuse texture images over the model's limits on bytes and pixels in all.

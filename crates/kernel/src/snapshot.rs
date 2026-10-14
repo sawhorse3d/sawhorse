@@ -508,6 +508,25 @@ fn check_snapshot(s: &Snapshot) -> Result<(), KernelError> {
     if s.definitions.len() > l::MAX_DEFINITIONS {
         return Err(LimitError::Definitions(s.definitions.len()).into());
     }
+    // Lane 16b: the model's other entities, counted before any is built.
+    l::count("guides", s.guides.len(), l::MAX_GUIDES)?;
+    l::count("dimensions", s.dimensions.len(), l::MAX_DIMENSIONS)?;
+    l::count("tags", s.tags.len(), l::MAX_TAGS)?;
+    l::count("tag colours", s.tag_colors.len(), l::MAX_TAGS)?;
+    l::count("materials", s.materials.len(), l::MAX_MATERIALS)?;
+    l::count("scenes", s.scenes.len(), l::MAX_SCENES)?;
+    for sc in &s.scenes {
+        l::count(
+            "tags hidden by one scene",
+            sc.hidden_tags.len(),
+            l::MAX_TAGS,
+        )?;
+    }
+    l::count("section planes", s.sections.len(), l::MAX_SECTIONS)?;
+    l::count("sheets", s.sheets.len(), l::MAX_SHEETS)?;
+    for sh in &s.sheets {
+        l::count("items on one sheet", sh.items.len(), l::MAX_SHEET_ITEMS)?;
+    }
     let long = |n: &str, max: usize| n.chars().count() > max;
     let name_ok = |what: &str, n: Option<&str>| -> Result<(), KernelError> {
         match n {

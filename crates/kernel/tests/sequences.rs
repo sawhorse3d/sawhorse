@@ -2627,6 +2627,15 @@ fn run(name: &str, cases: u32, max_len: usize, seed: Option<u64>) {
         };
         match checked {
             Ok(s) => {
+                // Lane 16b: the generators stay well inside the model's count limits (a
+                // tenth of each), so a limit refusal never stands in for the op it refused.
+                for (what, peak, max) in s.peak.bounded() {
+                    if peak * 10 > max {
+                        let e = format!("the generated sequence held {peak} {what}, more than a tenth of the limit of {max}");
+                        let _ = write_repro(&repro_out(), &format!("pending-{name}"), &e, &ops);
+                        return Err(TestCaseError::fail(e));
+                    }
+                }
                 let mut t = totals.borrow_mut();
                 t.sequences += 1;
                 t.accepted += s.accepted;
