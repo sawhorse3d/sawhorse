@@ -223,16 +223,16 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         }
         // Watertight: each kept half (its faces clipped to the kept side, and its cap) is
         // a closed surface, so its vector area cancels (see KeptPart). A cap that is
-        // missing, folded or turned the wrong way leaves its whole area here. Faces are
-        // planar only to within PLANARITY, so where a face meets the plane in a slightly bent
-        // line its kept part and the cap may join along chords up to its bend apart: allow
-        // the farthest any corner sits off its face's plane times the cut's length. And a
-        // face whose every corner is within a nanometre of the plane (LENGTH_EPS, the tie
-        // rule's ON_FACE) lies on it and is kept or cut whole, while the cap lies exactly in
-        // the plane: the face may be tilted off it by up to twice that across its width, so
-        // the two differ by up to that tilt times its area, at most LENGTH_EPS times its
-        // perimeter (lane 12d's property tests: a box face tilted 1.5e-8 rad off a plane
-        // through its centre, 1.2e-9 m2 apart).
+        // missing, folded or turned the wrong way leaves its whole area here. Since lane 19c
+        // the cut is closed by construction (`section::clip_solid`): the faces are clipped
+        // along their own triangles by one distance per vertex, and the cap is laid from
+        // exactly the chords their kept parts leave open, so along the normal the halves
+        // close to rounding, and across it to within how far a chord's end sits off the
+        // plane: a corner the tie rule puts on it is up to LENGTH_EPS (ON_FACE) off, so allow
+        // twice that times the cut's length. Before lane 19c this also allowed the farthest
+        // any corner sat off its face's plane times the cut's length (faces were cut along
+        // their stored planes, so a bent face met the cap along chords up to its bend apart);
+        // no face's bend enters the cut now, and the allowance no longer has it.
         let bend = reached_objects
             .iter()
             .flat_map(|(_, x)| {
@@ -248,12 +248,50 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             .fold(0.0, f64::max);
         for (half, p) in [("kept", &pa), ("cut-away", &pb)] {
             let open = p.vector_area.length();
-            let allowed = 1e-9 * (1.0 + p.area)
-                + (2.0 * bend + 2.0 * crate::tolerance::LENGTH_EPS) * p.cap_length;
+            let allowed = 1e-9 * (1.0 + p.area) + 2.0 * crate::tolerance::LENGTH_EPS * p.cap_length;
             if open > allowed {
                 return Err(format!(
                     "section {id}: the {half} half is not closed (vector area {open} of {} m2; faces bend {bend}, cap {} m around)",
                     p.area, p.cap_length
+                ));
+            }
+        }
+        // Lane 19c: the caps are the cross-section of the solids' own triangles, worked out
+        // here without the cut ([`cross_section`]), for every solid the plane reaches whose
+        // caps no other active plane clips. The kept part's only face along the plane is the
+        // cap, so the kept triangles' vector area along the normal is the cap's area; the
+        // two can differ by rounding and by the cap's corners moving within its arrangement's
+        // tolerance (far below a nanometre) along its rings.
+        for (oid, x) in &reached_objects {
+            if m.active_sections_over(x.member.parent)
+                .iter()
+                .any(|&other| other != id)
+            {
+                continue;
+            }
+            let Some((indep, surface)) = cross_section(x, s.origin, s.normal) else {
+                continue;
+            };
+            let caps: Vec<&crate::section::Cap> =
+                cut.caps.iter().filter(|c| c.object == *oid).collect();
+            let shown: f64 = caps.iter().map(|c| c.area).sum();
+            let around: f64 = caps
+                .iter()
+                .flat_map(|c| std::iter::once(&c.outer).chain(&c.holes))
+                .map(|r| {
+                    (0..r.len())
+                        .map(|i| {
+                            DVec2::from_array(r[i])
+                                .distance(DVec2::from_array(r[(i + 1) % r.len()]))
+                        })
+                        .sum::<f64>()
+                })
+                .sum();
+            let allowed =
+                1e-9 * (1.0 + surface) + 2.0 * crate::tolerance::LENGTH_EPS * around + 1e-15;
+            if (shown - indep).abs() > allowed {
+                return Err(format!(
+                    "section {id}: solid {oid}'s caps cover {shown} m2, its triangles clipped to the plane {indep} m2 (allowed {allowed})"
                 ));
             }
         }
@@ -276,6 +314,61 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The cross-section of solid `x` by the plane through `origin` with unit normal `normal`
+/// (the side it points to kept), worked out without the cut (lane 19c): the solid's own
+/// triangles (`Object::tri_solid`, the ones its volume is measured by), each clipped to the kept
+/// side by its three corners' signed distances (the documented tie rule, restated: a corner
+/// within LENGTH_EPS of the plane is on it, distance zero, and zero counts as kept), and the
+/// vector area of what is kept (Newell, over its 3D corners and the crossings of its edges)
+/// along the normal, summed. The kept part is a closed surface whose only face along the
+/// plane is the cap, facing `-normal`, so the sum is the cap's area. It shares no code with
+/// the cut. Returns the area and the solid's surface area; `None` for a solid that does not
+/// triangulate (a committed solid always does).
+pub fn cross_section(
+    x: &crate::object::Object,
+    origin: glam::DVec3,
+    normal: glam::DVec3,
+) -> Option<(f64, f64)> {
+    let t = x.tri_solid().ok()?;
+    let dist: Vec<f64> = t
+        .positions
+        .iter()
+        .map(|p| {
+            let d = (*p - origin).dot(normal);
+            if d.abs() <= crate::tolerance::LENGTH_EPS {
+                0.0
+            } else {
+                d
+            }
+        })
+        .collect();
+    let (mut area, mut surface) = (0.0, 0.0);
+    for tri in &t.triangles {
+        let c = tri.map(|i| i as usize);
+        let p = c.map(|i| t.positions[i]);
+        surface += 0.5 * (p[1] - p[0]).cross(p[2] - p[0]).length();
+        let mut ring: Vec<glam::DVec3> = Vec::with_capacity(4);
+        for k in 0..3 {
+            let (a, b) = (c[k], c[(k + 1) % 3]);
+            let (da, db) = (dist[a], dist[b]);
+            if da >= 0.0 {
+                ring.push(t.positions[a]);
+            }
+            // An edge from a corner above the plane to one below it crosses it once.
+            if (da > 0.0 && db < 0.0) || (da < 0.0 && db > 0.0) {
+                let (pa, pb) = (t.positions[a], t.positions[b]);
+                ring.push(pa + (pb - pa) * (da / (da - db)));
+            }
+        }
+        let mut va = glam::DVec3::ZERO;
+        for i in 0..ring.len() {
+            va += ring[i].cross(ring[(i + 1) % ring.len()]) * 0.5;
+        }
+        area += va.dot(normal);
+    }
+    Some((area, surface))
 }
 
 /// Soft, smooth and hidden edges (lane 15) of any committed model: every flag is 1 to 7

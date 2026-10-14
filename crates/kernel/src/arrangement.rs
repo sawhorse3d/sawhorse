@@ -13,19 +13,28 @@
 //!   edge bends by less than the tolerance), crossings split both segments at the crossing
 //!   point, and a piece laid along an existing edge adds to it.
 //! - **Material evidence on every edge.** Every segment is laid with a direction that has
-//!   the material on its left, and with a vote (`+1`) or none (`0`: a segment whose
-//!   direction is not to be trusted). An edge keeps the signed sum of the votes laid along
-//!   it; pieces laid both ways along one edge (a hole's edge lying along the outline, two
-//!   faces of a folded solid touching) cancel.
+//!   the material on its left, and with a vote (`+1`) or none (`0`). An edge keeps the signed
+//!   sum of the votes laid along it; pieces laid both ways along one edge cancel.
 //!
-//! [`Arrangement::material_rings`] then walks the faces of the embedding, decides which
-//! are material (every edge around a face that has a vote says the same thing, or else an
-//! oracle, the caller's point-in-solid test, decides; the unbounded face never is), and
-//! returns the boundary of the union of the material faces as closed rings with the
-//! material on their left. Every ring closes by construction: around any vertex the
-//! boundary edges are exactly where material and empty faces alternate, so as many
-//! boundary edges leave a vertex as reach it. Where two material faces touch at a point
-//! (a pinch) the walk turns as far left as it can and so traces one face at a time.
+//! **What is material (lane 19c): the winding number.** The section cut lays the chords of a
+//! closed surface's kept part (`crate::section`), which form a closed cycle by construction:
+//! as many votes reach every point as leave it. Every step here keeps that so (merging two
+//! vertices adds their edges, splitting an edge at a vertex or a crossing splits its votes
+//! with it), so crossing an edge from its right to its left raises the winding number by the
+//! votes along it, and every face of the arrangement has one winding number: the unbounded
+//! face 0, every other face its neighbour's plus the votes between them
+//! ([`Arrangement::material_rings`] works them out face to face from the unbounded one). A
+//! face is material when its winding number is 1 or more. No oracle is asked: lane 12d's ray
+//! cast into the solid (for faces whose votes disagreed) is gone, because for a cycle they
+//! cannot disagree about the winding number. Only when the votes are not a cycle (a caller
+//! laying segments that do not close, which the cut never does) are the numbers inconsistent;
+//! then each face is decided by its own votes, the majority.
+//!
+//! The material faces' union is returned as closed rings with the material on their left.
+//! Every ring closes by construction: around any vertex the boundary edges are exactly where
+//! material and empty faces alternate, so as many boundary edges leave a vertex as reach it.
+//! Where two material faces touch at a point (a pinch) the walk turns as far left as it can
+//! and so traces one face at a time.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -155,9 +164,11 @@ impl Arrangement {
         best.map(|(_, e)| e)
     }
 
-    /// The vertex for a segment's endpoint: an existing one within the tolerance, else a new
-    /// one at `p` exactly, splitting an edge it lies on.
-    fn snap(&mut self, p: DVec2) -> usize {
+    /// The vertex for the point `p`: an existing one within the tolerance, else a new one at
+    /// `p` exactly, splitting an edge it lies on. The section cut asks this once for every
+    /// distinct end of its chords before laying any (lane 19c), so two chords that share an
+    /// end always share its vertex and the votes stay a cycle.
+    pub(crate) fn vertex(&mut self, p: DVec2) -> usize {
         if let Some(v) = self.vertex_near(p) {
             return v;
         }
@@ -170,10 +181,24 @@ impl Arrangement {
 
     /// Lay the segment `a -> b` (material on its left) with `vote` (`1` or `0`), from
     /// segment number `first`.
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, a: DVec2, b: DVec2, vote: i32, first: usize) {
         self.segs.entry(first).or_insert((a, b));
-        let p = self.snap(a);
-        let q = self.snap(b);
+        let p = self.vertex(a);
+        let q = self.vertex(b);
+        self.lay(p, q, vote, first);
+    }
+
+    /// Lay the segment from vertex `p` to vertex `q` (both from [`Arrangement::vertex`];
+    /// material on its left) with `vote`, from segment number `first`.
+    pub(crate) fn insert_between(&mut self, p: usize, q: usize, vote: i32, first: usize) {
+        self.segs.entry(first).or_insert((self.pts[p], self.pts[q]));
+        self.lay(p, q, vote, first);
+    }
+
+    /// Lay `p -> q`: split where existing vertices lie on it and where it properly crosses
+    /// an existing edge (splitting that edge too), and add the votes along the pieces.
+    fn lay(&mut self, p: usize, q: usize, vote: i32, first: usize) {
         if p == q {
             return;
         }
@@ -242,9 +267,9 @@ impl Arrangement {
     /// Settle what single insertions leave behind (a crossing that lands within the
     /// tolerance of an unrelated edge, two vertices closer than the tolerance), as the
     /// sketch's repair does: merge vertices, split an edge at a vertex on it, split proper
-    /// crossings, until none is left (each step moves nothing by more than the tolerance).
-    /// A cluster that does not settle in 64 steps is left as it is: the faces are still
-    /// walked, and the oracle decides what they are.
+    /// crossings, until none is left (each step moves nothing by more than the tolerance,
+    /// and each keeps the votes a cycle). A cluster that does not settle in 64 steps is left
+    /// as it is: the faces are still walked, and the winding numbers say what they are.
     pub(crate) fn settle(&mut self) {
         for _ in 0..64 {
             if !self.repair_step() {
@@ -341,14 +366,10 @@ impl Arrangement {
         c.iter().map(|&v| self.pts[v]).collect()
     }
 
-    /// The faces of the arrangement, which of them are material, and the boundary of their
-    /// union as rings of vertices with the material on their left (see the module docs).
-    /// `oracle` says whether a point is inside the solid (`None`: it cannot tell) and is
-    /// asked only about a face whose evidence is missing or disagrees.
-    pub(crate) fn material_rings(
-        &self,
-        mut oracle: impl FnMut(DVec2) -> Option<bool>,
-    ) -> Vec<Vec<DVec2>> {
+    /// The faces of the arrangement, which of them are material (winding number 1 or more,
+    /// see the module docs), and the boundary of their union as rings of vertices with the
+    /// material on their left.
+    pub(crate) fn material_rings(&self) -> Vec<Vec<DVec2>> {
         if self.edges.is_empty() {
             return Vec::new();
         }
@@ -392,39 +413,15 @@ impl Arrangement {
                     .min_by(|&x, &y| area[x].total_cmp(&area[y]).then(x.cmp(&y)))
             })
             .collect();
-        // Votes per face.
-        let mut votes: BTreeMap<usize, (u32, u32)> = BTreeMap::new();
-        for (i, c) in circuits.iter().enumerate() {
-            let Some(f) = face_of[i] else {
-                continue;
-            };
-            let v = votes.entry(f).or_default();
-            for k in 0..c.len() {
-                match self.net(c[k], c[(k + 1) % c.len()]).cmp(&0) {
-                    Ordering::Greater => v.0 += 1,
-                    Ordering::Less => v.1 += 1,
-                    Ordering::Equal => {}
-                }
-            }
-        }
-        let mut material: BTreeMap<usize, bool> = BTreeMap::new();
-        for &f in &outers {
-            let (yes, no) = votes.get(&f).copied().unwrap_or_default();
-            let m = if yes > 0 && no == 0 {
-                true
-            } else if no > 0 && yes == 0 {
-                false
-            } else {
-                let holes: Vec<Vec<DVec2>> = (0..circuits.len())
-                    .filter(|&i| i != f && face_of[i] == Some(f))
-                    .map(|i| rings[i].clone())
-                    .collect();
-                sawhorse_tessellate::interior_point(&rings[f], &holes)
-                    .and_then(&mut oracle)
-                    .unwrap_or(yes > no)
-            };
-            material.insert(f, m);
-        }
+        let material = self
+            .windings(&circuits, &face_of)
+            .map(|w| {
+                outers
+                    .iter()
+                    .map(|&f| (f, w[f + 1] >= 1))
+                    .collect::<BTreeMap<usize, bool>>()
+            })
+            .unwrap_or_else(|| self.by_votes(&circuits, &face_of, &outers));
         // Each directed edge's side: material on its left?
         let mut left: BTreeMap<(usize, usize), bool> = BTreeMap::new();
         for (i, c) in circuits.iter().enumerate() {
@@ -490,10 +487,81 @@ impl Arrangement {
             .collect()
     }
 
+    /// The winding number of every face (index 0: the unbounded face; `1 + o`: the face
+    /// bounded from outside by circuit `o`), worked out face to face from the unbounded one
+    /// across every edge (the face on an edge's left has the one on its right's number plus
+    /// the votes along it). `None` when two ways round give a face two numbers: the votes are
+    /// not a cycle.
+    fn windings(&self, circuits: &[Vec<usize>], face_of: &[Option<usize>]) -> Option<Vec<i64>> {
+        let face = |i: usize| face_of[i].map_or(0, |f| f + 1);
+        let mut holder: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+        for (i, c) in circuits.iter().enumerate() {
+            for k in 0..c.len() {
+                holder.insert((c[k], c[(k + 1) % c.len()]), i);
+            }
+        }
+        // Each face's neighbours: (the face across, its number minus this face's).
+        let mut links: Vec<Vec<(usize, i64)>> = vec![Vec::new(); circuits.len() + 1];
+        for (&(u, v), &i) in &holder {
+            let j = *holder.get(&(v, u))?;
+            links[face(j)].push((face(i), i64::from(self.net(u, v))));
+        }
+        let mut w: Vec<Option<i64>> = vec![None; circuits.len() + 1];
+        w[0] = Some(0);
+        let mut queue = std::collections::VecDeque::from([0usize]);
+        while let Some(f) = queue.pop_front() {
+            let here = w[f].expect("queued faces have a number");
+            for &(g, d) in &links[f] {
+                match w[g] {
+                    None => {
+                        w[g] = Some(here + d);
+                        queue.push_back(g);
+                    }
+                    Some(x) if x != here + d => return None,
+                    Some(_) => {}
+                }
+            }
+        }
+        // A face nothing reaches (it cannot happen: the faces of a plane are connected
+        // through the edges between them) counts as empty.
+        Some(w.into_iter().map(|x| x.unwrap_or(0)).collect())
+    }
+
+    /// Material by each face's own votes, when the votes are not a cycle: every edge around
+    /// it that has a vote says so, or most of them do.
+    fn by_votes(
+        &self,
+        circuits: &[Vec<usize>],
+        face_of: &[Option<usize>],
+        outers: &[usize],
+    ) -> BTreeMap<usize, bool> {
+        let mut votes: BTreeMap<usize, (u32, u32)> = BTreeMap::new();
+        for (i, c) in circuits.iter().enumerate() {
+            let Some(f) = face_of[i] else {
+                continue;
+            };
+            let v = votes.entry(f).or_default();
+            for k in 0..c.len() {
+                match self.net(c[k], c[(k + 1) % c.len()]).cmp(&0) {
+                    Ordering::Greater => v.0 += 1,
+                    Ordering::Less => v.1 += 1,
+                    Ordering::Equal => {}
+                }
+            }
+        }
+        outers
+            .iter()
+            .map(|&f| {
+                let (yes, no) = votes.get(&f).copied().unwrap_or_default();
+                (f, yes > no)
+            })
+            .collect()
+    }
+
     /// Rings as point lists, with the order the start was found in (tests).
     #[cfg(test)]
     pub(crate) fn rings_for_test(&self) -> Vec<Vec<DVec2>> {
-        self.material_rings(|_| None)
+        self.material_rings()
     }
 }
 
@@ -589,10 +657,10 @@ mod tests {
         }
     }
 
+    /// Lane 19c: votes that are not a cycle (a segment laid backwards) give a face two winding
+    /// numbers; the face is then decided by its own votes, three to one.
     #[test]
-    fn a_segment_laid_the_wrong_way_is_outvoted_or_asked() {
-        // The top edge points the wrong way: the square's own face has three votes for
-        // and one against, so the oracle decides; the oracle says inside.
+    fn votes_that_do_not_close_are_decided_by_the_majority() {
         let mut a = Arrangement::new(1e-12);
         let c = [v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)];
         a.insert(c[0], c[1], 1, 0);
@@ -600,19 +668,48 @@ mod tests {
         a.insert(c[3], c[2], 1, 2); // backwards
         a.insert(c[3], c[0], 1, 3);
         a.settle();
-        let rs = a.material_rings(|p| Some(p.x > 0.0 && p.x < 1.0 && p.y > 0.0 && p.y < 1.0));
+        let rs = a.rings_for_test();
         assert_eq!(rs.len(), 1);
         assert!((area(&rs[0]) - 1.0).abs() < 1e-12);
-        // Without a vote on it, the others decide alone.
+    }
+
+    /// Lane 19c: a cycle that winds twice round part of the plane (two squares overlapping,
+    /// both counter-clockwise) and one that winds the wrong way (a clockwise square alone):
+    /// material is a winding number of 1 or more, so the first is the union of the two
+    /// squares and the second is nothing.
+    #[test]
+    fn material_is_a_winding_number_of_one_or_more() {
+        let mut a = Arrangement::new(1e-12);
+        square(&mut a, 0.0, 0.0, 2.0, 2.0, 0);
+        square(&mut a, 1.0, 1.0, 3.0, 3.0, 4);
+        a.settle();
+        let rs = a.rings_for_test();
+        let total: f64 = rs.iter().map(|r| area(r)).sum();
+        assert!((total - 7.0).abs() < 1e-12, "{rs:?}");
         let mut b = Arrangement::new(1e-12);
-        b.insert(c[0], c[1], 1, 0);
-        b.insert(c[1], c[2], 1, 1);
-        b.insert(c[3], c[2], 0, 2);
-        b.insert(c[3], c[0], 1, 3);
+        let c = [v(0.0, 0.0), v(0.0, 1.0), v(1.0, 1.0), v(1.0, 0.0)];
+        for i in 0..4 {
+            b.insert(c[i], c[(i + 1) % 4], 1, i);
+        }
         b.settle();
-        let rs = b.rings_for_test();
-        assert_eq!(rs.len(), 1);
-        assert!((area(&rs[0]) - 1.0).abs() < 1e-12);
+        assert!(b.rings_for_test().is_empty());
+    }
+
+    /// Lane 19c: chords laid between vertices asked for once each (as the cut lays them): a
+    /// point within the tolerance of one already there is that vertex, so the votes close.
+    #[test]
+    fn chords_between_shared_vertices_close() {
+        let mut a = Arrangement::new(1e-9);
+        let pts = [v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)];
+        let ids: Vec<usize> = pts.iter().map(|p| a.vertex(*p)).collect();
+        // A point a hair from the second corner is the second corner.
+        assert_eq!(a.vertex(v(1.0 + 1e-10, 0.0)), ids[1]);
+        for i in 0..4 {
+            a.insert_between(ids[i], ids[(i + 1) % 4], 1, i);
+        }
+        a.settle();
+        let rs = a.rings_for_test();
+        assert_eq!(rs, vec![pts.to_vec()]);
     }
 
     #[test]

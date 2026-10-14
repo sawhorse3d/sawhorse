@@ -13,11 +13,16 @@
 //!   belongs to that copy (it is not part of the definition), and it moves with the copy.
 //! - The **cut** ([`Model::section_cut`]) is exact: for every visible solid the plane cuts,
 //!   the plane's intersection with the solid as polygons with holes (the *caps*, what the
-//!   section fill paints), and the outline segments around them. It is computed on the
-//!   B-rep, in the plane's frame, with a consistent tie rule (a vertex exactly on the plane
-//!   counts as kept: a plane laid on a face, facing into the solid, cuts nothing), so it
-//!   never depends on floating-point luck at the boundary;
-//!   other active sections that reach the same solids clip it. Deterministic and hashed.
+//!   section fill paints), and the outline segments around them. Since lane 19c it is built
+//!   so that it closes the half it caps **by construction**, whatever the floating-point
+//!   geometry: every vertex has one signed distance from the plane, zero within [`ON_FACE`]
+//!   ([`distances`]; zero counts as kept: a plane laid on a face, facing into the solid, cuts
+//!   nothing); the solid's own triangles (the ones `Object::tri_solid` measures it by) are
+//!   clipped by their corners' distances, each edge's crossing worked out once for both
+//!   triangles that share it; the chords those clipped triangles run along the plane are
+//!   exactly the boundary their kept parts leave open, and the cap is laid on a planar
+//!   arrangement from those chords ([`crate::arrangement`]). Other active sections that
+//!   reach the same solids clip it. Deterministic and hashed.
 //! - **Create Group from Slice** ([`Model::slice_to_group`]) draws the caps into a sketch
 //!   on the plane inside a new group: closed loops become faces, ready to push.
 //! - **The cut keeps every cap exactly** (lane 18); what the slice can draw of one is one
@@ -29,10 +34,12 @@
 //! Hashing: everything here is hashed only when a section exists or a scene stores
 //! section state, so every older document keeps its hash.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DVec2, DVec3};
+use slotmap::SecondaryMap;
 
+use crate::brep::{Brep, Face};
 use crate::error::{KernelError, SectionError, StructureError};
 use crate::hash::StableHasher;
 use crate::ids::{FaceId, NodeId, ObjectId, SectionId, VertexId, from_public, to_public};
@@ -45,13 +52,13 @@ use crate::transform::Xform;
 /// The longest name a section plane takes.
 pub const MAX_NAME: usize = 64;
 
-/// A signed distance this close to zero is zero: the vertex is on the plane (and, by the
-/// tie rule, on the side that is kept). Far below the merge distance, far above f64
-/// noise on coordinates of a few metres.
-const ON_PLANE: f64 = 1e-12;
-/// A surface with every corner this close to a section plane lies on it (the tie rule): it is
-/// never split, whatever its tilt ([`sides`]; within twice its own bend when that is more).
-const ON_FACE: f64 = crate::tolerance::LENGTH_EPS;
+/// **The tie rule, the one tolerance of the cut** (lane 19c): a vertex whose signed distance
+/// from a section plane is this or less in size is on the plane, distance exactly zero, and
+/// zero counts as kept. It is the kernel's noise floor for lengths (`LENGTH_EPS`, 1 nm): far
+/// below the merge distance (a vertex this close to the plane cannot be told from one on it),
+/// far above f64 noise on coordinates within the model's 10 km. Nothing else decides a
+/// vertex's side: no face, surface or bend ([`distances`]).
+pub const ON_FACE: f64 = crate::tolerance::LENGTH_EPS;
 
 /// A section plane (see the module docs).
 #[derive(Debug, Clone, PartialEq)]
@@ -234,14 +241,14 @@ impl SectionCut {
 pub struct KeptPart {
     /// Enclosed volume, cubic metres (the divergence theorem about the world origin).
     pub volume: f64,
-    /// The surface's vector area, square metres: every clipped face ring's own (Newell's
-    /// sum over its 3D corners and crossings) plus the cap's (its area along -normal).
-    /// Every edge of a closed surface is walked once each way, so the sum cancels: to
-    /// rounding for planar faces, and to about a face's bend times the cut's length for
-    /// faces planar only to within PLANARITY (where a face meets the plane in a slightly
-    /// bent line, its kept part and the cap join along chords up to that bend apart). A
-    /// cap missing, folded or facing the wrong way leaves its area here. It measures how
-    /// far the cut is from watertight.
+    /// The surface's vector area, square metres: every kept face ring's own (Newell's sum
+    /// over its 3D corners and crossings) plus the cap's (its area along -normal). Every
+    /// edge of a closed surface is walked once each way, so the sum cancels. Since lane 19c
+    /// the cut is built so that it does ([`clip_solid`]): along the normal to rounding, and
+    /// across it to within the farthest a chord's end sits off the plane (a corner the tie
+    /// rule puts on the plane is up to ON_FACE off it) times the cut's length. A cap
+    /// missing, folded or facing the wrong way leaves its area here. It measures how far the
+    /// cut is from watertight.
     pub vector_area: DVec3,
     /// The surface's total (unsigned) area, square metres: the scale to compare against.
     pub area: f64,
@@ -282,314 +289,70 @@ impl KeptPart {
     }
 }
 
-/// A crossing of the plane on a B-rep edge, named by the edge's two vertices (low first).
+// ---- the cut (lane 19c): one sign per vertex, the solid's own triangles, their chords ------
+
+/// One signed distance per vertex of a solid ([`distances`]).
+pub(crate) type Distances = SecondaryMap<VertexId, f64>;
+
+/// **One sign per vertex** (lane 19c, ADR-0010): the signed distance of every vertex of `b`
+/// from `plane`, worked out once, and exactly zero when it is within [`ON_FACE`] (zero counts
+/// as kept). These are the only distances the cut, the kept halves and the oracles read.
+///
+/// History. Lanes 12 to 19b also decided a vertex's side by the faces around it: a face
+/// with every corner within twice its own bend of the plane lay on it (lane 12d), decided
+/// once per surface of faces sharing a stored plane (lane 19) or meeting within the merge
+/// distance (lane 19b), a parallel surface at its corners' mean, and faces cut along the
+/// line their stored plane gives or, when weak, along their triangles. Each pass fixed the
+/// case a verifier's fuzz found and the hostile generator found the next sibling, 1 in 130k
+/// to 700k cases, always faces nearly on the plane classified one way and cut another; the
+/// last (the lane-19b verifier's) was a box top whose poked corner is 1.8 micrometres beyond
+/// twice its 0.65 micrometre bend, two n-gons drawn over it, a plane at the original top:
+/// the cut-away half kept 0.0251 m2 of sheet with no cap
+/// (`tests/repro/2026-10-14-section-top-face-poked-beyond-its-bend-*.json`). Lane 19c stopped
+/// patching rules: with one distance per vertex and the cut made of the solid's own
+/// triangles ([`clip_solid`]), the cap closes the half whatever the distances are.
+pub(crate) fn distances(b: &Brep, plane: &Plane) -> Distances {
+    let mut out = SecondaryMap::with_capacity(b.vertex_count());
+    for (k, v) in b.vertices() {
+        let d = plane.signed_distance(v.pos);
+        out.insert(k, if d.abs() <= ON_FACE { 0.0 } else { d });
+    }
+    out
+}
+
+/// A point of the cut, named by where it is: a vertex of the solid (`(v, v)`; on the plane,
+/// or a kept corner of a face), or where the plane crosses the segment between two vertices
+/// whose distances have opposite signs (`(lo, hi)`, low first). A crossing is worked out once,
+/// from its two vertices alone ([`node_point`]), so every triangle that has the segment, on
+/// either side, sees the same point.
 type Node = (VertexId, VertexId);
 
-/// One directed piece of the cut inside one face: from crossing `a` to crossing `b`, with
-/// the kept part of the face on its left (seen from the face's normal), so the solid's
-/// material is on its left seen from the plane's normal ([`cut_pieces`]).
-struct Piece {
-    a: Node,
-    b: Node,
+/// The crossing node on the segment between `p` and `q`.
+fn edge_node(p: VertexId, q: VertexId) -> Node {
+    if p < q { (p, q) } else { (q, p) }
 }
 
-/// A face this close to parallel with the plane (the cross product of the normals) is
-/// parallel: wholly on one side of it or on it (the tie rule, [`sides`]), so it meets the
-/// plane along no line.
-const PARALLEL: f64 = 1e-12;
-
-fn parallel(plane: &Plane, face: &crate::brep::Face) -> bool {
-    plane.normal.cross(face.plane.normal).length() < PARALLEL
+/// Where node `n` is: the vertex, or the point between its two vertices where their
+/// distances interpolate to zero (from the low one).
+fn node_point(b: &Brep, dist: &Distances, n: Node) -> DVec3 {
+    let (lo, hi) = n;
+    let pl = b.vertices[lo].pos;
+    if lo == hi {
+        return pl;
+    }
+    let ph = b.vertices[hi].pos;
+    let (dl, dh) = (dist[lo], dist[hi]);
+    pl + (ph - pl) * (dl / (dl - dh))
 }
 
-/// The key of a face's stored plane: faces that share one are one surface (lane 19).
-fn plane_key(p: &Plane) -> [u64; 6] {
-    [
-        p.origin.x.to_bits(),
-        p.origin.y.to_bits(),
-        p.origin.z.to_bits(),
-        p.normal.x.to_bits(),
-        p.normal.y.to_bits(),
-        p.normal.z.to_bits(),
-    ]
-}
-
-/// Two faces that meet along an edge are one surface when they face the same way and every
-/// corner of each is within this of the other's stored plane (lane 19b): the merge distance,
-/// closer than the model holds two points apart, so no fold between them can be drawn.
-const SAME_SURFACE: f64 = crate::tolerance::POINT_MERGE;
-
-/// The surfaces of `b` (lane 19; lane 19b): faces grouped so that every face with the same
-/// stored plane is in one group (a face split by Draw, Imprint or Split Face keeps its
-/// parent's plane in every part), and so is every pair of faces that meet along an edge,
-/// face the same way and lie within [`SAME_SURFACE`] of each other's planes. The second rule
-/// is for the parts of one face that an edit re-planed apart: a corner of a drawn-on face
-/// moved by micrometres without autofold re-fits the plane of the part it is in and leaves
-/// the other parts on the old one (the lane-19b property tests: a part bent 6e-8 m by the
-/// moved corner was on a plane through that corner while the parts beside it, on the old
-/// plane 6e-8 m off, were not, and the corners they share were on the plane for one and off
-/// it for the other; the kept half's cap double-counted the bent part, 0.0053 m2). Each group
-/// is listed with its faces in id order; groups in the order of the smallest stored-plane key
-/// among their faces (lane 19's order, for faces that share a plane).
-fn surfaces(b: &crate::brep::Brep) -> Vec<Vec<FaceId>> {
-    let faces: Vec<FaceId> = b.faces().map(|(k, _)| k).collect();
-    let mut parent: Vec<usize> = (0..faces.len()).collect();
-    fn root(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
-    fn join(parent: &mut [usize], a: usize, c: usize) {
-        let (ra, rc) = (root(parent, a), root(parent, c));
-        if ra != rc {
-            parent[ra.max(rc)] = ra.min(rc);
-        }
-    }
-    let mut by_key: BTreeMap<[u64; 6], usize> = BTreeMap::new();
-    let mut by_edge: BTreeMap<(VertexId, VertexId), Vec<usize>> = BTreeMap::new();
-    for (i, k) in faces.iter().enumerate() {
-        let f = &b.faces[*k];
-        match by_key.get(&plane_key(&f.plane)) {
-            Some(&j) => join(&mut parent, i, j),
-            None => {
-                by_key.insert(plane_key(&f.plane), i);
-            }
-        }
-        for l in f.loops() {
-            let vs = b.loop_vertices(l);
-            for t in 0..vs.len() {
-                let (p, q) = (vs[t], vs[(t + 1) % vs.len()]);
-                by_edge.entry((p.min(q), p.max(q))).or_default().push(i);
-            }
-        }
-    }
-    let corners = |i: usize| -> Vec<DVec3> {
-        b.faces[faces[i]]
-            .loops()
-            .flat_map(|l| b.loop_points(l))
-            .collect()
-    };
-    let near = |i: usize, j: usize| {
-        let (fi, fj) = (&b.faces[faces[i]], &b.faces[faces[j]]);
-        fi.plane.normal.dot(fj.plane.normal) > 0.0
-            && corners(i)
-                .iter()
-                .all(|p| fj.plane.signed_distance(*p).abs() <= SAME_SURFACE)
-            && corners(j)
-                .iter()
-                .all(|p| fi.plane.signed_distance(*p).abs() <= SAME_SURFACE)
-    };
-    for fs in by_edge.values() {
-        for (x, &i) in fs.iter().enumerate() {
-            for &j in &fs[x + 1..] {
-                if i != j && root(&mut parent, i) != root(&mut parent, j) && near(i, j) {
-                    join(&mut parent, i, j);
-                }
-            }
-        }
-    }
-    let mut groups: BTreeMap<usize, Vec<FaceId>> = BTreeMap::new();
-    for (i, k) in faces.iter().enumerate() {
-        let r = root(&mut parent, i);
-        groups.entry(r).or_default().push(*k);
-    }
-    let mut out: Vec<([u64; 6], Vec<FaceId>)> = groups
-        .into_values()
-        .map(|mut fs| {
-            fs.sort_unstable();
-            let key = fs
-                .iter()
-                .map(|k| plane_key(&b.faces[*k].plane))
-                .min()
-                .expect("a group has a face");
-            (key, fs)
-        })
-        .collect();
-    out.sort_by(|a, c| a.0.cmp(&c.0).then(a.1.cmp(&c.1)));
-    out.into_iter().map(|(_, fs)| fs).collect()
-}
-
-/// **The tie rule, decided once per surface** (lane 19, ADR-0010): the signed distance of
-/// every vertex of `b` from `plane`, as the cut, the kept halves and the ray all read it.
-///
-/// Faces are taken by surface ([`surfaces`]): every face of the solid with the same stored
-/// plane is one surface (a face split by Draw, Imprint or Split Face keeps its parent's plane
-/// in every part), and so are faces that meet along an edge, face the same way and lie within
-/// the merge distance of each other's planes (lane 19b: parts of one face an edit re-planed
-/// apart). Each surface is classified once, for both halves and for every part:
-///
-/// 1. **On the plane** when every corner of every face of the surface is within
-///    `max(ON_FACE, 2 x bend)` of the plane, where *bend* is the farthest any of those
-///    corners sits off the stored plane of its face (a face is planar only to within
-///    PLANARITY, so where it lies relative to a plane closer than that cannot be told). Every
-///    vertex of such a surface is on the plane: distance exactly zero. Zero counts as kept,
-///    so both halves keep the surface whole: it belongs to the half whose material is behind
-///    it, and in the other half the faces around it run off the plane on the side cut away,
-///    so that half's cap closes along the surface's own edges and covers it exactly, and the
-///    surface and its cap close each other ([`cut_pieces`]).
-/// 2. **Parallel** to the plane (every face's normal within PARALLEL of it) and not on it:
-///    every vertex takes the surface's mean distance, so it is wholly on one side.
-/// 3. Otherwise each vertex is on the side its own distance says (within ON_PLANE of zero is
-///    zero), and the surface is cut where its corners change sides.
-///
-/// A vertex of a surface on the plane is on the plane whatever other surfaces it is a corner
-/// of; one shared only by parallel surfaces takes the last of their means in key order (they
-/// agree to within PARALLEL times the solid's size). Nothing depends on face order or on
-/// which half asks: the flipped plane classifies every surface the same way.
-///
-/// These are the **effective distances** (lane 19b): every vertex has exactly one, and every
-/// face is cut by them, never by its stored plane ([`cut_pieces`], [`Model::kept_part`]). A
-/// vertex on the plane by its surface's decision may be a corner of other surfaces that are
-/// not (a facet beside the surface, an autofold triangle round a poked corner); those faces
-/// read it as on the plane too, and when that, or their own bend, puts their crossings more
-/// than a nanometre off one line they are cut along their own triangles ([`weak`]).
-///
-/// History. Lane 12: a face within ON_FACE of the plane took its mean distance (a face tilted
-/// 5e-11 off a plane through three of its corners kept a notch as a sliver of negative area,
-/// 2026-10-12 fuzz). Lane 12d: within twice its own bend when that is more (a box top bent by
-/// moving one corner 0.3 micrometres up clipped to a triangle over the dent that no cap could
-/// close). Lane 19 (the lane-18 verifier's snapping-on fuzz, seed 27182803): each face was
-/// still decided on its own and moved its corners to its own mean. A box's bottom face, a
-/// plane lying on it, was tilted by moving one corner a micrometre (bend 2.5e-7, so not on
-/// the plane) and then had a rectangle drawn across its edge: the drawn part, bent only
-/// 1.1e-7, was on the plane by itself and moved its corners to its mean, 9.1e-8 off, two of
-/// them on the box's side face. The side face then no longer met the flipped plane along that
-/// edge, its cap piece was gone, and the cut-away half kept the bottom face's triangle on the
-/// plane (0.0313 m2) with no cap to close it
-/// (`tests/repro/2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json`).
-pub(crate) fn sides(b: &crate::brep::Brep, plane: &Plane) -> BTreeMap<VertexId, f64> {
-    let raw: BTreeMap<VertexId, f64> = b
-        .vertices()
-        .map(|(k, v)| (k, plane.signed_distance(v.pos)))
-        .collect();
-    let mut dist = raw.clone();
-    let mut on: Vec<VertexId> = Vec::new();
-    for fs in surfaces(b) {
-        let mut vs: Vec<VertexId> = fs
-            .iter()
-            .flat_map(|&k| b.faces[k].loops().flat_map(|l| b.loop_vertices(l)))
-            .collect();
-        vs.sort_unstable();
-        vs.dedup();
-        // The bend: the farthest any corner sits off the stored plane of a face of the
-        // surface it is a corner of.
-        let bend = fs
-            .iter()
-            .flat_map(|&k| {
-                let f = &b.faces[k];
-                f.loops()
-                    .flat_map(|l| b.loop_points(l))
-                    .map(move |p| f.plane.signed_distance(p).abs())
-            })
-            .fold(0.0, f64::max);
-        let near = ON_FACE.max(2.0 * bend);
-        if vs.iter().all(|v| raw[v].abs() <= near) {
-            on.extend(vs);
-        } else if fs.iter().all(|&k| parallel(plane, &b.faces[k])) {
-            let mean = vs.iter().map(|v| raw[v]).sum::<f64>() / vs.len() as f64;
-            for v in vs {
-                dist.insert(v, mean);
-            }
-        }
-    }
-    for d in dist.values_mut() {
-        if d.abs() < ON_PLANE {
-            *d = 0.0;
-        }
-    }
-    for v in on {
-        dist.insert(v, 0.0);
-    }
-    dist
-}
-
-/// The cut's pieces: what [`cut_pieces`] finds in each face.
-struct Cut {
-    pieces: Vec<Piece>,
-    /// Where every crossing is.
-    points: BTreeMap<Node, DVec3>,
-}
-
-/// The tolerance of the cap's arrangement, per metre of the solid's largest coordinate: a
-/// few hundred rounding errors, far below anything the model can hold apart.
-const ARRANGE_TOL: f64 = 2e-13;
-
-/// How far (metres) a face's corners' distances may put its crossings off one line before
-/// the face is *weak* against a section plane ([`weak`]): a nanometre, the length epsilon.
-const WEAK_LINE: f64 = crate::tolerance::LENGTH_EPS;
-
-/// Whether face `f` is weak against `plane` under the distances `dist` ([`sides`]): the
-/// distances its corners carry are not those of one plane through the face, by enough that
-/// its crossings can sit more than [`WEAK_LINE`] off a line. Two things move them: the face's
-/// *bend* (its corners sit up to that far off its stored plane) and its *forcing* (the
-/// farthest [`sides`] moved one of its corners' distances off where the corner is: onto the
-/// plane, for a surface that lies on it; to a mean, for a parallel one; to zero within
-/// ON_PLANE). Either, over the sine of the angle between the face's plane and the section
-/// plane, is how far the crossings move. A weak face is cut along its own triangles
-/// ([`clip_rings`]), on which any three distances are those of a plane. The same for both
-/// halves, since the flipped plane forces the same corners by the same amounts.
-///
-/// Lane 12c called a face weak when its tilt across its size was within 16 times its bend;
-/// lane 19 made it the bend over the sine (a face bent a micrometre and tilted 1.2e-5 rad off
-/// the plane, not weak by the old rule, paired four crossings across a drawn rectangle).
-/// Lane 19b added the forcing: on the lane-19 verifier's find a corner forced onto the plane
-/// by the big facet it belongs to (moved 1.4 micrometres) was also a corner of exact
-/// triangular facets around a corner poked 2.5 micrometres out of the plane, unbent and so
-/// not weak, whose crossings their forced corner put off the line their stored plane gives.
-fn weak(
-    b: &crate::brep::Brep,
-    f: &crate::brep::Face,
-    plane: &Plane,
-    dist: &BTreeMap<VertexId, f64>,
-) -> bool {
-    let (bend, forced) = f
-        .loops()
-        .flat_map(|l| b.loop_vertices(l))
-        .map(|v| {
-            let p = b.vertices[v].pos;
-            (
-                f.plane.signed_distance(p).abs(),
-                (dist[&v] - plane.signed_distance(p)).abs(),
-            )
-        })
-        .fold((0.0, 0.0), |(a, c), (x, y)| {
-            (f64::max(a, x), f64::max(c, y))
-        });
-    bend + forced > WEAK_LINE * plane.normal.cross(f.plane.normal).length()
-}
-
-/// The rings a face is clipped by, as the cut ([`cut_pieces`]) and the kept halves
-/// ([`Model::kept_part`]) both clip it under the distances `dist` ([`sides`]): its loops, or
-/// for a weak face ([`weak`]) its triangles (the tessellator's, in the face's own frame, the
-/// ones `Object::tri_solid` measures the solid by), on each of which the three corners'
-/// distances are exactly those of a plane (lane 19). A face whose corners are all kept, or all
-/// cut away, keeps its loops (its triangles would clip it the same way), and so does a face
-/// the tessellator refuses.
-///
-/// The sides of a weak face's corners are set as much by how it bends, or by where the tie
-/// rule put them, as by where its plane meets the section plane, so they need not split it
-/// along a line, and its loop clipped corner by corner is no part of the face: a bottom face
-/// bent by a corner nudged 1e-7 m, with rectangles drawn on it, had corners a few nanometres
-/// either side of the plane, its loop's chords crossed the rectangles, and the pieces ran
-/// round a 2.2e-5 m2 region the wrong way (lane 19 property tests: a cap no material can be).
-/// On a triangle the corners' distances are exactly those of a plane, so each triangle is
-/// clipped along a line, and the kept part is exactly the part of the face's own tessellated
-/// surface on the kept side.
-fn clip_rings(
-    b: &crate::brep::Brep,
-    f: &crate::brep::Face,
-    plane: &Plane,
-    dist: &BTreeMap<VertexId, f64>,
-) -> Vec<Vec<VertexId>> {
-    let loops: Vec<Vec<VertexId>> = f.loops().map(|l| b.loop_vertices(l)).collect();
-    let kept = loops.iter().flatten().filter(|v| dist[*v] >= 0.0).count();
-    let all = loops.iter().map(Vec::len).sum::<usize>();
-    if kept == 0 || kept == all || !weak(b, f, plane, dist) {
-        return loops;
-    }
-    let flat: Vec<Vec<DVec2>> = loops
+/// A face's triangles, in the face's own turn: the tessellator's, in the face's own frame,
+/// exactly the ones `Object::tri_solid` measures the solid by. For a face the tessellator
+/// refuses (a committed solid has none: the validator refuses such a solid first), a fan from
+/// the first corner of each loop. Either way they are a 2-chain whose boundary is the face's
+/// loops (every diagonal is walked once each way), which is all the cut needs.
+fn face_triangles(b: &Brep, f: &Face, loops: &[Vec<VertexId>]) -> Vec<[VertexId; 3]> {
+    let flat: Vec<VertexId> = loops.iter().flatten().copied().collect();
+    let rings: Vec<Vec<DVec2>> = loops
         .iter()
         .map(|l| {
             l.iter()
@@ -597,141 +360,480 @@ fn clip_rings(
                 .collect()
         })
         .collect();
-    let Ok(tris) = sawhorse_tessellate::triangulate(&flat[0], &flat[1..]) else {
-        return loops;
-    };
-    let all: Vec<VertexId> = loops.iter().flatten().copied().collect();
-    tris.iter()
-        .map(|t| t.iter().map(|&i| all[i as usize]).collect())
-        .collect()
+    match sawhorse_tessellate::triangulate(&rings[0], &rings[1..]) {
+        Ok(ts) => ts.iter().map(|t| t.map(|i| flat[i as usize])).collect(),
+        Err(_) => loops
+            .iter()
+            .flat_map(|l| (1..l.len().saturating_sub(1)).map(move |i| [l[0], l[i], l[i + 1]]))
+            .collect(),
+    }
 }
 
-/// The node where edge `p -> q` (one end kept, the other not) crosses the plane, its point
-/// recorded in `points`: a vertex on the plane is that vertex whichever edge reaches it
-/// (node (v, v)), so faces that touch the plane at a vertex meet at one node, or coincident
-/// crossings join differently on two faces and the ring folds over itself; otherwise the
-/// edge's two vertices, low first, and the point where the distance interpolates to zero
-/// (the same point for every face and triangle that has the edge).
-fn crossing(
-    b: &crate::brep::Brep,
-    dist: &BTreeMap<VertexId, f64>,
-    points: &mut BTreeMap<Node, DVec3>,
-    p: VertexId,
-    q: VertexId,
-) -> Node {
-    let on = [p, q].into_iter().find(|v| dist[v] == 0.0);
-    let node = match on {
-        Some(v) => (v, v),
-        None if p < q => (p, q),
-        None => (q, p),
-    };
-    points.entry(node).or_insert_with(|| match on {
-        Some(v) => b.vertices[v].pos,
-        None => {
-            let (lo, hi) = node;
-            let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
-            let (dl, dh) = (dist[&lo], dist[&hi]);
-            pl + (ph - pl) * (dl / (dl - dh))
+/// What one triangle keeps ([`clip_triangle`]).
+struct TriClip {
+    /// The kept polygon, in the triangle's own turn (empty: nothing is kept).
+    kept: Vec<Node>,
+    /// Where the plane splits it: from where its boundary leaves the kept side to where it
+    /// comes back, the kept part on its left.
+    chord: Option<(Node, Node)>,
+}
+
+/// **The classic table** for one triangle, its corners in its own turn, under one distance
+/// per corner, zero counting as kept:
+///
+/// - no corner below the plane (`+ + +`, `+ + 0`, `+ 0 0`, `0 0 0`): the whole triangle;
+/// - no corner above it and one below (`- - -`, `- - 0`, `- 0 0`): nothing;
+/// - otherwise (a corner above and one below) the plane splits it: the kept part is the
+///   polygon of its kept corners and the crossings of the edges running from a corner above
+///   to one below, and its chord runs from where its boundary leaves the kept side to where
+///   it comes back, the crossing on that edge or, on an edge from a corner on the plane to
+///   one below, that corner. Every such triangle has exactly one chord (its kept and cut
+///   corners change over twice going round it).
+fn clip_triangle(t: [VertexId; 3], dist: &Distances) -> TriClip {
+    let d = t.map(|v| dist[v]);
+    if d.iter().all(|&x| x >= 0.0) {
+        return TriClip {
+            kept: t.iter().map(|&v| (v, v)).collect(),
+            chord: None,
+        };
+    }
+    if d.iter().all(|&x| x <= 0.0) {
+        return TriClip {
+            kept: Vec::new(),
+            chord: None,
+        };
+    }
+    let mut kept = Vec::with_capacity(4);
+    let (mut out, mut back) = (None, None);
+    for i in 0..3 {
+        let j = (i + 1) % 3;
+        let (p, q) = (t[i], t[j]);
+        let (kp, kq) = (d[i] >= 0.0, d[j] >= 0.0);
+        if kp {
+            kept.push((p, p));
         }
-    });
-    node
-}
-
-/// Every piece where `plane` cuts a face of `b`, in face order, under the distances `dist`
-/// ([`sides`]): **exactly the chords along which [`Model::kept_part`] clips the face** (lane
-/// 19b, ADR-0010). Each ring the face is clipped by ([`clip_rings`]: its loops, or a weak
-/// face's triangles) is walked in order; where an edge leaves the kept side the ring
-/// departs, where one comes back it returns (at the crossing on that edge, or at the vertex
-/// on the plane), and each departure pairs with the return after it. That chord is the edge
-/// the clipped ring runs along the plane, with the kept part of the ring on its left (seen
-/// from the face's normal), which puts the material on its left seen from the plane's
-/// normal; it is laid with a vote.
-///
-/// So the cut reads the distances its corners carry, never the face's stored plane, and both
-/// halves see the same pieces: the kept half's faces are its clipped rings, every edge of a
-/// clipped ring that is not a chord is part of an edge of the solid that the face beside it
-/// clips at the same crossing and walks the other way, so the chords of all the faces are the
-/// whole boundary of the kept faces along the plane, and the cap they enclose closes the half
-/// edge for edge, whatever the distances are.
-///
-/// History. Lane 12 sorted a face's crossings along the line where its stored plane meets
-/// the section plane, paired them, and directed each pair by the stored normal. Lane 12c/12d
-/// set weak faces apart (their pieces pointed the wrong way, CX1), lane 19 cut them along
-/// their triangles, as here. Lane 19b (the lane-19 verifier's find, about one case in
-/// 700,000 of `planes_on_a_nudged_face_drawn_on`): an exact triangular facet beside a big
-/// facet lying on the plane had a corner the big facet forced onto the plane (1.4
-/// micrometres off it) and a corner poked 2.5 micrometres out; its crossings were that
-/// corner and another on the plane, a line nearly at right angles to the one its stored plane
-/// gives, so the sort along that line ran the piece backwards, and the five facets around the
-/// poked corner (0.0235 m2) were lost from the kept half with no cap
-/// (`tests/repro/2026-10-14-section-poked-corner-facets.json`).
-fn cut_pieces(b: &crate::brep::Brep, plane: &Plane, dist: &BTreeMap<VertexId, f64>) -> Cut {
-    let kept = |v: VertexId| dist[&v] >= 0.0;
-    let mut points: BTreeMap<Node, DVec3> = BTreeMap::new();
-    let mut pieces: Vec<Piece> = Vec::new();
-    for (_, f) in b.faces() {
-        for ring in clip_rings(b, f, plane, dist) {
-            // Each crossing in ring order, and whether the ring leaves the kept side there.
-            let mut events: Vec<(Node, bool)> = Vec::new();
-            for i in 0..ring.len() {
-                let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
-                if kept(p) != kept(q) {
-                    events.push((crossing(b, dist, &mut points, p, q), kept(p)));
-                }
-            }
-            // Leaving and coming back alternate around a ring: each departure pairs with the
-            // return after it.
-            let Some(first) = events.iter().position(|e| e.1) else {
-                continue;
+        if kp != kq {
+            // One end is below the plane; the other is on it (that corner is where the
+            // boundary crosses) or above it (the edge's own crossing, a corner of the part).
+            let node = if d[i] == 0.0 {
+                (p, p)
+            } else if d[j] == 0.0 {
+                (q, q)
+            } else {
+                edge_node(p, q)
             };
-            let m = events.len();
-            for j in (0..m).step_by(2) {
-                let (a, b) = (events[(first + j) % m], events[(first + j + 1) % m]);
-                if a.0 != b.0 {
-                    pieces.push(Piece { a: a.0, b: b.0 });
-                }
+            if node.0 != node.1 {
+                kept.push(node);
+            }
+            if kp {
+                out = Some(node);
+            } else {
+                back = Some(node);
             }
         }
     }
-    Cut { pieces, points }
+    TriClip {
+        kept,
+        chord: out.zip(back),
+    }
 }
+
+/// A directed segment of a face's kept part.
+#[derive(Debug, Clone, Copy)]
+struct Seg {
+    a: Node,
+    b: Node,
+    /// A triangle's chord (every other segment runs along an edge of a triangle).
+    chord: bool,
+}
+
+/// One solid under one distance per vertex ([`clip_solid`]).
+struct Clipped {
+    /// Every face with anything kept, in face order: the rings of its kept part (nodes, in
+    /// the face's turn), its kept triangles merged back into one face.
+    faces: Vec<(FaceId, Vec<Vec<Node>>)>,
+    /// The chords, in order: every segment the kept faces leave open, the kept part on its
+    /// left, so the material is on its left seen from the plane's normal.
+    chords: Vec<(Node, Node)>,
+}
+
+/// A run of chords found together ([`clip_solid`]).
+struct Run {
+    /// Where it was found: the face's place in face order, then the place of its first
+    /// segment in that face.
+    order: (usize, usize),
+    segs: Vec<(Node, Node)>,
+    /// A kept edge of the solid with both ends on the plane, waiting for the face across: if
+    /// that face keeps its side too, the two run opposite ways and close each other.
+    edge: bool,
+}
+
+/// **The cut of one solid** (lane 19c, ADR-0010): every face clipped along its own triangles
+/// under the distances `dist` (one per vertex, [`distances`]), the triangles each face keeps
+/// merged back into its kept rings, and the chords those rings leave open, which are what the
+/// cap is laid from. `tol` (metres) is how far a chain of chords across one face may bend
+/// and still be laid as one straight chord: the cap's arrangement tolerance.
+///
+/// **Why the cap closes the half, by construction.** The triangles of the faces are a closed
+/// oriented surface: every edge of a triangle is an edge of exactly one other, walked the
+/// other way (a diagonal of a face by the face's next triangle, an edge of the solid by the
+/// triangle of the face across). What a triangle keeps of an edge depends on the edge's two
+/// distances alone: all of it when neither end is below the plane, the part from the end
+/// above to the crossing (one point, [`node_point`]) when one end is above and one below,
+/// nothing else of any length; so both triangles of an edge keep the same part of it and
+/// walk it opposite ways, and it closes, except along an edge with both ends on the plane,
+/// which a triangle keeps whole when its third corner is not below the plane and not at all
+/// when it is: such an edge stays open when one of its two triangles is kept and the other
+/// is not. So what the kept triangles leave open is exactly (1) the chord of every triangle
+/// the plane splits ([`clip_triangle`]) and (2) every edge with both ends on the plane kept by
+/// one of its triangles only, walked as that triangle walks it; these are the chords, one
+/// to one (`tests::the_kept_triangles_leave_open_exactly_the_chords` walks the kept triangles
+/// of hostile solids under the tie rule's distances and under random ones and matches every
+/// open segment to a chord). They close up into a cycle, being the boundary of a surface, and
+/// the cap laid on them in the plane (the arrangement keeps them a cycle, and takes for
+/// material every face its winding number puts inside, [`crate::arrangement`]) has them as
+/// its boundary, walked the other way: kept faces and cap close each other edge for edge.
+/// Along the normal that is exact (the cap's boundary is the chords seen in the plane); across
+/// it, a chord's end is off the plane only by how far the tie rule moved its corner (at most
+/// ON_FACE). No face's stored plane, bend or neighbours enter it, so it holds for any
+/// floating-point geometry.
+///
+/// **Faces, not triangles.** A face with no corner below the plane is kept whole (its loops;
+/// its triangles' diagonals would close each other), a face with every corner below it keeps
+/// nothing, and only a face the plane splits is triangulated. Its kept triangles are merged
+/// back: the segments its triangles walk both ways close (its diagonals), the chords that
+/// meet at a crossing on a diagonal are joined into one run from where the run enters the
+/// face to where it leaves, and a run that lies within `tol` of a straight line is laid as
+/// that line (Douglas and Peucker): a planar face cut by the plane gives exactly the chord
+/// between the two crossings on its edges, as it did before lane 19c, so the cap's corners are
+/// the crossings on the solid's own edges and every golden hashes as before. The merged rings
+/// and the chords take the same straightened runs, so they still close each other.
+fn clip_solid(b: &Brep, plane: &Plane, dist: &Distances, tol: f64) -> Clipped {
+    let mut out = Clipped {
+        faces: Vec::new(),
+        chords: Vec::new(),
+    };
+    let below = dist.values().any(|&d| d < 0.0);
+    let kept = dist.values().any(|&d| d >= 0.0);
+    if !kept {
+        return out;
+    }
+    let mut runs: Vec<Run> = Vec::new();
+    for (place, (fk, f)) in b.faces().enumerate() {
+        let loops: Vec<Vec<VertexId>> = f.loops().map(|l| b.loop_vertices(l)).collect();
+        let any_below = below && loops.iter().flatten().any(|v| dist[*v] < 0.0);
+        if !any_below {
+            // Kept whole: its loops, and its edges with both ends on the plane.
+            for (k, (p, q)) in loops
+                .iter()
+                .flat_map(|l| (0..l.len()).map(move |i| (l[i], l[(i + 1) % l.len()])))
+                .enumerate()
+            {
+                if dist[p] == 0.0 && dist[q] == 0.0 {
+                    runs.push(Run {
+                        order: (place, k),
+                        segs: vec![((p, p), (q, q))],
+                        edge: true,
+                    });
+                }
+            }
+            let rings = loops
+                .iter()
+                .map(|l| l.iter().map(|&v| (v, v)).collect())
+                .collect();
+            out.faces.push((fk, rings));
+            continue;
+        }
+        if loops.iter().flatten().all(|v| dist[*v] < 0.0) {
+            continue;
+        }
+        let rings = clip_face(b, plane, dist, tol, f, &loops, place, &mut runs);
+        if !rings.is_empty() {
+            out.faces.push((fk, rings));
+        }
+    }
+    // The solid's edges with both ends on the plane: one kept from both sides closes.
+    let mut alive = vec![true; runs.len()];
+    let mut waiting: BTreeMap<(Node, Node), Vec<usize>> = BTreeMap::new();
+    for i in 0..runs.len() {
+        if !runs[i].edge {
+            continue;
+        }
+        let (a, e) = runs[i].segs[0];
+        if let Some(js) = waiting.get_mut(&(e, a))
+            && let Some(j) = js.pop()
+        {
+            alive[i] = false;
+            alive[j] = false;
+            continue;
+        }
+        waiting.entry((a, e)).or_default().push(i);
+    }
+    let mut order: Vec<usize> = (0..runs.len()).filter(|&i| alive[i]).collect();
+    order.sort_by_key(|&i| runs[i].order);
+    out.chords = order
+        .into_iter()
+        .flat_map(|i| runs[i].segs.iter().copied())
+        .collect();
+    out
+}
+
+/// One face the plane splits ([`clip_solid`]): its triangles clipped, merged back into the
+/// rings of its kept part (returned), and its runs of chords added to `runs`.
+#[allow(clippy::too_many_arguments)]
+fn clip_face(
+    b: &Brep,
+    plane: &Plane,
+    dist: &Distances,
+    tol: f64,
+    f: &Face,
+    loops: &[Vec<VertexId>],
+    place: usize,
+    runs: &mut Vec<Run>,
+) -> Vec<Vec<Node>> {
+    // The face's own edges; any other segment between two of its corners is a diagonal.
+    let edges: BTreeSet<Node> = loops
+        .iter()
+        .flat_map(|l| (0..l.len()).map(move |i| edge_node(l[i], l[(i + 1) % l.len()])))
+        .collect();
+    let on_diagonal = |n: Node| n.0 != n.1 && !edges.contains(&n);
+    let mut segs: Vec<Seg> = Vec::new();
+    for t in face_triangles(b, f, loops) {
+        let c = clip_triangle(t, dist);
+        let k = c.kept.len();
+        for i in 0..k {
+            let (a, e) = (c.kept[i], c.kept[(i + 1) % k]);
+            segs.push(Seg {
+                a,
+                b: e,
+                chord: c.chord == Some((a, e)),
+            });
+        }
+    }
+    // A segment two kept triangles walk opposite ways (a diagonal, or part of one) closes.
+    let mut alive = vec![true; segs.len()];
+    let mut waiting: BTreeMap<(Node, Node), Vec<usize>> = BTreeMap::new();
+    for i in 0..segs.len() {
+        if segs[i].chord {
+            continue;
+        }
+        if let Some(js) = waiting.get_mut(&(segs[i].b, segs[i].a))
+            && let Some(j) = js.pop()
+        {
+            alive[i] = false;
+            alive[j] = false;
+            continue;
+        }
+        waiting.entry((segs[i].a, segs[i].b)).or_default().push(i);
+    }
+    // Runs: chords joined through the crossings on the face's diagonals (each has exactly one
+    // chord in and one out: both triangles of the diagonal are split), from where a run
+    // enters the face to where it leaves; what is left goes round in closed runs (a level of
+    // a bent face round one of its holes, crossing only diagonals).
+    let mut from: BTreeMap<Node, usize> = BTreeMap::new();
+    for (i, s) in segs.iter().enumerate() {
+        if s.chord && on_diagonal(s.a) {
+            from.insert(s.a, i);
+        }
+    }
+    let mut used = vec![false; segs.len()];
+    let mut chains: Vec<Vec<usize>> = Vec::new();
+    for open in [true, false] {
+        for i in 0..segs.len() {
+            if !segs[i].chord || used[i] || (open && on_diagonal(segs[i].a)) {
+                continue;
+            }
+            let mut chain = vec![i];
+            used[i] = true;
+            let mut at = segs[i].b;
+            while on_diagonal(at) {
+                match from.get(&at) {
+                    Some(&j) if !used[j] => {
+                        used[j] = true;
+                        chain.push(j);
+                        at = segs[j].b;
+                    }
+                    _ => break,
+                }
+            }
+            chains.push(chain);
+        }
+    }
+    let mut ring_segs: Vec<(Node, Node)> = Vec::new();
+    for chain in &chains {
+        let mut nodes: Vec<Node> = std::iter::once(segs[chain[0]].a)
+            .chain(chain.iter().map(|&i| segs[i].b))
+            .collect();
+        if nodes.len() > 2 && nodes.first() != nodes.last() {
+            let pts: Vec<DVec2> = nodes
+                .iter()
+                .map(|n| plane.to_local(node_point(b, dist, *n)))
+                .collect();
+            nodes = straighten(&pts, tol)
+                .into_iter()
+                .map(|k| nodes[k])
+                .collect();
+        }
+        let run: Vec<(Node, Node)> = nodes.windows(2).map(|w| (w[0], w[1])).collect();
+        ring_segs.extend(&run);
+        runs.push(Run {
+            order: (place, chain.iter().copied().min().unwrap_or(0)),
+            segs: run,
+            edge: false,
+        });
+    }
+    // What is left open of the triangles' edges: the face's own edges (kept whole or in
+    // part; the faces across close them) and, among them or on diagonals, edges with both
+    // ends on the plane kept on one side only.
+    for i in 0..segs.len() {
+        let s = segs[i];
+        if s.chord || !alive[i] {
+            continue;
+        }
+        ring_segs.push((s.a, s.b));
+        let on = |n: Node| n.0 == n.1 && dist[n.0] == 0.0;
+        if on(s.a) && on(s.b) {
+            runs.push(Run {
+                order: (place, i),
+                segs: vec![(s.a, s.b)],
+                // Along an edge of the solid the face across decides; along a diagonal the
+                // triangle across is this face's own, and it did not keep it.
+                edge: edges.contains(&edge_node(s.a.0, s.b.0)),
+            });
+        }
+    }
+    link(&ring_segs)
+}
+
+/// Segments that close up (as many leave every node as reach it), linked into rings: from
+/// each unused segment in order, on along the first unused segment out of each node, until
+/// the ring is back where it started.
+fn link(segs: &[(Node, Node)]) -> Vec<Vec<Node>> {
+    let mut out_of: BTreeMap<Node, std::collections::VecDeque<usize>> = BTreeMap::new();
+    for (i, s) in segs.iter().enumerate() {
+        out_of.entry(s.0).or_default().push_back(i);
+    }
+    let mut used = vec![false; segs.len()];
+    let mut rings = Vec::new();
+    for i in 0..segs.len() {
+        if used[i] {
+            continue;
+        }
+        let start = segs[i].0;
+        let mut ring = Vec::new();
+        let mut j = i;
+        loop {
+            used[j] = true;
+            ring.push(segs[j].0);
+            let at = segs[j].1;
+            if at == start {
+                break;
+            }
+            let mut next = None;
+            if let Some(q) = out_of.get_mut(&at) {
+                while let Some(k) = q.pop_front() {
+                    if !used[k] {
+                        next = Some(k);
+                        break;
+                    }
+                }
+            }
+            match next {
+                Some(k) => j = k,
+                None => break, // cannot happen: the segments of a kept face close up
+            }
+        }
+        rings.push(ring);
+    }
+    rings
+}
+
+/// The points of an open run to keep so that every point dropped is within `tol` of the line
+/// kept (Douglas and Peucker: the farthest point from the line between the ends stays when it
+/// is farther than `tol`, and each side is done again). The ends always stay.
+fn straighten(pts: &[DVec2], tol: f64) -> Vec<usize> {
+    let n = pts.len();
+    let mut keep = vec![false; n];
+    keep[0] = true;
+    keep[n - 1] = true;
+    let mut todo = vec![(0, n - 1)];
+    while let Some((a, c)) = todo.pop() {
+        if c <= a + 1 {
+            continue;
+        }
+        let (mut far, mut at) = (-1.0, a);
+        for k in a + 1..c {
+            let d = crate::sketch::point_segment_distance(pts[k], pts[a], pts[c]);
+            if d > far {
+                far = d;
+                at = k;
+            }
+        }
+        if far > tol {
+            keep[at] = true;
+            todo.push((a, at));
+            todo.push((at, c));
+        }
+    }
+    (0..n).filter(|&k| keep[k]).collect()
+}
+
+/// The tolerance of the cap's arrangement, per metre of the solid's largest coordinate: a
+/// few hundred rounding errors, far below anything the model can hold apart.
+const ARRANGE_TOL: f64 = 2e-13;
 
 /// The rings where `plane` cuts a solid, in the plane's frame: material on the left of
 /// every ring (outer rings counter-clockwise, holes clockwise), every ring simple. Exact up
 /// to the crossing interpolation; see the module docs for the tie rule.
 ///
-/// Since lane 12d the rings come out of a planar arrangement ([`crate::arrangement`]): every
-/// piece of every face ([`cut_pieces`]) is laid in it with its material side, split where it
-/// crosses or touches another and merged where pieces coincide; the arrangement's faces are
-/// material when the pieces around them say so, or else when the solid holds a point inside
-/// them ([`inside_below`]); the cap is the union of the material faces. The pieces used to be
-/// chained into rings directly, which went wrong two ways: a hole whose edge lies along the
-/// cap's outline (a plane along the top edge of the hole in a frame) never met the outline
-/// at a node, so the hole was lost and the cap was a plain rectangle; and a piece pointing
-/// the wrong way left a ring that could not close, so the whole cap was dropped. Since lane
-/// 19b the pieces of every face are exactly the chords the kept half clips it along, under the
-/// one set of distances [`sides`] gives, so the cap closes the half by construction and the ray is asked only where pieces disagree (a solid folded
-/// through itself).
+/// The rings come out of a planar arrangement ([`crate::arrangement`], lane 12d) laid from the
+/// chords of the solid's kept faces ([`clip_solid`], lane 19c), which close up by construction:
+/// every distinct end of a chord is made a vertex once, every chord is laid between its two
+/// vertices (split where it crosses or touches another), and the faces of the arrangement
+/// whose winding number is 1 or more are the cap.
 pub(crate) fn solid_rings(o: &Object, plane: &Plane) -> Vec<Vec<DVec2>> {
-    rings_under(o, plane, &sides(o.brep(), plane))
+    rings_under(o, plane, &distances(o.brep(), plane))
 }
 
-/// [`solid_rings`] under any distances `dist` (one per vertex; [`sides`] gives the tie rule's).
-fn rings_under(o: &Object, plane: &Plane, dist: &BTreeMap<VertexId, f64>) -> Vec<Vec<DVec2>> {
-    let b = o.brep();
-    let cut = cut_pieces(b, plane, dist);
-    if cut.pieces.is_empty() {
+/// [`solid_rings`] under any distances `dist` (one per vertex; [`distances`] gives the tie
+/// rule's).
+fn rings_under(o: &Object, plane: &Plane, dist: &Distances) -> Vec<Vec<DVec2>> {
+    // A solid with no corner below the plane is kept whole, and one with every corner below
+    // it is cut away whole: neither has a cap.
+    if !dist.values().any(|&d| d < 0.0) || dist.values().all(|&d| d < 0.0) {
         return Vec::new();
     }
-    let scale = solid_scale(o);
-    let mut arr = crate::arrangement::Arrangement::new(ARRANGE_TOL * scale);
-    let at2d = |k: &Node| plane.to_local(cut.points[k]);
-    for (i, p) in cut.pieces.iter().enumerate() {
-        arr.insert(at2d(&p.a), at2d(&p.b), 1, i);
+    let tol = ARRANGE_TOL * solid_scale(o);
+    let cut = clip_solid(o.brep(), plane, dist, tol);
+    cap_rings(o.brep(), plane, dist, &cut.chords, tol)
+}
+
+/// The cap laid from `chords` ([`solid_rings`]).
+fn cap_rings(
+    b: &Brep,
+    plane: &Plane,
+    dist: &Distances,
+    chords: &[(Node, Node)],
+    tol: f64,
+) -> Vec<Vec<DVec2>> {
+    if chords.is_empty() {
+        return Vec::new();
+    }
+    let mut arr = crate::arrangement::Arrangement::new(tol);
+    let mut ids: BTreeMap<Node, usize> = BTreeMap::new();
+    for &(a, c) in chords {
+        for n in [a, c] {
+            if let std::collections::btree_map::Entry::Vacant(e) = ids.entry(n) {
+                e.insert(arr.vertex(plane.to_local(node_point(b, dist, n))));
+            }
+        }
+    }
+    for (i, (a, c)) in chords.iter().enumerate() {
+        arr.insert_between(ids[a], ids[c], 1, i);
     }
     arr.settle();
     let mut rings = Vec::new();
-    for r in arr.material_rings(|q| inside_below(b, plane, dist, q, scale)) {
+    for r in arr.material_rings() {
         let pts = tidy_ring(r);
         if pts.len() >= 3 && sawhorse_tessellate::signed_area(&pts).abs() > RING_FLOOR {
             rings.push(pts);
@@ -973,109 +1075,6 @@ pub(crate) fn representable(ring: &[DVec2], scale: f64) -> Vec<Vec<DVec2>> {
         .collect()
 }
 
-/// Directions (off `-normal`, along `u` and `v`) of the rays [`inside_below`] casts, tried in
-/// turn until one meets nothing on an edge.
-const RAYS: [(f64, f64); 6] = [
-    (0.1371, 0.0583),
-    (-0.0917, 0.1229),
-    (0.0443, -0.1613),
-    (-0.1789, -0.0371),
-    (0.2113, 0.1931),
-    (-0.0611, 0.2477),
-];
-
-/// Whether the solid holds the point `q` of the plane's frame, taken just below the plane
-/// (on the side that is cut away, which is what the tie rule makes the cap: a face lying on
-/// the plane is kept, so the cap is the cut a hair below it). A ray from `q` into the cut-away
-/// side counts the faces it passes through; a face the tie rule keeps whole or puts on the
-/// plane is never met. `None` when every ray runs within the tolerance of a face's edge or
-/// starts on a face. The cap's arrangement asks this only about a face whose pieces disagree
-/// or say nothing.
-fn inside_below(
-    b: &crate::brep::Brep,
-    plane: &Plane,
-    dist: &BTreeMap<VertexId, f64>,
-    q: DVec2,
-    scale: f64,
-) -> Option<bool> {
-    let start = plane.to_world(q);
-    let faces: Vec<_> = b
-        .faces()
-        .filter(|(_, f)| {
-            f.loops()
-                .flat_map(|l| b.loop_vertices(l))
-                .any(|v| dist[&v] < 0.0)
-        })
-        .map(|(_, f)| {
-            let rings: Vec<Vec<DVec2>> = f
-                .loops()
-                .map(|l| {
-                    b.loop_points(l)
-                        .iter()
-                        .map(|p| f.plane.to_local(*p))
-                        .collect()
-                })
-                .collect();
-            let bend = f
-                .loops()
-                .flat_map(|l| b.loop_points(l))
-                .map(|p| f.plane.signed_distance(p).abs())
-                .fold(0.0, f64::max);
-            (&f.plane, rings, 1e-9 * scale + 2.0 * bend)
-        })
-        .collect();
-    'rays: for (a, c) in RAYS {
-        let r = (-plane.normal + plane.u * a + plane.v * c).normalize();
-        let mut hits = 0u32;
-        for (fp, rings, tol) in &faces {
-            let h = fp.signed_distance(start);
-            let denom = r.dot(fp.normal);
-            let s = if denom.abs() < 1e-9 {
-                f64::NAN
-            } else {
-                -h / denom
-            };
-            // The ray starts in the face's plane (or runs along it): if it starts on the
-            // face, no ray can tell.
-            let on_plane = s.is_nan() || s.abs() <= *tol;
-            let at = if on_plane {
-                if h.abs() > *tol {
-                    continue;
-                }
-                start
-            } else if s < 0.0 {
-                continue;
-            } else {
-                start + r * s
-            };
-            let p = fp.to_local(at);
-            let near = rings.iter().any(|ring| {
-                (0..ring.len()).any(|i| {
-                    crate::sketch::point_segment_distance(p, ring[i], ring[(i + 1) % ring.len()])
-                        <= *tol
-                })
-            });
-            if near {
-                continue 'rays;
-            }
-            let inside = rings
-                .iter()
-                .filter(|ring| crate::validate::point_in_ring(p, ring))
-                .count()
-                % 2
-                == 1;
-            if inside {
-                if on_plane {
-                    continue 'rays;
-                }
-                hits += 1;
-            }
-        }
-        return Some(hits % 2 == 1);
-    }
-    None
-}
-
 /// Drop repeated points and points on one line with their neighbours: between them, or
 /// the tip of a zero-width spike (a ring that runs out along a line and back, as one
 /// through a vertex touching the plane can).
@@ -1165,39 +1164,27 @@ fn clip(ring: &[DVec2], h: &HalfPlane) -> Vec<DVec2> {
     out
 }
 
-/// What `frame` keeps of solid `o` under the distances `dist` (one per vertex; [`sides`] gives
-/// the tie rule's), as a closed surface: every face clipped to the kept side by the rings the
-/// cut cuts it by ([`clip_rings`]: a weak face triangle by triangle), plus the cap facing
-/// `-normal`. The chords this clipping runs along are exactly the cut's pieces
-/// ([`cut_pieces`]), so the cap closes it edge for edge under any distances (lane 19b).
-fn kept_under(o: &Object, frame: &Plane, dist: &BTreeMap<VertexId, f64>) -> KeptPart {
+/// What `frame` keeps of solid `o` under the distances `dist` (one per vertex; [`distances`]
+/// gives the tie rule's), as a closed surface: the kept part of every face (its kept
+/// triangles merged back into rings, [`clip_solid`]) plus the cap facing `-normal`, laid from
+/// the chords those rings leave open, so the two close each other under any distances.
+fn kept_under(o: &Object, frame: &Plane, dist: &Distances) -> KeptPart {
     let b = o.brep();
+    let tol = ARRANGE_TOL * solid_scale(o);
+    let cut = clip_solid(b, frame, dist, tol);
     let mut part = KeptPart::default();
-    for (_, f) in b.faces() {
-        let fp = &f.plane;
+    for (fk, rings) in &cut.faces {
+        let fp = &b.faces[*fk].plane;
         let mut area = 0.0;
-        for vs in clip_rings(b, f, frame, dist) {
-            let mut ring: Vec<DVec3> = Vec::with_capacity(vs.len() + 2);
-            for i in 0..vs.len() {
-                let (p, q) = (vs[i], vs[(i + 1) % vs.len()]);
-                let (kp, kq) = (dist[&p] >= 0.0, dist[&q] >= 0.0);
-                if kp {
-                    ring.push(b.vertices[p].pos);
-                }
-                if kp != kq && dist[&p] != 0.0 && dist[&q] != 0.0 {
-                    let (lo, hi) = if p < q { (p, q) } else { (q, p) };
-                    let (pl, ph) = (b.vertices[lo].pos, b.vertices[hi].pos);
-                    let (dl, dh) = (dist[&lo], dist[&hi]);
-                    ring.push(pl + (ph - pl) * (dl / (dl - dh)));
-                }
-            }
+        for r in rings {
+            let ring: Vec<DVec3> = r.iter().map(|n| node_point(b, dist, *n)).collect();
             let flat: Vec<DVec2> = ring.iter().map(|p| fp.to_local(*p)).collect();
             area += sawhorse_tessellate::signed_area(&flat);
             part.newell(&ring);
         }
         part.add(fp.normal, fp.origin, area);
     }
-    let rings = rings_under(o, frame, dist);
+    let rings = cap_rings(b, frame, dist, &cut.chords, tol);
     part.cap_length += rings
         .iter()
         .map(|r| {
@@ -1438,11 +1425,11 @@ impl Model {
         let mut part = KeptPart::default();
         for o in self.section_solids(s) {
             let obj = &self.objects[o];
-            // Which side each vertex is on, with the same tie rule and the same crossing
-            // points as the cap (`solid_rings`, both through `sides`): a face lying on the
-            // plane is kept whole by both halves, and the half it does not belong to has the
-            // face itself as its cap there, so the two halves always add up to the whole.
-            part.absorb(kept_under(obj, &frame, &sides(obj.brep(), &frame)));
+            // One distance per vertex, the same as the cap's (`solid_rings`, both through
+            // `distances`): a face lying on the plane is kept whole by both halves, and the
+            // half whose material is not behind it has the face itself as its cap there, so
+            // the two halves always add up to the whole.
+            part.absorb(kept_under(obj, &frame, &distances(obj.brep(), &frame)));
         }
         Ok(part)
     }
@@ -1861,7 +1848,6 @@ impl Model {
         Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1910,9 +1896,8 @@ mod tests {
         assert_eq!(tidy_ring(r).len(), 4);
     }
 
-    #[test]
-    fn a_box_cut_through_its_middle() {
-        let o = Object::extrude(
+    fn a_box() -> Object {
+        Object::extrude(
             &Plane::GROUND,
             &[
                 DVec2::ZERO,
@@ -1923,7 +1908,12 @@ mod tests {
             &[],
             1.0,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn a_box_cut_through_its_middle() {
+        let o = a_box();
         let plane = Plane::new(DVec3::new(0.5, 0.0, 0.0), DVec3::X).unwrap();
         let caps = assemble(solid_rings(&o, &plane));
         assert_eq!(caps.len(), 1);
@@ -1940,23 +1930,22 @@ mod tests {
         assert!(solid_rings(&o, &top).is_empty());
     }
 
+    /// A frame: a 3 x 3 square with a hole from (1, 1.5) to (2, 2.5), pulled up 1.
+    fn a_frame() -> Object {
+        let mut hole = square(1.0, 1.5, 2.0, 2.5);
+        hole.reverse();
+        Object::extrude(&Plane::GROUND, &square(0.0, 0.0, 3.0, 3.0), &[hole], 1.0).unwrap()
+    }
+
     /// CX2 in miniature: a frame cut by a plane through the top edge of its hole. One side's
     /// top face crosses the plane in a single piece straight over the hole while the hole's
-    /// wall lays its edge along it the other way; the arrangement cancels the two, so both
-    /// sides get the same notched cap (it used to be a plain rectangle on one side).
+    /// wall lays its edge along it the other way; both sides get the same notched cap (it
+    /// used to be a plain rectangle on one side). Since lane 19c the hole's top edge, with both
+    /// ends on the plane and kept by the triangles on both sides of it, closes itself, and the
+    /// top face's runs end at the hole's corners.
     #[test]
     fn a_frame_cut_along_its_hole_edge_keeps_the_notch() {
-        let sq = |x0: f64, y0: f64, x1: f64, y1: f64| {
-            vec![
-                DVec2::new(x0, y0),
-                DVec2::new(x1, y0),
-                DVec2::new(x1, y1),
-                DVec2::new(x0, y1),
-            ]
-        };
-        let mut hole = sq(1.0, 1.5, 2.0, 2.5);
-        hole.reverse();
-        let o = Object::extrude(&Plane::GROUND, &sq(0.0, 0.0, 3.0, 3.0), &[hole], 1.0).unwrap();
+        let o = a_frame();
         // Through the hole's top edge (y = 2.5, z = 1), rising 1 in 2: it leaves the slab at
         // y = 0.5 on the bottom, so the cut spans y 0.5..2.5 and the hole notches its top.
         let n = DVec3::new(0.0, 1.0, -2.0).normalize();
@@ -1972,115 +1961,30 @@ mod tests {
         }
     }
 
-    /// The ray that settles a face the pieces disagree on: inside a box, just below a plane
-    /// through it, yes; outside, no; on a face the plane lies on, the side that is cut away.
+    /// Lane 19c: one sign per vertex. Every distance is the vertex's own, zero within ON_FACE
+    /// and nothing else: a corner 0.9 nm off the plane is on it, one 2 nm off is not, whatever
+    /// face or surface it is a corner of.
     #[test]
-    fn the_ray_reads_the_solid_just_below_the_plane() {
-        let o = Object::extrude(
-            &Plane::GROUND,
-            &[
-                DVec2::ZERO,
-                DVec2::new(2.0, 0.0),
-                DVec2::new(2.0, 1.0),
-                DVec2::new(0.0, 1.0),
-            ],
-            &[],
-            1.0,
-        )
-        .unwrap();
+    fn one_sign_per_vertex() {
+        let o = a_box();
         let b = o.brep();
-        let at = |plane: &Plane, p: DVec3| {
-            let dist = sides(b, plane);
-            inside_below(b, plane, &dist, plane.to_local(p), 2.0)
-        };
-        let mid = Plane::new(DVec3::new(0.0, 0.0, 0.5), DVec3::Z).unwrap();
-        assert_eq!(at(&mid, DVec3::new(1.0, 0.5, 0.5)), Some(true));
-        assert_eq!(at(&mid, DVec3::new(3.0, 0.5, 0.5)), Some(false));
-        // On the top face: facing out (down into the box) the box is below; facing in, not.
-        let out = Plane::new(DVec3::new(0.0, 0.0, 1.0), DVec3::Z).unwrap();
-        assert_eq!(at(&out, DVec3::new(1.0, 0.5, 1.0)), Some(true));
-        let into = Plane::new(DVec3::new(0.0, 0.0, 1.0), -DVec3::Z).unwrap();
-        assert_eq!(at(&into, DVec3::new(1.0, 0.5, 1.0)), Some(false));
-    }
-
-    /// The faces of `o` lying along z = -1.75, facing down.
-    fn down(o: &Object) -> Vec<&crate::brep::Face> {
-        o.brep()
-            .faces()
-            .map(|(_, f)| f)
-            .filter(|f| f.plane.normal.z < -0.99 && (f.plane.origin.z + 1.75).abs() < 1e-5)
-            .collect()
-    }
-
-    /// Lane 19: the parts of a face split by a stroke are one surface to the tie rule. The
-    /// lane-18 verifier's find, as found (one corner of the bottom face moved a micrometre, so
-    /// the bottom face is not on the plane, while the part drawn on it would be by itself) and
-    /// without the move (the bottom face and the part drawn on it both on the plane).
-    #[test]
-    fn the_parts_of_a_drawn_on_face_are_one_surface() {
-        let r: crate::testing::Repro = serde_json::from_str(include_str!(
-            "../tests/repro/2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json"
-        ))
-        .unwrap();
-        let was = crate::snap::plane_snapping();
-        crate::snap::set_plane_snapping(r.plane_snap.unwrap_or(true));
-        let play = |skip_move: bool| {
-            let mut d = crate::document::Document::new();
-            for op in &r.ops {
-                if skip_move && matches!(op, crate::model::Op::TransformGeometry { .. }) {
-                    continue;
-                }
-                let _ = d.apply(op);
-            }
-            d
-        };
-        for (skip_move, on) in [(false, false), (true, true)] {
-            let d = play(skip_move);
-            let m = d.model();
-            let s = m.sections()[0].1;
-            // The faces of the box lying along z = -1.75, facing down: the bottom face and the
-            // part drawn on it, one stored plane.
-            let o = m
-                .objects()
-                .into_iter()
-                .map(|(_, o)| o)
-                .find(|o| down(o).len() == 2)
-                .expect("the box drawn on");
-            let b = o.brep();
-            let bottom = down(o);
-            assert_eq!(bottom[0].plane, bottom[1].plane);
-            for normal in [s.normal, -s.normal] {
-                let plane = Plane::new(s.origin, normal).unwrap();
-                let dist = sides(b, &plane);
-                for f in &bottom {
-                    for v in f.loops().flat_map(|l| b.loop_vertices(l)) {
-                        let raw = plane.signed_distance(b.vertices[v].pos);
-                        let raw = if raw.abs() < ON_PLANE { 0.0 } else { raw };
-                        // On the plane: every corner of both parts exactly on it. Not: every
-                        // corner where it is, none moved to a part's own mean.
-                        let want = if on { 0.0 } else { raw };
-                        assert_eq!(dist[&v], want, "skip_move {skip_move}");
-                    }
+        for (h, on) in [(0.0, true), (0.9e-9, true), (-0.9e-9, true), (2e-9, false)] {
+            let plane = Plane::new(DVec3::new(0.0, 0.0, 1.0 + h), DVec3::Z).unwrap();
+            let dist = distances(b, &plane);
+            for (v, x) in b.vertices() {
+                let raw = plane.signed_distance(x.pos);
+                let want = if raw.abs() <= ON_FACE { 0.0 } else { raw };
+                assert_eq!(dist[v], want);
+                if x.pos.z == 1.0 {
+                    assert_eq!(dist[v] == 0.0, on, "{h}");
                 }
             }
         }
-        crate::snap::set_plane_snapping(was);
     }
 
-    /// Lane 19b: under **any** distances, one per vertex, the cut's pieces are exactly the
-    /// chords the kept half clips its faces along, so the cap closes the half along the
-    /// normal to rounding (and across it to the farthest a corner sits off the plane at the
-    /// distance it is given, times the seam). The lane-19 verifier's find, with the distances
-    /// the tie rule gives now, with the one corner the lane-19 rule forced onto the plane (the
-    /// big facet's dented corner, 1.4 micrometres off; its triangle was cut backwards along
-    /// its stored plane's line and the kept half lost 0.0235 m2), and with every corner within
-    /// 5 micrometres of the plane put on it; both ways.
-    #[test]
-    fn the_cut_closes_the_half_under_any_distances() {
-        let r: crate::testing::Repro = serde_json::from_str(include_str!(
-            "../tests/repro/2026-10-14-section-poked-corner-facets.json"
-        ))
-        .unwrap();
+    /// A repro of `tests/repro` played to its end, with its plane snapping.
+    fn replay(json: &str) -> crate::document::Document {
+        let r: crate::testing::Repro = serde_json::from_str(json).unwrap();
         let was = crate::snap::plane_snapping();
         crate::snap::set_plane_snapping(r.plane_snap.unwrap_or(true));
         let mut d = crate::document::Document::new();
@@ -2088,46 +1992,305 @@ mod tests {
             let _ = d.apply(op);
         }
         crate::snap::set_plane_snapping(was);
-        let m = d.model();
-        let s = m.sections()[0].1;
-        let o = m.objects()[0].1;
-        let b = o.brep();
-        let dented = b
-            .vertices()
-            .min_by(|x, y| {
-                let at = DVec3::new(0.125, 0.0, 0.5);
-                x.1.pos.distance(at).total_cmp(&y.1.pos.distance(at))
-            })
-            .unwrap()
-            .0;
-        let mut tried = 0;
-        for normal in [s.normal, -s.normal] {
-            let plane = Plane::new(s.origin, normal).unwrap();
-            let tie = sides(b, &plane);
-            let mut one = tie.clone();
-            one.insert(dented, 0.0);
-            let mut all = tie.clone();
-            for (v, x) in all.iter_mut() {
-                if plane.signed_distance(b.vertices[*v].pos).abs() <= 5e-6 {
+        d
+    }
+
+    /// Hostile solids and planes through them: the lane-19b verifier's find (a box top poked
+    /// beyond its bend under two n-gons, both snappings), the lane-19 verifier's (autofold
+    /// facets round a poked corner), the lane-18 verifier's (a tilted face drawn on), folded
+    /// boxes cut through two vertices, and a box and a frame; each with its own planes, both
+    /// ways round, and planes through its middle at odd angles.
+    fn hostile() -> Vec<(String, Object, Vec<Plane>)> {
+        let repros = [
+            (
+                "top face poked beyond its bend, snapping off",
+                include_str!(
+                    "../tests/repro/2026-10-14-section-top-face-poked-beyond-its-bend-snap-off.json"
+                ),
+            ),
+            (
+                "top face poked beyond its bend, snapping on",
+                include_str!(
+                    "../tests/repro/2026-10-14-section-top-face-poked-beyond-its-bend-snap-on.json"
+                ),
+            ),
+            (
+                "poked corner facets",
+                include_str!("../tests/repro/2026-10-14-section-poked-corner-facets.json"),
+            ),
+            (
+                "tie rule on an imprinted tilted face",
+                include_str!(
+                    "../tests/repro/2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json"
+                ),
+            ),
+            (
+                "pinch at two vertices",
+                include_str!("../tests/repro/2026-10-12-section-pinch-at-two-vertices.json"),
+            ),
+            (
+                "pinch: a face on the plane meets a fold",
+                include_str!(
+                    "../tests/repro/2026-10-12-section-pinch-face-on-plane-meets-fold.json"
+                ),
+            ),
+        ];
+        let mut out = Vec::new();
+        let odd = [
+            DVec3::new(0.3, -0.2, 1.0),
+            DVec3::new(1.0, 0.7, 0.1),
+            DVec3::new(-0.4, 1.0, 0.25),
+        ];
+        let middle = |o: &Object| {
+            let b = o.brep();
+            let (mut lo, mut hi) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
+            for (_, v) in b.vertices() {
+                lo = lo.min(v.pos);
+                hi = hi.max(v.pos);
+            }
+            (lo + hi) * 0.5
+        };
+        for (name, json) in repros {
+            let d = replay(json);
+            let m = d.model();
+            for (k, (_, o)) in m.objects().into_iter().enumerate() {
+                let mut planes = Vec::new();
+                for (_, s) in m.sections() {
+                    planes.push(Plane::new(s.origin, s.normal).unwrap());
+                    planes.push(Plane::new(s.origin, -s.normal).unwrap());
+                }
+                for n in odd {
+                    planes.push(Plane::new(middle(o), n.normalize()).unwrap());
+                }
+                out.push((format!("{name}, solid {k}"), o.clone(), planes));
+            }
+        }
+        for (name, o) in [("a box", a_box()), ("a frame", a_frame())] {
+            let c = middle(&o);
+            let mut planes = vec![
+                Plane::new(
+                    DVec3::new(0.0, 2.5, 1.0),
+                    DVec3::new(0.0, 1.0, -2.0).normalize(),
+                )
+                .unwrap(),
+                Plane::new(DVec3::new(1.0, 1.5, 0.5), DVec3::X).unwrap(),
+                Plane::new(DVec3::ZERO, -DVec3::Z).unwrap(),
+            ];
+            planes.extend(odd.map(|n| Plane::new(c, n.normalize()).unwrap()));
+            out.push((name.to_string(), o, planes));
+        }
+        out
+    }
+
+    /// A small deterministic generator (xorshift64*), for distances nobody chose.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> f64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// The distances to try on a solid: the tie rule's; every corner within `h` of the plane
+    /// forced onto it, for `h` from a nanometre to five micrometres; and random ones, any
+    /// size and either sign, a third of them exactly zero, which no geometry gives.
+    fn tries(b: &Brep, plane: &Plane, seed: u64) -> Vec<(String, Distances, bool)> {
+        let tie = distances(b, plane);
+        let mut out = vec![("the tie rule".to_string(), tie.clone(), true)];
+        for h in [1e-8, 1e-7, 2e-6, 5e-6] {
+            let mut forced = tie.clone();
+            for (v, x) in forced.iter_mut() {
+                if plane.signed_distance(b.vertices[v].pos).abs() <= h {
                     *x = 0.0;
                 }
             }
-            for (what, dist) in [("tie rule", tie), ("one forced", one), ("all forced", all)] {
-                let part = kept_under(o, &plane, &dist);
-                let off = b
-                    .vertices()
-                    .map(|(v, p)| (plane.signed_distance(p.pos) - dist[&v]).abs())
-                    .fold(0.0, f64::max);
-                let along = part.vector_area.dot(normal).abs();
-                assert!(along < 1e-12, "{what}, {normal}: {part:?}");
-                let across = part.vector_area.length();
-                assert!(
-                    across <= 2.0 * off * part.cap_length + 1e-12,
-                    "{what}, {normal}: {part:?} (corners up to {off} off)"
-                );
-                tried += 1;
+            out.push((format!("forced within {h}"), forced, true));
+        }
+        let mut rng = Rng(seed | 1);
+        for k in 0..3 {
+            let mut any = tie.clone();
+            for (_, x) in any.iter_mut() {
+                let r = rng.next();
+                *x = if r < 0.33 {
+                    0.0
+                } else {
+                    (rng.next() - 0.5) * 10f64.powf(-9.0 + 9.0 * rng.next())
+                };
+            }
+            out.push((format!("random {k}"), any, false));
+        }
+        out
+    }
+
+    /// The directed segments that `rings` leave open: each ring walked in its own turn, and
+    /// two segments that run opposite ways between the same nodes closing each other. Sorted.
+    fn left_open(rings: impl IntoIterator<Item = Vec<Node>>) -> Vec<(Node, Node)> {
+        let mut count: BTreeMap<(Node, Node), u32> = BTreeMap::new();
+        for r in rings {
+            for i in 0..r.len() {
+                let (a, e) = (r[i], r[(i + 1) % r.len()]);
+                if a == e {
+                    continue;
+                }
+                match count.get_mut(&(e, a)) {
+                    Some(c) if *c > 0 => *c -= 1,
+                    _ => *count.entry((a, e)).or_default() += 1,
+                }
             }
         }
-        assert_eq!(tried, 6);
+        count
+            .into_iter()
+            .flat_map(|(k, c)| std::iter::repeat_n(k, c as usize))
+            .collect()
+    }
+
+    /// **The proof, checked** (lane 19c, see [`clip_solid`]): the kept parts of a solid's
+    /// triangles, walked edge by edge, leave open exactly the chords, one to one: every
+    /// triangle's chord where the plane splits it, and every edge with both ends on the plane
+    /// that one of its triangles keeps and the other does not. Then the same for the faces:
+    /// the kept triangles merged back into face rings (runs straightened) leave open exactly
+    /// the chords the cap is laid from. Under the tie rule's distances, under every corner
+    /// near the plane forced onto it, and under random distances no geometry gives.
+    #[test]
+    fn the_kept_triangles_leave_open_exactly_the_chords() {
+        let mut checked = 0;
+        for (name, o, planes) in hostile() {
+            let b = o.brep();
+            for (k, plane) in planes.iter().enumerate() {
+                for (what, dist, _) in tries(b, plane, 0x5eed + 977 * k as u64 + checked) {
+                    // Triangles: every kept part, every chord, and every edge with both ends
+                    // on the plane that a kept triangle walks; two of those that run opposite
+                    // ways (the edge kept by both its triangles) close each other.
+                    let mut pieces = Vec::new();
+                    let mut chords = Vec::new();
+                    let mut on_plane: BTreeMap<(Node, Node), u32> = BTreeMap::new();
+                    for (_, f) in b.faces() {
+                        let loops: Vec<Vec<VertexId>> =
+                            f.loops().map(|l| b.loop_vertices(l)).collect();
+                        for t in face_triangles(b, f, &loops) {
+                            let c = clip_triangle(t, &dist);
+                            chords.extend(c.chord);
+                            if c.chord.is_none() && !c.kept.is_empty() {
+                                for i in 0..3 {
+                                    let (p, q) = (t[i], t[(i + 1) % 3]);
+                                    if dist[p] == 0.0 && dist[q] == 0.0 {
+                                        let (a, e) = ((p, p), (q, q));
+                                        match on_plane.get_mut(&(e, a)) {
+                                            Some(c) if *c > 0 => *c -= 1,
+                                            _ => *on_plane.entry((a, e)).or_default() += 1,
+                                        }
+                                    }
+                                }
+                            }
+                            if !c.kept.is_empty() {
+                                pieces.push(c.kept);
+                            }
+                        }
+                    }
+                    let mut want: Vec<(Node, Node)> = on_plane
+                        .into_iter()
+                        .flat_map(|(k, c)| std::iter::repeat_n(k, c as usize))
+                        .chain(chords)
+                        .collect();
+                    want.sort();
+                    let open = left_open(pieces);
+                    assert_eq!(open, want, "{name}, plane {k}, {what}: triangles");
+                    // Faces: the merged rings leave open exactly the chords the cap is laid from.
+                    let cut = clip_solid(b, plane, &dist, ARRANGE_TOL * solid_scale(&o));
+                    let open = left_open(cut.faces.into_iter().flat_map(|(_, r)| r));
+                    let mut chords = cut.chords.clone();
+                    chords.sort();
+                    assert_eq!(open, chords, "{name}, plane {k}, {what}: faces");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 300, "{checked}");
+    }
+
+    /// Lane 19c: the half a plane keeps, laid as faces plus the cap from their chords, is
+    /// closed: along the normal to rounding, across it to the farthest a corner sits off the
+    /// plane at the distance it was given times the seam. Under the tie rule's distances and
+    /// every corner near the plane forced onto it (the distances a geometry can give; random
+    /// ones close at the chords, above, but the cap of a cycle that winds twice is the union,
+    /// not the sum), on every hostile solid, both ways round.
+    #[test]
+    fn the_cap_closes_the_half_under_any_distances() {
+        let mut tried = 0;
+        for (name, o, planes) in hostile() {
+            let b = o.brep();
+            for (k, plane) in planes.iter().enumerate() {
+                for (what, dist, geometric) in tries(b, plane, 7 + k as u64) {
+                    if !geometric {
+                        continue;
+                    }
+                    let part = kept_under(&o, plane, &dist);
+                    let off = b
+                        .vertices()
+                        .map(|(v, p)| (plane.signed_distance(p.pos) - dist[v]).abs())
+                        .fold(0.0, f64::max);
+                    let along = part.vector_area.dot(plane.normal).abs();
+                    assert!(
+                        along < 1e-12 * (1.0 + part.area),
+                        "{name}, plane {k}, {what}: {part:?}"
+                    );
+                    let across = part.vector_area.length();
+                    assert!(
+                        across <= 2.0 * off * part.cap_length + 1e-12 * (1.0 + part.area),
+                        "{name}, plane {k}, {what}: {part:?} (corners up to {off} off)"
+                    );
+                    tried += 1;
+                }
+            }
+        }
+        assert!(tried > 200, "{tried}");
+    }
+
+    /// Lane 19c: a planar face cut by the plane gives one chord, from the crossing on one of
+    /// its edges to the crossing on another, however many of its triangles' diagonals the
+    /// plane crosses between them: the cap's corners are the crossings on the solid's own
+    /// edges, as before the cut was made of triangles (so every golden hashes as before). A
+    /// box cut by a plane through its middle at an angle: six crossings, six corners; a
+    /// 24-sided prism (every face a fan of diagonals, its ends 22 triangles each): one corner
+    /// for every side the plane crosses.
+    #[test]
+    fn a_planar_face_cut_through_gives_one_chord() {
+        let o = a_box();
+        let plane = Plane::new(
+            DVec3::new(1.0, 0.5, 0.5),
+            DVec3::new(0.3, 0.6, 0.75).normalize(),
+        )
+        .unwrap();
+        let rings = solid_rings(&o, &plane);
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].len(), 6, "{rings:?}");
+        let circle: Vec<DVec2> = (0..24)
+            .map(|k| {
+                let t = std::f64::consts::TAU * k as f64 / 24.0;
+                DVec2::new(t.cos(), t.sin())
+            })
+            .collect();
+        let prism = Object::extrude(&Plane::GROUND, &circle, &[], 2.0).unwrap();
+        // Through the axis, tilted: it crosses both ends and the sides between.
+        let plane = Plane::new(
+            DVec3::new(0.0, 0.0, 1.0),
+            DVec3::new(1.0, 0.2, 0.3).normalize(),
+        )
+        .unwrap();
+        let rings = solid_rings(&prism, &plane);
+        assert_eq!(rings.len(), 1);
+        let dist = distances(prism.brep(), &plane);
+        let crossed = prism
+            .brep()
+            .edges()
+            .filter(|(e, _)| {
+                let he = prism.brep().edges[*e].he;
+                let (p, q) = (prism.brep().half_edges[he].origin, prism.brep().dest(he));
+                (dist[p] < 0.0) != (dist[q] < 0.0)
+            })
+            .count();
+        assert_eq!(rings[0].len(), crossed, "{rings:?}");
     }
 }
