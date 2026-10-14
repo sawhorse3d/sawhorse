@@ -305,12 +305,14 @@ fn caps_are_simple(m: &Model, section: u64) -> Result<(), String> {
 /// face clipped to the kept side, its vector area (Newell, over its 3D corners and
 /// crossings) along the normal, summed. The kept part is a closed surface whose only face
 /// along the plane is the cap, facing `-normal`, so that sum is the cap's area. The tie rule
-/// is the documented one, restated: a distance within 1e-12 of zero is zero, and every corner
-/// of a face parallel to the plane (normals within 1e-12) or lying within 1e-9 of it (or
-/// within twice the face's bend off its own plane, when that is more) takes the face's mean
-/// distance. Returns the area and how far it may honestly differ from the cap's:
-/// the bend allowance of `check_sections` (a face planar to within PLANARITY meets the plane
-/// along chords up to its bend apart).
+/// is the documented one (ADR-0010, lane 19), restated: faces with the same stored plane are
+/// one surface; a surface with every corner within 1e-9 of the plane, or within twice the
+/// farthest any of its corners sits off its own plane when that is more, lies on the plane
+/// (every corner at distance zero); a surface parallel to the plane (normals within 1e-12)
+/// and not on it takes its corners' mean distance; any other distance within 1e-12 of zero
+/// is zero. Returns the area and how far it may honestly differ from the cap's: the bend
+/// allowance of `check_sections` (a face planar to within PLANARITY meets the plane along
+/// chords up to its bend apart).
 fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
     let s = m.section(section).unwrap();
     let (o, n) = (s.origin, s.normal);
@@ -322,26 +324,41 @@ fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
             continue;
         }
         let b = x.brep();
-        let mut dist: std::collections::BTreeMap<_, f64> =
+        let raw: std::collections::BTreeMap<_, f64> =
             b.vertices().map(|(k, v)| (k, (v.pos - o).dot(n))).collect();
-        let raw = dist.clone();
+        let mut dist = raw.clone();
+        // One surface per stored plane: its corners.
+        let mut surfaces: std::collections::BTreeMap<[u64; 6], Vec<_>> = Default::default();
         for (_, f) in b.faces() {
-            let vs: Vec<_> = f.loops().flat_map(|l| b.loop_vertices(l)).collect();
-            let flat = n.cross(f.plane.normal).length() < 1e-12;
+            let key = [
+                f.plane.origin.x.to_bits(),
+                f.plane.origin.y.to_bits(),
+                f.plane.origin.z.to_bits(),
+                f.plane.normal.x.to_bits(),
+                f.plane.normal.y.to_bits(),
+                f.plane.normal.z.to_bits(),
+            ];
+            let e = surfaces.entry(key).or_insert_with(Vec::new);
+            for l in f.loops() {
+                for v in b.loop_vertices(l) {
+                    e.push((v, f.plane));
+                }
+            }
+        }
+        let mut zero = Vec::new();
+        for vs in surfaces.values() {
             let own = vs
                 .iter()
-                .map(|v| f.plane.signed_distance(b.vertex(*v).unwrap().pos).abs())
+                .map(|(v, p)| p.signed_distance(b.vertex(*v).unwrap().pos).abs())
                 .fold(0.0, f64::max);
             let near = (2.0 * own).max(1e-9);
-            if !(flat || vs.iter().all(|v| raw[v].abs() <= near)) {
-                continue;
-            }
-            if vs.iter().all(|v| dist[v] == dist[&vs[0]]) {
-                continue;
-            }
-            let mean = vs.iter().map(|v| dist[v]).sum::<f64>() / vs.len() as f64;
-            for v in vs {
-                dist.insert(v, mean);
+            if vs.iter().all(|(v, _)| raw[v].abs() <= near) {
+                zero.extend(vs.iter().map(|(v, _)| *v));
+            } else if n.cross(vs[0].1.normal).length() < 1e-12 {
+                let mean = vs.iter().map(|(v, _)| raw[v]).sum::<f64>() / vs.len() as f64;
+                for (v, _) in vs {
+                    dist.insert(*v, mean);
+                }
             }
         }
         for d in dist.values_mut() {
@@ -349,17 +366,53 @@ fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
                 *d = 0.0;
             }
         }
+        for v in zero {
+            dist.insert(v, 0.0);
+        }
         for (_, f) in b.faces() {
+            let pos = |v| b.vertex(v).unwrap().pos;
+            let loops: Vec<Vec<_>> = f.loops().map(|l| b.loop_vertices(l)).collect();
+            let corners: Vec<DVec3> = loops.iter().flatten().map(|v| pos(*v)).collect();
+            let own = corners
+                .iter()
+                .map(|p| f.plane.signed_distance(*p).abs())
+                .fold(0.0, f64::max);
+            bend = bend.max(own);
             for l in f.loops() {
-                let vs = b.loop_vertices(l);
-                for v in &vs {
-                    bend = bend.max(f.plane.signed_distance(b.vertex(*v).unwrap().pos).abs());
+                let all: Vec<DVec3> = b.loop_points(l);
+                let mut whole = DVec3::ZERO;
+                for i in 0..all.len() {
+                    whole += all[i].cross(all[(i + 1) % all.len()]) * 0.5;
                 }
+                surface += whole.length();
+            }
+            // A weak face (its bend over the sine of its angle with the plane more than a
+            // nanometre: its crossings may sit that far off a line) is clipped triangle by
+            // triangle, the tessellator's triangles in its own frame; any other face loop by
+            // loop.
+            let weak = own > 1e-9 * n.cross(f.plane.normal).length();
+            let flat: Vec<Vec<DVec2>> = loops
+                .iter()
+                .map(|l| l.iter().map(|v| f.plane.to_local(pos(*v))).collect())
+                .collect();
+            let rings: Vec<Vec<_>> = match weak {
+                true => match sawhorse_tessellate::triangulate(&flat[0], &flat[1..]) {
+                    Ok(tris) => {
+                        let all: Vec<_> = loops.iter().flatten().copied().collect();
+                        tris.iter()
+                            .map(|t| t.iter().map(|&i| all[i as usize]).collect())
+                            .collect()
+                    }
+                    Err(_) => loops.clone(),
+                },
+                false => loops.clone(),
+            };
+            for vs in rings {
                 let mut ring: Vec<DVec3> = Vec::new();
                 for i in 0..vs.len() {
                     let (p, q) = (vs[i], vs[(i + 1) % vs.len()]);
                     let (dp, dq) = (dist[&p], dist[&q]);
-                    let (pp, pq) = (b.vertex(p).unwrap().pos, b.vertex(q).unwrap().pos);
+                    let (pp, pq) = (pos(p), pos(q));
                     if dp >= 0.0 {
                         ring.push(pp);
                     }
@@ -372,12 +425,6 @@ fn independent_cross_section(m: &Model, section: u64) -> (f64, f64) {
                     va += ring[i].cross(ring[(i + 1) % ring.len()]) * 0.5;
                 }
                 area += va.dot(n);
-                let all: Vec<DVec3> = b.loop_points(l);
-                let mut whole = DVec3::ZERO;
-                for i in 0..all.len() {
-                    whole += all[i].cross(all[(i + 1) % all.len()]) * 0.5;
-                }
-                surface += whole.length();
             }
         }
     }
@@ -1400,5 +1447,263 @@ fn the_lane_17_verification_finds() {
             cut_cleanly(&mut d.clone(), s).unwrap();
             d.apply(&Op::FlipSection { section: s }).unwrap();
         }
+    });
+}
+
+/// Lane 19: a box with a section plane lying on one of its faces, that face's corners (and
+/// others) nudged by 0.1 to 5 micrometres, and rectangles and circles drawn on it, some across
+/// its edges: the lane-18 verifier's find (seed 27182803) and its family. Every part of the
+/// face a stroke splits off keeps the face's stored plane, so it must be classified with it.
+#[derive(Debug, Clone)]
+struct Nudged {
+    size: [f64; 3],
+    /// The face the plane lies on: -x, +x, -y, +y, -z, +z.
+    face: usize,
+    /// Corners moved (0..8, `(k & 1, k & 2, k & 4)` times the size), each by its own shift.
+    nudges: Vec<(usize, [f64; 3])>,
+    autofold: bool,
+    /// Strokes on the face, before or after the nudges.
+    strokes: Vec<Stroke>,
+    strokes_first: bool,
+    /// The plane facing out of the face (`true`) or into the box.
+    out: bool,
+}
+
+/// A closed stroke on the face, in fractions of its two sides (it may run past an edge).
+#[derive(Debug, Clone)]
+enum Stroke {
+    Rect {
+        centre: [f64; 2],
+        half: [f64; 2],
+    },
+    Circle {
+        centre: [f64; 2],
+        radius: f64,
+        sides: usize,
+    },
+}
+
+fn nudge() -> impl Strategy<Value = [f64; 3]> {
+    (
+        prop_oneof![1 => 1e-7..1e-6f64, 2 => 1e-6..5e-6f64, 1 => Just(1e-6)],
+        prop::array::uniform3(-1.0..1.0f64),
+    )
+        .prop_map(|(len, dir)| {
+            let d = DVec3::from_array(dir);
+            let d = if d.length() < 1e-3 {
+                DVec3::Z
+            } else {
+                d.normalize()
+            };
+            (d * len).to_array()
+        })
+}
+
+fn stroke() -> impl Strategy<Value = Stroke> {
+    let at = || prop::array::uniform2(prop_oneof![3 => 0.1..0.9f64, 1 => -0.1..1.1f64]);
+    prop_oneof![
+        2 => (at(), prop::array::uniform2(0.02..0.4f64))
+            .prop_map(|(centre, half)| Stroke::Rect { centre, half }),
+        1 => (at(), 0.02..0.4f64, 8usize..25)
+            .prop_map(|(centre, radius, sides)| Stroke::Circle { centre, radius, sides }),
+    ]
+}
+
+fn nudged() -> impl Strategy<Value = Nudged> {
+    (
+        prop::array::uniform3(quarters()),
+        0usize..6,
+        prop::collection::vec((0usize..8, nudge()), 1..4),
+        any::<bool>(),
+        prop::collection::vec(stroke(), 1..4),
+        any::<bool>(),
+        any::<bool>(),
+    )
+        .prop_map(
+            |(size, face, nudges, autofold, strokes, strokes_first, out)| Nudged {
+                size,
+                face,
+                nudges,
+                autofold,
+                strokes,
+                strokes_first,
+                out,
+            },
+        )
+}
+
+/// The persistent id and plane of the box's face nearest `want` (the face the strokes go on;
+/// every part of it shares that plane, so any of them takes the stroke).
+fn face_towards(d: &Document, object: u64, want: DVec3) -> (u64, sawhorse_kernel::plane::Plane) {
+    let b = d.model().object(object).unwrap().brep();
+    let ids = b.persistent_face_ids();
+    let (k, f) = b
+        .faces()
+        .enumerate()
+        .map(|(k, (_, f))| (k, f))
+        .max_by(|x, y| {
+            x.1.plane
+                .normal
+                .dot(want)
+                .total_cmp(&y.1.plane.normal.dot(want))
+                .then(y.0.cmp(&x.0))
+        })
+        .unwrap();
+    (ids[k], f.plane)
+}
+
+/// The box, the plane on its face (origin and normal), as [`Nudged`] says.
+fn nudged_box(n: &Nudged) -> (Document, u64, [f64; 3], [f64; 3]) {
+    let mut d = Document::new();
+    let object = add_box(&mut d, [0.0; 3], n.size);
+    let (axis, high) = face_axis(n.face);
+    let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+    let level = if high { n.size[axis] } else { 0.0 };
+    let mut want = DVec3::ZERO;
+    want[axis] = if high { 1.0 } else { -1.0 };
+    let draw = |d: &mut Document| {
+        for s in &n.strokes {
+            let (id, plane) = face_towards(d, object, want);
+            // The face's corner at (0, 0) and its two sides, in the world.
+            let mut o = DVec3::ZERO;
+            o[axis] = level;
+            let (mut eu, mut ev) = (DVec3::ZERO, DVec3::ZERO);
+            eu[u] = n.size[u];
+            ev[v] = n.size[v];
+            let at = |a: f64, b: f64| {
+                // Onto the face's own (stored) plane, as a person drawing on it would.
+                let p = o + eu * a + ev * b;
+                plane.to_world(plane.to_local(p)).to_array()
+            };
+            let points: Vec<[f64; 3]> = match s {
+                Stroke::Rect { centre, half } => vec![
+                    at(centre[0] - half[0], centre[1] - half[1]),
+                    at(centre[0] + half[0], centre[1] - half[1]),
+                    at(centre[0] + half[0], centre[1] + half[1]),
+                    at(centre[0] - half[0], centre[1] + half[1]),
+                ],
+                Stroke::Circle {
+                    centre,
+                    radius,
+                    sides,
+                } => {
+                    let r = radius * n.size[u].min(n.size[v]);
+                    (0..*sides)
+                        .map(|k| {
+                            let t = std::f64::consts::TAU * k as f64 / *sides as f64;
+                            at(
+                                centre[0] + r * t.cos() / n.size[u],
+                                centre[1] + r * t.sin() / n.size[v],
+                            )
+                        })
+                        .collect()
+                }
+            };
+            // A stroke the kernel refuses (too small, off the face) leaves the box as it was.
+            let _ = d.apply(&Op::Draw {
+                target: sawhorse_kernel::model::DrawTarget::Face { object, face: id },
+                points,
+                closed: true,
+            });
+        }
+    };
+    let corner = |k: usize| {
+        [
+            if k & 1 == 0 { 0.0 } else { n.size[0] },
+            if k & 2 == 0 { 0.0 } else { n.size[1] },
+            if k & 4 == 0 { 0.0 } else { n.size[2] },
+        ]
+    };
+    if n.strokes_first {
+        draw(&mut d);
+    }
+    for &(k, shift) in &n.nudges {
+        // A corner of the plane's face, mostly (a corner off it by its index otherwise).
+        let mut p = corner(k);
+        if k < 4 {
+            p[axis] = level;
+        }
+        let _ = d.apply(&Op::TransformGeometry {
+            object,
+            points: vec![p],
+            xform: Xform::translation(DVec3::from_array(shift)),
+            autofold: n.autofold,
+        });
+    }
+    if !n.strokes_first {
+        draw(&mut d);
+    }
+    let mut origin = [0.0; 3];
+    origin[axis] = level;
+    let normal = if n.out { want } else { -want };
+    (d, object, origin, normal.to_array())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(256),
+        ..ProptestConfig::default()
+    })]
+
+    /// Lane 19: a plane on a face nudged by micrometres and drawn on, cut with plane
+    /// snapping on and off: the halves make the whole, each is closed, every cap ring is
+    /// simple, the caps are the faces clipped to the plane, and the slice closes.
+    #[test]
+    fn planes_on_a_nudged_face_drawn_on(n in nudged(), snap_on in any::<bool>()) {
+        snapping(snap_on, || -> Result<(), TestCaseError> {
+            let (mut d, _, origin, normal) = nudged_box(&n);
+            let section = add_section(&mut d, origin, normal);
+            cut_cleanly(&mut d, section)
+        })?;
+    }
+}
+
+/// The lane-18 verifier's find (snapping on, seed 27182803, about 1 in 130,000 sequences;
+/// `tests/repro/2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json`): a plane on a
+/// box's bottom face, the face tilted by moving one corner a micrometre, then a rectangle
+/// drawn across its edge. The drawn part (bent 1.1e-7 off the face's plane) was on the plane
+/// by itself while the rest (bent 2.5e-7, one corner 1e-6 off) was not; its corners moved to
+/// its own mean, the side face no longer met the flipped plane along its bottom edge, and the
+/// cut-away half kept a 0.0313 m2 triangle of the bottom face with no cap (vector area
+/// 0.0312505 m2, a cap 0 m around). Both parts are now one surface, not on the plane, and the
+/// face, weak against the plane, is clipped along its own triangles by the cut and the halves
+/// alike: what the half below keeps of it is a sheet on the plane, closed by its cap.
+#[test]
+fn the_lane_18_verification_find() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/repro");
+    let r: Repro = serde_json::from_str(
+        &std::fs::read_to_string(
+            dir.join("2026-10-13-section-tie-rule-on-an-imprinted-tilted-face.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    snapping(r.plane_snap.unwrap_or(true), || {
+        let mut d = Document::new();
+        for op in &r.ops {
+            let _ = d.apply(op);
+        }
+        let s = d.model().sections()[0].0;
+        // As found: the plane at z = -1.75 facing up, lying on the bottom face. It keeps
+        // everything and cuts nothing.
+        let cut = d.model().section_cut(s).unwrap();
+        assert!(cut.caps.is_empty(), "{cut:?}");
+        let kept = d.model().kept_part(s).unwrap();
+        assert!(kept.vector_area.length() < 1e-12, "{kept:?}");
+        let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
+        assert!((kept.volume - whole).abs() < 1e-8, "{kept:?} of {whole}");
+        cut_cleanly(&mut d.clone(), s).unwrap();
+        // Flipped: the bottom face touches the plane at three corners and along two edges,
+        // and the half below keeps the part of it on the plane, a sheet of no volume, closed
+        // by a cap of the same area (it had none).
+        d.apply(&Op::FlipSection { section: s }).unwrap();
+        let cut = d.model().section_cut(s).unwrap();
+        assert_eq!(cut.caps.len(), 1, "{cut:?}");
+        assert!(cut.area > 0.01 && cut.area <= 0.0312505, "{}", cut.area);
+        let below = d.model().kept_part(s).unwrap();
+        assert!(below.vector_area.length() < 1e-12, "{below:?}");
+        assert!(below.volume.abs() < 1e-8, "{below:?}");
+        assert!((below.area - 2.0 * cut.area).abs() < 1e-9, "{below:?}");
+        cut_cleanly(&mut d, s).unwrap();
     });
 }
