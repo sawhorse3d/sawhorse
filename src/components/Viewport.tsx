@@ -93,6 +93,8 @@ export interface SawhorseHooks {
   edgeCounts(): ReturnType<ViewportEngine["edgeCounts"]>;
   /** Lane 15: the grid's line colours (they follow the style's background). */
   gridColours(): ReturnType<ViewportEngine["gridColours"]>;
+  /** Lane 16b: what the highlight draws (fat segments; solids and parts drawn from the state textures). */
+  highlightCounts(): ReturnType<ViewportEngine["highlightCounts"]>;
 }
 
 export function Viewport(props: ViewportProps) {
@@ -139,6 +141,7 @@ export function Viewport(props: ViewportProps) {
       engineTriangles: () => (engine.captureSource().mesh?.indices.length ?? 0) / 3,
       edgeCounts: () => engine.edgeCounts(),
       gridColours: () => engine.gridColours(),
+      highlightCounts: () => engine.highlightCounts(),
     };
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), ...hooks };

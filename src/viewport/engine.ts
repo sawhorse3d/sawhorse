@@ -18,6 +18,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { GraphSection, MaterialInfo, MeshData, SectionView, Shadows, Style, TextureBlob, TextureInfo } from "../kernel/types";
+import { ownerEdgeCount, ownerSegments } from "../lib/meshIndex";
 import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorners } from "../lib/sections";
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
 import { TextureCache, edgeInk, edgeSets, gridTones, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
@@ -88,9 +89,71 @@ export interface Highlight {
   fadedParts?: number[];
   /** Section planes selected and under the cursor (lane 12). */
   sections?: { selected: number[]; hover: number | null };
+  /** Lane 16b: whole solids whose every edge is highlighted, as indices into
+   * `MeshData.edgeOwners` (the viewport draws their segments; see FAT_HIGHLIGHT_EDGES). */
+  selectedEdgeOwners?: number[];
+  hoverEdgeOwners?: number[];
 }
 
 export const NO_HIGHLIGHT: Highlight = { hoverParts: [], selectedParts: [], hoverEdges: [], selectedEdges: [], selectedPoints: [] };
+
+/**
+ * Lane 16b: the most edge segments of whole solids drawn as fat (several-pixel) highlight
+ * lines. Past it, the edges are drawn in the highlight colour as the view's own thin lines,
+ * picked out on the GPU from a per-solid state texture. Selecting all of 100,000 solids
+ * built 1,200,000 fat lines on the window's thread and then drew them every frame: seconds
+ * a frame where the GPU is emulated in software (CI runners), and the face tint was a pass
+ * over every triangle. Now a selection costs what it holds: a byte per part and per solid
+ * written to two textures, and the same frame as before it.
+ */
+export const FAT_HIGHLIGHT_EDGES = 20_000;
+
+/** Highlight state bits, one byte per part (faces) and per solid (edges). */
+const SELECTED = 1;
+const HOVERED = 2;
+const FADED = 4;
+const NONE: readonly number[] = [];
+
+/** One byte per item, read by the shaders with texelFetch (row-major, `width` a row). */
+class StateTexture {
+  readonly data: Uint8Array;
+  readonly texture: THREE.DataTexture;
+  readonly width: number;
+  readonly count: number;
+  constructor(count: number, maxSize: number) {
+    this.count = count;
+    this.width = Math.max(1, Math.min(4096, maxSize));
+    const rows = Math.max(1, Math.ceil(count / this.width));
+    this.data = new Uint8Array(this.width * rows);
+    this.texture = new THREE.DataTexture(this.data, this.width, rows, THREE.RedFormat, THREE.UnsignedByteType);
+    this.texture.minFilter = THREE.NearestFilter;
+    this.texture.magFilter = THREE.NearestFilter;
+    this.texture.generateMipmaps = false;
+    this.texture.needsUpdate = true;
+  }
+  /** Set or clear `bit` on every item of `list`; true when anything was listed. */
+  mark(list: readonly number[], bit: number, on: boolean): boolean {
+    if (!list.length) return false;
+    const d = this.data;
+    const n = this.count;
+    const off = ~bit & 0xff;
+    if (on) {
+      for (const i of list) if (i < n) d[i] |= bit;
+    } else {
+      for (const i of list) if (i < n) d[i] &= off;
+    }
+    this.texture.needsUpdate = true;
+    return true;
+  }
+  dispose(): void {
+    this.texture.dispose();
+  }
+}
+
+/** GLSL: the state byte of item `p` in a StateTexture. */
+const STATE_FETCH = `int sawhorseState(highp sampler2D t, int w, int p) {
+  return int(texelFetch(t, ivec2(p - (p / w) * w, p / w), 0).r * 255.0 + 0.5);
+}`;
 
 function readTheme(el: Element): Theme {
   const cs = getComputedStyle(el);
@@ -129,6 +192,29 @@ function disposeObject(o: THREE.Object3D | null): void {
     else mat?.dispose?.();
   });
   o.removeFromParent();
+}
+
+/** Each render vertex's part (the faces' shader looks its highlight state up by it). */
+function partOfVertex(mesh: MeshData, vertices: number): Float32Array {
+  const out = new Float32Array(vertices);
+  const { indices, faceIds } = mesh;
+  for (let t = 0; t < faceIds.length; t++) {
+    const part = faceIds[t];
+    out[indices[3 * t]] = part;
+    out[indices[3 * t + 1]] = part;
+    out[indices[3 * t + 2]] = part;
+  }
+  return out;
+}
+
+/** Segments as six floats each. */
+function flatPairs(pairs: Vec3[][]): Float32Array {
+  const out = new Float32Array(pairs.length * 6);
+  pairs.forEach(([a, b], i) => {
+    out.set(a, 6 * i);
+    out.set(b, 6 * i + 3);
+  });
+  return out;
 }
 
 export class ViewportEngine {
@@ -191,6 +277,26 @@ export class ViewportEngine {
   private sectionPlanes: GraphSection[] = [];
   private sectionGroup = new THREE.Group();
   private sectionKey = "";
+  // Lane 16b: highlight state on the GPU. The faces' shader tints a part by its byte in
+  // `partState`; `ownerLines` draws the edges of solids whose byte in `ownerState` is set
+  // (only when a highlight holds more than FAT_HIGHLIGHT_EDGES segments). `applied` is what
+  // the textures hold now, so a change writes only what it changes.
+  private partState: StateTexture | null = null;
+  private ownerState: StateTexture | null = null;
+  private ownerLines: THREE.LineSegments | null = null;
+  private applied = { selected: NONE, hover: NONE, faded: NONE, selOwners: NONE, hoverOwners: NONE };
+  private stateUniforms = {
+    uPartState: { value: null as THREE.Texture | null },
+    uPartW: { value: 1 },
+    uSelTint: { value: new THREE.Color() },
+    uFadeTo: { value: new THREE.Color() },
+  };
+  private ownerUniforms = {
+    uOwnerState: { value: null as THREE.Texture | null },
+    uOwnerW: { value: 1 },
+    uOwnerSel: { value: new THREE.Color() },
+    uOwnerHover: { value: new THREE.Color() },
+  };
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -335,6 +441,10 @@ export class ViewportEngine {
     this.theme = readTheme(this.themeRoot);
     this.renderer.setClearColor(new THREE.Color(this.theme.vp), 1);
     this.colourGrid();
+    this.stateUniforms.uSelTint.value.set(this.theme.sel);
+    this.stateUniforms.uFadeTo.value.set(this.theme.vp);
+    this.ownerUniforms.uOwnerSel.value.set(this.cssColor(this.theme.sel));
+    this.ownerUniforms.uOwnerHover.value.set(this.cssColor(this.theme.hover));
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).color.set(this.ink());
     if (this.faces) this.colourFaces(this.faces.geometry);
     this.buildOverlays();
@@ -375,8 +485,10 @@ export class ViewportEngine {
 
   /** Colour each triangle: the mock's three face tones (top / front / side) or the material
    * colour shaded the same way, white under a texture (the image is the colour), the
-   * background colour in hidden line; tinted for selection and hover, faded outside the open
-   * group. Under the sun the tones come from the light instead. */
+   * background colour in hidden line. Under the sun the tones come from the light instead.
+   * Lane 16b: the selection and hover tints and the fade outside the open group are not baked
+   * in here (that was a pass over every triangle per selection change): the faces' shader
+   * applies them from the part state texture (withPartState). */
   private colourFaces(geom: THREE.BufferGeometry): void {
     const pos = geom.getAttribute("position") as THREE.BufferAttribute;
     const index = geom.getIndex();
@@ -385,12 +497,7 @@ export class ViewportEngine {
     const top = new THREE.Color(this.theme.faceTop);
     const front = new THREE.Color(this.theme.face);
     const side = new THREE.Color(this.theme.faceSide);
-    const sel = new THREE.Color(this.theme.sel);
     const warn = new THREE.Color("#d9a33a");
-    const tint = (c: THREE.Color, k: number) => c.clone().lerp(sel, k);
-    const selected = new Set(this.highlight.selectedParts);
-    const hovered = new Set(this.highlight.hoverParts);
-    const faded = new Set(this.highlight.fadedParts ?? []);
     const paper = new THREE.Color(this.theme.vp);
     const mode = faceMode(this.style);
     const lit = this.lit();
@@ -437,10 +544,6 @@ export class ViewportEngine {
       }
       // Imported geometry that is not a solid reads amber-tinted: it cannot be pushed or printed.
       if (info?.kind === "mesh" && !mode.paper) col = col.clone().lerp(warn, 0.3);
-      if (selected.has(part)) col = tint(col, 0.45);
-      else if (hovered.has(part)) col = tint(col, 0.2);
-      // Outside the open group or component: faded towards the background.
-      if (faded.has(part)) col = col.clone().lerp(paper, 0.6);
       if (!smooth || lit || mode.paper) {
         for (const i of [ia, ib, ic]) col.toArray(colors, i * 3);
         continue;
@@ -450,12 +553,7 @@ export class ViewportEngine {
       for (const i of [ia, ib, ic]) {
         const w = toneWeights(vn![3 * i], vn![3 * i + 1], vn![3 * i + 2]);
         let v = themed ? blend(w) : reshade(col, shade, w);
-        if (themed) {
-          if (info?.kind === "mesh") v = v.lerp(warn, 0.3);
-          if (selected.has(part)) v = tint(v, 0.45);
-          else if (hovered.has(part)) v = tint(v, 0.2);
-          if (faded.has(part)) v = v.lerp(paper, 0.6);
-        }
+        if (themed && info?.kind === "mesh") v = v.lerp(warn, 0.3);
         v.toArray(colors, i * 3);
       }
     }
@@ -591,6 +689,7 @@ export class ViewportEngine {
     const mesh = this.meshData;
     const mode = faceMode(this.style);
     const lit = this.lit();
+    this.resetHighlightState();
     if (mesh && mesh.indices.length > 0) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
@@ -603,6 +702,7 @@ export class ViewportEngine {
         else g.computeVertexNormals();
       }
       this.colourFaces(g);
+      g.setAttribute("aPart", new THREE.BufferAttribute(partOfVertex(mesh, g.getAttribute("position").count), 1));
       g.computeBoundingSphere();
       g.computeBoundingBox();
       const common = {
@@ -615,12 +715,12 @@ export class ViewportEngine {
         opacity: mode.xray ? 0.42 : 1,
         depthWrite: !mode.xray,
       };
-      const mat = lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common);
+      const mat = this.withPartState(lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common));
       this.faces = new THREE.Mesh(g, mat);
       // Section cuts (lane 12): triangles grouped by the planes that clip them, each group
       // drawn with its own clipping material.
       const clip = this.triangleClipSets();
-      if (clip) this.faces.material = this.clipGroups(g, mat, clip, mesh.indices.length / 3);
+      if (clip) this.faces.material = this.clipGroups(g, mat, clip, mesh.indices.length / 3).map((m) => this.withPartState(m));
       this.faces.renderOrder = 2;
       this.faces.visible = mode.faces;
       this.faces.castShadow = lit;
@@ -682,6 +782,8 @@ export class ViewportEngine {
     }
     this.styledEdgesKey = "";
     this.updateSun();
+    // Fresh state textures: the highlight shown goes back in.
+    this.applyHighlightState(this.highlight);
   }
 
   /** One mesh per texture over the faces that show it, drawn exactly over the faces (the
@@ -720,7 +822,7 @@ export class ViewportEngine {
         index.push(k);
       }
       const og = new THREE.BufferGeometry();
-      for (const [name, size] of [["position", 3], ["uv", 2], ["color", 3], ["normal", 3]] as const) {
+      for (const [name, size] of [["position", 3], ["uv", 2], ["color", 3], ["normal", 3], ["aPart", 1]] as const) {
         const at = g.getAttribute(name) as THREE.BufferAttribute | undefined;
         if (!at) continue;
         const src = at.array as Float32Array;
@@ -738,7 +840,7 @@ export class ViewportEngine {
         polygonOffsetUnits: 1,
         depthFunc: THREE.LessEqualDepth,
       };
-      const om = new THREE.Mesh(og, lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common));
+      const om = new THREE.Mesh(og, this.withPartState(lit ? new THREE.MeshLambertMaterial(common) : new THREE.MeshBasicMaterial(common)));
       if (clip && set >= 0) (om.material as THREE.Material).clippingPlanes = clip.planes[set];
       om.renderOrder = 2.5;
       om.receiveShadow = this.faces.receiveShadow;
@@ -859,13 +961,182 @@ export class ViewportEngine {
   setHighlight(h: Highlight): void {
     const planes = (s: Highlight) => JSON.stringify(s.sections ?? null);
     const sectionsChanged = planes(h) !== planes(this.highlight);
+    const before = this.highlight;
     this.highlight = h;
-    if (this.faces) this.colourFaces(this.faces.geometry);
-    this.buildOverlays();
-    this.rebuildHighlights();
+    // Lane 16b: what changed goes into the state textures (the faces are not recoloured and
+    // the textured overlays not rebuilt: neither depends on the highlight any more).
+    this.applyHighlightState(h);
+    this.rebuildHighlights(before);
     if (sectionsChanged) this.rebuildSections();
     this.requestRender();
   }
+
+  /** How many edge segments a highlight's whole solids have (once per list). */
+  private ownerCounts = new WeakMap<readonly number[], number>();
+  private ownerEdges(owners: readonly number[] | undefined): number {
+    if (!owners?.length || !this.meshData) return 0;
+    let n = this.ownerCounts.get(owners);
+    if (n === undefined) this.ownerCounts.set(owners, (n = ownerEdgeCount(this.meshData, owners)));
+    return n;
+  }
+
+  /** True when these solids' edges are drawn from the state texture, not as fat lines. */
+  private manyOwners(owners: readonly number[] | undefined): boolean {
+    return this.ownerEdges(owners) > FAT_HIGHLIGHT_EDGES;
+  }
+
+  /** New state textures for the mesh (all clear); the owner lines are made when needed. */
+  private resetHighlightState(): void {
+    this.partState?.dispose();
+    this.ownerState?.dispose();
+    disposeObject(this.ownerLines);
+    this.ownerLines = null;
+    this.ownerState = null;
+    this.partState = null;
+    this.applied = { selected: NONE, hover: NONE, faded: NONE, selOwners: NONE, hoverOwners: NONE };
+    const mesh = this.meshData;
+    if (!mesh) return;
+    const max = this.renderer.capabilities.maxTextureSize;
+    this.partState = new StateTexture(mesh.parts.length, max);
+    this.stateUniforms.uPartState.value = this.partState.texture;
+    this.stateUniforms.uPartW.value = this.partState.width;
+  }
+
+  /** Write `h` into the state textures: only the lists that changed, cleared then set. */
+  private applyHighlightState(h: Highlight): void {
+    const ps = this.partState;
+    const swap = (t: StateTexture, key: keyof ViewportEngine["applied"], next: readonly number[], bit: number) => {
+      const prev = this.applied[key];
+      if (prev === next) return;
+      t.mark(prev, bit, false);
+      t.mark(next, bit, true);
+      this.applied[key] = next;
+    };
+    if (ps) {
+      swap(ps, "selected", h.selectedParts, SELECTED);
+      swap(ps, "hover", h.hoverParts, HOVERED);
+      swap(ps, "faded", h.fadedParts ?? NONE, FADED);
+    }
+    const selOwners = this.manyOwners(h.selectedEdgeOwners) ? h.selectedEdgeOwners! : NONE;
+    const hoverOwners = this.manyOwners(h.hoverEdgeOwners) ? h.hoverEdgeOwners! : NONE;
+    if (selOwners.length || hoverOwners.length) this.ensureOwnerLines();
+    const os = this.ownerState;
+    if (os) {
+      swap(os, "selOwners", selOwners, SELECTED);
+      swap(os, "hoverOwners", hoverOwners, HOVERED);
+    }
+    if (this.ownerLines) this.ownerLines.visible = selOwners.length + hoverOwners.length > 0;
+  }
+
+  /**
+   * The faces' material, tinted by the part state texture: selected parts towards the
+   * selection colour (0.45), hovered ones less (0.2), parts outside the open group towards
+   * the background (0.6), applied to the vertex colour exactly as colourFaces used to bake it.
+   */
+  private withPartState<M extends THREE.Material>(m: M): M {
+    m.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, this.stateUniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+attribute float aPart;
+uniform highp sampler2D uPartState;
+uniform int uPartW;
+uniform vec3 uSelTint;
+uniform vec3 uFadeTo;
+${STATE_FETCH}`,
+        )
+        .replace(
+          "#include <color_vertex>",
+          `#include <color_vertex>
+#ifdef USE_COLOR
+{
+  int s = sawhorseState(uPartState, uPartW, int(aPart + 0.5));
+  if ((s & ${SELECTED}) != 0) vColor.rgb = mix(vColor.rgb, uSelTint, 0.45);
+  else if ((s & ${HOVERED}) != 0) vColor.rgb = mix(vColor.rgb, uSelTint, 0.2);
+  if ((s & ${FADED}) != 0) vColor.rgb = mix(vColor.rgb, uFadeTo, 0.6);
+}
+#endif`,
+        );
+    };
+    m.customProgramCacheKey = () => "sawhorse-part-state";
+    return m;
+  }
+
+  /** Every edge of the mesh as one thin-line draw, each segment shown only while its solid's
+   * byte in the owner state texture is set (in the selection colour, or the hover colour). */
+  private ensureOwnerLines(): void {
+    const mesh = this.meshData;
+    if (this.ownerLines || !mesh) return;
+    this.ownerState = new StateTexture(mesh.edgeOwners.length, this.renderer.capabilities.maxTextureSize);
+    this.ownerUniforms.uOwnerState.value = this.ownerState.texture;
+    this.ownerUniforms.uOwnerW.value = this.ownerState.width;
+    const n = mesh.edgeOwner.length;
+    const owner = new Float32Array(2 * n);
+    for (let i = 0; i < n; i++) owner[2 * i] = owner[2 * i + 1] = mesh.edgeOwner[i];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(mesh.edges, 3));
+    g.setAttribute("aOwner", new THREE.BufferAttribute(owner, 1));
+    // The renderer sorts by bounding sphere: the faces' (the edges lie on them), not a pass
+    // over a million segments to compute one.
+    g.boundingSphere = this.faces?.geometry.boundingSphere?.clone() ?? new THREE.Sphere(new THREE.Vector3(), 2e4);
+    const m = new THREE.LineBasicMaterial({ color: 0xffffff });
+    m.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, this.ownerUniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+attribute float aOwner;
+uniform highp sampler2D uOwnerState;
+uniform int uOwnerW;
+varying float vOwnerState;
+${STATE_FETCH}`,
+        )
+        .replace(
+          "#include <project_vertex>",
+          `#include <project_vertex>
+{
+  int s = sawhorseState(uOwnerState, uOwnerW, int(aOwner + 0.5));
+  vOwnerState = float(s);
+  // Not highlighted: both ends outside the clip volume, so the segment is not drawn.
+  if ((s & ${SELECTED | HOVERED}) == 0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+uniform vec3 uOwnerSel;
+uniform vec3 uOwnerHover;
+varying float vOwnerState;`,
+        )
+        .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `vec4 diffuseColor = vec4( (int(vOwnerState + 0.5) & ${SELECTED}) != 0 ? uOwnerSel : uOwnerHover, opacity );`);
+    };
+    m.customProgramCacheKey = () => "sawhorse-owner-state";
+    this.ownerLines = new THREE.LineSegments(g, m);
+    this.ownerLines.renderOrder = 5;
+    this.ownerLines.frustumCulled = false;
+    this.ownerLines.visible = false;
+    this.scene.add(this.ownerLines);
+  }
+
+  /** What the selection's highlight draws now (tests): fat segments (selected, hovered), the
+   * solids whose edges come from the owner state texture, and the parts tinted as selected. */
+  highlightCounts(): { fatSelected: number; fatHover: number; stateSolids: number; stateParts: number } {
+    let fatSelected = 0;
+    let fatHover = 0;
+    for (const c of this.highlightGroup.children) {
+      const n = c instanceof LineSegments2 ? ((c.geometry as LineSegmentsGeometry).getAttribute("instanceStart")?.count ?? 0) : 0;
+      if (c.userData.role === "selected") fatSelected += n;
+      else if (c.userData.role === "hover") fatHover += n;
+    }
+    let stateParts = 0;
+    if (this.partState) for (const b of this.partState.data) if (b & SELECTED) stateParts++;
+    return { fatSelected, fatHover, stateSolids: this.applied.selOwners.length, stateParts };
+  }
+
 
   // ---- section planes (lane 12) ------------------------------------------------------
 
@@ -1031,8 +1302,11 @@ export class ViewportEngine {
   }
 
   private fatLines(pairs: Vec3[][], color: string, width: number, dashed = false, depthTest = true, opacity = 1): LineSegments2 {
-    const flat: number[] = [];
-    for (const [a, b] of pairs) flat.push(...a, ...b);
+    return this.fatLinesFlat(flatPairs(pairs), color, width, dashed, depthTest, opacity);
+  }
+
+  /** Fat lines from xyz pairs, six floats a segment (lane 16b: no array of arrays). */
+  private fatLinesFlat(flat: Float32Array, color: string, width: number, dashed = false, depthTest = true, opacity = 1): LineSegments2 {
     const g = new LineSegmentsGeometry();
     g.setPositions(flat);
     const mat = new LineMaterial({
@@ -1059,25 +1333,49 @@ export class ViewportEngine {
     return l;
   }
 
-  private rebuildHighlights(): void {
-    for (const c of [...this.highlightGroup.children]) disposeObject(c);
+  /**
+   * The fat highlight lines: explicit edges, and whole solids' edges while they hold at most
+   * FAT_HIGHLIGHT_EDGES segments (more are drawn from the owner state texture). The hover
+   * and the selection are rebuilt apart, each only when its own lists changed (the pointer
+   * moves often; the selection does not). No `before`: rebuild both (theme, resize).
+   */
+  private rebuildHighlights(before?: Highlight): void {
     const h = this.highlight;
-    if (h.hoverEdges.length) {
-      const l = this.fatLines(h.hoverEdges, this.theme.hover, 2.5, false, true, 0.55);
-      l.renderOrder = 4;
-      this.highlightGroup.add(l);
+    const mesh = this.meshData;
+    const segs = (pairs: [Vec3, Vec3][], owners: number[] | undefined) => {
+      const flat = flatPairs(pairs);
+      return mesh && owners?.length && !this.manyOwners(owners) ? ownerSegments(mesh, owners, flat) : flat;
+    };
+    const drop = (role: string) => {
+      for (const c of [...this.highlightGroup.children]) if (c.userData.role === role) disposeObject(c);
+    };
+    if (!before || before.hoverEdges !== h.hoverEdges || before.hoverEdgeOwners !== h.hoverEdgeOwners) {
+      drop("hover");
+      const flat = segs(h.hoverEdges, h.hoverEdgeOwners);
+      if (flat.length) {
+        const l = this.fatLinesFlat(flat, this.theme.hover, 2.5, false, true, 0.55);
+        l.renderOrder = 4;
+        l.userData.role = "hover";
+        this.highlightGroup.add(l);
+      }
     }
-    if (h.selectedEdges.length) {
-      const l = this.fatLines(h.selectedEdges, this.theme.sel, 3, false, true);
-      l.renderOrder = 5;
-      this.highlightGroup.add(l);
-    }
-    if (h.selectedPoints.length) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.Float32BufferAttribute(h.selectedPoints.flat(), 3));
-      const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: this.theme.sel, size: 8, sizeAttenuation: false, depthTest: false }));
-      pts.renderOrder = 6;
-      this.highlightGroup.add(pts);
+    if (!before || before.selectedEdges !== h.selectedEdges || before.selectedEdgeOwners !== h.selectedEdgeOwners || before.selectedPoints !== h.selectedPoints) {
+      drop("selected");
+      const flat = segs(h.selectedEdges, h.selectedEdgeOwners);
+      if (flat.length) {
+        const l = this.fatLinesFlat(flat, this.theme.sel, 3, false, true);
+        l.renderOrder = 5;
+        l.userData.role = "selected";
+        this.highlightGroup.add(l);
+      }
+      if (h.selectedPoints.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(h.selectedPoints.flat(), 3));
+        const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: this.theme.sel, size: 8, sizeAttenuation: false, depthTest: false }));
+        pts.renderOrder = 6;
+        pts.userData.role = "selected";
+        this.highlightGroup.add(pts);
+      }
     }
   }
 

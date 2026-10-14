@@ -8,7 +8,7 @@
 // exports one.
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DocState, Entity } from "../kernel/types";
-import { entityKey } from "../lib/entities";
+import { selectionLookup } from "../lib/entities";
 import { chain, graphOf } from "../lib/scope";
 import { PanelGlyph } from "./glyphs";
 
@@ -254,8 +254,9 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
     };
   }, [windowed]);
   const span = windowed ? outlineWindow(rows.length, view.top, view.height) : { first: 0, last: rows.length };
-  const selected = useMemo(() => new Set(selection.map(entityKey)), [selection]);
-  const isSelected = (r: OutlineRow) => !!r.entity && selected.has(entityKey(r.entity));
+  // Lane 16b: membership by number for solids and groups, built once per selection.
+  const selected = useMemo(() => selectionLookup(selection), [selection]);
+  const isSelected = (r: OutlineRow) => !!r.entity && selected.has(r.entity);
   const nodeOf = (r: OutlineRow) => (r.entity?.kind === "node" ? r.entity.node : -1);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);

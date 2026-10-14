@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DocState, Entity, MeshData } from "../kernel/types";
-import { applySelection, boxSelect, entityKey, eraseOp, eraseOps, highlightFor, modeFor, toSketch, fromSketch } from "./entities";
+import { applySelection, boxSelect, entityKey, eraseOp, eraseOps, highlightFor, modeFor, objectEdges, partsOf, selectionLookup, toSketch, fromSketch } from "./entities";
+import { meshIndex, ownerEdgeCount, ownerSegments } from "./meshIndex";
 
 // Two parts: face 2 of solid 1 (a unit square at z = 1, two triangles) and region 4 of the
 // ground sketch (a unit square at x = 3); one object edge and one sketch edge.
@@ -63,9 +64,53 @@ describe("highlights", () => {
     expect(h.selectedParts).toEqual([0]);
     expect(h.hoverParts).toEqual([1]);
     expect(h.selectedEdges).toEqual([[objEdge.kind === "edge" ? objEdge.a : [0, 0, 0], [1, 0, 1]]]);
-    const o = highlightFor([{ kind: "object", object: 1 }], null, mesh());
+    // Lane 16b: a whole solid's edges are named by their owner (the viewport draws them).
+    const m = mesh();
+    const o = highlightFor([{ kind: "object", object: 1 }], null, m);
     expect(o.selectedParts).toEqual([0]);
-    expect(o.selectedEdges).toHaveLength(1);
+    expect(o.selectedEdges).toEqual([]);
+    expect(o.selectedEdgeOwners).toEqual([0]);
+    expect(Array.from(ownerSegments(m, o.selectedEdgeOwners!))).toEqual([0, 0, 1, 1, 0, 1]);
+    // Hovering what is already selected adds nothing; hovering the region adds it.
+    expect(highlightFor([face], face, m).hoverParts).toEqual([]);
+    expect(highlightFor([face], region, m).hoverParts).toEqual([1]);
+  });
+
+  it("a mesh's lookups: each solid's parts and edge segments, built once per mesh", () => {
+    const m = mesh();
+    const ix = meshIndex(m);
+    expect(meshIndex(m)).toBe(ix);
+    expect(ix.objects).toEqual([1]);
+    expect(ix.objectParts.get(1)).toEqual([0]);
+    expect(ix.regionParts.get(1)).toEqual([1]);
+    expect(ix.objectOwner.get(1)).toBe(0);
+    expect(Array.from(ix.ownerStart)).toEqual([0, 1, 2]);
+    expect(Array.from(ix.ownerEdges)).toEqual([0, 1]);
+    expect(ownerEdgeCount(m, [0, 1])).toBe(2);
+    // Segments appended after explicit ones, six floats each.
+    expect(Array.from(ownerSegments(m, [1], new Float32Array([9, 9, 9, 8, 8, 8])))).toEqual([9, 9, 9, 8, 8, 8, 3, 0, 0, 4, 0, 0]);
+    expect(objectEdges(1, m)).toEqual([
+      [
+        [0, 0, 1],
+        [1, 0, 1],
+      ],
+    ]);
+    expect(objectEdges(7, m)).toEqual([]);
+    expect(partsOf(face, m)).toEqual([0]);
+    expect(partsOf({ kind: "face", object: 1, face: 3 }, m)).toEqual([]);
+    expect(partsOf(region, m)).toEqual([1]);
+    expect(partsOf({ kind: "object", object: 1 }, m)).toEqual([0]);
+  });
+
+  it("selection membership: solids and groups by number, the rest by key, once per selection", () => {
+    const sel: Entity[] = [{ kind: "object", object: 4 }, { kind: "node", node: 9 }, face];
+    const l = selectionLookup(sel);
+    expect(selectionLookup(sel)).toBe(l);
+    expect(l.has({ kind: "object", object: 4 })).toBe(true);
+    expect(l.has({ kind: "object", object: 9 })).toBe(false);
+    expect(l.has({ kind: "node", node: 9 })).toBe(true);
+    expect(l.has({ kind: "face", object: 1, face: 2 })).toBe(true);
+    expect(l.has(region)).toBe(false);
   });
 });
 

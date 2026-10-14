@@ -27,9 +27,10 @@ import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { Entity, KernelOp, SceneData } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
-import { entityKey, eraseOps, partsOf, selectionHighlight, withHover } from "./lib/entities";
+import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
-import { contextTrail, describeNode, entityShown, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
+import { contextTrail, describeNode, entityShown, graphIndex, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
+import { meshIndex } from "./lib/meshIndex";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
@@ -86,18 +87,26 @@ import { activeSectionHere, describeSection, sceneSectionsOf, sectionById, slice
  * solid), each once, in selection order. */
 export function itemsOf(es: Entity[]): Item[] {
   const out: Item[] = [];
-  const seen = new Set<string>();
-  const push = (it: Item) => {
-    const k = JSON.stringify(it);
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push(it);
+  // Lane 16b: numbers, not a JSON string per entity (a select-all of 100,000 solids made
+  // 100,000 strings each time the menus were drawn).
+  const nodes = new Set<number>();
+  const objects = new Set<number>();
+  const node = (n: number) => {
+    if (!nodes.has(n)) {
+      nodes.add(n);
+      out.push({ node: n });
+    }
+  };
+  const object = (o: number) => {
+    if (!objects.has(o)) {
+      objects.add(o);
+      out.push({ object: o });
     }
   };
   for (const e of es) {
-    if (e.kind === "node") push({ node: e.node });
-    else if (e.kind === "object" || e.kind === "face") push({ object: e.object });
-    else if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") push({ object: e.owner.id });
+    if (e.kind === "node") node(e.node);
+    else if (e.kind === "object" || e.kind === "face") object(e.object);
+    else if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") object(e.owner.id);
   }
   return out;
 }
@@ -456,7 +465,7 @@ export function App() {
           const sel = live.current.selection.filter((e) => {
             if (!entityShown(e, r.scene.state)) return false;
             if (e.kind === "node") {
-              if (!g?.nodes.some((n) => n.id === e.node)) return false;
+              if (!g || !graphIndex(g).node.has(e.node)) return false;
             } else if ((e.kind === "face" || e.kind === "region" || e.kind === "object") && partsOf(e, r.scene.mesh).length === 0) return false;
             const s = scopeEntity(e, r.scene.state);
             return !!s && entityKey(s) === entityKey(e);
@@ -1848,19 +1857,21 @@ export function App() {
   /** Rows whose drawn pieces are all selected, or held by something selected (a row picked
    * along with rows elsewhere selects the groups or components holding its pieces). */
   const cutSelected = useMemo(() => {
-    const keys = new Set(selection.map(entityKey));
+    const out = new Set<string>();
+    // Lane 16b: nothing to work out while the cut list is not drawn; solids and groups looked
+    // up by number (selectionLookup), not a key string per selected entity.
+    if (!selection.length || !cutList?.rows.length) return out;
+    const sel = selectionLookup(selection);
     const g = graphOf(scene?.state);
     const held = (e: Entity): boolean => {
-      if (keys.has(entityKey(e))) return true;
+      if (sel.has(e)) return true;
       let at = e.kind === "node" ? (nodeById(g, e.node)?.parent ?? null) : e.kind === "object" ? objectParent(g, e.object) : null;
       for (let guard = 0; at !== null && guard < 64; guard++) {
-        if (keys.has(entityKey({ kind: "node", node: at }))) return true;
+        if (sel.nodes.has(at)) return true;
         at = nodeById(g, at)?.parent ?? null;
       }
       return false;
     };
-    const out = new Set<string>();
-    if (!keys.size) return out;
     for (const row of cutList?.rows ?? []) {
       const vis = row.occurrences.filter((o) => o.visible);
       if (vis.length && vis.every((o) => held("node" in o.item ? { kind: "node", node: o.item.node } : { kind: "object", object: o.item.object }))) out.add(rowKey(row));
@@ -2066,18 +2077,37 @@ export function App() {
     const state = live.current.scene?.state;
     if (!m) return;
     // Everything the open context offers: its solids, the groups and components directly
-    // in it (as units), and its sketch regions.
-    const seen = new Set<string>();
+    // in it (as units), and its sketch regions. Lane 16b: the solids come from the mesh's
+    // index, each solid's scope is worked out once per parent (every solid in a group shares
+    // it), and solids and groups are kept once by number, not by a string key each.
+    const g = graphOf(state);
+    const ix = meshIndex(m);
     const all: Entity[] = [];
-    const add = (raw: Entity) => {
-      const e = scopeEntity(raw, state);
-      if (e && !seen.has(entityKey(e))) {
-        seen.add(entityKey(e));
-        all.push(e);
+    const objects = new Set<number>();
+    const nodes = new Set<number>();
+    const scopeOf = new Map<number | null, Entity | null>();
+    for (const o of ix.objects) {
+      const parent = objectParent(g, o);
+      let s = scopeOf.get(parent);
+      if (s === undefined) scopeOf.set(parent, (s = scopeEntity({ kind: "object", object: o }, state)));
+      if (s?.kind === "object" && !objects.has(o)) {
+        objects.add(o);
+        all.push({ kind: "object", object: o });
+      } else if (s?.kind === "node" && !nodes.has(s.node)) {
+        nodes.add(s.node);
+        all.push(s);
       }
-    };
-    for (const o of new Set(m.parts.filter((p) => p.kind === "face").map((p) => p.owner))) add({ kind: "object", object: o });
-    for (const p of m.parts) if (p.kind === "region") add({ kind: "region", sketch: p.owner, region: p.index });
+    }
+    const regions = new Set<string>();
+    for (const [sketch, parts] of ix.regionParts) {
+      for (const i of parts) {
+        const e = scopeEntity({ kind: "region", sketch, region: m.parts[i].index }, state);
+        if (e && !regions.has(entityKey(e))) {
+          regions.add(entityKey(e));
+          all.push(e);
+        }
+      }
+    }
     live.current.selection = all;
     setSelection(all);
     setMessage({ text: `Selected ${all.length} item${all.length === 1 ? "" : "s"}.`, error: false });
@@ -2292,6 +2322,20 @@ export function App() {
   hud.push({ text: `Units: ${u.label}` });
   hud.push({ text: `Edit: ${contextTrail(graphOf(st))} · undo ${st?.undo_depth ?? 0} · redo ${st?.redo_depth ?? 0}` });
 
+  // Lane 16b: the view mesh's lookups (meshIndex) are built in idle time after each edit, so
+  // the first selection of a large model finds them ready instead of building them then.
+  useEffect(() => {
+    const m = scene?.mesh;
+    if (!m) return;
+    const w = window as Window & { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(() => meshIndex(m), { timeout: 5000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(() => meshIndex(m), 250);
+    return () => window.clearTimeout(t);
+  }, [scene]);
+
   // Push targets show as a selection while the Push tool is active.
   const highlightEntities = useMemo<Entity[]>(() => {
     if (selection.length || toolId !== "pushpull" || !target) return selection;
@@ -2328,6 +2372,8 @@ export function App() {
     [apply],
   );
 
+  // What the selection stands for, once per selection (the menus asked six times a draw).
+  const selItems = useMemo(() => itemsOf(selection), [selection]);
   const menus = useMemo<Record<string, MenuItem[]>>(
     () => ({
       File: [
@@ -2387,8 +2433,8 @@ export function App() {
         { label: "Delete", keys: "Delete", disabled: !selection.length, onSelect: eraseSelection },
         { label: "Delete Guides", disabled: !st?.guides?.length, onSelect: () => void apply({ op: "delete_guides" }, () => "Guides deleted.") },
         "-",
-        { label: "Make Group", keys: "Ctrl+G", disabled: !itemsOf(selection).length, onSelect: () => void makeGroup(itemsOf(selection)) },
-        { label: "Make Component…", disabled: !itemsOf(selection).length, onSelect: () => makeComponent(itemsOf(selection)) },
+        { label: "Make Group", keys: "Ctrl+G", disabled: !selItems.length, onSelect: () => void makeGroup(selItems) },
+        { label: "Make Component…", disabled: !selItems.length, onSelect: () => makeComponent(selItems) },
         {
           label: "Make Unique",
           disabled: !(selection.length === 1 && selection[0].kind === "node" && (st?.graph?.nodes.find((n) => n.id === (selection[0] as { node: number }).node)?.kind ?? "") === "instance"),
@@ -2398,14 +2444,14 @@ export function App() {
         {
           label: "Clear Paint",
           title: "Take the paint off what the selection holds, so the group's (or the solid's container's) paint shows; one undo step",
-          disabled: !itemsOf(selection).length,
+          disabled: !selItems.length,
           onSelect: () =>
-            void apply({ op: "clear_paint", items: itemsOf(selection) }, (r) =>
+            void apply({ op: "clear_paint", items: selItems }, (r) =>
               r.outcome.kind === "paint_cleared" ? `Paint cleared from ${plural(r.outcome.cleared_faces, "face")} and ${plural(r.outcome.cleared_items, "item")}: what holds them shows now.` : "Paint cleared.",
             ),
         },
-        { label: "Hide", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_hidden", items: itemsOf(selection), hidden: true }, () => `Hid ${plural(itemsOf(selection).length, "item")} (the Outliner's eye shows them again).`) },
-        { label: "Lock", disabled: !itemsOf(selection).length, onSelect: () => void apply({ op: "set_locked", items: itemsOf(selection), locked: true }, () => `Locked ${plural(itemsOf(selection).length, "item")}.`) },
+        { label: "Hide", disabled: !selItems.length, onSelect: () => void apply({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
+        { label: "Lock", disabled: !selItems.length, onSelect: () => void apply({ op: "set_locked", items: selItems, locked: true }, () => `Locked ${plural(selItems.length, "item")}.`) },
         {
           label: "Close Group / Component",
           keys: "Esc",
@@ -2470,7 +2516,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -2709,7 +2755,7 @@ export function App() {
         outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
         tags={{
           state: st ?? null,
-          canTag: itemsOf(selection).length > 0,
+          canTag: selItems.length > 0,
           onCreate: () => void createTag(),
           onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
           onColor: (tag, color) => void apply({ op: "set_tag_color", tag, color: hexToRgb(color) }),

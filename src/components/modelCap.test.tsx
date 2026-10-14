@@ -8,7 +8,8 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CutList, CutRow, DocState, Entity, MeshData, SceneGraph } from "../kernel/types";
-import { highlightFor, partsOf } from "../lib/entities";
+import { highlightFor, partsOf, selectionHighlight, withHover } from "../lib/entities";
+import { ownerEdgeCount } from "../lib/meshIndex";
 import { contentsOf, graphIndex, objectParent, solidsIn } from "../lib/scope";
 import { CutListPane, CUT_ROWS_SHOWN } from "./CutListPane";
 import { OUTLINE_ROW_PX, OUTLINE_WINDOW_FROM, Outliner, outlineRows, outlineWindow } from "./Outliner";
@@ -140,10 +141,25 @@ describe("a model at the 100,000-solid limit", () => {
     let h: ReturnType<typeof highlightFor> | null = null;
     const t = ms(() => (h = highlightFor(sel, null, m, st.graph)));
     expect(h!.selectedParts.length).toBe(N * 6);
-    expect(h!.selectedEdges.length).toBe(N * 12);
+    // Lane 16b: whole solids' edges are named by owner, not built as 1,200,000 pairs; the
+    // viewport draws them from a state texture (FAT_HIGHLIGHT_EDGES).
+    expect(h!.selectedEdges.length).toBe(0);
+    expect(h!.selectedEdgeOwners!.length).toBe(N);
+    expect(ownerEdgeCount(m, h!.selectedEdgeOwners!)).toBe(N * 12);
     // Was 10 s at a tenth of this size (each solid a pass over the mesh); and a spread of
-    // a million edges into push() threw past the call stack's limit.
+    // a million edges into push() threw past the call stack's limit. Lane 16b: from the
+    // mesh's index (built once per mesh, in idle time in the app), the selection's own size.
     expect(t).toBeLessThan(3000);
+    const again = ms(() => (h = highlightFor(sel, null, m, st.graph)));
+    expect(again).toBeLessThan(1000);
+    // The pointer moving over the model with all of it selected: the selection's highlight
+    // is kept (the app memoises it) and each move asks the selection once per selection,
+    // not 100,000 keys per move.
+    const base = selectionHighlight(sel, m, st.graph);
+    const hover = ms(() => {
+      for (let k = 0; k < 200; k++) withHover(base, sel, { kind: "object", object: 1000 + k }, m, st.graph);
+    });
+    expect(hover).toBeLessThan(500);
     // All of it as groups: the same parts, through the nodes.
     const gs = model(N, 100);
     const groupSel: Entity[] = Array.from({ length: 100 }, (_, k) => ({ kind: "node", node: k + 1 }));
