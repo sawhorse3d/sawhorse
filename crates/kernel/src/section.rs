@@ -485,10 +485,13 @@ struct Run {
 /// the cap laid on them in the plane (the arrangement keeps them a cycle, and takes for
 /// material every face its winding number puts inside, [`crate::arrangement`]) has them as
 /// its boundary, walked the other way: kept faces and cap close each other edge for edge
-/// (where the chords wind round no point of the plane twice: an embedded solid cut by its
-/// own distances never makes them, and corners forced onto the plane could only where two
-/// sheets of its surface lie within about a nanometre of each other and of the plane; there
-/// the cap would be the union, and `testing::check_sections` would show the overlap).
+/// (where the chords wind round every point of the plane once or not at all: an embedded
+/// solid cut by its own distances does, and its triangles are embedded once none stands off
+/// its face, [`crate::object::face_triangles`]; corners forced onto the plane could break it
+/// only where two sheets of its surface lie within about a nanometre of each other and of
+/// the plane, folded over one another, as a standing triangle did in the lane's resumed run;
+/// there the cap is the region they wind round once or more, and `testing::check_sections`
+/// would show the difference).
 /// Along the normal that is exact (the cap's boundary is the chords seen in the plane); across
 /// it, a chord's end is off the plane only by how far the tie rule moved its corner (at most
 /// ON_FACE). No face's stored plane, bend or neighbours enter it, so it holds for any
