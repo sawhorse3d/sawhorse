@@ -54,7 +54,7 @@ jobs:
       - name: provenance (no source maps, no SketchUp document bytes in what we publish)
         run: node scripts/check-provenance.mjs dist-site
       - name: check the site (links, outside resources, sizes, download links)
-        run: node scripts/check-site.mjs --dir dist-site --base "${{ steps.pages.outputs.base_path }}/" --online --allow-missing-release
+        run: node scripts/check-site.mjs --dir dist-site --base "${{ steps.pages.outputs.base_path }}/" --online
       - name: install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: smoke test (landing page, demo kernel, a box, save and open)
