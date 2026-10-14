@@ -24,6 +24,8 @@
 
 use std::io::{Cursor, Write};
 
+mod declared;
+
 use sawhorse_kernel::document::Document;
 use sawhorse_kernel::meshbuild::ImportItem;
 use sawhorse_kernel::model::{Model, Op, OpOutcome};
@@ -93,6 +95,9 @@ pub enum ShzError {
     Model(String),
     #[error("could not write the file: {0}")]
     Write(String),
+    /// Lane 16b: the file lists more of something than a model may hold.
+    #[error("{0}")]
+    Limit(sawhorse_kernel::limits::LimitError),
 }
 
 /// Most entries a `.shz` may hold (lane 16): 512 textures and a handful of others fit with
@@ -276,25 +281,28 @@ impl<'a> Archive<'a> {
     }
 }
 
-/// The two fields a reader checks before parsing the rest.
-#[derive(serde::Deserialize)]
-struct Head {
-    #[serde(default)]
-    format: Option<String>,
-    #[serde(default)]
-    version: Option<serde_json::Number>,
-}
-
 /// Read a `.shz` into a fresh document (its log is the `restore` op, nothing to undo).
 pub fn read(bytes: &[u8]) -> Result<Opened, ShzError> {
     let mut zip = Archive::open(bytes)?;
-    let json = zip
-        .entry("scene.json", MAX_SCENE_JSON)?
-        .ok_or_else(|| ShzError::NotShz("there is no scene.json inside".into()))?;
-    // The format and version first (a pass that skips the rest without building it), then
-    // the scene straight into its types: no generic JSON tree of a large file.
-    let head: Head =
-        serde_json::from_slice(&json).map_err(|e| ShzError::Damaged(format!("scene.json: {e}")))?;
+    // The format, the version and what scene.json lists, counted as it inflates (a pass
+    // that skips everything without building it, and stops at the first list past a model
+    // limit: lane 16b), then the scene straight into its types: no generic JSON tree of a
+    // large file.
+    let (json, head) = match zip
+        .0
+        .entry_inspected("scene.json", MAX_SCENE_JSON, |r| declared::check(r))
+        .map_err(shz_error)?
+    {
+        None => return Err(ShzError::NotShz("there is no scene.json inside".into())),
+        Some(Ok(both)) => both,
+        Some(Err(declared::Stop::Limit(e))) => return Err(ShzError::Limit(e)),
+        Some(Err(declared::Stop::Json(e))) => {
+            // Not JSON as far as it was read: if the entry is not what its header says
+            // (a size lie, a damaged stream), that is the reason; read it whole to know.
+            zip.entry("scene.json", MAX_SCENE_JSON)?;
+            return Err(ShzError::Damaged(format!("scene.json: {e}")));
+        }
+    };
     if head.format.as_deref() != Some(FORMAT) {
         return Err(ShzError::NotShz(
             "scene.json does not say format \"sawhorse-shz\"".into(),
@@ -1052,7 +1060,11 @@ mod tests {
         let t = std::time::Instant::now();
         let e = read(&rezip(&v)).unwrap_err();
         assert!(t.elapsed().as_millis() < 2000, "{:?}", t.elapsed());
-        assert!(e.to_string().contains("lists 10000 textures"), "{e}");
+        // Lane 16b: counted as scene.json inflates, before its rows are parsed.
+        assert!(
+            e.to_string().contains("more than 512 texture images"),
+            "{e}"
+        );
         v["textures"] = serde_json::json!([
             { "path": "assets/a.png", "mime": "image/png" },
             { "path": "assets/a.png", "mime": "image/png" }
@@ -1219,5 +1231,168 @@ mod tests {
         let mut v = scene_json_of(&d);
         v["nodes"][0]["xform"] = serde_json::json!({ "linear": [[0, 0, 0], [0, 0, 0], [0, 0, 0]], "translation": [0, 0, 0] });
         assert!(read(&rezip(&v)).is_err());
+    }
+
+    // ---- lane 16b: counts a file declares --------------------------------------------------
+
+    /// `sample()`'s scene.json with `key` holding `n` generated values (`item(i)`, JSON
+    /// text), as a list or (`map`) an object, deflated. Written as text: building millions
+    /// of serde_json values would take the test seconds.
+    fn declaring(key: &str, n: usize, map: bool, item: &dyn Fn(usize) -> String) -> Vec<u8> {
+        let mut v = scene_json_of(&sample());
+        v[key] = serde_json::json!("__BULK__");
+        let text = serde_json::to_string(&v).unwrap();
+        let mut bulk = String::with_capacity(n * 48 + 2);
+        bulk.push(if map { '{' } else { '[' });
+        for i in 0..n {
+            if i > 0 {
+                bulk.push(',');
+            }
+            bulk.push_str(&item(i));
+        }
+        bulk.push(if map { '}' } else { ']' });
+        let json = text.replacen("\"__BULK__\"", &bulk, 1);
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file("scene.json", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(json.as_bytes()).unwrap();
+        zw.finish().unwrap().into_inner()
+    }
+
+    fn refused_as_declared(file: &[u8], what: &str, max: usize) {
+        let t = std::time::Instant::now();
+        let e = read(file).map(|_| ()).unwrap_err();
+        let took = t.elapsed();
+        match &e {
+            ShzError::Limit(sawhorse_kernel::limits::LimitError::Declared { what: w, max: m }) => {
+                assert_eq!((*w, *m), (what, max), "{e}");
+            }
+            _ => panic!("not refused by its declared count: {e}"),
+        }
+        assert!(
+            e.to_string()
+                .contains(&format!("the file holds more than {max} {what}")),
+            "{e}"
+        );
+        // Refused at the element past the limit: the rest is never inflated.
+        assert!(took.as_millis() < 100, "{what}: {took:?}");
+    }
+
+    #[test]
+    fn two_million_guides_are_refused_by_their_count_before_any_is_parsed() {
+        // The attack: 2,000,000 guide lines, a 5 MB .shz, crashed the tab.
+        let guides = |i: usize| {
+            format!(
+                r#"{{"point":[{},{},0],"dir":[0,1,0]}}"#,
+                (i % 1000) as f64 * 1e-3,
+                (i / 1000) as f64 * 1e-3
+            )
+        };
+        let file = declaring("guides", 2_000_000, false, &guides);
+        assert!(file.len() < 16 << 20, "{} bytes", file.len());
+        refused_as_declared(&file, "guides", 50_000);
+        // Exactly the limit opens, and holds them all.
+        let at = read(&declaring("guides", 50_000, false, &guides)).unwrap();
+        assert_eq!(at.document.model().snapshot().guides.len(), 50_000);
+        refused_as_declared(
+            &declaring("guides", 50_001, false, &guides),
+            "guides",
+            50_000,
+        );
+    }
+
+    #[test]
+    fn dimensions_tags_materials_and_scenes_are_refused_by_their_counts() {
+        let dim = |i: usize| {
+            format!(
+                r#"{{"a":[{},0,0],"b":[{},1,0],"offset":[0,0,0.1]}}"#,
+                i as f64 * 1e-4,
+                i as f64 * 1e-4
+            )
+        };
+        refused_as_declared(
+            &declaring("dimensions", 2_000_000, false, &dim),
+            "dimensions",
+            50_000,
+        );
+        let tag = |i: usize| format!(r#""t{i}":true"#);
+        refused_as_declared(&declaring("tags", 1_000_000, true, &tag), "tags", 10_000);
+        let colour = |i: usize| format!(r##""t{i}":"#aabbcc""##);
+        refused_as_declared(
+            &declaring("tag_colors", 1_000_000, true, &colour),
+            "tag colours",
+            10_000,
+        );
+        let mat = |i: usize| format!(r#"{{"name":"m{i}","color":[{},2,3,255]}}"#, i % 256);
+        refused_as_declared(
+            &declaring("materials", 1_000_000, false, &mat),
+            "materials",
+            4_096,
+        );
+        let scene = |i: usize| {
+            format!(
+                r#"{{"name":"s{i}","eye":[1,1,1],"target":[0,0,0],"up":[0,0,1],"fov":45,"parallel":false}}"#
+            )
+        };
+        refused_as_declared(
+            &declaring("scenes", 300_000, false, &scene),
+            "scenes",
+            1_000,
+        );
+        // One scene hiding 3,000,000 tag names.
+        let hiding = |_: usize| {
+            let mut s = String::from(
+                r#"{"name":"s","eye":[1,1,1],"target":[0,0,0],"up":[0,0,1],"hidden_tags":["#,
+            );
+            for i in 0..3_000_000 {
+                if i > 0 {
+                    s.push(',');
+                }
+                s.push_str(&format!("\"t{i}\""));
+            }
+            s.push_str("]}");
+            s
+        };
+        refused_as_declared(
+            &declaring("scenes", 1, false, &hiding),
+            "tags hidden by one scene",
+            10_000,
+        );
+        let plane = |i: usize| format!(r#"{{"id":{},"origin":[0,0,0],"normal":[0,0,1]}}"#, i + 1);
+        refused_as_declared(
+            &declaring("sections", 1_001, false, &plane),
+            "section planes",
+            1_000,
+        );
+        let tex = |i: usize| format!(r#"{{"path":"assets/t{i}.png","mime":"image/png"}}"#);
+        refused_as_declared(
+            &declaring("textures", 513, false, &tex),
+            "texture images",
+            512,
+        );
+    }
+
+    #[test]
+    fn counted_lists_of_another_type_are_left_to_the_typed_parse() {
+        // Not a list: the count pass lets it through and the parse says what is wrong.
+        let mut v = scene_json_of(&sample());
+        v["guides"] = serde_json::json!(7);
+        let e = read(&rezip(&v)).map(|_| ()).unwrap_err();
+        assert!(matches!(e, ShzError::Damaged(_)), "{e}");
+        // Not JSON at all.
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file("scene.json", SimpleFileOptions::default())
+            .unwrap();
+        zw.write_all(b"[1, 2").unwrap();
+        let e = read(&zw.finish().unwrap().into_inner())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(e, ShzError::Damaged(_)), "{e}");
+        // An ordinary file reads as it always did.
+        let back = read(&write(sample().model(), &SaveOptions::default()).unwrap()).unwrap();
+        assert_eq!(
+            back.document.model().snapshot(),
+            sample().model().snapshot()
+        );
     }
 }

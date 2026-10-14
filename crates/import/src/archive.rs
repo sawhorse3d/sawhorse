@@ -108,6 +108,25 @@ impl<'a> Archive<'a> {
 
     /// Entry `name`, at most `cap` bytes (see the module docs). `None` when it is absent.
     pub fn entry(&mut self, name: &str, cap: u64) -> Result<Option<Vec<u8>>, ArchiveError> {
+        match self.entry_inspected(name, cap, |_| Ok::<(), std::convert::Infallible>(()))? {
+            None => Ok(None),
+            Some(Ok((v, ()))) => Ok(Some(v)),
+            Some(Err(never)) => match never {},
+        }
+    }
+
+    /// Entry `name` as [`Archive::entry`] reads it, shown to `inspect` while it inflates
+    /// (lane 16b): `inspect` reads from the start of the entry as far as it likes, and what it
+    /// reads is kept, so the entry is inflated once. When `inspect` returns `Err`, reading
+    /// stops there (the rest is never inflated) and that error is returned inside `Some`.
+    /// `None` when the entry is absent.
+    #[allow(clippy::type_complexity)]
+    pub fn entry_inspected<T, E>(
+        &mut self,
+        name: &str,
+        cap: u64,
+        inspect: impl FnOnce(&mut dyn Read) -> Result<T, E>,
+    ) -> Result<Option<Result<(Vec<u8>, T), E>>, ArchiveError> {
         let damaged = |m: String| ArchiveError::Damaged(format!("{name}: {m}"));
         let mut f = match self.zip.by_name(name) {
             Ok(f) => f,
@@ -132,10 +151,30 @@ impl<'a> Archive<'a> {
             )));
         }
         // `declared` is at most `cap`: the allocation is bounded, and so is the inflating
-        // (one byte past the declared size is enough to know the header lied).
-        let mut v = Vec::with_capacity(declared as usize);
-        (&mut f)
-            .take(declared + 1)
+        // (one byte past the declared size is enough to know the header lied). Lane 16b: the
+        // copy grows with what is read until RESERVE_AFTER bytes, then takes the declared
+        // size at once; an entry the inspector stops early never allocates its claim.
+        let mut v = Vec::with_capacity((declared as usize).min(RESERVE_AFTER / 8));
+        let mut limited = (&mut f).take(declared + 1);
+        let seen = {
+            let mut tee = Tee {
+                inner: &mut limited,
+                out: &mut v,
+                failed: None,
+                declared: declared as usize,
+            };
+            let r = inspect(&mut tee);
+            if let Some(e) = tee.failed.take() {
+                return Err(damaged(e));
+            }
+            r
+        };
+        let seen = match seen {
+            Ok(t) => t,
+            Err(e) => return Ok(Some(Err(e))),
+        };
+        v.reserve_exact((declared as usize + 1).saturating_sub(v.len()));
+        limited
             .read_to_end(&mut v)
             .map_err(|e| damaged(e.to_string()))?;
         if v.len() as u64 != declared {
@@ -150,6 +189,39 @@ impl<'a> Archive<'a> {
             )));
         }
         self.read += declared;
-        Ok(Some(v))
+        Ok(Some(Ok((v, seen))))
+    }
+}
+
+/// How much of an inspected entry is read before its copy takes the whole declared size.
+const RESERVE_AFTER: usize = 8 << 20;
+
+/// A reader that keeps a copy of everything read through it (and the first read error, so
+/// a damaged entry is reported as damaged whatever the inspector made of it).
+struct Tee<'a, R: Read> {
+    inner: R,
+    out: &'a mut Vec<u8>,
+    failed: Option<String>,
+    declared: usize,
+}
+
+impl<R: Read> Read for Tee<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.inner.read(buf) {
+            Ok(n) => {
+                let len = self.out.len() + n;
+                if len > self.out.capacity() && len >= RESERVE_AFTER {
+                    // Past the first few megabytes: the rest at once, as declared.
+                    self.out
+                        .reserve_exact((self.declared + 1).max(len) - self.out.len());
+                }
+                self.out.extend_from_slice(&buf[..n]);
+                Ok(n)
+            }
+            Err(e) => {
+                self.failed.get_or_insert_with(|| e.to_string());
+                Err(e)
+            }
+        }
     }
 }
