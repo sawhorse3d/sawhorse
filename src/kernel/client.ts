@@ -237,6 +237,11 @@ export class KernelClient {
     return this.send(req);
   }
 
+  /** Lane 16b: the kernel's WebAssembly memory in bytes (tests: it only grows). */
+  async wasmBytes(): Promise<number> {
+    return (await this.call({ kind: "memory" })).wasmBytes ?? 0;
+  }
+
   async version(): Promise<string> {
     return (await this.call({ kind: "version" })).version ?? "unknown";
   }

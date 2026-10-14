@@ -22,6 +22,8 @@ const WASM_ENTRY = "../wasm/pkg/sawhorse_wasm.js";
 class KernelMissing extends Error {}
 
 let ready: Promise<WasmModule> | null = null;
+/** The kernel's WebAssembly memory (lane 16b: tests read its size, which only grows). */
+let wasmMemory: WebAssembly.Memory | null = null;
 let doc: WasmDoc | null = null;
 
 function load(): Promise<WasmModule> {
@@ -30,7 +32,8 @@ function load(): Promise<WasmModule> {
       const loader = loaders[WASM_ENTRY];
       if (!loader) throw new KernelMissing("Kernel WASM is not built. Run: npm run wasm");
       const mod = await loader();
-      await mod.default();
+      const exports = (await mod.default()) as { memory?: WebAssembly.Memory } | undefined;
+      wasmMemory = exports?.memory ?? null;
       return mod;
     })();
   }
@@ -110,6 +113,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     switch (req.kind) {
       case "version":
         res = { id: req.id, ok: true, version: mod.kernel_version() };
+        break;
+      case "memory":
+        res = { id: req.id, ok: true, wasmBytes: wasmMemory?.buffer.byteLength ?? 0 };
         break;
       case "init": {
         doc?.free();

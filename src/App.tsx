@@ -873,7 +873,7 @@ export function App() {
     try {
       if (new URLSearchParams(window.location.search).get("kerneltest") === "1") {
         const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), restarts: () => k.restarts } };
+        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
       }
     } catch {
       /* no URL */

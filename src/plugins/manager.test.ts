@@ -11,7 +11,8 @@ import { fakeHost } from "../tools/fakeHost";
 import { PluginTool } from "../tools/plugin";
 import { METHODS } from "./host";
 import { BATCH_MAX_OPS } from "../../packages/plugin-api/src/runtime.ts";
-import { batchRefusedWithoutRead, MAX_BATCH_OPS, permissionLines, PluginManager, type AppBridge } from "./manager";
+import { batchCounts, batchRefusedWithoutRead, MAX_BATCH_OPS, permissionLines, PluginManager, type AppBridge } from "./manager";
+import { isLimitRefusal, MODEL_LIMITS } from "../kernel/limits";
 import { grantCovers, grantMatches, loadGrants, packageDigest, trimGrant } from "./store";
 import { checkToolView } from "./toolView";
 
@@ -746,5 +747,56 @@ describe("consent, attribution and grants (lane 17, F4 to F9)", () => {
 describe("one batch limit for the plugin and the app (lane 17)", () => {
   it("the runtime stops adding ops where the app would refuse the batch", () => {
     expect(BATCH_MAX_OPS).toBe(MAX_BATCH_OPS);
+  });
+});
+
+describe("the model's count limits hold for a plugin's batch (lane 16b)", () => {
+  const add = { op: "add_guide", point: [0, 0, 0], dir: [1, 0, 0] };
+
+  it("a batch that would take the model past a limit is refused too_large before it is sent", async () => {
+    const { c, req, bridge } = await running({ permissions: ["model.read", "model.write"] });
+    const s = state as unknown as { guides: unknown[]; materials: { name: string }[] };
+    const guides = s.guides;
+    s.guides = Array.from({ length: MODEL_LIMITS.guides - 1 }, (_, i) => ({ id: i + 1, point: [0, 0, 0], dir: null }));
+    try {
+      const r = await req(c, "model.batch", { name: "Guides", ops: [add, add] });
+      expect(r).toMatchObject({ ok: false, code: "too_large" });
+      expect(r.ok === false && r.error).toContain("the model would hold 50001 guides; at most 50000");
+      expect(bridge.applyBatch).not.toHaveBeenCalled();
+      // One more is still room.
+      expect(await req(c, "model.batch", { name: "Guide", ops: [add] })).toMatchObject({ ok: true });
+    } finally {
+      s.guides = guides;
+    }
+    // Materials by name: redefining one the model holds adds nothing; 4,096 new ones next to Oak are past.
+    const mats = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `m${i}`, color: [1, 2, 3, 255] }));
+    expect(await req(c, "model.batch", { name: "Oak again", ops: [{ op: "define_material", name: "Oak", color: [1, 2, 3, 255] }] })).toMatchObject({ ok: true });
+    const r = await req(c, "model.batch", { name: "Many", ops: [{ op: "import", materials: mats(MODEL_LIMITS.materials) }] });
+    expect(r).toMatchObject({ ok: false, code: "too_large" });
+    expect(r.ok === false && r.error).toContain("4097 materials; at most 4096");
+    // A scene hiding more tags than a model holds.
+    const hiding = { op: "add_scene", scene: { name: "S", eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], hidden_tags: Array.from({ length: MODEL_LIMITS.tags + 1 }, (_, i) => `t${i}`) } };
+    expect(await req(c, "model.batch", { name: "Hide", ops: [hiding] })).toMatchObject({ ok: false, code: "too_large" });
+  });
+
+  it("the counts a batch adds: each named thing once, and nothing the model already holds", () => {
+    const c = batchCounts(
+      [add, add, { op: "add_dimension" }, { op: "create_tag", name: "Shelves" }, { op: "tag_items", tag: "Shelves" }, { op: "set_tag", tag: "Legs" }, { op: "define_material", name: "Oak" }, { op: "define_material", name: "Ash" }, { op: "add_section" }, { op: "add_sheet" }, { op: "import", materials: [{ name: "Ash" }, { name: "Elm" }], scenes: [{ name: "Top" }], hidden_tags: ["Legs", "Rails"] }],
+      state,
+    );
+    expect(c).toMatchObject({ guides: 2, dimensions: 1, tags: 3, materials: 3, scenes: 1, sections: 1, sheets: 1 });
+  });
+
+  it("the kernel's own limit refusal reaches the plugin as too_large, with or without model.read", async () => {
+    const reason = "op 0 (array): the model would hold 1000000 solids and meshes; at most 100000";
+    for (const permissions of [["model.read", "model.write"], ["model.write"]]) {
+      const { c, req, bridge } = await running({ permissions });
+      bridge.applyBatch.mockRejectedValueOnce(new Error(reason));
+      expect(await req(c, "model.batch", { name: "Array", ops: [{ op: "rename", item: { object: 7 }, name: "x" }] })).toMatchObject({ ok: false, code: "too_large" });
+    }
+    expect(isLimitRefusal(reason)).toBe(true);
+    expect(isLimitRefusal("the file holds more than 50000 guides; a model holds at most 50000")).toBe(true);
+    expect(isLimitRefusal("faces: 2000000 is more than the 1500000 one import may bring in")).toBe(true);
+    expect(isLimitRefusal('op 1 (push_pull): no face #12 on object 7 "at most 3"')).toBe(false);
   });
 });

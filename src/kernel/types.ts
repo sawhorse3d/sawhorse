@@ -810,6 +810,8 @@ export interface WasmModule {
 
 export type RequestBody =
   | { kind: "version" }
+  /** Lane 16b: the kernel's WebAssembly memory in bytes (it only grows: what a request allocated at its peak). */
+  | { kind: "memory" }
   | { kind: "init" }
   /** An op log to rebuild from: the ops, or (lane 16) their JSON as one text. */
   | { kind: "replay"; ops?: KernelOp[]; json?: string }
@@ -886,6 +888,8 @@ export type WorkerResponse =
       id: number;
       ok: true;
       version?: string;
+      /** Lane 16b: the kernel's WebAssembly memory, bytes. */
+      wasmBytes?: number;
       outcome?: OpOutcome;
       scene?: SceneData;
       log?: KernelOp[];

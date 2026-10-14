@@ -6,7 +6,8 @@
 import { describeNetEntry, originAllowed, PERMISSION_TEXT, type Manifest, type Permission, type ToolContribution } from "../../packages/plugin-api/src/manifest.ts";
 import type { Data } from "../../packages/plugin-api/src/rpc.ts";
 import type { KernelClient } from "../kernel/client";
-import type { CutList, Entity, OpOutcome, Rounding, SceneData } from "../kernel/types";
+import { checkCounts, countsOf, isLimitRefusal, MODEL_LIMITS, ModelLimitError, type ModelCounts } from "../kernel/limits";
+import type { CutList, DocState, Entity, OpOutcome, Rounding, SceneData } from "../kernel/types";
 import { NeedsUserActivation, type FileType, type PickedFile } from "../io/files";
 import { scopeEntity } from "../lib/scope";
 import type { UnitSystem } from "../lib/units";
@@ -193,6 +194,74 @@ export function batchRefusedWithoutRead(reason: string): string {
   const at = /\bop (\d{1,6})\b/.exec(reason);
   const tail = 'nothing changed (the reason names the model, and plugin.json does not ask for "model.read")';
   return at ? `op ${Number(at[1])} was refused; ${tail}` : `the batch was refused; ${tail}`;
+}
+
+/**
+ * Lane 16b: what a batch would take the model's counts to (guides, dimensions, tags,
+ * materials, scenes, section planes, sheets), worked out from the ops before the batch is
+ * sent; past a limit the batch is refused with "too_large" and nothing reaches the kernel
+ * (which holds every edit to the same limits anyway, and each sheet to its items as an item
+ * is added). Named things count once, and not at all when the model already holds that name.
+ */
+export function batchCounts(ops: unknown[], state: DocState | null | undefined, scene?: SceneData | null): ModelCounts {
+  const c = countsOf(state, scene);
+  const tags = new Set(Object.keys(state?.tags ?? {}));
+  const materials = new Set((state?.materials ?? []).map((m) => m.name));
+  const scenes = new Set((state?.scenes ?? []).map((x) => x.name));
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const tag = (v: unknown) => {
+    const t = str(v)?.trim();
+    if (t) tags.add(t);
+  };
+  const scene_ = (v: unknown) => {
+    if (!isObj(v)) return;
+    const n = str(v.name)?.trim();
+    if (n) scenes.add(n);
+    // The tags one scene hides are held to the tag limit too.
+    if (Array.isArray(v.hidden_tags) && v.hidden_tags.length > MODEL_LIMITS.tags) throw new ModelLimitError("tags", v.hidden_tags.length);
+  };
+  for (const op of ops) {
+    if (!isObj(op)) continue;
+    switch (op.op) {
+      case "add_guide":
+        c.guides++;
+        break;
+      case "add_dimension":
+        c.dimensions++;
+        break;
+      case "add_section":
+        c.sections++;
+        break;
+      case "add_sheet":
+        c.sheets++;
+        break;
+      case "create_tag":
+        tag(op.name);
+        break;
+      case "tag_items":
+      case "set_tag":
+        tag(op.tag);
+        break;
+      case "define_material": {
+        const n = str(op.name);
+        if (n) materials.add(n);
+        break;
+      }
+      case "add_scene":
+        scene_(op.scene);
+        break;
+      case "import": {
+        for (const m of Array.isArray(op.materials) ? op.materials : []) if (isObj(m) && str(m.name)) materials.add(str(m.name)!);
+        for (const x of Array.isArray(op.scenes) ? op.scenes : []) scene_(x);
+        for (const t of Array.isArray(op.hidden_tags) ? op.hidden_tags : []) tag(t);
+        break;
+      }
+    }
+  }
+  c.tags = tags.size;
+  c.materials = materials.size;
+  c.scenes = scenes.size;
+  return c;
 }
 
 /** What the permission dialog lists for a manifest. */
@@ -668,6 +737,13 @@ export class PluginManager {
           if (!isObj(op) || typeof op.op !== "string") throw new PluginRefusal(`op ${i} is not an op (an object with "op")`, "invalid");
           if (FORBIDDEN_OPS.has(op.op)) throw new PluginRefusal(`op ${i}: "${op.op}" cannot be part of a plugin batch (history and navigation belong to the person)`, "invalid");
         });
+        // Lane 16b: the model's count limits, before anything is sent.
+        try {
+          checkCounts(batchCounts(p.ops, b.scene()?.state, b.scene()));
+        } catch (e) {
+          if (e instanceof ModelLimitError) throw new PluginRefusal(`${e.message}: split the work, or remove some first`, "too_large");
+          throw e;
+        }
         try {
           return (await b.applyBatch(name.trim(), p.ops, host.name, host.signal)) as unknown as Data;
         } catch (e) {
@@ -676,8 +752,10 @@ export class PluginManager {
           // Lane 17: the kernel's reason names the model ("no face #12 on object 7", a
           // solid's name), so a plugin that may write but not read hears only which op was
           // refused (the person sees the whole reason in the status line).
-          if (!host.has("model.read")) throw new PluginRefusal(batchRefusedWithoutRead(reason), "refused");
-          throw new PluginRefusal(reason, "refused");
+          // Lane 16b: a limit the kernel holds the model to is "too_large", as the app's are.
+          const code = isLimitRefusal(reason) ? "too_large" : "refused";
+          if (!host.has("model.read")) throw new PluginRefusal(batchRefusedWithoutRead(reason), code);
+          throw new PluginRefusal(reason, code);
         }
       }
 

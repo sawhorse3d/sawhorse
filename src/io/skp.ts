@@ -39,6 +39,7 @@
 // instead of refusing the whole import.
 import { unzipSync } from "fflate";
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
+import { MODEL_LIMITS } from "../kernel/limits";
 import { imageSize } from "../lib/imageSize";
 import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, OpOutcome, SceneDef, V3, Xform } from "../kernel/types";
 import type { UnitSystem } from "../lib/units";
@@ -93,6 +94,22 @@ export function checkSkpArchive(bytes: Uint8Array): void {
     if (e instanceof SkpTooLarge) throw e;
     // Not a zip after all (openskp says why), or a broken one: openskp decides.
   }
+}
+
+/**
+ * Lane 16b: what a parsed .skp holds against the model's count limits (src/kernel/limits.ts),
+ * before any of it is mapped: materials, layers (tags), pages (scenes) and the layers one
+ * page hides. Each is a few bytes in the file, so its size bounds none of them; the kernel
+ * would refuse the import too, but only after it had been built.
+ */
+export function checkSkpCounts(model: Pick<SkpModel, "materials" | "layers" | "pages">): void {
+  const over = (n: number, what: string, max: number) => {
+    if (n > max) throw new SkpTooLarge(`the SketchUp file holds ${n} ${what}; a model holds at most ${max}`);
+  };
+  over(model.materials.length, "materials", MODEL_LIMITS.materials);
+  over(model.layers.length, "tags (layers)", MODEL_LIMITS.tags);
+  over(model.pages.length, "scenes", MODEL_LIMITS.scenes);
+  for (const p of model.pages) over(p.hiddenLayers.length, "tags hidden by one scene", MODEL_LIMITS.tags);
 }
 
 /** SketchUp's default layer: geometry on it is untagged. */
@@ -641,6 +658,7 @@ const SKIPPED_LABEL: Record<string, string> = {
 
 /** Map a parsed SketchUp model onto one kernel import op. */
 export function modelToOp(model: SkpModel, fileName: string): SkpImport {
+  checkSkpCounts(model);
   const stem = fileName.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, "") || "SketchUp model";
   const ctx: Ctx = {
     model,
@@ -720,6 +738,8 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   // Section planes drawn at the top of the model (lane 12): placed after the import, in the
   // same undo step, inactive.
   const rootSections = sectionsIn(ctx, model.root, IDENTITY);
+  // Lane 16b: section planes are found while mapping (in groups and components too).
+  if (ctx.summary.sections > MODEL_LIMITS.sections) throw new SkpTooLarge(`the SketchUp file holds ${ctx.summary.sections} section planes; a model holds at most ${MODEL_LIMITS.sections}`);
 
   const materials: MaterialDef[] = model.materials
     .filter((m) => ctx.usedMaterials.has(m.name))

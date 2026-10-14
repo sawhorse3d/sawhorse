@@ -7,7 +7,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
 import { FAMILIES, corpus, rng } from "./corpus/models";
-import { apply, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, SkpTooLarge, unitsOf } from "./skp";
+import { apply, checkSkpCounts, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, SkpTooLarge, unitsOf } from "./skp";
+import { MODEL_LIMITS } from "../kernel/limits";
 import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
@@ -450,5 +451,21 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     const t0 = performance.now();
     expect(() => modelToOp(model, "Bomb.skp")).toThrow(SkpTooLarge);
     expect(performance.now() - t0).toBeLessThan(2000);
+  });
+});
+
+describe("a .skp past the model's count limits (lane 16b)", () => {
+  const model = (o: { materials?: number; layers?: number; pages?: number; hidden?: number }) => ({
+    materials: Array.from({ length: o.materials ?? 0 }, (_, i) => ({ name: `m${i}` })),
+    layers: Array.from({ length: o.layers ?? 0 }, (_, i) => ({ name: `l${i}` })),
+    pages: Array.from({ length: o.pages ?? 0 }, () => ({ hiddenLayers: Array.from({ length: o.hidden ?? 0 }, (_, i) => `l${i}`) })),
+  });
+  it("is refused before it is mapped, by what it holds", () => {
+    const check = (o: Parameters<typeof model>[0]) => () => checkSkpCounts(model(o) as unknown as Parameters<typeof checkSkpCounts>[0]);
+    expect(check({ materials: MODEL_LIMITS.materials, layers: MODEL_LIMITS.tags, pages: MODEL_LIMITS.scenes })).not.toThrow();
+    expect(check({ materials: MODEL_LIMITS.materials + 1 })).toThrow(new SkpTooLarge(`the SketchUp file holds 4097 materials; a model holds at most 4096`));
+    expect(check({ layers: MODEL_LIMITS.tags + 1 })).toThrow(/10001 tags \(layers\); a model holds at most 10000/);
+    expect(check({ pages: MODEL_LIMITS.scenes + 1 })).toThrow(/1001 scenes; a model holds at most 1000/);
+    expect(check({ pages: 1, hidden: MODEL_LIMITS.tags + 1 })).toThrow(/tags hidden by one scene/);
   });
 });
