@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { CutListPane, type CutListPaneProps } from "./CutListPane";
 import type { CreditsHandle } from "../credits/useCredits";
 import type { RenderPasses } from "../render/passes";
@@ -15,6 +15,47 @@ import { TagsPane, type TagsPaneProps } from "./TagsPane";
 // Materials and Styles (with the sun) came in lane 10.
 
 export type PaneId = "outliner" | "tags" | "cutlist" | "materials" | "styles" | "render" | "plugins";
+
+/** Lane 20: the panel's width (px): the mock's 300 by default, wider by dragging its left
+ * edge (or the arrow keys on it) or with the Cut list's Wide button; kept on this device. */
+export const SIDE_WIDTH = 300;
+/** The Wide button's width (px), when the window has room for it. */
+export const SIDE_WIDE = 600;
+/** Where the width is kept (this browser or this desktop app only). */
+export const SIDE_WIDTH_KEY = "sawhorse.sideWidth";
+/** The model keeps at least this much room beside the rail (px). */
+const VIEW_ROOM = 420;
+const RAIL = 56;
+
+/** The widest the panel may be in a window this wide: room is left for the model. */
+export function maxSideWidth(windowWidth: number): number {
+  return Math.max(SIDE_WIDTH, Math.min(1000, windowWidth - RAIL - VIEW_ROOM));
+}
+
+/** A width clamped to what the window allows, whole pixels. */
+export function clampSideWidth(w: number, windowWidth: number): number {
+  return Math.round(Math.min(maxSideWidth(windowWidth), Math.max(SIDE_WIDTH, Number.isFinite(w) ? w : SIDE_WIDTH)));
+}
+
+function storedSideWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(SIDE_WIDTH_KEY));
+    return v > 0 ? v : SIDE_WIDTH;
+  } catch {
+    return SIDE_WIDTH;
+  }
+}
+
+function saveSideWidth(w: number): void {
+  try {
+    if (w === SIDE_WIDTH) localStorage.removeItem(SIDE_WIDTH_KEY);
+    else localStorage.setItem(SIDE_WIDTH_KEY, String(w));
+  } catch {
+    /* storage blocked: the width lasts for this session */
+  }
+}
+
+const windowWidth = () => (typeof window === "undefined" ? 1440 : window.innerWidth);
 
 // Plugins (lane 11) is a glyph tab at the end, so the named tabs keep the mock's widths.
 const TABS: { id: PaneId; label: string; glyph?: boolean }[] = [
@@ -53,6 +94,50 @@ export interface SidePanelProps {
 
 export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, outliner, tags, focusTags = 0, cutlist, materials, styles, focusMaterials = 0, plugins, focusPlugins = 0, onPane }: SidePanelProps) {
   const [pane, setPane] = useState<PaneId>("outliner");
+  // Lane 20: the panel's width, dragged on its left edge or set by the Cut list's Wide.
+  const [width, setWidthState] = useState(() => clampSideWidth(storedSideWidth(), windowWidth()));
+  const setWidth = useCallback((w: number) => {
+    const next = clampSideWidth(w, windowWidth());
+    setWidthState(next);
+    saveSideWidth(next);
+  }, []);
+  useEffect(() => {
+    const fit = () => setWidthState((w) => clampSideWidth(w, windowWidth()));
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const gripDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    drag.current = { x: e.clientX, w: width };
+    setDragging(true);
+  };
+  const gripMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (d) setWidthState(clampSideWidth(d.w + (d.x - e.clientX), windowWidth()));
+  };
+  const gripUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    setDragging(false);
+    setWidth(d.w + (d.x - e.clientX));
+  };
+  const gripKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 100 : 20;
+    if (e.key === "ArrowLeft") setWidth(width + step);
+    else if (e.key === "ArrowRight") setWidth(width - step);
+    else if (e.key === "Home") setWidth(SIDE_WIDTH);
+    else if (e.key === "End") setWidth(maxSideWidth(windowWidth()));
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const wideWidth = clampSideWidth(SIDE_WIDE, windowWidth());
+  const wide = width > SIDE_WIDTH;
   /** The select the pointer last went down on (lane 15). */
   const pointerSelect = useRef<HTMLSelectElement | null>(null);
   useEffect(() => {
@@ -78,6 +163,7 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
     <aside
       className="side"
       aria-label="Panels"
+      style={{ "--side-w": `${width}px` } as CSSProperties}
       // Lane 15: a select picked with the mouse gives the keyboard back to the model, so the
       // next "r" or "p" picks a tool instead of jumping the select to an option. (A select
       // worked from the keyboard keeps focus: its arrows still move through the options.)
@@ -98,6 +184,24 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
         }
       }}
     >
+      <div
+        className={`side-grip${dragging ? " on" : ""}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Panel width"
+        aria-valuemin={SIDE_WIDTH}
+        aria-valuemax={maxSideWidth(windowWidth())}
+        aria-valuenow={width}
+        tabIndex={0}
+        title="Drag to widen the panel (arrow keys too; double-click for the usual width)"
+        data-testid="side-grip"
+        onPointerDown={gripDown}
+        onPointerMove={gripMove}
+        onPointerUp={gripUp}
+        onPointerCancel={gripUp}
+        onDoubleClick={() => setWidth(SIDE_WIDTH)}
+        onKeyDown={gripKey}
+      />
       <div className="tabs" role="tablist">
         {TABS.filter((t) => renderOn || t.id !== "render").map((t) => (
           <button
@@ -142,7 +246,7 @@ export function SidePanel({ credits, renderOn = true, capture, focusRender = 0, 
         <h3>
           Cut list <small>from components</small>
         </h3>
-        <CutListPane {...cutlist} />
+        <CutListPane {...cutlist} wide={wide} onWide={wideWidth > SIDE_WIDTH ? (w) => setWidth(w ? wideWidth : SIDE_WIDTH) : undefined} />
       </section>
 
       <section className="pane" id="pane-materials" role="tabpanel" aria-labelledby="tab-materials" hidden={pane !== "materials"}>

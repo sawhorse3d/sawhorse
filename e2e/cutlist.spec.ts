@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import { IN, type } from "./helpers";
 import { buildBookshelf, component, escapeAll, hint, ready } from "./bookshelf-build";
 import { csvCellText, parseCsv } from "../src/cutlist/csv";
+import { buildShz, openShz } from "./shz";
+import { UNCOUNTED_NOTES } from "../src/cutlist/format";
 
 async function cutRows(page: Page): Promise<string[][]> {
   return page.locator(".cutlist table tbody tr").evaluateAll((trs) => trs.map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => (td.querySelector(".name") ?? td).textContent ?? "")));
@@ -230,4 +232,85 @@ test("the cut list of an empty model says how parts come about", async ({ page }
   await expect(page.getByTestId("cutlist-empty")).toContainText("Make Component");
   await expect(page.locator(".cutlist .btnrow").getByRole("button", { name: "CSV" })).toBeDisabled();
   void IN;
+});
+
+// Lane 20: a long part name and the reason a part counts nowhere were cut short with an
+// ellipsis in the 300 px panel. Both now read in full at the default width (the name wraps,
+// the reason is a line of its own under it, not only a tooltip), and the panel widens by
+// its left edge or the Wide button.
+test("long part names and the reason a part is not counted read in full; the panel widens", async ({ page }) => {
+  test.setTimeout(90_000);
+  const NAME = "Rodeo#2 drawer front left";
+  const shz = await buildShz((apply) => {
+    const block = (name: string, x: number, w: number, d: number, h: number) => {
+      const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[x * IN, 0, 0], [(x + w) * IN, 0, 0], [(x + w) * IN, d * IN, 0], [x * IN, d * IN, 0]], closed: true });
+      const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: h * IN });
+      apply({ op: "make_component", items: [{ object: made.object }], name });
+    };
+    block(NAME, 0, 6, 20, 0.75);
+    // A closed 24 x 24 x 18 block: a whole piece (a carcass), not a board.
+    block("Carcass", 20, 24, 24, 18);
+  });
+  await openShz(page, shz, 2, "lane20.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const side = page.locator("aside.side").first();
+  expect(Math.round((await side.boundingBox())!.width), "the default width").toBe(300);
+  // Read in full: nothing in the Part cell is clipped (no ellipsis, no overflow), and each
+  // line lies inside the panel.
+  const clipped = () =>
+    page.evaluate(() => {
+      const out: string[] = [];
+      const pane = document.querySelector("aside.side")!.getBoundingClientRect();
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(".cutlist td.part .name, .cutlist tr.why small.why"))) {
+        const r = el.getBoundingClientRect();
+        if (el.scrollWidth > el.clientWidth + 1) out.push(`${el.textContent} overflows sideways`);
+        if (el.scrollHeight > el.clientHeight + 1) out.push(`${el.textContent} overflows down`);
+        if (r.left < pane.left - 0.5 || r.right > pane.right + 0.5) out.push(`${el.textContent} is outside the panel`);
+        if (getComputedStyle(el).textOverflow === "ellipsis" && getComputedStyle(el).whiteSpace === "nowrap") out.push(`${el.textContent} ends in an ellipsis`);
+      }
+      const cell = document.querySelector<HTMLElement>(".cutlist td.part");
+      if (cell && cell.scrollWidth > cell.clientWidth + 1) out.push("the Part cell overflows");
+      return out;
+    });
+  const name = page.locator(`.cutlist tbody tr[data-part="${NAME}"] .name`);
+  await expect(name).toHaveText(NAME);
+  await expect(name).toBeVisible();
+  const why = page.locator('.cutlist tbody tr.why[data-why-for="Carcass"] small.why');
+  await expect(why).toHaveText(UNCOUNTED_NOTES.whole_piece);
+  await expect(why).toBeVisible();
+  // The reason runs the table's whole width, under its row.
+  const line = (await why.boundingBox())!;
+  const table = (await page.locator(".cutlist table").boundingBox())!;
+  expect(line.width, "the reason's line is (nearly) the table's width").toBeGreaterThan(table.width * 0.8);
+  expect(await clipped(), "at the default width").toEqual([]);
+  // The header says how many pieces count nowhere, and why.
+  await expect(page.getByTestId("cutlist-geometry")).toContainText("1 piece not counted: 1 whole piece (thicker than any board, over 12 in both ways)");
+  // Wide mode, and back.
+  const wide = page.locator(".cutlist .cut-controls").getByRole("button", { name: "Wide" });
+  await wide.click();
+  await expect(wide).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(600);
+  expect(await clipped(), "wide").toEqual([]);
+  await wide.click();
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(300);
+  // The left edge drags (and the width is kept for next time).
+  const grip = page.getByTestId("side-grip");
+  const g = (await grip.boundingBox())!;
+  await page.mouse.move(g.x + g.width / 2, g.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(g.x + g.width / 2 - 150, g.y + 200, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(450);
+  await expect(grip).toHaveAttribute("aria-valuenow", "450");
+  expect(await page.evaluate(() => localStorage.getItem("sawhorse.sideWidth"))).toBe("450");
+  // The keyboard moves it too; double-click puts it back.
+  await grip.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(grip).toHaveAttribute("aria-valuenow", "430");
+  await grip.dblclick();
+  await expect.poll(async () => Math.round((await side.boundingBox())!.width)).toBe(300);
+  // The model still fills the rest of the window.
+  const vp = (await page.locator("main.vp").boundingBox())!;
+  expect(vp.width).toBeGreaterThan(900);
+  await page.screenshot({ path: test.info().outputPath("cutlist-long-names.png") });
 });

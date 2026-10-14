@@ -6,7 +6,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
-.app{display:grid;height:100%;min-height:560px;grid-template-rows:auto 1fr auto;grid-template-columns:56px 1fr 300px;grid-template-areas:"top top top" "rail vp side" "vcb vcb side"}
+.app{display:grid;height:100%;min-height:560px;grid-template-rows:auto 1fr auto;grid-template-columns:56px 1fr auto;grid-template-areas:"top top top" "rail vp side" "vcb vcb side"}
 .top{grid-area:top;display:flex;align-items:center;gap:14px;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
 .brand{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:.02em;display:flex;align-items:center;gap:8px}
 .brand svg{width:22px;height:22px}
@@ -38,7 +38,11 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);ou
 .vp .tip i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px}
 .vp .axes{position:absolute;right:10px;bottom:8px;font:10px var(--mono);color:var(--muted)}
 
-.side{grid-area:side;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0}
+.side{grid-area:side;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0;width:var(--side-w,300px);position:relative}
+/* Lane 20: the panel's left edge drags to widen it (and the arrow keys move it). */
+.side-grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5;touch-action:none}
+.side-grip:hover,.side-grip:focus-visible,.side-grip.on{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+.side-grip:focus-visible{outline:none}
 .tabs{display:flex;border-bottom:1px solid var(--line)}
 .tabs button{flex:1 1 auto;padding:9px 3px;font-family:var(--display);font-weight:600;font-size:12.5px;letter-spacing:.01em;text-transform:uppercase;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
 .tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
@@ -91,7 +95,8 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
   .app{min-height:0;height:auto;grid-template-columns:1fr;grid-template-rows:auto auto 440px auto auto;grid-template-areas:"top" "rail" "vp" "vcb" "side"}
   .rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:4px 8px;gap:4px}
   .rail .grp{flex-direction:row;width:auto;border-bottom:0;border-right:1px solid var(--line);padding:0 6px 0 0}
-  .side{border-left:0;border-top:1px solid var(--line);max-height:520px}
+  .side{border-left:0;border-top:1px solid var(--line);max-height:520px;width:auto}
+  .side-grip,.cut-controls .pin.wide{display:none}
 }
 @media (prefers-reduced-motion:reduce){ *{transition:none!important;animation:none!important} }
 
@@ -238,7 +243,13 @@ button.chip:hover{border-color:var(--accent)}
 .cut-controls .pin{font:11.5px var(--body);padding:2px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--muted)}
 .cut-controls .pin.on{border-color:var(--accent);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .cut-controls .pin:disabled{opacity:.5;cursor:default}
-.cutlist table.fit td.part .name,.cutlist table.fit td.part small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Lane 20: a part's name wraps (between words; inside one only when a word is wider than
+   the column) rather than ending in an ellipsis, so "Rodeo#2 drawer front left" reads in
+   full at any panel width; the short notes under it keep one line (in full in the tooltip),
+   and the reason a part counts nowhere has a line of its own under the row (tr.why). */
+.cutlist table.fit td.part{white-space:normal;text-overflow:clip}
+.cutlist table.fit td.part .name{white-space:normal;overflow-wrap:break-word}
+.cutlist table.fit td.part small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cutlist table.fit td.part .name,.cutlist table.fit td.mat{font-family:var(--body);font-size:11.5px}
 .cutlist table tbody tr.menu td{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 0 1px 0 var(--accent),inset 0 -1px 0 var(--accent)}
 .ctxtitle{font:600 12px var(--body);color:var(--muted);padding:4px 8px 5px;border-bottom:1px solid var(--line);margin:0 0 3px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -252,6 +263,10 @@ button.chip:hover{border-color:var(--accent)}
 .cutlist table tbody tr.out td{color:var(--muted)}
 .cutlist table tbody tr.out td .name,.cutlist table tbody tr.out td.n .v{text-decoration:line-through}
 .cutlist table tbody tr[data-not-solid] td.part small{color:var(--warn)}
+.cutlist table tbody tr.has-why td{border-bottom:0;padding-bottom:1px}
+.cutlist table.fit tbody tr.why td{padding-top:0;white-space:normal;text-overflow:clip}
+.cutlist table tbody tr.why small.why{display:block;font-family:var(--body);font-size:10.5px;line-height:1.3;color:var(--fg);opacity:.85;overflow-wrap:anywhere;padding-left:16px}
+.cut-controls .pin.wide{margin-left:auto}
 .cutlist .note.geom{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;margin:6px 0 4px}
 .cutlist .note.geom button.link{background:none;border:0;padding:0;font:inherit;color:var(--accent);text-decoration:underline;cursor:pointer}
 .cutlist .note.geom button.link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

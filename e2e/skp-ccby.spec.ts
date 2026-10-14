@@ -89,11 +89,11 @@ for (const f of FILES) {
     expect(cut.totals.sheet_count, "sheets 4x8").toBe(f.sheets);
     if (f.boardFeet !== undefined) expect(cut.totals.board_feet, "board feet counted").toBeCloseTo(f.boardFeet, 6);
     if (uncounted.length) {
-      await expect(page.locator(".cutlist tbody tr[data-uncounted] small").first()).toContainText("(not counted)");
-      // The header says how many pieces and why; each part says why in its notes.
+      await expect(page.locator(".cutlist tbody tr[data-uncounted] small").first()).toContainText("not counted");
+      // The header says how many pieces and why; each reason is written in full under its part.
       const pieces = uncounted.reduce((n, r) => n + r.qty, 0);
       await expect(page.getByTestId("cutlist-geometry")).toContainText(`${pieces} ${pieces === 1 ? "piece" : "pieces"} not counted`);
-      for (const r of uncounted) await expect(page.locator(`.cutlist tbody tr[data-part="${r.name}"] small`).first()).toContainText("(not counted)");
+      for (const r of uncounted) await expect(page.locator(`.cutlist tbody tr.why[data-why-for="${r.name}"] small.why`).first()).toContainText("(not counted)");
     }
     // Faces outside parts that sit inside an assembly: the pane says where and offers to open
     // it, never a Make parts link that would refuse.

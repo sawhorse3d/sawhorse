@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookshelf } from "../cutlist/fixture";
 import { grainArrows, grainOverlay } from "../cutlist/arrows";
-import { columnWidths, CutListPane, pickRows, rowKey, type CutListPaneProps } from "./CutListPane";
+import { columnWidths, CutListPane, materialWidth, pickRows, rowKey, type CutListPaneProps } from "./CutListPane";
 import { CutListReport } from "./CutListReport";
 import { REPORT_COLUMNS, reportCells, UNCOUNTED_NOTES, uncountedNote } from "../cutlist/format";
 import { readPdf } from "../cutlist/pdf";
@@ -199,6 +199,10 @@ describe("Cut list pane fit (300 px)", () => {
     // Thirty-seconds over 100 in are capped; the full size is in the cell's tooltip.
     const long = { ...list, rounding: "thirty_second" as const, rows: [{ ...list.rows[0], grain: "none" as const, qty: 12345, steps: [47, 3647, 3231] as [number, number, number] }] };
     expect(columnWidths(long, "fraction")).toEqual(["calc(3ch + 10px)", "calc(7ch + 10px)", "calc(8ch + 10px)", "calc(9ch + 10px)"]);
+    // Lane 20: Material takes a third of what the numbers leave (28 px at least); Part, the rest.
+    expect(materialWidth(275, 189)).toBe(28);
+    expect(materialWidth(275, 150)).toBe(41);
+    expect(materialWidth(575, 150)).toBe(141);
     render(<CutListPane {...props({ list: long, rounding: "thirty_second" })} />);
     const cells = [...screen.getByText("Side").closest("tr")!.querySelectorAll("td")];
     expect(cells[3].textContent).toBe("113 31/32");
@@ -347,9 +351,11 @@ describe("Parts that are not solids (lane 15)", () => {
     const flat = screen.getByText("Rodeo#2").closest("tr")!;
     expect(flat.getAttribute("data-uncounted")).toBe("flat");
     expect(flat.className).toContain("out");
-    expect(flat.querySelector("small")!.textContent).toContain("flat face, no thickness (not counted)");
+    // Lane 20: the row says "not counted"; the reason is a line of its own under it.
+    expect(flat.querySelector("small")!.textContent).toContain("not counted");
+    expect(flat.nextElementSibling!.querySelector("small.why")!.textContent).toBe("flat face, no thickness (not counted)");
     const bench = screen.getByText("benches 1").closest("tr")!;
-    expect(bench.querySelector("small")!.textContent).toContain("thicker than any board: several parts drawn as one? (not counted)");
+    expect(bench.nextElementSibling!.querySelector("small.why")!.textContent).toBe("thicker than any board: several parts drawn as one? (not counted)");
     expect(screen.getByTestId("cutlist-geometry").textContent).toContain(`${list.rows[1].qty + list.rows[2].qty} pieces not counted`);
     expect(screen.getByTestId("cutlist-geometry").textContent).toContain("flat face");
     expect(screen.getByTestId("cutlist-geometry").textContent).toContain("open faces thicker than any board");
@@ -360,7 +366,7 @@ describe("Parts that are not solids (lane 15)", () => {
   // Lane 20: a closed solid that is a whole piece of furniture (a coffee table at 128 board
   // feet), a hollow solid, and lumber wider than 4 ft (a floor at 102) count nowhere either,
   // and the header says how many pieces and why.
-  it("says how many pieces count nowhere and why, each reason in its part's notes", () => {
+  it("says how many pieces count nowhere and why, each reason in full under its part", () => {
     const list = mixed();
     list.rows[0] = { ...list.rows[0], name: "coffee table 6", qty: 1, not_solid: false, uncounted: "whole_piece", board_feet: 0, area_m2: 0, sheet: false };
     list.rows[1] = { ...list.rows[1], name: "Agrupar#8", qty: 2, not_solid: true, uncounted: "too_wide", board_feet: 0, area_m2: 0, sheet: false };
@@ -372,7 +378,11 @@ describe("Parts that are not solids (lane 15)", () => {
     for (const [name, u] of [["coffee table 6", "whole_piece"], ["Agrupar#8", "too_wide"], ["lamp 2", "hollow"]] as const) {
       const tr = screen.getByText(name).closest("tr")!;
       expect(tr.getAttribute("data-uncounted")).toBe(u);
-      expect(tr.querySelector("small")!.textContent).toContain(UNCOUNTED_NOTES[u]);
+      const line = tr.nextElementSibling!;
+      expect(line.className).toContain("why");
+      expect(line.getAttribute("data-why-for")).toBe(name);
+      expect(line.querySelector("td")!.getAttribute("colspan"), "the table's whole width").toBe("6");
+      expect(line.querySelector("small.why")!.textContent).toBe(UNCOUNTED_NOTES[u]);
     }
     expect(cutListCsv(list)).toContain(UNCOUNTED_NOTES.too_wide);
     const one = mixed();

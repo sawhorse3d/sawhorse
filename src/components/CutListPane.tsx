@@ -6,9 +6,9 @@
 // model (Shift picks a range of rows, Ctrl toggles one); right-click sets the grain or the
 // stock of the row, or of every picked row at once. The Nesting button opens the Nesting
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
-import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, type RoundingChoice } from "../cutlist/format";
+import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, UNCOUNTED_NOTES, type RoundingChoice } from "../cutlist/format";
 
 export interface CutListPaneProps {
   list: CutList | null;
@@ -49,6 +49,10 @@ export interface CutListPaneProps {
   onNest?: () => void;
   /** The Nesting section itself, drawn under the cut list while open. */
   nesting?: ReactNode;
+  /** Lane 20: the panel is in its wide mode (more room for names, notes and reasons). */
+  wide?: boolean;
+  /** Lane 20: switch the panel's wide mode (the Wide button); none hides the button. */
+  onWide?: (wide: boolean) => void;
 }
 
 /** A stable key for a row (its part and its size). */
@@ -113,6 +117,15 @@ export function columnWidths(list: CutList, style: ReturnType<typeof listStyle>)
   return [`calc(${qty}ch + ${PAD}px)`, ...sizes.map((n, k) => `calc(${n}ch + ${PAD + mark(k)}px)`)];
 }
 
+/** Lane 20: the Material column's width (px) in a table `table` px wide whose number
+ * columns take `numbers` px: a third of what they leave (at least 28 px), so the Part column
+ * (the other two thirds) has room for names to wrap between words in the 300 px pane. A long
+ * material ends in an ellipsis, in full in its tooltip. (A `calc()` with a percentage would
+ * say this in CSS, but a fixed-layout table treats such a column width as auto.) */
+export function materialWidth(table: number, numbers: number): number {
+  return Math.max(28, Math.floor((table - numbers) / 3));
+}
+
 /** Rows the pane draws at first, and how many more each "Show more" adds (lane 16). */
 export const CUT_ROWS_SHOWN = 500;
 
@@ -167,6 +180,25 @@ export function CutListPane(p: CutListPaneProps) {
   const [shown, setShown] = useState(CUT_ROWS_SHOWN);
   const rowCount = list?.rows.length ?? 0;
   const widths = useMemo(() => (list ? columnWidths(list, style) : []), [list, style]);
+  // Lane 20: the Material column's width, from the table's width as laid out (and again
+  // whenever the panel is widened); until it is measured, Part and Material share equally.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [matPx, setMatPx] = useState<number | null>(null);
+  useEffect(() => {
+    const t = tableRef.current;
+    if (!t || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const ths = t.querySelectorAll("thead th");
+      if (ths.length < 6 || t.clientWidth <= 0) return;
+      let numbers = 0;
+      for (let k = 1; k <= 4; k++) numbers += (ths[k] as HTMLElement).offsetWidth;
+      setMatPx(materialWidth(t.clientWidth, numbers));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(t);
+    return () => ro.disconnect();
+  }, [widths, list === null, empty]);
 
   return (
     <div className="cutlist" data-testid="cutlist">
@@ -197,6 +229,17 @@ export function CutListPane(p: CutListPaneProps) {
           <input type="checkbox" checked={p.visibleOnly} onChange={(e) => p.onVisibleOnly(e.currentTarget.checked)} />
           <span>Visible only</span>
         </label>
+        {p.onWide ? (
+          <button
+            type="button"
+            className={`pin wide${p.wide ? " on" : ""}`}
+            aria-pressed={!!p.wide}
+            onClick={() => p.onWide?.(!p.wide)}
+            title={p.wide ? "Back to the narrow panel (or drag the panel's left edge)" : "Widen the panel for long part names and notes (or drag the panel's left edge)"}
+          >
+            Wide
+          </button>
+        ) : null}
       </div>
       {p.problem ? <p className="note err">{p.problem}</p> : null}
       {list && geometryNote(list) ? (
@@ -232,13 +275,13 @@ export function CutListPane(p: CutListPaneProps) {
       ) : (
         <>
           <div className="tablewrap">
-            <table aria-label="Cut list" className="fit">
+            <table aria-label="Cut list" className="fit" ref={tableRef}>
               <colgroup>
                 <col className="c-part" />
                 {widths.map((w, k) => (
                   <col key={k} style={{ width: w }} />
                 ))}
-                <col className="c-mat" />
+                <col className="c-mat" style={matPx === null ? undefined : { width: `${matPx}px` }} />
               </colgroup>
               <thead>
                 <tr>
@@ -253,59 +296,79 @@ export function CutListPane(p: CutListPaneProps) {
               <tbody>
                 {list.rows.slice(0, shown).map((row) => {
                   const k = rowKey(row);
-                  const notes = rowNotes(row);
+                  // Lane 20: the reason a part counts nowhere is written in full on a line of
+                  // its own under the row, the table's whole width (not only in a tooltip);
+                  // the row's own notes say "not counted".
+                  const why = row.uncounted ? UNCOUNTED_NOTES[row.uncounted] : null;
+                  const notes = rowNotes(row).map((x) => (x === why ? "not counted" : x));
                   if (row.sheet) notes.unshift("sheet");
                   const sel = p.selected.has(k);
                   const mark = (axis: 1 | 2) => (row.grain === (axis === 2 ? "length" : "width") ? <i className="grain" title={`Grain runs along ${axis === 2 ? "the length" : "the width"}`} aria-label="grain" /> : null);
+                  const rowClass = `${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false || row.uncounted ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`;
                   return (
-                    <tr
-                      key={k}
-                      data-row={k}
-                      data-part={row.name}
-                      aria-selected={sel}
-                      data-not-solid={row.not_solid ? "true" : undefined}
-                      data-uncounted={row.uncounted}
-                      className={`${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false || row.uncounted ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`}
-                      onMouseDown={(e) => e.shiftKey && e.preventDefault()}
-                      onClick={(e) => clickRow(e, row)}
-                      onContextMenu={(e) => openMenu(e, row)}
-                      title="Click to select its pieces in the model (Shift: a range of rows, Ctrl: one more). Right-click to set the grain or the stock of the picked rows."
-                    >
-                      <td className="part" title={notes.length ? `${row.name} (${notes.join(", ")})` : row.name}>
-                        {p.onInclude ? (
-                          <input
-                            type="checkbox"
-                            className="inc"
-                            checked={row.included !== false}
-                            aria-label={`Include ${row.name}`}
-                            title={row.included === false ? "Left out of the totals and the nesting. Tick to count it again." : "Counted. Untick to leave it out of the totals and the nesting (it stays listed)."}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => p.onInclude?.([row], e.currentTarget.checked)}
-                          />
-                        ) : null}
-                        <span className="name">{row.name}</span>
-                        {notes.length ? <small>{notes.join(" · ")}</small> : null}
-                      </td>
-                      <td className="n">{row.qty}</td>
-                      {[0, 1, 2].map((k) => {
-                        const t = formatSteps(row.steps[k], r, style);
-                        const m = k ? mark(k as 1 | 2) : null;
-                        return (
-                          <td
-                            key={k}
-                            className={m ? "n mk" : "n"}
-                            data-nominal={k === 0 && nominalText(row) ? row.nominal : undefined}
-                            title={k === 0 && nominalText(row) ? `${t} ${sizeUnit(r)} finished; board feet on ${nominalText(row)}` : t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}
-                          >
-                            <span className="v">{t}</span>
-                            {m}
+                    <Fragment key={k}>
+                      <tr
+                        data-row={k}
+                        data-part={row.name}
+                        aria-selected={sel}
+                        data-not-solid={row.not_solid ? "true" : undefined}
+                        data-uncounted={row.uncounted}
+                        className={`${rowClass}${why ? " has-why" : ""}`}
+                        onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                        onClick={(e) => clickRow(e, row)}
+                        onContextMenu={(e) => openMenu(e, row)}
+                        title="Click to select its pieces in the model (Shift: a range of rows, Ctrl: one more). Right-click to set the grain or the stock of the picked rows."
+                      >
+                        <td className="part" title={notes.length ? `${row.name} (${[why, ...notes.filter((x) => x !== "not counted")].filter(Boolean).join(", ")})` : row.name}>
+                          {p.onInclude ? (
+                            <input
+                              type="checkbox"
+                              className="inc"
+                              checked={row.included !== false}
+                              aria-label={`Include ${row.name}`}
+                              title={row.included === false ? "Left out of the totals and the nesting. Tick to count it again." : "Counted. Untick to leave it out of the totals and the nesting (it stays listed)."}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => p.onInclude?.([row], e.currentTarget.checked)}
+                            />
+                          ) : null}
+                          <span className="name">{row.name}</span>
+                          {notes.length ? <small>{notes.join(" · ")}</small> : null}
+                        </td>
+                        <td className="n">{row.qty}</td>
+                        {[0, 1, 2].map((k) => {
+                          const t = formatSteps(row.steps[k], r, style);
+                          const m = k ? mark(k as 1 | 2) : null;
+                          return (
+                            <td
+                              key={k}
+                              className={m ? "n mk" : "n"}
+                              data-nominal={k === 0 && nominalText(row) ? row.nominal : undefined}
+                              title={k === 0 && nominalText(row) ? `${t} ${sizeUnit(r)} finished; board feet on ${nominalText(row)}` : t.length > SIZE_CAP[k] ? `${t} ${sizeUnit(r)}` : undefined}
+                            >
+                              <span className="v">{t}</span>
+                              {m}
+                            </td>
+                          );
+                        })}
+                        <td className={`mat${row.stock_set ? " set" : ""}`} title={row.material ?? "No material or stock set"}>
+                          {materialText(row)}
+                        </td>
+                      </tr>
+                      {why ? (
+                        <tr
+                          className={`why ${rowClass}`}
+                          data-why-for={row.name}
+                          aria-selected={sel}
+                          onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                          onClick={(e) => clickRow(e, row)}
+                          onContextMenu={(e) => openMenu(e, row)}
+                        >
+                          <td colSpan={6}>
+                            <small className="why">{why}</small>
                           </td>
-                        );
-                      })}
-                      <td className={`mat${row.stock_set ? " set" : ""}`} title={row.material ?? "No material or stock set"}>
-                        {materialText(row)}
-                      </td>
-                    </tr>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>
