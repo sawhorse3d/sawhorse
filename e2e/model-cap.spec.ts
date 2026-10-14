@@ -178,8 +178,9 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   // Select everything, then nothing. Measured (longest gap, in this machine's units): the
   // development machine under 0.1 s with its GPU; 2.3 workloads under 6x CPU throttling;
   // 1.6 renders under SwiftShader at 1x and 4x. Before lane 16b: 19 workloads (6x) and 22
-  // renders (SwiftShader), the 19 to 31 seconds of CI. 8 workloads and 5 renders sit about
-  // three times above the first and well below the second.
+  // renders (SwiftShader), the 19 to 31 seconds of CI. 12 workloads and 5 renders sit
+  // well above the first (the whole suite in parallel: 6 workloads, under the floor) and
+  // well below the second.
   await page.locator("#cv").click({ position: { x: 5, y: 5 } });
   await page.waitForTimeout(400);
   await watchFrames(page);
@@ -196,7 +197,7 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   expect(none).toMatchObject({ fatSelected: 0, stateSolids: 0 });
   expect(none.stateParts).toBeLessThanOrEqual(1);
   const all = await longestGap(page);
-  const allBound = frameBound(machine, 8, 5);
+  const allBound = frameBound(machine, 12, 5);
   note("select all, then nothing", all, allBound, machine);
   expect(all, "select all").toBeLessThan(allBound);
   // The page's own heap stays well under what the 46-second freeze built up.

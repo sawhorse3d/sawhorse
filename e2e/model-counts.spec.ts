@@ -135,10 +135,12 @@ for (const c of CASES) {
     // What the attacker sent: a file of a few megabytes.
     expect(file.length).toBeLessThan(16 * 1024 * 1024);
     // This machine, so the time bound means the same on a slower runner (e2e/perf.ts):
-    // 100 ms on a machine whose workload takes 40 ms (the development machine's), more
-    // in proportion on a slower one.
+    // 100 ms on a machine whose workload takes 30 ms or less (the development machine's
+    // takes 30 to 55 ms; its refusals took 16 to 44 ms), more in proportion on a slower or
+    // busier one (the full suite in parallel there: workload 110 to 125 ms, refusals 35 to
+    // 233 ms).
     const machine = await calibrate(page);
-    const bound = Math.round(100 * Math.max(1, machine.cpu / 40));
+    const bound = Math.round(100 * Math.max(1, machine.cpu / 30));
     const before = await memory(page);
     // Time it in the page: from the file input's change to the refusal in the status line.
     await within(
