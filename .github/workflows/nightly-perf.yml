@@ -1,0 +1,84 @@
+name: Nightly perf
+
+# Lane 16b: the responsiveness specs with an absolute bound. On main's CI every frame-gap
+# bound is stated in units of the runner it runs on (e2e/perf.ts: a calibrated JavaScript
+# workload and one render of the scene), because GitHub's hosted runners share their CPUs
+# and have no GPU (WebGL there is emulated on the CPU), so a bound in milliseconds measured
+# the runner, not the app. This job holds the same specs to a flat 2,000 ms
+# (PERF_ABSOLUTE_MS), which only means something on one known machine.
+#
+# GitHub provides no such runner, so the job runs on a self-hosted runner labelled
+# `sawhorse-perf` (a machine with a real GPU and nothing else scheduled on it), and only when
+# the repository variable SAWHORSE_PERF_RUNNER is "true". Without one, the `no-runner` job
+# says so in the run summary and the absolute check is skipped, with that reason: it is
+# never run on a hosted runner, where it would fail for the runner's sake.
+# See docs/DEVELOPMENT.md, "Responsiveness bounds in the end-to-end tests".
+
+on:
+  schedule:
+    - cron: "41 9 * * *" # daily, 09:41 UTC (after nightly-fuzz)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-perf
+  cancel-in-progress: false
+
+env:
+  SAWHORSE_NO_WSL: "1"
+
+jobs:
+  absolute:
+    name: frame gaps under an absolute 2,000 ms (dedicated runner)
+    if: vars.SAWHORSE_PERF_RUNNER == 'true'
+    runs-on: [self-hosted, sawhorse-perf]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: wasm-pack build
+        run: npm run wasm
+      - name: install Playwright Chromium
+        run: npx playwright install chromium
+      - name: model-cap specs, absolute bound
+        env:
+          REQUIRE_KERNEL: "1"
+          PERF_ABSOLUTE_MS: "2000"
+        run: npx playwright test e2e/model-cap.spec.ts --reporter=line
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: nightly-perf-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+
+  no-runner:
+    name: absolute bound skipped (no dedicated runner)
+    if: vars.SAWHORSE_PERF_RUNNER != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: say why
+        run: |
+          {
+            echo "### Absolute frame-gap bound: skipped"
+            echo
+            echo "No dedicated perf runner is registered (repository variable SAWHORSE_PERF_RUNNER is not \"true\")."
+            echo "GitHub's hosted runners share their CPUs and emulate the GPU on them, so a flat 2,000 ms bound"
+            echo "there would measure the runner, not the app. main's CI holds the same specs to bounds calibrated"
+            echo "to the runner (e2e/perf.ts). To run this one: register a self-hosted runner with the label"
+            echo "\`sawhorse-perf\` and set SAWHORSE_PERF_RUNNER=true (docs/DEVELOPMENT.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "skipped: no dedicated perf runner (see the run summary)"

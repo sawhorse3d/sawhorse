@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
 import { deflateSync } from "node:zlib";
 import { box } from "./helpers";
+import { calibrate, frameBound, note } from "./perf";
 
 // Lane 16 fixes: the two failures the lane 16 verifier found, replayed against the real app.
 //
@@ -15,6 +16,12 @@ import { box } from "./helpers";
 //    hundred kilobytes) took the browser from 480 MB to over 1.5 GB, and the 512-image limit
 //    allowed tens of gigabytes. The model now holds at most 128 million texture pixels, and
 //    the viewport decodes all of them within 32 million (each at most 2048 a side).
+// 3. Lane 16b: selecting all of them held the window's thread for 19 to 31 seconds on
+//    GitHub's runners (no GPU there: WebGL is emulated on the CPU). The highlight built
+//    1,200,000 fat lines and drew them every frame (8 s a frame emulated), and recoloured
+//    every triangle; now it writes a byte per part and per solid into two state textures and
+//    the frame costs what it did before. Every frame-gap bound here is stated in units of
+//    the machine running it (e2e/perf.ts), so the bounds mean the same on any runner.
 
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 
@@ -90,7 +97,14 @@ await attempt("cap", async () => {
 console.log("done");
 `;
 
-type Hook = { plugins: { list(): { id: string; status: string; logs: string[] }[] }; solids(): unknown[]; looks(): { decoded: { images: number; texels: number; largest: [number, number]; pending: number } } | null };
+type Hook = {
+  plugins: { list(): { id: string; status: string; logs: string[] }[] };
+  solids(): unknown[];
+  parts(): unknown[];
+  looks(): { decoded: { images: number; texels: number; largest: [number, number]; pending: number } } | null;
+  highlightCounts(): { fatSelected: number; fatHover: number; stateSolids: number; stateParts: number };
+};
+const highlightCounts = (page: Page) => page.evaluate(() => (window as unknown as { __sawhorse: Hook }).__sawhorse.highlightCounts());
 
 async function logLine(page: Page, prefix: string): Promise<string> {
   let line = "";
@@ -134,18 +148,26 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   await expect(vp).toHaveAttribute("data-objects", "100000", { timeout: 60_000 });
 
   // The window kept drawing frames through all of it, and the plugin was never taken for
-  // hung (it was the app that used to be busy). Measured on the development machine: 0.55 s
-  // at most here, under 0.5 s for each pane and for selecting all; the bounds leave room for
-  // a CI runner several times slower and still catch the 46-second freeze by far.
-  expect(await longestGap(page)).toBeLessThan(6000);
+  // hung (it was the app that used to be busy). The gap is read before the machine is
+  // measured (measuring renders frames of its own). Bounds in this machine's units (e2e/
+  // perf.ts): on the development machine this phase measured 13 workloads (0.55 s), 3 under
+  // SwiftShader; 40 workloads and 5 renders still fail the 46-second freeze by far.
+  const plugin = await longestGap(page);
+  const machine = await calibrate(page);
+  const pluginBound = frameBound(machine, 40, 5);
+  note("two array ops to the limit", plugin, pluginBound, machine);
+  expect(plugin).toBeLessThan(pluginBound);
   await expect(row).toHaveAttribute("data-status", "running");
 
-  // Every pane, the selection and the view at that size.
+  // Every pane, the selection and the view at that size (a pane draws no 3D frame).
+  const paneBound = frameBound(machine, 30, 2);
   for (const tab of ["Outliner", "Cut list", "Materials", "Tags", "Outliner"]) {
     await watchFrames(page);
     await page.getByRole("tab", { name: tab }).click();
     await page.waitForTimeout(400);
-    expect(await longestGap(page), `the ${tab} pane`).toBeLessThan(5000);
+    const gap = await longestGap(page);
+    note(`the ${tab} pane`, gap, paneBound, machine);
+    expect(gap, `the ${tab} pane`).toBeLessThan(paneBound);
   }
   // The Outliner lists 100,000 rows and draws the ones in view.
   const tree = page.getByRole("tree", { name: "Groups, components and solids" });
@@ -153,21 +175,41 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   expect(await tree.getByRole("treeitem").count()).toBeLessThan(400);
   await page.locator("#pane-outliner").evaluate((e) => (e.scrollTop = e.scrollHeight / 2));
   await expect(tree.locator('[aria-posinset="50000"]')).toHaveCount(1);
-  // Select everything, then nothing.
-  await watchFrames(page);
+  // Select everything, then nothing. Measured (longest gap, in this machine's units): the
+  // development machine under 0.1 s with its GPU; 2.3 workloads under 6x CPU throttling;
+  // 1.6 renders under SwiftShader at 1x and 4x. Before lane 16b: 19 workloads (6x) and 22
+  // renders (SwiftShader), the 19 to 31 seconds of CI. 8 workloads and 5 renders sit about
+  // three times above the first and well below the second.
   await page.locator("#cv").click({ position: { x: 5, y: 5 } });
+  await page.waitForTimeout(400);
+  await watchFrames(page);
   await page.keyboard.press("Control+a");
   await expect(page.locator("#hint")).toContainText("Selected 100000 items", { timeout: 30_000 });
   await page.waitForTimeout(400);
+  // Drawn from the state textures: no fat line built, every solid's byte and every part's set.
+  const parts = await page.evaluate(() => (window as unknown as { __sawhorse: Hook }).__sawhorse.parts().length);
+  expect(await highlightCounts(page)).toMatchObject({ fatSelected: 0, stateSolids: 100000, stateParts: parts });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
-  expect(await longestGap(page), "select all").toBeLessThan(6000);
+  // Nothing selected (the Push tool's target face may still show as one).
+  const none = await highlightCounts(page);
+  expect(none).toMatchObject({ fatSelected: 0, stateSolids: 0 });
+  expect(none.stateParts).toBeLessThanOrEqual(1);
+  const all = await longestGap(page);
+  const allBound = frameBound(machine, 8, 5);
+  note("select all, then nothing", all, allBound, machine);
+  expect(all, "select all").toBeLessThan(allBound);
   // The page's own heap stays well under what the 46-second freeze built up.
   const heap = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0);
   expect(heap).toBeLessThan(1.5e9);
   // And it still edits: undo the last array.
   await page.keyboard.press("Control+z");
   await expect(vp).toHaveAttribute("data-objects", "1000", { timeout: 60_000 });
+  // A thousand solids (12,000 edge segments) are still drawn with the fat highlight lines.
+  await page.locator("#cv").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+a");
+  await expect(page.locator("#hint")).toContainText("Selected 1000 items", { timeout: 30_000 });
+  await expect.poll(() => highlightCounts(page)).toMatchObject({ fatSelected: 12000, stateSolids: 0 });
 });
 
 // ---- F10 ----------------------------------------------------------------------------------
