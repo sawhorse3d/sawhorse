@@ -159,8 +159,10 @@ test("a plugin's two array ops that land exactly at the 100,000-solid limit leav
   expect(plugin).toBeLessThan(pluginBound);
   await expect(row).toHaveAttribute("data-status", "running");
 
-  // Every pane, the selection and the view at that size (a pane draws no 3D frame).
-  const paneBound = frameBound(machine, 30, 2);
+  // Every pane, the selection and the view at that size. A pane changes the view's size, so
+  // the view is drawn again: on CI's runners (no GPU) the Cut list measured 2.9 to 3.9 s,
+  // two frames; 30 workloads and 5 renders.
+  const paneBound = frameBound(machine, 30, 5);
   for (const tab of ["Outliner", "Cut list", "Materials", "Tags", "Outliner"]) {
     await watchFrames(page);
     await page.getByRole("tab", { name: tab }).click();

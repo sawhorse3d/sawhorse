@@ -55,7 +55,8 @@ jobs:
         env:
           REQUIRE_KERNEL: "1"
           PERF_ABSOLUTE_MS: "2000"
-        run: npx playwright test e2e/model-cap.spec.ts --reporter=line
+        # --no-deps: the timed project alone (it depends on every other spec otherwise).
+        run: npx playwright test e2e/model-cap.spec.ts --no-deps --reporter=line
       - uses: actions/upload-artifact@v5
         if: failure()
         with:
