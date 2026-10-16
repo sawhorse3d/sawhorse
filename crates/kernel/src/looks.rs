@@ -383,6 +383,9 @@ pub struct Style {
     /// The cut outline's width in screen pixels, 1 to 12; absent: 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_line_width: Option<u8>,
+    /// The ground grid drawn (lane 21, View > Grid; absent: true, so older files show it).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub grid: bool,
 }
 
 impl Default for Style {
@@ -400,6 +403,7 @@ impl Default for Style {
             section_fill_color: None,
             section_line_color: None,
             section_line_width: None,
+            grid: true,
         }
     }
 }
@@ -438,7 +442,9 @@ impl Style {
                 | u64::from(!self.section_planes) << 5
                 | u64::from(!self.section_fill) << 6
                 // Lane 15 (0 when off, so older styles keep their hash).
-                | u64::from(e.soft) << 7,
+                | u64::from(e.soft) << 7
+                // Lane 21: counts when the grid is hidden, so older styles keep their hash.
+                | u64::from(!self.grid) << 8,
         );
         for c in [self.background, self.sky, self.ground] {
             match c {
@@ -1693,5 +1699,34 @@ mod tests {
             .is_err()
         );
         assert!(Shadows::default().check().is_ok());
+    }
+
+    /// Lane 21 (issue #4): the grid switch is saved only when it is off, a style written
+    /// before it existed reads as grid on, and it counts in the hash only when off.
+    #[test]
+    fn the_grid_switch_round_trips_and_defaults_on() {
+        let hash = |s: &Style| {
+            let mut h = StableHasher::default();
+            s.hash_into(&mut h);
+            h.finish()
+        };
+        let on = Style::default();
+        assert!(on.grid);
+        assert!(!serde_json::to_string(&on).unwrap().contains("grid"));
+        let off = Style {
+            grid: false,
+            ..Style::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains("\"grid\":false"), "{json}");
+        assert_eq!(serde_json::from_str::<Style>(&json).unwrap(), off);
+        // A style from before lane 21 (here a lane-12 one) shows the grid.
+        let old: Style =
+            serde_json::from_str(r#"{"face":"shaded","section_planes":false}"#).unwrap();
+        assert!(old.grid);
+        assert_ne!(hash(&on), hash(&off));
+        // Grid on hashes exactly as a style without the field did (the goldens keep theirs).
+        let explicit: Style = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert_eq!(hash(&explicit), hash(&on));
     }
 }

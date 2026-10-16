@@ -2372,6 +2372,18 @@ export function App() {
     [apply],
   );
 
+  /** Lane 21 (issue #4): show or hide the ground grid (View > Grid, the Styles pane). It is
+   * the style's `grid`, so it saves with the document and with each scene; one undo step.
+   * The preset stays: the grid is a view switch, not part of a look. */
+  const setGrid = useCallback(
+    (on: boolean) => {
+      const s = fullStyle(live.current.scene?.state.style);
+      if (s.grid === on) return;
+      void apply({ op: "set_style", style: compactStyle({ ...s, grid: on }) }, () => `Grid ${on ? "shown" : "hidden"}.`);
+    },
+    [apply],
+  );
+
   // What the selection stands for, once per selection (the menus asked six times a draw).
   const selItems = useMemo(() => itemsOf(selection), [selection]);
   const menus = useMemo<Record<string, MenuItem[]>>(
@@ -2480,6 +2492,7 @@ export function App() {
         { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
         "-",
         { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
+        { label: "Grid", checked: fullStyle(st?.style).grid, title: "Show or hide the ground grid (saved with the document)", onSelect: () => setGrid(!fullStyle(st?.style).grid) },
         "-",
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
         "-",
@@ -2516,7 +2529,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -2741,6 +2754,7 @@ export function App() {
           onStyle: (style) => void apply({ op: "set_style", style }, () => `Style: ${style?.preset ?? "custom"}.`),
           onShadows: (shadows) => void apply({ op: "set_shadows", shadows }, () => (shadows.on ? "Shadows on." : "Shadows off.")),
           onPreviewShadows: setShadowPreview,
+          onGrid: setGrid,
           softenTarget: softenTargetOf(selection),
           onSoften: (angle, soft, smooth) => {
             const t = softenTargetOf(live.current.selection);

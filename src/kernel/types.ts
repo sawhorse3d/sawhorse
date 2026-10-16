@@ -263,6 +263,8 @@ export interface Style {
   section_line_color?: [number, number, number] | null;
   /** Screen pixels, 1..12 (absent: 3). */
   section_line_width?: number | null;
+  /** Lane 21: the ground grid drawn (absent: true). */
+  grid?: boolean;
 }
 
 /** The sun and its shadows (crates/kernel/src/looks.rs `Shadows`): local solar time, north +Y. */

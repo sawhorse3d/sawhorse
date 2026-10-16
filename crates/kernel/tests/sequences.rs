@@ -2038,6 +2038,8 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     section_fill_color: (k == 1).then_some([180, 60, 40]),
                     section_line_color: (k == 3).then_some([20, 20, 20]),
                     section_line_width: (k == 2).then_some(5),
+                    // Lane 21: the grid switch.
+                    grid: k != 2,
                 }),
             }
         }

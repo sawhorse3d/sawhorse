@@ -73,3 +73,36 @@ describe("Styles pane sliders (lane 15)", () => {
     }
   });
 });
+
+describe("Styles pane, the ground grid (lane 21, issue #4)", () => {
+  it("is on by default and its checkbox switches it through onGrid", () => {
+    const onGrid = vi.fn();
+    const p = props({ onGrid });
+    const { rerender } = render(<StylesPane {...p} />);
+    const box = screen.getByLabelText("Ground grid") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    expect(onGrid).toHaveBeenLastCalledWith(false);
+    expect(p.onStyle).not.toHaveBeenCalled();
+    rerender(<StylesPane {...p} style={{ grid: false }} />);
+    expect((screen.getByLabelText("Ground grid") as HTMLInputElement).checked).toBe(false);
+    // Hiding the grid is not a look: the default preset still reads as chosen.
+    expect(screen.getByRole("button", { name: /Sawhorse/ }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByLabelText("Ground grid"));
+    expect(onGrid).toHaveBeenLastCalledWith(true);
+  });
+
+  it("without onGrid it commits the style, keeping the preset", () => {
+    const p = props({ style: { preset: "Clay", face: "monochrome" } });
+    render(<StylesPane {...p} />);
+    fireEvent.click(screen.getByLabelText("Ground grid"));
+    expect(p.onStyle).toHaveBeenLastCalledWith({ preset: "Clay", face: "monochrome", grid: false });
+  });
+
+  it("choosing a preset keeps the grid as it is", () => {
+    const p = props({ style: { grid: false } });
+    render(<StylesPane {...p} />);
+    fireEvent.click(screen.getByRole("button", { name: /X-ray/ }));
+    expect(p.onStyle).toHaveBeenLastCalledWith({ preset: "X-ray", face: "x_ray", grid: false });
+  });
+});

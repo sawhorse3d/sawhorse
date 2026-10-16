@@ -1,7 +1,7 @@
 // The Styles pane (lane 10, ADR-0008): six presets, how faces are drawn (shaded with
 // textures, shaded, monochrome, hidden line, wireframe, X-ray), edges (on, profiles,
 // extensions, endpoints), the background, sky and ground colours, section cuts, planes, fill
-// and the cut line (lane 12, ADR-0010), and the sun: shadows on or
+// and the cut line (lane 12, ADR-0010), the ground grid (lane 21), and the sun: shadows on or
 // off, the date, the time, the latitude, light and dark. Sliders show their effect live and
 // are one undo step when let go; styles and shadows are saved with the document and with
 // each scene.
@@ -26,6 +26,8 @@ export interface StylesPaneProps {
   /** Lane 15: soften and / or smooth every edge of the target turning by at most `angle`
    * degrees (others go hard): one undo step. */
   onSoften?: (angle: number, soft: boolean, smooth: boolean) => void;
+  /** Lane 21: show or hide the ground grid (one undo step; absent: through `onStyle`). */
+  onGrid?: (on: boolean) => void;
 }
 
 function Toggle({ label, checked, onChange, disabled, title }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; title?: string }) {
@@ -49,7 +51,7 @@ function Colour({ label, value, fallback, onChange }: { label: string; value: [n
   );
 }
 
-export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadows, softenTarget, onSoften }: StylesPaneProps) {
+export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadows, softenTarget, onSoften, onGrid }: StylesPaneProps) {
   const s = fullStyle(style);
   // Lane 15: the Soften control (SketchUp-style: 20 degrees softens a 24-sided cylinder).
   const [angle, setAngle] = useState(20);
@@ -124,7 +126,7 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
       <h4>Presets</h4>
       <div className="presets" role="group" aria-label="Style presets">
         {STYLE_PRESETS.map((p) => (
-          <button key={p.name} type="button" aria-pressed={s.preset === p.name || (!style && p.name === "Sawhorse")} title={p.hint} onClick={() => onStyle(compactStyle(p.style))}>
+          <button key={p.name} type="button" aria-pressed={s.preset === p.name || (!s.preset && p.name === "Sawhorse" && compactStyle({ ...s, grid: true }) === null)} title={p.hint} onClick={() => onStyle(compactStyle({ ...p.style, grid: s.grid }))}>
             <span className={`preset-chip face-${p.style.face}`} aria-hidden="true"></span>
             {p.name}
           </button>
@@ -172,6 +174,12 @@ export function StylesPane({ style, shadows, onStyle, onShadows, onPreviewShadow
           Soften selected
         </button>
         <p className="note">{softenTarget && softenTarget.objects.length ? softenTarget.label : "Select solids (open a group or component to reach its solids)."} The Eraser does it edge by edge: Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens.</p>
+      </div>
+
+      <h4>Grid</h4>
+      <div className="radios">
+        {/* Lane 21 (issue #4): a view switch, not part of a look, so the preset stays. */}
+        <Toggle label="Ground grid" checked={s.grid} title="Show the ground grid (View > Grid); saved with the document" onChange={(v) => (onGrid ? onGrid(v) : onStyle(compactStyle({ ...s, grid: v })))} />
       </div>
 
       <h4>Background</h4>

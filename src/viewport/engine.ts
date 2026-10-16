@@ -430,14 +430,16 @@ export class ViewportEngine {
     if (!this.gridMinor || !this.gridMajor) return;
     const minorPx = this.spec.minor / Math.max(this.pixelAtTarget(), 1e-9);
     const vis = gridVisibility(minorPx, this.spec.ratio);
-    this.gridMinor.visible = vis.minor;
+    // Lane 21 (issue #4): View > Grid off hides both levels (the style's `grid`).
+    const on = this.style.grid;
+    this.gridMinor.visible = on && vis.minor;
     (this.gridMinor.material as THREE.LineBasicMaterial).opacity = vis.opacity;
-    this.gridMajor.visible = vis.major;
+    this.gridMajor.visible = on && vis.major;
   }
 
-  /** Which grid levels show right now (tests and the HUD). */
-  gridState(): { minor: boolean; major: boolean; spec: GridSpec } {
-    return { minor: !!this.gridMinor?.visible, major: !!this.gridMajor?.visible, spec: this.spec };
+  /** Which grid levels show right now, and whether the style shows the grid at all (tests and the HUD). */
+  gridState(): { minor: boolean; major: boolean; spec: GridSpec; enabled: boolean } {
+    return { minor: !!this.gridMinor?.visible, major: !!this.gridMajor?.visible, spec: this.spec, enabled: this.style.grid };
   }
 
   // ---- theme -------------------------------------------------------------------------------
@@ -584,7 +586,13 @@ export class ViewportEngine {
     this.texDigest = new Map((looks.textures ?? []).map((t) => [t.path, t.digest]));
     const style = fullStyle(looks.style ?? null);
     const shadows = looks.shadows ?? null;
-    const key = JSON.stringify([style, shadows, looks.materials, looks.textures]);
+    // The grid switch only shows or hides the grid: no need to rebuild the faces for it.
+    if (style.grid !== this.style.grid) {
+      this.style = { ...this.style, grid: style.grid };
+      this.updateGridVisibility();
+      this.requestRender();
+    }
+    const key = JSON.stringify([{ ...style, grid: true }, shadows, looks.materials, looks.textures]);
     if (key === this.looksKey) return;
     this.looksKey = key;
     this.style = style;

@@ -21,6 +21,8 @@ export interface FullStyle {
   section_line_color: [number, number, number] | null;
   /** Screen pixels. */
   section_line_width: number;
+  /** Lane 21 (issue #4): the ground grid drawn (View > Grid). */
+  grid: boolean;
 }
 
 /** The cut outline's width when the style does not say (screen pixels). */
@@ -46,6 +48,7 @@ export function fullStyle(s: Style | null | undefined): FullStyle {
     section_fill_color: s?.section_fill_color ?? null,
     section_line_color: s?.section_line_color ?? null,
     section_line_width: s?.section_line_width ?? DEFAULT_SECTION_LINE_WIDTH,
+    grid: s?.grid ?? true,
   };
 }
 
@@ -72,6 +75,7 @@ export function compactStyle(s: FullStyle): Style | null {
   if (s.section_fill_color) out.section_fill_color = s.section_fill_color;
   if (s.section_line_color) out.section_line_color = s.section_line_color;
   if (s.section_line_width !== DEFAULT_SECTION_LINE_WIDTH) out.section_line_width = Math.max(1, Math.min(12, Math.round(s.section_line_width)));
+  if (!s.grid) out.grid = false;
   return Object.keys(out).length ? out : null;
 }
 
