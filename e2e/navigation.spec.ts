@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// Camera and navigation (lane 3): middle-drag orbit, Shift+middle pan, wheel zoom toward the
-// cursor, Shift+Z zoom extents, standard views, the projection toggle, a unit-aware grid,
-// and sketch regions drawn over the grid.
+// Camera and navigation (lane 3; the orbit pivot is lane 21's, see orbit.spec.ts):
+// middle-drag orbit, Shift+middle pan, wheel zoom toward the cursor, Shift+Z zoom extents,
+// standard views, the projection toggle, a unit-aware grid, and sketch regions drawn over
+// the grid.
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 
 type V3 = [number, number, number];
@@ -44,14 +45,19 @@ test("middle-drag orbits, Shift+middle-drag pans, the wheel zooms toward the cur
   const cx = b.x + b.width / 2;
   const cy = b.y + b.height / 2;
 
-  // Orbit: the eye direction changes, the target does not; the view is no longer "iso".
+  // Orbit: the eye direction changes and the point under the cursor at the press stays
+  // under it (lane 21: the pivot is that point, not the look-at point); the view is no
+  // longer "iso".
   const before = await cam(page);
+  const pivot = await page.evaluate(([x, y]) => (window as unknown as { __sawhorse: { navPick(x: number, y: number): V3 | null } }).__sawhorse.navPick(x, y), [b.width / 2, b.height / 2] as const);
+  expect(pivot).not.toBeNull();
   await page.mouse.move(cx, cy);
   await page.mouse.down({ button: "middle" });
   await page.mouse.move(cx + 120, cy + 30, { steps: 6 });
   await page.mouse.up({ button: "middle" });
   const orbited = await cam(page);
-  expect(orbited.target).toEqual(before.target);
+  const still = await page.evaluate((p) => (window as unknown as { __sawhorse: { worldToScreen(p: V3): [number, number] } }).__sawhorse.worldToScreen(p), pivot!);
+  expect(Math.hypot(still[0] - b.width / 2, still[1] - b.height / 2)).toBeLessThan(1);
   const d0 = dir(before);
   const d1 = dir(orbited);
   expect(d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2]).toBeLessThan(0.98);

@@ -109,6 +109,8 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .vp .tip[hidden]{display:none}
 .vp canvas{touch-action:none}
 .vcb label.idle input{color:var(--muted)}
+.vp .orbit-pivot{position:absolute;width:15px;height:15px;transform:translate(-50%,-50%);pointer-events:none;background:linear-gradient(var(--fg),var(--fg)) center/15px 1.5px no-repeat,linear-gradient(var(--fg),var(--fg)) center/1.5px 15px no-repeat;filter:drop-shadow(0 0 1px var(--vp)) drop-shadow(0 0 1px var(--vp))}
+.vp .orbit-pivot::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;border-radius:50%;transform:translate(-50%,-50%);background:var(--sel);box-shadow:0 0 0 1.5px var(--vp)}
 .vp .snap{position:absolute;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--vp);transform:translate(-50%,-50%);pointer-events:none}
 .btn:disabled{cursor:not-allowed}
 

@@ -3,17 +3,17 @@
 // Rendering is on demand (camera change, mesh change, theme change, resize); there is no
 // animation loop burning a laptop battery while nothing moves.
 //
-// Navigation (the left button belongs to the active tool):
-//   middle-drag orbits, Shift+middle-drag pans, right-drag pans, the wheel zooms toward the
-//   cursor; Shift+Z (zoom extents), the standard views and the projection toggle are
-//   driven from the app.
+// Navigation (the left button belongs to the active tool; controls.ts, lane 21):
+//   middle-drag orbits about the point under the cursor (pinned on screen, with a marker),
+//   Shift+middle-drag and right-drag pan with the point under the cursor, the wheel zooms
+//   toward the cursor; Shift+Z (zoom extents), the standard views and the projection toggle
+//   are driven from the app.
 //
 // Layers, back to front: ground grid (no depth writes, drawn first and nudged a hair below
 // z = 0, so sketch regions on the ground always draw over it), axes, model faces (pushed
 // back by a polygon offset so edges draw on top), model edges, highlights, overlays (tool
 // previews and inference lines, drawn without depth test so they are never hidden).
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -23,6 +23,7 @@ import { clippedEdges, partClipPlanes, pickSection, sectionArrows, sectionCorner
 import { fullStyle, sunDirection, type FullStyle } from "../lib/looks";
 import { TextureCache, edgeInk, edgeSets, gridTones, endpointSegments, extendedSegments, faceMode, makeBackdrop, profileSegments, rgbCss, setBackdrop, toneWeights, type EdgeSets } from "./looks";
 import type { UnitSystem } from "../lib/units";
+import { CameraController, type NavMode } from "./controls";
 import {
   AXIS_COLORS,
   PERSPECTIVE_FOV_DEG,
@@ -45,6 +46,11 @@ export { VIEWS, type ViewId, type Projection } from "./camera";
 
 /** Nudge the grid below the ground so coplanar regions win the depth test (lane-2 open question 3). */
 export const GRID_DEPTH_OFFSET = -5e-5;
+
+/** Navigation's pivot snaps to a model vertex this close to the cursor (CSS px), else to an
+ * edge this close (lane 21). */
+export const NAV_VERTEX_PX = 6;
+export const NAV_EDGE_PX = 4;
 
 /** The default back-face colour: the inner sides of imported meshes that are not closed. */
 export const BACK_FACE_COLOUR = "#7f93ad";
@@ -223,7 +229,7 @@ export class ViewportEngine {
   private ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 1000);
   private persp = new THREE.PerspectiveCamera(PERSPECTIVE_FOV_DEG, 1, 0.01, 1000);
   private camera: THREE.OrthographicCamera | THREE.PerspectiveCamera = this.ortho;
-  private controls: OrbitControls;
+  private controls: CameraController;
   private gridMinor: THREE.LineSegments | null = null;
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
@@ -326,14 +332,14 @@ export class ViewportEngine {
     this.ambient.visible = false;
     this.groundShadow.visible = false;
 
-    this.controls = new OrbitControls(this.camera, canvas);
-    // Left button belongs to the active tool. Middle orbits (Shift+middle pans: OrbitControls
-    // turns a rotate gesture into a pan while Shift is held), right pans, wheel zooms.
-    this.controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
-    this.controls.zoomToCursor = true;
-    this.controls.enableDamping = false;
-    this.controls.screenSpacePanning = true;
-    this.controls.addEventListener("change", () => {
+    // Left button belongs to the active tool. Middle orbits about the point under the cursor
+    // (Shift+middle pans), right pans, wheel zooms toward the cursor (lane 21, controls.ts).
+    this.controls = new CameraController(this.camera, canvas, {
+      pick: (x, y, snap) => this.navPick(x, y, snap),
+      size: () => this.size,
+      navigating: () => this.requestRender(),
+    });
+    this.controls.onChange(() => {
       // Any orbit leaves the standard view; a pure zoom or pan keeps the direction.
       if (this.view) {
         const want = new THREE.Vector3(...VIEW_DIRS[this.view].dir);
@@ -1782,6 +1788,94 @@ varying float vOwnerState;`,
     const ground = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const p = this.raycaster.ray.intersectPlane(ground, new THREE.Vector3());
     return p ? { point: [p.x, p.y, p.z], part: -1 } : null;
+  }
+
+  /**
+   * The point navigation holds at canvas pixel (x, y) (lane 21, issue #5): the orbit pivot,
+   * the point a pan drags, the point a zoom closes in on. With `snap` (the pivot), a visible
+   * model vertex within NAV_VERTEX_PX of the cursor, else a point of a visible edge within
+   * NAV_EDGE_PX; then the nearest face under the cursor, else the ground (z = 0) under the
+   * cursor when it is not absurdly far off (a ray skimming the horizon); null when the ray
+   * meets none of them.
+   */
+  navPick(x: number, y: number, snap = true): Vec3 | null {
+    this.raycaster.setFromCamera(this.ndc(x, y), this.camera);
+    const ray = this.raycaster.ray.clone();
+    const face = this.faces ? (this.raycaster.intersectObject(this.faces, false)[0]?.point.clone() ?? null) : null;
+    const snapped = snap ? this.snapNear(x, y, ray) : null;
+    if (snapped) return snapped;
+    if (face) return [face.x, face.y, face.z];
+    const ground = ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), new THREE.Vector3());
+    if (ground) {
+      const span = this.pixelAtTarget() * Math.max(this.size.w, this.size.h);
+      const reach = 50 * Math.max(this.contentBox().getBoundingSphere(new THREE.Sphere()).radius, span);
+      if (ground.distanceTo(this.controls.target) <= reach) return [ground.x, ground.y, ground.z];
+    }
+    return null;
+  }
+
+  /** A model vertex (preferred) or edge point close to pixel (x, y) on screen and not
+   * hidden behind a face (navPick's first choices). */
+  private snapNear(x: number, y: number, ray: THREE.Ray): Vec3 | null {
+    const e = this.meshData?.edges;
+    if (!e || e.length < 6) return null;
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    const m = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).elements;
+    const { w, h } = this.size;
+    // Screen position of point i (or null behind the eye).
+    const scr = (i: number): [number, number] | null => {
+      const px = e[i];
+      const py = e[i + 1];
+      const pz = e[i + 2];
+      const cw = m[3] * px + m[7] * py + m[11] * pz + m[15];
+      if (cw <= 1e-12) return null;
+      const cx = (m[0] * px + m[4] * py + m[8] * pz + m[12]) / cw;
+      const cy = (m[1] * px + m[5] * py + m[9] * pz + m[13]) / cw;
+      return [((cx + 1) / 2) * w, ((1 - cy) / 2) * h];
+    };
+    const verts: { i: number; d: number }[] = [];
+    const edges: { i: number; d: number }[] = [];
+    const V2 = NAV_VERTEX_PX * NAV_VERTEX_PX;
+    for (let i = 0; i + 5 < e.length; i += 6) {
+      const a = scr(i);
+      const b = scr(i + 3);
+      if (!a || !b) continue;
+      const da = (a[0] - x) ** 2 + (a[1] - y) ** 2;
+      const db = (b[0] - x) ** 2 + (b[1] - y) ** 2;
+      if (da <= V2) verts.push({ i, d: da });
+      if (db <= V2) verts.push({ i: i + 3, d: db });
+      // Distance from the cursor to the segment on screen.
+      const vx = b[0] - a[0];
+      const vy = b[1] - a[1];
+      const len2 = vx * vx + vy * vy;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - a[0]) * vx + (y - a[1]) * vy) / len2)) : 0;
+      const ds = (a[0] + vx * t - x) ** 2 + (a[1] + vy * t - y) ** 2;
+      if (ds <= NAV_EDGE_PX * NAV_EDGE_PX) edges.push({ i, d: ds });
+    }
+    // Not hidden from the eye behind a face (a ray through the point's own pixel).
+    const visible = (p: THREE.Vector3) => !this.occluded([p.x, p.y, p.z]);
+    verts.sort((p, q) => p.d - q.d);
+    for (const v of verts.slice(0, 8)) {
+      const p = new THREE.Vector3(e[v.i], e[v.i + 1], e[v.i + 2]);
+      if (visible(p)) return [p.x, p.y, p.z];
+    }
+    edges.sort((p, q) => p.d - q.d);
+    for (const s of edges.slice(0, 8)) {
+      // The point of the edge closest to the cursor ray.
+      const a = new THREE.Vector3(e[s.i], e[s.i + 1], e[s.i + 2]);
+      const b = new THREE.Vector3(e[s.i + 3], e[s.i + 4], e[s.i + 5]);
+      const p = new THREE.Vector3();
+      ray.distanceSqToSegment(a, b, undefined, p);
+      if (visible(p)) return [p.x, p.y, p.z];
+    }
+    return null;
+  }
+
+  /** What navigation is doing (lane 21): the gesture, and the pivot while orbiting (the
+   * marker the viewport draws). */
+  navState(): { mode: NavMode | null; pivot: Vec3 | null } {
+    return this.controls.state();
   }
 
   /** Is world point `p` hidden behind a face nearer the eye? (screen-space helpers) */

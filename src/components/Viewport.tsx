@@ -95,6 +95,11 @@ export interface SawhorseHooks {
   gridColours(): ReturnType<ViewportEngine["gridColours"]>;
   /** Lane 16b: what the highlight draws (fat segments; solids and parts drawn from the state textures). */
   highlightCounts(): ReturnType<ViewportEngine["highlightCounts"]>;
+  /** Lane 21: the point navigation holds under canvas pixel (x, y), or null: the orbit pivot
+   * (`snap`, the default: a vertex or edge a few pixels off counts), or what a pan drags. */
+  navPick(x: number, y: number, snap?: boolean): Vec3 | null;
+  /** Lane 21: the gesture under way and the orbit pivot (null when not orbiting). */
+  nav(): ReturnType<ViewportEngine["navState"]>;
 }
 
 export function Viewport(props: ViewportProps) {
@@ -142,6 +147,8 @@ export function Viewport(props: ViewportProps) {
       edgeCounts: () => engine.edgeCounts(),
       gridColours: () => engine.gridColours(),
       highlightCounts: () => engine.highlightCounts(),
+      navPick: (x, y, snap) => engine.navPick(x, y, snap ?? true),
+      nav: () => engine.navState(),
     };
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), ...hooks };
@@ -225,6 +232,9 @@ export function Viewport(props: ViewportProps) {
   void frame; // re-render with the camera so pinned labels follow it
   const markerXY = marker && engine ? engine.worldToScreen(marker.at) : null;
   const style = marker ? INFERENCE_STYLES[marker.kind] : null;
+  // Lane 21: the orbit pivot's marker, while the middle button (or one finger) is down.
+  const nav = engine?.navState() ?? null;
+  const pivotXY = nav?.pivot && engine ? engine.worldToScreen(nav.pivot) : null;
 
   return (
     <main
@@ -246,6 +256,7 @@ export function Viewport(props: ViewportProps) {
       data-inference={marker?.kind ?? ""}
       data-selection={selectionCount ?? 0}
       data-hover={hoverKind ?? ""}
+      data-nav={nav?.mode ?? ""}
     >
       <canvas
         id="cv"
@@ -286,6 +297,7 @@ export function Viewport(props: ViewportProps) {
           style={{ left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }}
         ></div>
       ) : null}
+      {pivotXY ? <span className="orbit-pivot" data-testid="orbit-pivot" aria-hidden="true" style={{ left: pivotXY[0], top: pivotXY[1] }}></span> : null}
       {marker && markerXY && style ? (
         <>
           <span className="snap" aria-hidden="true" style={{ left: markerXY[0], top: markerXY[1], background: `var(${style.token})` }}></span>
