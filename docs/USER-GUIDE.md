@@ -6,7 +6,7 @@ Sawhorse is pre-alpha. This page covers what works today (lane 11): looking arou
 
 You will make a board, cut a dado across it, and set a shelf in the dado. Everything is keyboard and mouse; nothing needs a dialog.
 
-**Minute 0 to 1: look around.** The screen is the approved layout: menus and view buttons along the top, the tool rail on the left, the 3D view in the middle, a panel on the right, and the **Value Control Box** (VCB) at the bottom right. Middle-drag to orbit, right-drag (or Shift+middle-drag) to pan, and roll the wheel to zoom toward the cursor. The buttons Iso, Top, Front, Right and Persp jump to the standard views. Shift+Z fits everything in view. The red, green and blue lines are the X, Y and Z axes; their dashed halves are the negative sides. The grid follows your units: 1 in and 1 ft lines in inches, 10 mm and 100 mm lines in metric.
+**Minute 0 to 1: look around.** The screen is the approved layout: menus and view buttons along the top, the tool rail on the left, the 3D view in the middle, a panel on the right, and the **Value Control Box** (VCB) at the bottom right. Middle-drag to orbit around the point under the cursor, right-drag (or Shift+middle-drag) to pan, and roll the wheel to zoom toward the cursor (see Navigating, below). The buttons Iso, Top, Front, Right and Persp jump to the standard views. Shift+Z fits everything in view. The red, green and blue lines are the X, Y and Z axes; their dashed halves are the negative sides. The grid follows your units: 1 in and 1 ft lines in inches, 10 mm and 100 mm lines in metric; View > Grid hides it.
 
 **Minute 1 to 3: a board.** Press `R` (Rectangle). Type `3/4, 11 1/4` and press Enter: a 3/4 in by 11 1/4 in rectangle appears on the ground at the origin. You don't need to click in the box first; typing goes straight into it. Press `P` (Push/Pull), type `30` and press Enter: the rectangle you just drew rises 30 in into a solid board. The badge at the top left of the view shows the solid count, face count, volume and whether the solid is watertight.
 
@@ -30,6 +30,20 @@ You will make a board, cut a dado across it, and set a shelf in the dado. Everyt
 - Press Space (Select) and drag a box across the shelf, then press Delete. A box dragged left to right selects only what is wholly inside it. A box dragged right to left also selects anything it touches.
 
 If an operation can't be done (for example, erasing an edge would open a solid), nothing changes and the status line says why.
+
+## Navigating
+
+The left button belongs to the tool you are using; the middle button, the right button and the wheel move the view, whatever the tool.
+
+- **Orbit: middle-drag.** When you press the middle button, the point under the cursor becomes the **pivot**: a corner or a point on an edge if one is within a few pixels, else the face under the cursor, else the ground under it, else the middle of the view. A small crosshair marks it while you hold the button. The model turns around the pivot and the pivot stays exactly under the cursor for the whole drag, so you can zoom in on a joint and look at it from every side without it sliding away. Dragging across turns the model around the vertical (blue) axis; dragging up and down tips it toward or away from you, about a level axis. The tilt stops half a degree short of looking straight down or straight up, so the view never flips over, and dragging across still turns it there. Orbiting leaves the standard view (the view buttons let go).
+- **Pan: right-drag, or Shift+middle-drag.** The point you grab stays under the cursor, at its own depth: in perspective, grab the near corner of a long board and the near corner follows the cursor exactly. Pressing or releasing Shift during a middle-drag switches between orbit and pan.
+- **Zoom: the wheel.** It zooms toward the cursor: the point under the cursor stays put. On a trackpad, pinching zooms the same way.
+- **Touch:** one finger orbits around the point under it; two fingers pan, and pinch to zoom around their midpoint.
+- **Zoom Extents (Shift+Z)** frames the whole model; the **standard views** (Iso, Top, Front, Right, Persp) frame the model and the working area around the origin. **View > Perspective** switches between parallel and perspective projection without moving the view.
+
+The view keeps a look-at point on the line of sight at the depth of whatever you last orbited, panned or zoomed toward. It is what the projection switch keeps the same size, what a scene saves with the camera, and what a sheet's viewport uses when it shows the 3D view's camera.
+
+**The grid:** **View > Grid** (or **Ground grid** in the Styles pane) shows or hides the ground grid. It is part of the model's style, so it is one undo step, it is saved with the model and with each scene, and a model saved before the switch existed shows the grid. Hiding the grid hides its lines only: points on the ground still snap to whole grid steps.
 
 ## Keys
 
@@ -219,6 +233,7 @@ The Styles pane (right panel, **Styles**) changes how the model is drawn, never 
 - **Presets**: Sawhorse (textures, plain edges), Shop drawing (hidden line on paper, heavy outlines, edges running a little past their ends), Shaded (colours without textures), X-ray, Clay (one colour, heavy outlines and endpoints) and Outdoors (textures under a sky, on the ground).
 - **Faces**: shaded with textures, shaded, monochrome, hidden line (faces in the background colour: only the edges you could see), wireframe (every edge, no faces), X-ray (see-through faces, every edge).
 - **Edges**: on or off; **Profiles** draws outlines heavier; **Extensions** runs edges a little past their ends, like pencil lines; **Endpoints** draws the ends of edges heavier. SVG view drawings (File > Export) follow the edge style.
+- **Grid**: **Ground grid** shows or hides the ground grid, as View > Grid does. It is a view switch rather than part of a look: choosing a preset leaves it as it is.
 - **Background**, **Sky** and **Ground** colours. The horizon follows the camera as you tilt it.
 - **Sections**: section cuts, section planes and section fill on or off, and the cut's colours and line width (see Section planes below).
 - **Shadows**: tick **Show shadows**, then pick the date, the time (local sun time) and the latitude; **Light** and **Dark** set how bright the sun and the shade are; **On the ground** and **On faces** choose where shadows fall. North is along green.

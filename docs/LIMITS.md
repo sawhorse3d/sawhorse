@@ -130,6 +130,12 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | Packages | 2,000 files, 50 MB, 8 MB per file (each refused by the size its zip declares, before it is inflated; lane 16b); modules 4 MB each and 16 MB in all; at most 20 problems listed | A module of 100,000 forbidden names used to cost 100,000 scans of the whole module. A package over 256 KB is parsed and digested in a worker (60 s at most), never on the app's thread. |
 | Package file names | no drive (`C:`), device (`con.js`), alternate stream (`a.json:x`) or trailing dot or space; no two names that differ only in case; every file exactly the size and checksum its zip says | Installed as files on the desktop; installed into a staging folder and swapped in, so a failed install leaves the old version. |
 
+## The view
+
+| What | Limit |
+|---|---|
+| Orbit | the view tips at most 89.5 degrees from level, up or down (lane 21): orbiting never looks exactly straight down or up, so it cannot flip over; the Top view does look straight down, and orbiting from it comes back without a jump |
+
 ## SketchUp files that do not open
 
 `.skp` files are read by openskp 1.3.0. It reads SketchUp 2013 to 2026 saves, with these known refusals (the file is refused with openskp's message and the model is unchanged):

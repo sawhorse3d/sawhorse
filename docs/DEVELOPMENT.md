@@ -64,6 +64,8 @@ The Render pane talks to the render service (`../render-service`, its own reposi
 |---|---|
 | `e2e/shell.spec.ts` | lane-1/2 shell: Rect + Push/Pull through the kernel, undo/redo |
 | `e2e/navigation.spec.ts` | orbit/pan/zoom, standard views, projection toggle, Shift+Z, unit-aware grid |
+| `e2e/orbit.spec.ts` | lane 21 (#5): a box zoomed in on a corner, synthetic middle-drags (pointer capture stubbed) orbiting 200 px across and 200 px down with the corner's projection held within 1 px, the pivot marker shown while held and gone after, 2000 px down then across still turning the view, a right-drag pan keeping the grabbed point under the cursor, the Top and Persp views and the ground as pivots, zoom extents and the standard views landing as before |
+| `e2e/grid.spec.ts` | lane 21 (#4): View > Grid off hides both grid levels at every zoom, the Styles pane's Ground grid agrees, the `.shz` saved and reopened keeps it hidden, on again restores it, undo |
 | `e2e/selection.spec.ts` | click, window vs crossing boxes, double-click, Delete and Erase through the kernel, Ctrl+A |
 | `e2e/inference.spec.ts` | our colours and tips (endpoint, midpoint, on-edge, on-face, grid), axis inference, arrow-key locks, exact values from inferred clicks (intersection, guide-point and the rest are hit in `tape` and `bookshelf`; every kind has a Rust test in `crates/inference/tests/infer.rs`) |
 | `e2e/vcb.spec.ts` | the typed-value grammar per tool, Esc, Ctrl+Z mid-entry, arrays refused until lane 4 |
