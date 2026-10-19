@@ -1026,6 +1026,8 @@ export function App() {
 
   const toolsRef = useRef<Map<ToolId, Tool> | null>(null);
   const activeRef = useRef<Tool | null>(null);
+  /** The active tool's id as of the last selectTool, ahead of the render that shows it. */
+  const toolIdRef = useRef(toolId);
   const host = useMemo<ToolHost>(
     () => ({
       units: () => live.current.units,
@@ -1156,7 +1158,12 @@ export function App() {
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? pluginsRef.current?.toolFor(id) ?? null;
   const paintTool = toolsRef.current.get("paint") as PaintTool;
   const active = toolFor(toolId);
-  activeRef.current = active;
+  // The keys and the Value Control Box talk to the tool selectTool chose last (toolIdRef, set
+  // there synchronously), never to this render's state: a key's render (SyncLane) can run
+  // before the render of a switch made outside an event ("p" waiting for the rectangle's edit,
+  // DefaultLane), and must not hand the next value ("6") back to the old tool. Looked up again
+  // here so a reloaded plugin's tool is the one that answers.
+  activeRef.current = toolFor(toolIdRef.current);
 
   const driverRef = useRef<ToolDriver | null>(null);
   const memoryRef = useRef(new InferenceMemory());
@@ -1230,10 +1237,8 @@ export function App() {
     }
     driverRef.current?.pointer(p);
   }, []);
-  const toolIdRef = useRef(toolId);
   /** A tool switch requested by a key and not applied yet (see the keydown handler). */
   const pendingToolRef = useRef<ToolId | null>(null);
-  toolIdRef.current = toolId;
 
   const defaultValue = useCallback(
     (id: ToolId, uu: UnitSystem): string => {
@@ -1260,6 +1265,7 @@ export function App() {
     (id: ToolId) => {
       const prev = activeRef.current;
       prev?.deactivate();
+      toolIdRef.current = id;
       setToolId(id);
       setMessage(null);
       setHover(null);
