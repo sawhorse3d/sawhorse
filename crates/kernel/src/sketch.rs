@@ -5,19 +5,23 @@
 //! Every edit is a set of straight segments inserted with [`Sketch::insert_segment`] (a
 //! rectangle is four of them, applied as one transaction). For each segment:
 //!
-//! 1. An endpoint within [`POINT_MERGE`] of an existing vertex merges into it.
-//! 2. Otherwise an endpoint within `POINT_MERGE` of an edge's interior splits that edge
+//! 1. An endpoint within [`SKETCH_MERGE`] of an existing vertex merges into it.
+//! 2. Otherwise an endpoint within `SKETCH_MERGE` of an edge's interior splits that edge
 //!    there (T-junction); the new vertex sits on the edge's line so the edge stays straight.
-//! 3. Existing vertices within `POINT_MERGE` of the new segment split it (the other kind of
+//! 3. Existing vertices within `SKETCH_MERGE` of the new segment split it (the other kind of
 //!    T-junction, and the ends of collinear overlaps).
 //! 4. Proper crossings split both segments at the crossing point.
 //! 5. Pieces that duplicate an existing edge are skipped, so collinear overlaps normalise
 //!    to non-overlapping edges.
 //!
+//! (The merge distance is [`SKETCH_MERGE`]: the kernel's `POINT_MERGE` plus the 1 nm noise
+//! floor, so what a sketch keeps still clears `POINT_MERGE` when a solid made from it is
+//! measured in world coordinates.)
+//!
 //! The graph invariant afterwards ([`Sketch::check`]): every edge is longer than
-//! `POINT_MERGE`, no two edges cross or overlap, and no vertex lies within `POINT_MERGE`
+//! `SKETCH_MERGE`, no two edges cross or overlap, and no vertex lies within `SKETCH_MERGE`
 //! of an edge it is not an end of. Only genuinely degenerate input is refused: a segment
-//! shorter than `POINT_MERGE` (before or after merging) or a non-finite / out-of-range
+//! shorter than `SKETCH_MERGE` (before or after merging) or a non-finite / out-of-range
 //! coordinate.
 //!
 //! # Regions
@@ -45,7 +49,7 @@ use sawhorse_tessellate::{interior_point, signed_area};
 use crate::error::SketchError;
 use crate::ids::{RegionId, SEdgeId, SVertexId};
 use crate::plane::Plane;
-use crate::tolerance::{POINT_MERGE, in_bounds};
+use crate::tolerance::{SKETCH_MERGE, in_bounds};
 use crate::validate::point_in_ring;
 
 /// A face of the sketch graph: one counter-clockwise outer ring and clockwise hole rings.
@@ -300,7 +304,7 @@ impl EdgeGrid {
         }
         let mid = sides.len() / 2;
         sides.select_nth_unstable_by(mid, f64::total_cmp);
-        let cell = (sides[mid] * 2.0).max(POINT_MERGE * 1e3);
+        let cell = (sides[mid] * 2.0).max(SKETCH_MERGE * 1e3);
         let mut g = EdgeGrid {
             cell,
             origin: lo - DVec2::splat(cell),
@@ -310,8 +314,8 @@ impl EdgeGrid {
         };
         for (i, b) in boxes.iter().enumerate() {
             let (a, z) = (
-                g.at(b.0 - DVec2::splat(POINT_MERGE)),
-                g.at(b.1 + DVec2::splat(POINT_MERGE)),
+                g.at(b.0 - DVec2::splat(SKETCH_MERGE)),
+                g.at(b.1 + DVec2::splat(SKETCH_MERGE)),
             );
             if (z.0 - a.0 + 1) * (z.1 - a.1 + 1) > 64 {
                 g.big.push(i as u32);
@@ -334,8 +338,8 @@ impl EdgeGrid {
     fn near(&self, i: usize) -> Vec<usize> {
         let b = self.boxes[i];
         let (a, z) = (
-            self.at(b.0 - DVec2::splat(POINT_MERGE)),
-            self.at(b.1 + DVec2::splat(POINT_MERGE)),
+            self.at(b.0 - DVec2::splat(SKETCH_MERGE)),
+            self.at(b.1 + DVec2::splat(SKETCH_MERGE)),
         );
         let mut out: Vec<u32> = self
             .big
@@ -369,10 +373,10 @@ fn first_close_pair(verts: &[(SVertexId, DVec2)]) -> Option<(usize, usize)> {
         let pi = verts[i].1;
         for &j in &order[n + 1..] {
             let pj = verts[j].1;
-            if pj.x - pi.x > POINT_MERGE {
+            if pj.x - pi.x > SKETCH_MERGE {
                 break;
             }
-            if pi.distance(pj) <= POINT_MERGE {
+            if pi.distance(pj) <= SKETCH_MERGE {
                 let pair = (i.min(j), i.max(j));
                 if best.is_none_or(|b| pair < b) {
                     best = Some(pair);
@@ -413,8 +417,8 @@ impl PointGrid {
             return g;
         }
         // About one point a cell on average over the occupied area.
-        let span = (hi - lo).max_element().max(POINT_MERGE);
-        g.cell = (span / (pts.len() as f64).sqrt()).max(POINT_MERGE * 1e3);
+        let span = (hi - lo).max_element().max(SKETCH_MERGE);
+        g.cell = (span / (pts.len() as f64).sqrt()).max(SKETCH_MERGE * 1e3);
         g.origin = lo - DVec2::splat(g.cell);
         for (i, p) in pts.iter().enumerate() {
             let c = g.at(*p);
@@ -434,8 +438,8 @@ impl PointGrid {
             return (0..self.all).collect();
         }
         let (a, z) = (
-            self.at(lo - DVec2::splat(POINT_MERGE)),
-            self.at(hi + DVec2::splat(POINT_MERGE)),
+            self.at(lo - DVec2::splat(SKETCH_MERGE)),
+            self.at(hi + DVec2::splat(SKETCH_MERGE)),
         );
         if (z.0 - a.0 + 1).saturating_mul(z.1 - a.1 + 1) > 4096 {
             return (0..pts.len()).collect();
@@ -584,7 +588,7 @@ impl Sketch {
         {
             return Err(SketchError::OutOfBounds);
         }
-        if size.x.abs() <= POINT_MERGE || size.y.abs() <= POINT_MERGE {
+        if size.x.abs() <= SKETCH_MERGE || size.y.abs() <= SKETCH_MERGE {
             return Err(SketchError::Degenerate);
         }
         let (x0, x1) = (
@@ -734,7 +738,7 @@ impl Sketch {
         Ok(changed)
     }
 
-    /// Erase every edge lying along segment `a`-`b` (both ends within `POINT_MERGE` of it),
+    /// Erase every edge lying along segment `a`-`b` (both ends within `SKETCH_MERGE` of it),
     /// drop vertices left without edges, and heal vertices the erase left joining exactly two
     /// collinear edges (a T-junction or crossing whose other stroke is gone), so splitting
     /// then erasing is the identity. Returns the live regions that are new or changed.
@@ -742,7 +746,7 @@ impl Sketch {
         if !(in_bounds(a.x) && in_bounds(a.y) && in_bounds(b.x) && in_bounds(b.y)) {
             return Err(SketchError::OutOfBounds);
         }
-        if a.distance(b) <= POINT_MERGE {
+        if a.distance(b) <= SKETCH_MERGE {
             return Err(SketchError::Degenerate);
         }
         let mut next = self.clone();
@@ -750,8 +754,8 @@ impl Sketch {
             .edges
             .iter()
             .filter(|(_, [p, q])| {
-                point_segment_distance(next.vertices[*p], a, b) <= POINT_MERGE
-                    && point_segment_distance(next.vertices[*q], a, b) <= POINT_MERGE
+                point_segment_distance(next.vertices[*p], a, b) <= SKETCH_MERGE
+                    && point_segment_distance(next.vertices[*q], a, b) <= SKETCH_MERGE
             })
             .map(|(e, ends)| (e, *ends))
             .collect();
@@ -798,7 +802,7 @@ impl Sketch {
         };
         let (pu, pw) = (self.vertices[u], self.vertices[w]);
         let t = (pv - pu).dot(pw - pu) / pu.distance_squared(pw);
-        if t <= 0.0 || t >= 1.0 || point_segment_distance(pv, pu, pw) > POINT_MERGE {
+        if t <= 0.0 || t >= 1.0 || point_segment_distance(pv, pu, pw) > SKETCH_MERGE {
             return;
         }
         if self.edge_between(u, w).is_some() {
@@ -930,7 +934,7 @@ impl Sketch {
             .vertices
             .iter()
             .map(|(k, q)| (q.distance(p), k))
-            .filter(|(d, _)| *d <= POINT_MERGE)
+            .filter(|(d, _)| *d <= SKETCH_MERGE)
             .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
         if let Some((_, v)) = near {
             return v;
@@ -941,7 +945,7 @@ impl Sketch {
             .filter_map(|(e, [a, b])| {
                 let (pa, pb) = (self.vertices[*a], self.vertices[*b]);
                 let d = point_segment_distance(p, pa, pb);
-                (d <= POINT_MERGE).then_some((d, e))
+                (d <= SKETCH_MERGE).then_some((d, e))
             })
             .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
         if let Some((_, e)) = on_edge {
@@ -951,10 +955,10 @@ impl Sketch {
             let t = ((p - pa).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
             let proj = pa + ab * t;
             // Never create a piece shorter than the merge distance.
-            if proj.distance(pa) <= POINT_MERGE {
+            if proj.distance(pa) <= SKETCH_MERGE {
                 return a;
             }
-            if proj.distance(pb) <= POINT_MERGE {
+            if proj.distance(pb) <= SKETCH_MERGE {
                 return b;
             }
             return self.split_edge(e, proj);
@@ -969,7 +973,7 @@ impl Sketch {
         a: DVec2,
         b: DVec2,
     ) -> Result<Vec<(SVertexId, SVertexId)>, SketchError> {
-        if a.distance(b) <= POINT_MERGE {
+        if a.distance(b) <= SKETCH_MERGE {
             return Err(SketchError::Degenerate);
         }
         let p = self.snap(a);
@@ -987,7 +991,7 @@ impl Sketch {
             .vertices
             .iter()
             .filter(|(v, pos)| {
-                *v != p && *v != q && point_segment_distance(**pos, pp, qq) <= POINT_MERGE
+                *v != p && *v != q && point_segment_distance(**pos, pp, qq) <= SKETCH_MERGE
             })
             .map(|(v, pos)| (param(*pos), v))
             .collect();
@@ -1019,17 +1023,17 @@ impl Sketch {
             let [c, dd] = self.edges[e];
             if let Some(end) = [c, dd]
                 .into_iter()
-                .find(|&w| self.vertices[w].distance(x) <= POINT_MERGE)
+                .find(|&w| self.vertices[w].distance(x) <= SKETCH_MERGE)
             {
                 cuts.push((param(self.vertices[end]), end));
                 last = Some((self.vertices[end], end));
                 continue;
             }
-            if x.distance(pp) <= POINT_MERGE || x.distance(qq) <= POINT_MERGE {
+            if x.distance(pp) <= SKETCH_MERGE || x.distance(qq) <= SKETCH_MERGE {
                 continue;
             }
             let v = match last {
-                Some((lx, lv)) if lx.distance(x) <= POINT_MERGE => {
+                Some((lx, lv)) if lx.distance(x) <= SKETCH_MERGE => {
                     // Re-route this edge through the shared vertex. A half that already
                     // exists (two crossed edges sharing an end) is the same edge now:
                     // keep one, so near-coincident pieces normalise like overlaps.
@@ -1070,8 +1074,8 @@ impl Sketch {
 
     /// Settle tolerance clusters the per-segment rules leave behind (a crossing that lands
     /// within the merge distance of an unrelated edge, two new vertices closer than the merge
-    /// distance): merge vertices closer than `POINT_MERGE`, split an edge at a vertex
-    /// within `POINT_MERGE` of it, split proper crossings, repeat until the graph satisfies
+    /// distance): merge vertices closer than `SKETCH_MERGE`, split an edge at a vertex
+    /// within `SKETCH_MERGE` of it, split proper crossings, repeat until the graph satisfies
     /// [`Sketch::check`]'s edge rules. Each step moves geometry by less than the merge
     /// distance. A cluster that does not settle is refused as degenerate input.
     fn repair(&mut self) -> Result<(), SketchError> {
@@ -1102,7 +1106,7 @@ impl Sketch {
             let (pa, pb) = (self.vertices[a], self.vertices[b]);
             for k in grid.near(pa.min(pb), pa.max(pb), &pts) {
                 let (w, pw) = verts[k];
-                if w != a && w != b && point_segment_distance(pw, pa, pb) <= POINT_MERGE {
+                if w != a && w != b && point_segment_distance(pw, pa, pb) <= SKETCH_MERGE {
                     self.edges.remove(e);
                     for (u, x) in [(a, w), (w, b)] {
                         if self.edge_between(u, x).is_none() {
@@ -1174,13 +1178,13 @@ impl Sketch {
 
     // ---- moving geometry (lane 22, ADR-0012) ---------------------------------------------
 
-    /// The vertex at `p` (sketch frame): the nearest one within `POINT_MERGE`, ties to the
+    /// The vertex at `p` (sketch frame): the nearest one within `SKETCH_MERGE`, ties to the
     /// smaller id.
     pub fn vertex_at(&self, p: DVec2) -> Option<SVertexId> {
         self.vertices
             .iter()
             .map(|(k, q)| (q.distance(p), k))
-            .filter(|(d, _)| *d <= POINT_MERGE)
+            .filter(|(d, _)| *d <= SKETCH_MERGE)
             .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
             .map(|(_, k)| k)
     }
@@ -1250,7 +1254,7 @@ impl Sketch {
         let mut made = Vec::new();
         for (_, [a, b]) in taken {
             let (pa, pb) = (next.vertices[a], next.vertices[b]);
-            if pa.distance(pb) <= POINT_MERGE {
+            if pa.distance(pb) <= SKETCH_MERGE {
                 continue; // shrunk to nothing: its ends merge in the repair
             }
             match next.add_segment(pa, pb) {
@@ -1286,7 +1290,7 @@ impl Sketch {
             {
                 return Err(SketchError::OutOfBounds);
             }
-            if a.distance(b) <= POINT_MERGE {
+            if a.distance(b) <= SKETCH_MERGE {
                 continue;
             }
             match next.add_segment(a, b) {
@@ -1473,8 +1477,8 @@ impl Sketch {
 
     // ---- invariants --------------------------------------------------------------------
 
-    /// Sketch-graph invariants: edges join two distinct vertices more than `POINT_MERGE`
-    /// apart; no two edges cross, overlap or repeat; no vertex lies within `POINT_MERGE` of
+    /// Sketch-graph invariants: edges join two distinct vertices more than `SKETCH_MERGE`
+    /// apart; no two edges cross, overlap or repeat; no vertex lies within `SKETCH_MERGE` of
     /// an edge it does not end; no isolated vertices; regions have simple CCW outers, simple
     /// CW holes and an anchor strictly inside. Runs in `Model::validate` and, in debug
     /// builds, after every sketch mutation.
@@ -1491,7 +1495,7 @@ impl Sketch {
             let (Some(pa), Some(pb)) = (self.vertices.get(a), self.vertices.get(b)) else {
                 return Err("edge references a missing vertex".into());
             };
-            if a == b || pa.distance(*pb) <= POINT_MERGE {
+            if a == b || pa.distance(*pb) <= SKETCH_MERGE {
                 return Err("zero-length sketch edge".into());
             }
         }
@@ -1544,7 +1548,7 @@ impl Sketch {
                     if x != seg.0
                         && x != seg.1
                         && point_segment_distance(px, self.vertices[seg.0], self.vertices[seg.1])
-                            <= POINT_MERGE
+                            <= SKETCH_MERGE
                     {
                         return Err(format!(
                             "sketch vertex {px} lies on another edge {} - {}",
@@ -1764,7 +1768,7 @@ impl Sketch {
             let keep = assigned[i]
                 .and_then(|id| self.regions.get(id))
                 .map(|r| r.anchor)
-                .filter(|&a| inside_rings(a, o, h) && ring_clearance(a, o, h) > POINT_MERGE);
+                .filter(|&a| inside_rings(a, o, h) && ring_clearance(a, o, h) > SKETCH_MERGE);
             let Some(anchor) = keep.or_else(|| interior_point(o, h)) else {
                 continue; // unreachable for a positive-area ring; drop rather than corrupt
             };

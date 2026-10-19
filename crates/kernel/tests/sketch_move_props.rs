@@ -27,6 +27,11 @@
 //! step, log replay, determinism).
 //!
 //! `PROPTEST_CASES` sets the number of cases (default 256); `PROPTEST_RNG_SEED` the seed.
+//! `SKETCH_MOVE_DUMP=<file>` writes the ops accepted so far after each one (the last write
+//! of a failing run is its sequence; keep it in `tests/sketch_move_finds/`, which
+//! `sketch_move.rs` replays and pushes region by region). `SKETCH_MOVE_STATS=1` prints a
+//! line per op (what it was, how it went) for a tally. Neither crosses into WSL through
+//! `scripts/cargo.sh`: run cargo inside WSL to set them.
 
 use std::f64::consts::PI;
 
@@ -411,6 +416,10 @@ fn run(
             }
             Ok(_) => {
                 ops.push(op.clone());
+                if let Ok(path) = std::env::var("SKETCH_MOVE_DUMP") {
+                    // The ops so far, for a repro: the last one written is the failing case.
+                    let _ = std::fs::write(path, serde_json::to_string(&ops).unwrap_or_default());
+                }
                 check_model(d.model()).map_err(|e| TestCaseError::fail(format!("{op:?}: {e}")))?;
                 let after = d.hash();
                 let mut probe = d.clone();

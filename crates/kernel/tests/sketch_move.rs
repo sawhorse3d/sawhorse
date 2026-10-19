@@ -810,3 +810,111 @@ fn a_mirror_and_a_scale_of_sketch_geometry() {
     assert!(verts(d.model(), 1).contains(&q(6.0, 0.0)));
     assert!(close(&areas(d.model(), 1), &[4.0]));
 }
+
+/// The property tests' finds (lane 22, `tests/sketch_move_finds/`): op sequences after
+/// which a region the sketch held could not be pushed into a valid solid. The sketch kept
+/// an edge, or a corner's clearance from another edge, a rounding error over the merge
+/// distance; the solid tier measured it again in world coordinates and called it a
+/// zero-length edge or a vertex on a face. The sketch now merges at `SKETCH_MERGE`
+/// (POINT_MERGE plus the 1 nm noise floor), so every region pushes, to its area times the
+/// distance. Each sequence is replayed as recorded (an op the kernel now refuses is skipped,
+/// as the fuzzer's replay does).
+#[test]
+fn the_property_finds_push_into_valid_solids() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sketch_move_finds");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 3);
+    for f in files {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        let ops: Vec<Op> = serde_json::from_value(v["ops"].clone()).unwrap();
+        let mut d = Document::new();
+        for op in &ops {
+            if let Err(e) = d.apply(op) {
+                assert!(!e.is_bug(), "{}: {e}", f.display());
+            }
+        }
+        sawhorse_kernel::testing::check_model(d.model()).unwrap();
+        let m = d.model();
+        let mut pushed = 0;
+        for id in m.sketch_ids() {
+            let s = m.sketch(id).unwrap();
+            for (r, reg) in s.regions() {
+                if reg.pinched {
+                    continue;
+                }
+                let area = s.region_area(reg);
+                let mut probe = d.clone();
+                let out = probe
+                    .apply(&Op::Extrude {
+                        sketch: id,
+                        region: sawhorse_kernel::ids::to_public(r),
+                        distance: 0.25,
+                    })
+                    .unwrap_or_else(|e| panic!("{}: region {r:?}: {e}", f.display()));
+                let OpOutcome::ObjectCreated { object } = out else {
+                    panic!("{out:?}")
+                };
+                let v = probe.model().object(object).unwrap().volume();
+                assert!((v - area * 0.25).abs() <= 1e-9 * area * 0.25 + 1e-12);
+                pushed += 1;
+            }
+        }
+        assert!(pushed > 0, "{}", f.display());
+    }
+}
+
+#[test]
+fn an_edge_a_rounding_error_over_the_merge_distance_is_too_short() {
+    // On the tilted plane of the second find: a stroke whose corners are 1e-5 + 2e-17 m
+    // apart was taken (over POINT_MERGE in the sketch's frame) and its region then made a
+    // solid with a zero-length edge. It is too short for the sketch now, refused, typed.
+    let mut d = Document::new();
+    d.apply(&Op::NewSketch {
+        origin: [0.0, 0.0, 0.5],
+        normal: [0.0, 1.0, 1.0],
+    })
+    .unwrap();
+    let plane = *d.model().sketch(1).unwrap().plane();
+    let l = sawhorse_kernel::tolerance::POINT_MERGE + 2e-17;
+    let w = |x: f64, y: f64| plane.to_world(DVec2::new(x, y)).to_array();
+    let square = |extra: bool| {
+        let mut p = vec![w(0.0, 0.0), w(0.5, 0.0), w(0.5, 0.5)];
+        if extra {
+            p.push(w(0.5 - l, 0.5));
+        }
+        p.push(w(0.0, 0.5));
+        Op::Draw {
+            target: DrawTarget::Sketch { sketch: 1 },
+            points: p,
+            closed: true,
+        }
+    };
+    let e = refused(&mut d, &square(true));
+    assert_eq!(e, KernelError::Sketch(SketchError::Degenerate));
+    d.apply(&square(false)).unwrap();
+    // Moving a corner to a rounding error over the merge distance from its neighbour merges
+    // them too: the edge between them goes, and the triangle left pushes.
+    let corner = w(0.5, 0.5);
+    let to = DVec3::from_array(w(0.5 - l, 0.0)) - DVec3::from_array(corner);
+    one_step(&mut d, &op(1, &[corner], &[], &[], Xform::translation(to)));
+    let s = d.model().sketch(1).unwrap();
+    assert_eq!(s.vertex_count(), 3);
+    for (_, [a, b]) in s.edges() {
+        let (pa, pb) = (s.vertex(a).unwrap(), s.vertex(b).unwrap());
+        assert!(
+            plane.to_world(pa).distance(plane.to_world(pb))
+                > sawhorse_kernel::tolerance::POINT_MERGE
+        );
+    }
+    d.apply(&Op::Extrude {
+        sketch: 1,
+        region: 1,
+        distance: 0.25,
+    })
+    .unwrap();
+}

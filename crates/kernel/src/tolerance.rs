@@ -10,6 +10,19 @@ pub const LENGTH_EPS: f64 = 1e-9;
 /// merging, T-junction detection and the smallest edge the kernel will create.
 pub const POINT_MERGE: f64 = 1e-5;
 
+/// The sketch tier's merge distance (lane 22): POINT_MERGE plus the noise floor. Every
+/// decision the sketch makes (merge two points, split an edge at a point, refuse a short
+/// segment, the invariants `Sketch::check` holds) uses it, so whatever a sketch keeps is
+/// longer, or clears another edge, by more than POINT_MERGE plus rounding. A region pushed
+/// into a solid is measured again by the solid tier, in world coordinates and with the
+/// plain POINT_MERGE (zero-length edges, a vertex on a face it does not bound); with one
+/// shared number, a sketch edge a rounding error longer than POINT_MERGE in the sketch's
+/// frame could measure a rounding error shorter in the world (lane 22's property tests
+/// found edges 1.6e-17 m over the merge distance that the solid called zero-length, and
+/// holes 1e-17 m clear of their outer ring that it called touching). The margin is far
+/// above the rounding of any coordinate within MAX_COORD (about 2e-12 m).
+pub const SKETCH_MERGE: f64 = POINT_MERGE + LENGTH_EPS;
+
 /// Smallest area a face or region may have (POINT_MERGE squared).
 pub const AREA_EPS: f64 = POINT_MERGE * POINT_MERGE;
 

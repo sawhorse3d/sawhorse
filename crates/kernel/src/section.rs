@@ -860,13 +860,14 @@ pub(crate) fn cap_area_floor(scale: f64) -> f64 {
 }
 
 /// Points this close are one point to the slice ([`weld`]). The sketch merges points
-/// within POINT_MERGE (10 micrometres) of a point or an edge, measured with its own rounding;
+/// within its merge distance (`SKETCH_MERGE`, 10 micrometres and the 1 nm noise floor since
+/// lane 22) of a point or an edge, measured with its own rounding;
 /// merging a part per million further keeps every corner the slice draws clear of the
 /// sketch's merging, so the sketch takes each loop exactly as merged here (2026-10-13, lane
 /// 18: merging only neighbours closer than POINT_MERGE left a cap's tip corner 9.9 micrometres
 /// from the next edge, which the sketch folded into the corner before it, so it refused the
 /// edge between them as "too small").
-const WELD: f64 = crate::tolerance::POINT_MERGE * (1.0 + 1e-6);
+const WELD: f64 = crate::tolerance::SKETCH_MERGE * (1.0 + 1e-6);
 
 /// Loops with their points closer than [`WELD`] merged, as the sketch would merge them (lane
 /// 18): the closest merge of the most local kind first, again until none is left.
@@ -883,7 +884,7 @@ const WELD: f64 = crate::tolerance::POINT_MERGE * (1.0 + 1e-6);
 ///
 /// Then every point is more than WELD from every other point and from every edge it is not
 /// an end of (points at exactly the same place are one point, as in the sketch), so the
-/// sketch, whose snapping and repair look only within POINT_MERGE, merges and splits nothing
+/// sketch, whose snapping and repair look only within SKETCH_MERGE, merges and splits nothing
 /// but proper crossings: it takes each loop as drawn. Which merge comes first is decided by
 /// the distances and the loops' order alone, never by where a loop starts or which way round
 /// it runs, so a plane and its flip merge a cap alike (2026-10-13: walking round and dropping
