@@ -42,6 +42,8 @@ So nobody finds out the hard way:
 
 Known limits (model size, `.skp` versions that do not open): [docs/LIMITS.md](docs/LIMITS.md).
 
+**Security and signing**: the installers are unsigned today; how they will be signed and who approves a release, what the app sends (nothing, unless you set up a render service or grant a plugin the network) and how to uninstall: [docs/SIGNING.md](docs/SIGNING.md).
+
 ## Run the browser build
 
 Needs Node 24+ and, for the kernel, Rust with the `wasm32-unknown-unknown` target and `wasm-pack` (see `docs/DEVELOPMENT.md`; on a Windows machine without Visual Studio Build Tools the Rust step runs in WSL automatically).
