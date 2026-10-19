@@ -3193,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-desktop"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "sawhorse-device-key",
  "sawhorse-safe-save",
@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-device-key"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -3220,7 +3220,7 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-safe-save"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "schemars"

@@ -1,7 +1,7 @@
 {
   "name": "sawhorse",
   "private": true,
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Free, local-first push/pull 3D modeler for woodworkers and makers.",
   "license": "MIT OR Apache-2.0",
   "type": "module",

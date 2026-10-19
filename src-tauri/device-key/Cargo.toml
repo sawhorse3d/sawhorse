@@ -1,6 +1,6 @@
 [package]
 name = "sawhorse-device-key"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 description = "Sawhorse desktop: the render-credit device key (Ed25519) kept in the OS secure store (ADR-0004)."
 authors = ["Sawhorse contributors"]
 license = "MIT OR Apache-2.0"
