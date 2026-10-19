@@ -1,0 +1,89 @@
+{
+  "name": "2026-10-19-sketch-copies-of-a-10km-offset-leave-a-17um-region",
+  "error": "op 5 TransformSketch { sketch: 1, points: [], edges: [], regions: [4294967297], xform: Xform { linear: [[1.0, -1.7453292519943295e-9, 0.0], [1.7453292519943295e-9, 1.0, 0.0], [0.0, 0.0, 1.0]], translation: [8.727082786208484e-6, 8.726646228751633e-6, 0.0] }, copy: true, count: 2 }: view mesh: polygon has (near) zero area",
+  "plane_snap": false,
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 1.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "face",
+        "object": 1,
+        "face": 1
+      },
+      "distance": 5000.0
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "transform_sketch",
+      "sketch": 1,
+      "regions": [
+        4294967297
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            -1.7453292519943295e-09,
+            0.0
+          ],
+          [
+            1.7453292519943295e-09,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          8.727082786208484e-06,
+          8.726646228751633e-06,
+          0.0
+        ]
+      },
+      "copy": true,
+      "count": 2
+    }
+  ]
+}

@@ -74,10 +74,15 @@ pub fn triangulate(
     }
     let outer_area = signed_area(outer).abs();
     let hole_area: f64 = holes.iter().map(|h| signed_area(h).abs()).sum();
-    let scale = outer
-        .iter()
-        .fold(0.0f64, |m, p| m.max(p.abs().max_element()))
-        .max(1e-300);
+    // "Near zero" against the polygon's own size (lane 22): areas are summed about the ring's
+    // first point, so their rounding follows the ring's extent, not its distance from the
+    // origin. Scaled by the largest coordinate instead, a 17 micrometre quadrilateral 5 km
+    // out (3e-10 m2, a fair region) read as zero area and the view could not be built.
+    let (lo, hi) = outer.iter().fold(
+        (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
+    let scale = (hi - lo).max_element().max(1e-300);
     if outer_area - hole_area <= scale * scale * 1e-15 {
         return Err(TessellateError::ZeroArea);
     }
@@ -501,6 +506,33 @@ pub fn interior_point(outer: &[DVec2], holes: &[Vec<DVec2>]) -> Option<DVec2> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    /// Lane 22: shapes far from the origin are judged by their own size. A 17 micrometre
+    /// square 5 km out is not "zero area", a 10 km sliver triangle 5 km out passes the area
+    /// check, and a ring's area does not depend on where it lies.
+    #[test]
+    fn far_small_and_long_thin_polygons_triangulate() {
+        let small = rect(5001.25, -5000.0, 1.7e-5, 1.7e-5);
+        let t = triangulate(&small, &[]).unwrap();
+        assert_eq!(t.len(), 2);
+        let sliver = vec![
+            DVec2::new(-5000.0, -5000.0),
+            DVec2::new(5001.25, -4999.999982544526),
+            DVec2::new(-5000.0, -4999.99996508905),
+        ];
+        assert_eq!(triangulate(&sliver, &[]).unwrap().len(), 1);
+        // Corners exact in binary, so only the sum's rounding could tell the two apart.
+        let here = signed_area(&rect(0.0, 0.0, 0.09375, 0.09375));
+        let there = signed_area(&rect(5001.96875, -5000.375, 0.09375, 0.09375));
+        assert_eq!(here, 0.0087890625);
+        assert_eq!(there, here);
+        // A frame with a hole, far out: robust areas, an exact check.
+        let outer = rect(4000.0, 4000.0, 2.0, 2.0);
+        let mut hole = rect(4000.5, 4000.5, 1.0, 1.0);
+        hole.reverse();
+        let t = triangulate(&outer, &[hole]).unwrap();
+        assert!(t.len() >= 8);
+    }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Vec<DVec2> {
         vec![
