@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { KernelOp, Picked, SurfaceHit, V3, Xform } from "../kernel/types";
+import type { DocState, KernelOp, Picked, SurfaceHit, V3, Xform } from "../kernel/types";
 import { ev, fakeHost } from "./fakeHost";
 import { RotateTool, fmtDeg, parseAngle, rotateOp, snapAngle } from "./rotate";
 import { applyX } from "./xform";
@@ -44,10 +44,45 @@ describe("rotate helpers", () => {
     close(applyX(op.xform, [2, 0, 0]), [1, 1, 0]);
     expect(rotateOp(s, [0, 0, 0], [0, 0, 1], 1, true, 3)).toMatchObject({ op: "array", count: 3 });
     expect(rotateOp({ kind: "geometry", object: 1, points: [[0, 0, 1]], what: "" }, [0, 0, 0], [0, 0, 1], 1, false)).toMatchObject({ op: "transform_geometry" });
+    // Lane 22: sketch geometry turns with a transform_sketch op (copies and arrays too).
+    const part = { sketch: 1, points: [], edges: [], regions: [1], rings: [], origin: [0, 0, 0] as V3, normal: [0, 0, 1] as V3, moving: [] };
+    const sk = { kind: "objects" as const, objects: [], sketches: [part] };
+    const t = rotateOp(sk, [0, 0, 0], [0, 0, 1], Math.PI / 4, false) as { op: string; xform: Xform };
+    expect(t.op).toBe("transform_sketch");
+    close(applyX(t.xform, [1, 0, 0]), [Math.SQRT1_2, Math.SQRT1_2, 0]);
+    expect(rotateOp(sk, [0, 0, 0], [0, 0, 1], 1, true, 3)).toMatchObject({ op: "transform_sketch", copy: true, count: 3 });
   });
 });
 
 describe("Rotate tool", () => {
+  it("turns sketch geometry on its own plane (lane 22): a typed 45 about an upright sketch's axis", async () => {
+    const state = { sketches: [{ id: 2, origin: [0, 0, 0], normal: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }] } as unknown as DocState;
+    const h = fakeHost({ outcome: { kind: "sketch_moved", sketch: 2, regions: [[2, 1]] }, _state: state });
+    const region = { kind: "region" as const, sketch: 2, region: 1 };
+    h.sel = [region];
+    const t = new RotateTool(h);
+    // The cursor is over level ground, but the protractor lies on the sketch's plane.
+    t.onEvent(down("click", 0, 0, 0, { picked: onBox, snapKind: "endpoint" }));
+    await tick();
+    expect(h.statuses.at(-1)?.text).toMatch(/about the red axis/);
+    t.onEvent(down("move", 0, 1, 0));
+    t.onEvent(down("click", 0, 1, 0));
+    t.onValue("45");
+    await tick();
+    const op = ops(h).at(-1)!;
+    expect(op).toMatchObject({ op: "transform_sketch", sketch: 2, regions: [1] });
+    close(applyX(op.xform as Xform, [0, 1, 0]), [0, Math.SQRT1_2, Math.SQRT1_2]);
+    expect(h.statuses.at(-1)?.text).toMatch(/^Turned .*45° about the red axis/);
+    expect(h.sel).toEqual([region]);
+    // An arrow key still chooses another plane (a whole shape may turn off its own).
+    const t2 = new RotateTool(h);
+    t2.onKey(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    t2.onEvent(down("click", 0, 0, 0, { snapKind: "endpoint" }));
+    await tick();
+    expect(h.statuses.at(-1)?.text).toMatch(/about the blue axis/);
+  });
+
+
   it("centre, start, end: turns the solid by the snapped angle about the face's axis", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
     const t = new RotateTool(h);

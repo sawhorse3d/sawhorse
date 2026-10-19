@@ -1395,4 +1395,67 @@ mod tests {
             sample().model().snapshot()
         );
     }
+
+    /// Lane 22: sketch geometry moved, turned, lifted onto a new plane and copied saves and
+    /// opens as the same document (hash, the same sketches, the same regions), and the moved
+    /// region still pushes into the same solid after opening.
+    #[test]
+    fn moved_sketches_round_trip() {
+        let mut d = Document::with_ground_sketch();
+        let x = |t: [f64; 3]| {
+            format!(
+                r#"{{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[{},{},{}]}}"#,
+                t[0], t[1], t[2]
+            )
+        };
+        let turn = r#"{"linear":[[0,-1,0],[1,0,0],[0,0,1]],"translation":[0,0,0]}"#;
+        for op in [
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.6,"h":0.4}"#.to_string(),
+            r#"{"op":"add_rectangle","sketch":1,"x":1,"y":0,"w":0.2,"h":0.2}"#.into(),
+            format!(
+                r#"{{"op":"transform_sketch","sketch":1,"points":[[0.6,0.4,0]],"xform":{}}}"#,
+                x([0.1, 0.05, 0.0])
+            ),
+            format!(r#"{{"op":"transform_sketch","sketch":1,"regions":[1],"xform":{turn}}}"#),
+            format!(
+                r#"{{"op":"transform_sketch","sketch":1,"regions":[2],"xform":{},"copy":true,"count":2}}"#,
+                x([0.3, 0.0, 0.0])
+            ),
+            format!(
+                r#"{{"op":"transform_sketch","sketch":1,"regions":[2],"xform":{}}}"#,
+                x([0.0, 0.0, 0.5])
+            ),
+        ] {
+            d.apply(&serde_json::from_str::<Op>(&op).unwrap())
+                .unwrap_or_else(|e| panic!("{op}: {e}"));
+        }
+        let m = d.model();
+        assert_eq!(
+            m.sketch_ids().len(),
+            2,
+            "the ground and the lifted square's plane"
+        );
+        let o = read(&write(m, &SaveOptions::default()).unwrap()).unwrap();
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        assert_eq!(o.document.hash(), d.hash());
+        let back = o.document.model();
+        for id in m.sketch_ids() {
+            let (a, b) = (m.sketch(id).unwrap(), back.sketch(id).unwrap());
+            assert_eq!(a.to_raw(), b.to_raw(), "sketch {id}");
+        }
+        // The turned, stretched region pushes the same after opening.
+        let push = |doc: &mut Document| {
+            doc.apply(&Op::Extrude {
+                sketch: 1,
+                region: 1,
+                distance: 0.3,
+            })
+            .unwrap();
+            doc.model().objects()[0].1.volume()
+        };
+        let mut opened = o.document;
+        let (v1, v2) = (push(&mut d), push(&mut opened));
+        assert_eq!(v1, v2);
+        assert!(v1 > 0.6 * 0.4 * 0.3, "the corner moved out: {v1}");
+    }
 }

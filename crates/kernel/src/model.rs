@@ -39,6 +39,10 @@ use crate::validate::{TopologyError, Violation};
 /// Most copies one array op makes.
 pub const MAX_ARRAY: u32 = 1000;
 
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
+
 /// One undoable edit. Lengths in metres; ids are public ids.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -206,6 +210,28 @@ pub enum Op {
         points: Vec<[f64; 3]>,
         xform: Xform,
         autofold: bool,
+    },
+    /// Move, turn or scale sketch geometry (lane 22, ADR-0012): the vertices at `points`
+    /// (world positions), the edges between the pairs in `edges` (world positions of their
+    /// ends) and the whole `regions` of sketch `sketch`, by `xform`. Within the plane (or for
+    /// part of a shape, projected into it) the neighbours' edges follow and the result is
+    /// re-arranged by the insertion rules (welds, splits, merges); a whole shape mapped off
+    /// its plane goes to the sketch on the plane it lands on. With `copy`, `count` copies of
+    /// the selected edges and regions' rings are drawn instead (copy k mapped `count` = k
+    /// times). See [`crate::sketch_move`].
+    TransformSketch {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        points: Vec<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        edges: Vec<[[f64; 3]; 2]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        regions: Vec<u64>,
+        xform: Xform,
+        #[serde(default, skip_serializing_if = "is_false")]
+        copy: bool,
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        count: u32,
     },
     /// Offset a face, a sketch region or a chain of edges by `distance` (positive grows;
     /// for an open chain, positive is to its left). The result is drawn like a stroke: on
@@ -943,6 +969,18 @@ pub enum OpOutcome {
     /// Part of a solid moved; the persistent ids of the faces that changed (folds included).
     GeometryMoved {
         faces: Vec<u64>,
+    },
+    /// Sketch geometry moved, turned or scaled (lane 22): the sketch it is in now (another
+    /// one when a whole shape left its plane) and the live regions its edges now bound, as
+    /// (sketch, region) public id pairs.
+    SketchMoved {
+        sketch: u64,
+        regions: Vec<[u64; 2]>,
+    },
+    /// Sketch geometry was copied (or arrayed): the live regions the copies bound, as
+    /// (sketch, region) public id pairs.
+    SketchCopied {
+        regions: Vec<[u64; 2]>,
     },
     /// A push/pull (or a sweep) cut a solid into pieces: each piece is its own solid. The
     /// first id is the original solid (the piece holding its smallest face id).
@@ -1890,6 +1928,15 @@ impl Model {
                 self.touch(k);
                 Ok(OpOutcome::GeometryMoved { faces })
             }
+            Op::TransformSketch {
+                sketch,
+                points,
+                edges,
+                regions,
+                xform,
+                copy,
+                count,
+            } => self.transform_sketch(*sketch, points, edges, regions, xform, *copy, *count),
             Op::Offset { source, distance } => self.offset(source, *distance),
             Op::FollowMe {
                 profile,
@@ -3115,7 +3162,7 @@ impl Model {
     /// The open context's sketch lying on `plane` (either facing, within the planarity
     /// tolerance), or a new one on it there. Strokes only stick to strokes of the same
     /// editing context.
-    fn sketch_on(&mut self, plane: &Plane) -> SketchId {
+    pub(crate) fn sketch_on(&mut self, plane: &Plane) -> SketchId {
         let found = self.sketch_order.iter().copied().find(|&k| {
             let s = &self.sketches[k];
             let sp = s.plane();
@@ -3150,7 +3197,7 @@ impl Model {
     }
 
     /// A sketch that may be edited: it exists and belongs to the open context.
-    fn sketch_edit_key(&self, id: u64) -> Result<SketchId, KernelError> {
+    pub(crate) fn sketch_edit_key(&self, id: u64) -> Result<SketchId, KernelError> {
         let k = self.sketch_key(id)?;
         self.editable_sketch(k)?;
         Ok(k)

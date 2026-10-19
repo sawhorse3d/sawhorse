@@ -137,6 +137,24 @@ export function objectEdges(object: number, mesh: MeshData | null): [V3, V3][] {
   return out;
 }
 
+/** Edge segments of a sketch in the view mesh (lane 22: what a sketch move previews). */
+export function sketchEdges(sketch: number, mesh: MeshData | null): [V3, V3][] {
+  if (!mesh) return [];
+  const ix = meshIndex(mesh);
+  const k = mesh.edgeOwners.findIndex((o) => o && o.kind === "sketch" && o.id === sketch);
+  if (k < 0 || k + 1 >= ix.ownerStart.length) return [];
+  const out: [V3, V3][] = [];
+  const e = mesh.edges;
+  for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
+    const i = ix.ownerEdges[j];
+    out.push([
+      [e[6 * i], e[6 * i + 1], e[6 * i + 2]],
+      [e[6 * i + 3], e[6 * i + 4], e[6 * i + 5]],
+    ]);
+  }
+  return out;
+}
+
 /** What a set of entities covers in the view mesh. Lane 16: gathered once, not solid by
  * solid with a pass over the whole mesh each. Lane 16b: from the mesh's index, so a
  * selection costs its own size; whole solids' edges are named by their owner (an index

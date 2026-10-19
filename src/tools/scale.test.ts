@@ -18,6 +18,13 @@ const at = (type: "move" | "down" | "click" | "drag" | "dragend", p: V3, extra =
 };
 
 describe("scale helpers", () => {
+  it("scales sketch geometry with a transform_sketch op (lane 22)", () => {
+    const part = { sketch: 1, points: [], edges: [], regions: [1], rings: [], origin: [0, 0, 0] as V3, normal: [0, 0, 1] as V3, moving: [] };
+    const op = scaleOp({ kind: "objects", objects: [], sketches: [part] }, [0, 0, 0], [2, 2, 1]) as { op: string; xform: Xform };
+    expect(op.op).toBe("transform_sketch");
+    close(applyX(op.xform, [1, 1, 0]), [2, 2, 0]);
+  });
+
   it("26 grips on a box, 8 on a flat face", () => {
     expect(grips([0, 0, 0], [1, 1, 1])).toHaveLength(26);
     const flat = grips([0, 0, 1], [1, 1, 1]);

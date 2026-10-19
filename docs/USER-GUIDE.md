@@ -59,9 +59,9 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 | A | Arc | Click both ends, then pull out the bulge | a bulge length, `12r` radius, `12s` segments |
 | A again | 3-Point Arc | Click the start, a point it passes through, then the end | - |
 | P | Push/Pull | Press on a face and drag, then release; or click, move, click. Double-click repeats the last distance. Hold Ctrl when you let go to pull out a new face. | a distance (negative flips it) |
-| M | Move | Click a solid (or select first), move, click; or drag. Ctrl copies. With faces, edges or points selected, moves that part (Alt: autofold). | a distance; after a copy `x3`, `3x`, `*3` or `/4` |
-| Q | Rotate | Click the centre on the protractor's plane, the start of the angle, then the end. Ctrl copies. | an angle in degrees (`90`, `-22.5`, `30deg`); after a copy `x3` or `/4` |
-| S | Scale | Drag a grip on the selection's box (or click it, move, click). Shift: uniform. Ctrl: about the centre. | a factor (`2`, `0.5`, `-1`), three factors (`2,1,0.5`), or a size with a unit (`30in`) |
+| M | Move | Click a solid or a sketch shape (or select first), move, click; or drag. Ctrl copies. With faces, edges or points selected, moves that part (Alt: autofold). | a distance; after a copy `x3`, `3x`, `*3` or `/4` |
+| Q | Rotate | Click the centre on the protractor's plane, the start of the angle, then the end. Ctrl copies. A sketch shape turns on its own plane. | an angle in degrees (`90`, `-22.5`, `30deg`); after a copy `x3` or `/4` |
+| S | Scale | Drag a grip on the selection's box (or click it, move, click). Shift: uniform. Ctrl: about the centre. Works on sketch shapes too. | a factor (`2`, `0.5`, `-1`), three factors (`2,1,0.5`), or a size with a unit (`30in`) |
 | F | Offset | Click a face or region (or near selected edges), move inward or outward, click | a distance (negative goes the other way) |
 | W | Follow Me | Select the path first (edges, or a face for its edge), then click the profile | - |
 | T | Tape | Click two points to measure. Click an edge, then move away from it, to place a parallel guide. | the offset, or a length that drops a guide point |
@@ -126,7 +126,7 @@ Push/Pull on a face moves it along its normal and keeps the solid closed. Pushin
 
 ## Moving, turning and scaling
 
-**Move (M).** With nothing selected, Move picks up the solid you click. Select first to move several solids, or to move part of one solid: a face, an edge or a point.
+**Move (M).** With nothing selected, Move picks up what you click: a solid, or a sketch shape (a circle, rectangle, polygon, arc or line you have not pushed into a solid yet). Select first to move several things at once, or to move part of one solid or one shape: a face, an edge or a point.
 - Click where to pick it up (a corner snaps exactly), move, and click where it goes.
 - Or type the distance: it goes the way the cursor went.
 - The arrow keys lock the red, green or blue axis. Shift holds the direction that is showing.
@@ -140,19 +140,29 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 
 **Moving part of a solid.** Select a face (or an edge, or a corner), press M and move it. Faces that stay flat follow along: lifting a top face makes the box taller, and sliding a top edge slopes the sides. If a face would have to bend, Sawhorse refuses and says which face. Tap Alt for autofold: the bent face then folds along new edges.
 
+**Moving sketch shapes.** Shapes you have drawn but not pushed into a solid move like solids do, with the same inference, arrow-key locks, typed distances, Ctrl copies and arrays, and one undo step per move:
+- **A whole shape** (click inside it to select its face, or window-select it) moves anywhere. Moved off its plane (up the blue axis, say), it goes into the sketch on the plane it lands on (a new one if there is none), ready to push/pull. A shape it shared an edge with keeps that edge.
+- **Part of a shape** (a corner, or an edge) moves within the shape's plane, and the edges beside it follow: drag one corner of a rectangle and its two edges stretch to it, the rest stays put. A move that points out of the plane is flattened into it; one that points straight out of it moves nothing, and the status line says to select the whole shape to lift it.
+- **An edge two shapes share** moves both of them.
+- **What it lands on** joins it the way drawing there would: dropped against another shape, the touching edges become one edge; dropped across one, both are split where they cross into separate faces. A move that would twist a face into a bow-tie splits it into two faces instead.
+- Moved or copied shapes push/pull like any other: the solid has exactly the shape's area times the distance.
+- What you moved stays selected where it went, so you can move it again, or press P and type a distance.
+- Today a circle, arc or polygon is a chain of separate edges: clicking its rim selects one segment or point, and moving that point bends the curve ([#3](https://github.com/sawhorse3d/sawhorse/issues/3)). Click inside the shape to move it whole.
+
 **Rotate (Q).** The protractor appears on the face under the cursor, or level on the ground.
 - Right, Left and Up lock it upright facing red, upright facing green, or level. Hold Shift to keep the plane it is on.
 - Click the centre, click where the angle starts, then click where it ends.
 - Or type the angle. The cursor snaps to the protractor's 15 degree ticks; a typed angle is exact.
-- With nothing selected, the solid under the centre click turns.
+- With nothing selected, the solid (or the sketch shape) under the centre click turns.
 - Ctrl copies; `x3` and `/4` work as in Move. A ring of four chair legs is one copy at 90 degrees, then `x3`.
+- **Sketch shapes** turn on their own plane: the protractor lies on the shape's sketch whatever the cursor is over, so a shape drawn on the ground turns about the blue axis and stays flat on the ground. An arrow key (or Shift) puts the protractor on another plane: a whole shape then turns off its plane onto a new one (stand a rectangle up with Right and `90`); part of a shape turns and is flattened back into its plane. A shape turned by 0 or 360 degrees does not move: the status line says there is nothing to move, and there is no step to undo.
 
 **Scale (S).** Grips appear on the box around the selection (or the solid under the cursor):
 - a face-centre grip stretches one way, an edge grip two ways, and a corner grip three;
 - Shift makes the scale uniform, and Ctrl scales about the centre instead of the opposite grip;
 - type `2` for twice the size, `-1` to mirror, or `30in` for an absolute length along the grip.
 
-Sawhorse refuses a scale that would flatten the solid, turn it inside out or fold it into itself.
+Sawhorse refuses a scale that would flatten the solid, turn it inside out or fold it into itself. A sketch shape scales too; its box is flat, so its grips lie in its plane.
 
 **A tapered leg.**
 1. Draw a 2 x 2 rectangle and pull it up 28.

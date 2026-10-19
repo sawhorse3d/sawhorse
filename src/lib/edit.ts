@@ -148,6 +148,14 @@ export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | 
       if (op.target.on === "face" && outcome.inside !== null) return { kind: "face", object: op.target.object, face: outcome.inside };
       return previous;
     }
+    case "sketch_moved": {
+      // Lane 22: a region lifted onto another plane is pushed there next; a region moved in
+      // its plane keeps its id.
+      if (op.op !== "transform_sketch" || outcome.sketch === op.sketch) return previous;
+      const moved = previous?.kind === "region" && previous.sketch === op.sketch && (op.regions ?? []).includes(previous.region);
+      const [first] = outcome.regions;
+      return moved && first ? { kind: "region", sketch: first[0], region: first[1] } : previous;
+    }
     default:
       return previous;
   }

@@ -131,6 +131,17 @@ pub enum TransformError {
     NoSuchVertex,
     #[error("nothing to move")]
     NothingToMove,
+    /// Lane 22: a sketch point or edge named by a move is not in the sketch.
+    #[error("there is no sketch point there")]
+    NoSuchSketchPoint,
+    #[error("there is no sketch edge there")]
+    NoSuchSketchEdge,
+    /// Part of a sketch shape moves only within its plane (the move is projected into it):
+    /// this one went straight off the plane, so nothing would move.
+    #[error(
+        "part of a sketch shape moves only along its plane; select the whole shape to lift it off"
+    )]
+    LeavesSketchPlane,
     /// Moving part of a solid would bend a face out of its plane (autofold is off).
     #[error("that would bend face #{face} out of its plane (hold Alt to fold it)")]
     WouldBend { face: u64 },

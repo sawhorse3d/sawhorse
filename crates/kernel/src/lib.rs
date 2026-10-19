@@ -43,6 +43,7 @@ pub mod section;
 pub mod sever;
 pub mod sheets;
 pub mod sketch;
+pub mod sketch_move;
 pub mod snap;
 pub mod snapshot;
 pub mod stock;

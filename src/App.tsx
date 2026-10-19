@@ -25,7 +25,7 @@ import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient, type RestartInfo } from "./kernel/client";
 import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
-import type { Entity, KernelOp, SceneData } from "./kernel/types";
+import type { Entity, KernelOp, SceneData, V3 } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
@@ -930,6 +930,30 @@ export function App() {
   useEffect(() => {
     const w = window as unknown as { __sawhorse?: Record<string, unknown> };
     w.__sawhorse = { ...(w.__sawhorse ?? {}), solids: () => live.current.scene?.state.solids ?? [], graph: () => live.current.scene?.state.graph ?? null };
+  }, []);
+
+  // Lane 22: every sketch region in the view with its world rings (outer first) and its
+  // sketch's plane, read from the kernel once the queued edits have landed.
+  useEffect(() => {
+    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+    w.__sawhorse = {
+      ...(w.__sawhorse ?? {}),
+      regions: async () => {
+        await queue.current;
+        const k = kernelRef.current;
+        const scene = live.current.scene;
+        if (!k || !scene) return [];
+        const seen = new Set<string>();
+        const out: { sketch: number; region: number; rings: V3[][]; normal: V3 | null; origin: V3 | null }[] = [];
+        for (const p of scene.mesh.parts) {
+          if (p.kind !== "region" || seen.has(`${p.owner}:${p.index}`)) continue;
+          seen.add(`${p.owner}:${p.index}`);
+          const info = scene.state.sketches.find((s) => s.id === p.owner);
+          out.push({ sketch: p.owner, region: p.index, rings: await k.outline("region", p.owner, p.index), normal: info?.normal ?? null, origin: info?.origin ?? null });
+        }
+        return out;
+      },
+    };
   }, []);
 
   // ---- cut list (lane 7) ------------------------------------------------------------------

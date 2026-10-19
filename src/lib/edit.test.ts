@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MeshPart } from "../kernel/types";
+import type { MeshPart, V3 } from "../kernel/types";
 import {
   GROUND,
   frameOfPart,
@@ -74,6 +74,13 @@ describe("tool ops", () => {
     const imp = rectangleOp({ frame: frameOfPart(top), point: [0.1, 0.1, 0.3], face: { object: 1, face: 1 } }, [0.2, 0.2]);
     expect(nextTarget(imp, { kind: "imprinted", face: 6 }, null)).toEqual({ kind: "face", object: 1, face: 6 });
     expect(nextTarget({ op: "push_pull", object: 1, face: 6, distance: 1 }, { kind: "face_moved" }, null)).toEqual({ kind: "face", object: 1, face: 6 });
+    // Lane 22: a region moved in its plane stays the target; lifted, its new self is.
+    const was = { kind: "region" as const, sketch: 1, region: 4 };
+    const id = { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as [V3, V3, V3], translation: [0, 0, 1] as V3 };
+    const lift = { op: "transform_sketch" as const, sketch: 1, regions: [4], xform: id };
+    expect(nextTarget(lift, { kind: "sketch_moved", sketch: 1, regions: [[1, 4]] }, was)).toEqual(was);
+    expect(nextTarget(lift, { kind: "sketch_moved", sketch: 3, regions: [[3, 1]] }, was)).toEqual({ kind: "region", sketch: 3, region: 1 });
+    expect(nextTarget({ ...lift, regions: [5] }, { kind: "sketch_moved", sketch: 3, regions: [[3, 1]] }, was)).toEqual(was);
   });
 
   it("parts and targets match", () => {

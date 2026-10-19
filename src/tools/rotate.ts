@@ -9,13 +9,20 @@
 // Ctrl copies; after a copy x3 makes three copies at one, two and three times the angle,
 // and /4 divides the angle into four. With faces, edges or points of one solid selected,
 // Rotate turns that part of the solid (faces that stay flat follow; a bend is refused).
+//
+// Sketch geometry (lane 22): circles, rectangles, polygons, arcs and lines not yet pushed
+// into a solid turn the same way. The protractor lies on their sketch's plane unless an
+// arrow key locks it, so a turn keeps them in it; a whole shape may turn about any other
+// axis (it goes onto the plane it lands on), part of one is turned and then projected back
+// into its plane. Ctrl copies, x3 and /4 make arrays.
 import type { EditResult } from "../kernel/client";
-import type { KernelOp, V3 } from "../kernel/types";
+import type { Entity, KernelOp, V3 } from "../kernel/types";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, facesToOutline, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, subjectEdges, subjectOf, type Subject } from "./xform";
+import { describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { scopeEntity } from "../lib/scope";
 
 const DEG = Math.PI / 180;
 /** The protractor's ticks, and how near (in degrees) a cursor angle must be to snap to one. */
@@ -53,8 +60,13 @@ function axisWords(n: V3): string {
 /** The op for turning `subject` by `angle` about the axis through `c` along `n`. */
 export function rotateOp(subject: Subject, c: V3, n: V3, angle: number, copy: boolean, count = 1): KernelOp {
   const xform = rotation(c, n, angle);
-  if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold: false };
+  if (subject.kind === "geometry") return geometryOp(subject, xform, false);
   return objectsOp(subject, xform, copy, count);
+}
+
+/** True when only sketch geometry turns (its protractor then lies on the sketch's plane). */
+function sketchOnly(s: Subject): boolean {
+  return s.kind === "objects" && !s.objects.length && !s.nodes?.length && !s.sections?.length && !!s.sketches?.length;
 }
 
 interface Gesture {
@@ -68,6 +80,10 @@ interface Gesture {
   /** Where the cursor is on the protractor plane. */
   cursor: V3 | null;
   edges: [V3, V3][];
+  /** Sketch geometry's preview (lane 22). */
+  sk: SketchPreview[];
+  /** The selection the turn started from (sketch geometry's follows it). */
+  sel: Entity[];
 }
 
 interface LastTurn {
@@ -77,6 +93,8 @@ interface LastTurn {
   angle: number;
   copy: boolean;
   count: number;
+  sel: Entity[];
+  sk: SketchPreview[];
 }
 
 export class RotateTool extends Tool {
@@ -196,13 +214,15 @@ export class RotateTool extends Tool {
     const g = this.g;
     if (!g) {
       const sel = h.selection();
-      const outlines = new Map<string, V3[][]>();
-      for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-      const subject = subjectOf(sel, e.picked?.entity ?? null, outlines, h.state());
+      const picked = e.picked?.entity ?? null;
+      const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(picked, h.state()));
+      const subject = subjectOf(sel, picked, outlines, h.state());
       if (typeof subject === "string") return void h.status(subject, true);
-      const normal = unit(this.normalFor(e.snap));
+      // Sketch geometry turns on its own plane unless an arrow key or Shift chose another.
+      const own = sketchOnly(subject) && !this.axisLock && !this.heldNormal ? subject.sketches?.[0]?.normal : undefined;
+      const normal = unit(own ?? this.normalFor(e.snap));
       this.copy = this.copy || e.ctrl;
-      this.g = { subject, centre: e.snap.point, normal, ref: null, angle: 0, cursor: null, edges: subjectEdges(subject, h.mesh()) };
+      this.g = { subject, centre: e.snap.point, normal, ref: null, angle: 0, cursor: null, edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), sel };
       h.status(`Turning ${describeSubject(subject)} about ${axisWords(normal)}: click where the angle starts.`);
       h.changed();
       return;
@@ -251,7 +271,7 @@ export class RotateTool extends Tool {
 
   private async redo(last: LastTurn, angle: number, count: number): Promise<void> {
     if (!(await this.host.apply({ op: "undo" }))) return;
-    await this.apply(last.subject, last.centre, last.normal, angle, last.copy, count);
+    await this.apply(last.subject, last.centre, last.normal, angle, last.copy, count, last.sel, last.sk);
   }
 
   private commit(angle: number, ctrl: boolean): void {
@@ -260,22 +280,26 @@ export class RotateTool extends Tool {
     this.reset();
     this.host.changed();
     if (!g || Math.abs(angle) < 1e-9) return;
-    void this.apply(g.subject, g.centre, g.normal, angle, copy, 1);
+    void this.apply(g.subject, g.centre, g.normal, angle, copy, 1, g.sel, g.sk);
   }
 
-  private async apply(subject: Subject, centre: V3, normal: V3, angle: number, copy: boolean, count: number): Promise<void> {
+  private async apply(subject: Subject, centre: V3, normal: V3, angle: number, copy: boolean, count: number, sel: Entity[] = [], sk: SketchPreview[] = []): Promise<void> {
     const h = this.host;
     const op = rotateOp(subject, centre, normal, angle, copy, count);
+    // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
+    const what = describeSubject(subject);
     const how = `${fmtDeg(angle)} about ${axisWords(normal)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;
-      if (o.kind === "copied" && count > 1) return `Array: ${count} turned copies of ${describeSubject(subject)}, ${fmtDeg(angle)} apart. Type another count, or an angle.`;
-      if (o.kind === "copied") return `Copied ${describeSubject(subject)} turned ${how}. Type x3 for more copies, or /4 to divide the angle.`;
-      return `Turned ${describeSubject(subject)} ${how}.`;
+      if (isCopied(o) && count > 1) return `Array: ${count} turned copies of ${what}, ${fmtDeg(angle)} apart. Type another count, or an angle.`;
+      if (isCopied(o)) return `Copied ${what} turned ${how}. Type x3 for more copies, or /4 to divide the angle.`;
+      return `Turned ${what} ${how}.`;
     });
     if (r) {
-      this.last = { subject, centre, normal, angle, copy, count };
+      this.last = { subject, centre, normal, angle, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
+      // Selected sketch geometry stays selected where it went (lane 22).
+      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle), r.outcome));
     }
   }
 
@@ -310,7 +334,7 @@ export class RotateTool extends Tool {
         overlay.push({ kind: "strip" as const, points: arc, color: "--sel", width: 2 });
         const end = add(centre, mul(rotate(g.ref, g.normal, g.angle), r));
         overlay.push({ kind: "segments" as const, points: [centre, end], color: "--sel", width: 1.75, dashed: true });
-        overlay.push({ kind: "segments" as const, points: previewSegments(g.subject, g.edges, rotation(centre, g.normal, g.angle)), color: this.copy ? "--ok" : "--sel", width: 1.5 });
+        overlay.push({ kind: "segments" as const, points: [...previewSegments(g.subject, g.edges, rotation(centre, g.normal, g.angle)), ...sketchSegments(g.sk, rotation(centre, g.normal, g.angle), this.copy)], color: this.copy ? "--ok" : "--sel", width: 1.5 });
         labels.push({ at: end, text: `${fmtDeg(g.angle)}${this.copy ? " +" : ""}`, className: "live" });
       }
     } else if (g?.cursor) {

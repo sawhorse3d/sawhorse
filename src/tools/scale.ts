@@ -11,13 +11,18 @@
 // positive volume, flat faces and a closed shell, or the scale is refused, typed. With
 // faces, edges or points of one solid selected, Scale scales that part (a tapered leg is
 // its bottom face scaled about its centre).
+//
+// Sketch geometry (lane 22) scales too: a region, its edges or points, selected or under
+// the cursor. A flat shape's box is flat, so its grips sit in its plane; part of a shape
+// stays in its plane (the scale is projected into it).
 import type { EditResult } from "../kernel/client";
-import type { KernelOp, V3 } from "../kernel/types";
+import type { Entity, KernelOp, V3 } from "../kernel/types";
 import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, describeSubject, facesToOutline, objectsOp, previewSegments, scaling, subjectEdges, subjectOf, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { scopeEntity } from "../lib/scope";
 
 /** How close (px) the cursor must be to a grip to take it. */
 export const GRIP_PX = 12;
@@ -96,7 +101,7 @@ export function parseScale(text: string, units: Parameters<typeof parseLength>[1
 /** The op for scaling `subject` by `f` about `c`. */
 export function scaleOp(subject: Subject, c: V3, f: V3): KernelOp {
   const xform = scaling(c, f);
-  if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold: false };
+  if (subject.kind === "geometry") return geometryOp(subject, xform, false);
   return objectsOp(subject, xform, false);
 }
 
@@ -105,6 +110,9 @@ interface Target {
   lo: V3;
   hi: V3;
   edges: [V3, V3][];
+  /** Sketch geometry's preview, and the selection it came from (lane 22). */
+  sk: SketchPreview[];
+  sel: Entity[];
 }
 
 interface Gesture extends Target {
@@ -176,23 +184,24 @@ export class ScaleTool extends Tool {
   private async refreshTarget(picked: ToolEvent["picked"]): Promise<void> {
     const h = this.host;
     const sel = h.selection();
-    const outlines = new Map<string, V3[][]>();
-    for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-    const subject = subjectOf(sel, picked?.entity ?? null, outlines, h.state());
+    const ent = picked?.entity ?? null;
+    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(ent, h.state()));
+    const subject = subjectOf(sel, ent, outlines, h.state());
     if (typeof subject === "string") return;
     if (this.target && sel.length === 0 && JSON.stringify(this.target.subject) === JSON.stringify(subject)) return;
     const b = this.bounds(subject);
     if (!b) return;
-    this.target = { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()) };
+    this.target = { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), sel };
     h.changed();
   }
 
   private bounds(s: Subject): [V3, V3] | null {
-    if (s.kind === "geometry") return boundsOf(s.points);
+    const sketch = (s.sketches ?? []).flatMap((p) => p.moving);
+    if (s.kind === "geometry") return boundsOf([...s.points, ...sketch]);
     const solids = this.host.state()?.solids ?? [];
     const covered = coveredSolids(s);
     const pts = solids.filter((x) => covered.includes(x.id)).flatMap((x) => [x.min, x.max]);
-    return boundsOf(pts);
+    return boundsOf([...pts, ...sketch]);
   }
 
   private nearestGrip(x: number, y: number): Grip | null {
@@ -348,7 +357,9 @@ export class ScaleTool extends Tool {
     if (f.some((x) => Math.abs(x) < 1e-9)) return void h.status("A scale of zero would flatten it.", true);
     if (again && !(await h.apply({ op: "undo" }))) return;
     const c = fixedPoint(grip, t.lo, t.hi, aboutCentre);
-    const r = await h.apply(scaleOp(t.subject, c, f), (_res: EditResult) => `Scaled ${describeSubject(t.subject)} ${factorWords(f)} about ${aboutCentre ? "its centre" : "the opposite grip"}.`);
+    // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
+    const what = describeSubject(t.subject);
+    const r = await h.apply(scaleOp(t.subject, c, f), (_res: EditResult) => `Scaled ${what} ${factorWords(f)} about ${aboutCentre ? "its centre" : "the opposite grip"}.`);
     if (r) {
       this.last = { target: t, grip, f, aboutCentre };
       // The box shows what was applied (the largest change), not the cursor's last reading.
@@ -356,9 +367,19 @@ export class ScaleTool extends Tool {
       h.showValue(String(Math.round(shown * 10000) / 10000));
       // The grips move to the new bounds of the same subject.
       const x = scaling(c, f);
+      if (t.subject.sketches?.length) {
+        // Sketch geometry: the selection follows it and the grips come back around it.
+        if (t.sel.length) {
+          h.setSelection(movedSelection(t.sel, t.subject, t.sk, x, r.outcome));
+          this.target = null;
+          await this.refreshTarget(null);
+        } else this.target = null;
+        h.changed();
+        return;
+      }
       const subject: Subject = t.subject.kind === "geometry" ? { ...t.subject, points: t.subject.points.map((p) => applyX(x, p)) } : t.subject;
       const b = this.bounds(subject);
-      this.target = b ? { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()) } : null;
+      this.target = b ? { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()), sk: [], sel: t.sel } : null;
       h.changed();
     }
   }
@@ -390,7 +411,7 @@ export class ScaleTool extends Tool {
     if (g) {
       const c = fixedPoint(g.grip, g.lo, g.hi, this.aboutCentre);
       const x = scaling(c, g.f);
-      overlay.push({ kind: "segments" as const, points: previewSegments(g.subject, g.edges, x), color: "--sel", width: 1.5 });
+      overlay.push({ kind: "segments" as const, points: [...previewSegments(g.subject, g.edges, x), ...sketchSegments(g.sk, x)], color: "--sel", width: 1.5 });
       labels.push({ at: g.grip.at, text: factorWords(g.f), className: "live" });
       labels.push({ at: c, text: "", className: "grip fixed" });
     }

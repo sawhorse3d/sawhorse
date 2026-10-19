@@ -14,6 +14,13 @@
 // With faces, edges or points of one solid selected, Move moves that part of the solid:
 // faces that stay flat follow, and a face that would bend out of its plane is refused,
 // typed. Alt toggles autofold (off by default): bent faces then fold along new edges.
+//
+// Sketch geometry (lane 22): a circle, rectangle, polygon, arc or line not yet pushed into
+// a solid moves the same way, selected or clicked (a region, an edge, a point). A point or
+// an edge of a shape moves within the shape's plane and the edges beside it follow; a
+// whole shape moves anywhere (lifted off its plane, it goes onto the plane it lands on).
+// What it lands on welds and splits as drawing there would. Ctrl copies it, and x3 / /4
+// make arrays of it, as for solids.
 import type { EditResult } from "../kernel/client";
 import type { Entity, KernelOp, V3, Xform } from "../kernel/types";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
@@ -22,13 +29,15 @@ import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
 import { scopeEntity } from "../lib/scope";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, facesToOutline, objectsOp, previewSegments, subjectEdges, subjectOf, translation, type Subject } from "./xform";
+import { describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
   from: V3;
   to: V3 | null;
   edges: [V3, V3][];
+  /** Sketch geometry's preview (lane 22). */
+  sk: SketchPreview[];
   dragging: boolean;
 }
 
@@ -39,6 +48,10 @@ interface LastMove {
   copy: boolean;
   /** Array count when the last edit was an array (else 1). */
   count: number;
+  /** The selection before the move and the sketch previews (lane 22): what a typed
+   * distance moves again from, and how the selection follows sketch geometry. */
+  sel: Entity[];
+  sk: SketchPreview[];
 }
 
 /** Under 0.01 mm is not a move. */
@@ -47,7 +60,7 @@ const MIN_MOVE = 1e-5;
 /** The ops for a move of `subject` by `delta`, as a copy or an array of `count` copies. */
 export function moveOp(subject: Subject, delta: V3, copy: boolean, count = 1, autofold = false): KernelOp {
   const xform: Xform = translation(delta);
-  if (subject.kind === "geometry") return { op: "transform_geometry", object: subject.object, points: subject.points, xform, autofold };
+  if (subject.kind === "geometry") return geometryOp(subject, xform, autofold);
   return objectsOp(subject, xform, copy, count);
 }
 
@@ -62,6 +75,8 @@ export class MoveTool extends Tool {
   private autofold = false;
   /** The press that started the gesture (its click does not commit). */
   private fresh = false;
+  /** The selection the gesture started from (lane 22: sketch geometry's follows it). */
+  private sel: Entity[] = [];
   last: LastMove | null = null;
 
   valueLabel(): string {
@@ -87,7 +102,7 @@ export class MoveTool extends Tool {
     const sel = this.host.selection();
     return sel.length
       ? "Click a start point, move, click the end (or drag). Ctrl copies; type a distance, then x3 or /4 after a copy."
-      : "Click a solid to pick it up (or select first), move, click again. Ctrl copies.";
+      : "Click a solid or a sketch shape to pick it up (or select first), move, click again. Ctrl copies.";
   }
 
   inferContext(): InferContext {
@@ -184,16 +199,17 @@ export class MoveTool extends Tool {
     const h = this.host;
     if (!e.snap) return;
     const sel = h.selection();
-    const outlines = new Map<string, V3[][]>();
-    for (const f of facesToOutline(sel)) outlines.set(`${f.object}:${f.face}`, await h.outline({ kind: "face", object: f.object, face: f.face }));
-    const subject = subjectOf(sel, e.picked?.entity ?? null, outlines, h.state());
+    const picked = e.picked?.entity ?? null;
+    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(picked, h.state()));
+    const subject = subjectOf(sel, picked, outlines, h.state());
     if (typeof subject === "string") {
       this.fresh = false;
       h.status(subject, true);
       return;
     }
     this.copy = this.copy || e.ctrl;
-    this.g = { subject, from: e.snap.point, to: null, edges: subjectEdges(subject, h.mesh()), dragging: false };
+    this.g = { subject, from: e.snap.point, to: null, edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), dragging: false };
+    this.sel = sel;
     h.hover(null);
     h.status(this.gestureStatus(subject));
     h.changed();
@@ -250,7 +266,7 @@ export class MoveTool extends Tool {
     const h = this.host;
     const undone = await h.apply({ op: "undo" });
     if (!undone) return;
-    await this.apply(last.subject, delta, last.copy, count);
+    await this.apply(last.subject, delta, last.copy, count, last.sel, last.sk);
   }
 
   private commit(delta: V3, ctrl: boolean): void {
@@ -259,23 +275,27 @@ export class MoveTool extends Tool {
     this.reset();
     this.host.changed();
     if (!g || len(delta) < MIN_MOVE) return;
-    void this.apply(g.subject, delta, copy, 1);
+    void this.apply(g.subject, delta, copy, 1, this.sel, g.sk);
   }
 
-  private async apply(subject: Subject, delta: V3, copy: boolean, count: number): Promise<void> {
+  private async apply(subject: Subject, delta: V3, copy: boolean, count: number, sel: Entity[] = [], sk: SketchPreview[] = []): Promise<void> {
     const h = this.host;
     const op = moveOp(subject, delta, copy, count, this.autofold);
+    // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
+    const what = describeSubject(subject);
     const how = `${h.fmt(len(delta))} ${h.unitLabel()} along ${dirName(delta)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;
-      if (o.kind === "copied" && count > 1) return `Array: ${count} copies of ${describeSubject(subject)}, ${how} apart. Type another count, or a distance.`;
-      if (o.kind === "copied") return `Copied ${describeSubject(subject)} ${how}. Type x3 for more copies, or /4 to divide the distance.`;
-      if (o.kind === "geometry_moved") return `Moved ${describeSubject(subject)} ${how}${o.faces.length ? ` (${o.faces.length} faces changed)` : ""}.`;
-      return `Moved ${describeSubject(subject)} ${how}.`;
+      if (isCopied(o) && count > 1) return `Array: ${count} copies of ${what}, ${how} apart. Type another count, or a distance.`;
+      if (isCopied(o)) return `Copied ${what} ${how}. Type x3 for more copies, or /4 to divide the distance.`;
+      if (o.kind === "geometry_moved") return `Moved ${what} ${how}${o.faces.length ? ` (${o.faces.length} faces changed)` : ""}.`;
+      return `Moved ${what} ${how}.`;
     });
     if (r) {
-      this.last = { subject: copy && subject.kind === "objects" ? subject : subject, delta, copy: copy && subject.kind === "objects", count };
+      this.last = { subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
       h.showValue(h.fmt(len(delta)));
+      // Selected sketch geometry stays selected where it went (lane 22).
+      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, translation(delta), r.outcome));
     }
   }
 
@@ -289,7 +309,7 @@ export class MoveTool extends Tool {
       const d = sub(g.to, g.from);
       const k = this.snap?.kind;
       const color = k === "axis-x" || k === "axis-y" || k === "axis-z" || k === "parallel" || k === "perpendicular" ? INFERENCE_STYLES[k].token : "--sel";
-      overlay.push({ kind: "segments" as const, points: previewSegments(g.subject, g.edges, translation(d)), color: this.copy ? "--ok" : "--sel", width: 1.5 });
+      overlay.push({ kind: "segments" as const, points: [...previewSegments(g.subject, g.edges, translation(d)), ...sketchSegments(g.sk, translation(d), this.copy)], color: this.copy ? "--ok" : "--sel", width: 1.5 });
       overlay.push({ kind: "segments" as const, points: [g.from, g.to], color, width: 1.75, dashed: true });
       label.push({ at: g.to, text: `${this.host.fmt(len(d))}${this.copy ? " +" : ""}`, className: "live" });
     }
@@ -297,10 +317,11 @@ export class MoveTool extends Tool {
   }
 }
 
-/** The whole solid (or group or component) an entity belongs to, as a hover target. */
+/** The whole solid (or group or component) an entity belongs to, as a hover target; sketch
+ * geometry (a region, a sketch edge or point) is its own. */
 function objectEntity(e: Entity | null): Entity | null {
   if (!e) return null;
-  if (e.kind === "node") return e;
+  if (e.kind === "node" || isSketchEntity(e)) return e;
   if (e.kind === "face") return { kind: "object", object: e.object };
   if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") return { kind: "object", object: e.owner.id };
   return null;

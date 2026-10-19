@@ -33,6 +33,8 @@ export type KernelOp =
   | { op: "copy"; objects: number[]; xform: Xform; nodes?: number[] }
   | { op: "array"; objects: number[]; xform: Xform; count: number; nodes?: number[] }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
+  /** Lane 22: move, turn or scale sketch points, edges (world ends) and whole regions of one sketch; `copy` (with `count`) copies the edges and regions' rings instead. */
+  | { op: "transform_sketch"; sketch: number; points?: V3[]; edges?: [V3, V3][]; regions?: number[]; xform: Xform; copy?: boolean; count?: number }
   | { op: "offset"; source: OffsetSource; distance: number }
   | { op: "follow_me"; profile: Profile; path: V3[]; closed: boolean }
   | { op: "delete_object"; object: number }
@@ -331,6 +333,9 @@ export type OpOutcome =
   | { kind: "transformed"; objects: number[]; nodes?: number[] }
   | { kind: "copied"; objects: number[]; nodes?: number[] }
   | { kind: "geometry_moved"; faces: number[] }
+  /** Lane 22: sketch geometry moved; the sketch it is in now and the (sketch, region) pairs its edges bound. */
+  | { kind: "sketch_moved"; sketch: number; regions: [number, number][] }
+  | { kind: "sketch_copied"; regions: [number, number][] }
   | { kind: "severed"; objects: number[] }
   | { kind: "swept"; objects: number[]; cut: boolean }
   | { kind: "imported"; objects: number[]; meshes: number[]; groups: number[]; sketches: number[]; notes: string[] }

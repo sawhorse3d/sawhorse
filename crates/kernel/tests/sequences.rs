@@ -17,7 +17,9 @@
 //! with ordinary intents and with garbage on purpose: placeholders to later ops, bad paths,
 //! forbidden ops), resolved by `refbatch` and applied as one op; a refused batch must leave
 //! the document, its log and its undo depth untouched, with undo / redo interleaved
-//! anywhere. After every accepted op every face is sampled and its texture coordinates
+//! anywhere; and (lane 22) sketch geometry moved, turned, scaled, lifted off its plane and
+//! copied (points, edges, regions and whole sketches, landing on vertices and edges, turns
+//! by 0, 180, 360 and tiny angles, off-plane moves, arrays). After every accepted op every face is sampled and its texture coordinates
 //! checked (`testing::check_looks`), the cut list is worked out and checked against a
 //! brute-force count of the world (`testing::check_cut_list`), and the parts are nested
 //! with both algorithms and every layout invariant checked
@@ -188,6 +190,21 @@ enum Fuzz {
         xform: XformPick,
         autofold: bool,
     },
+    /// Lane 22: move, turn, scale or copy sketch geometry: points, edges and regions of a
+    /// sketch picked by index (`all`: every edge of it), by a map that may land a vertex on
+    /// another vertex or on an edge, turn about the sketch's normal or an axis in its plane
+    /// (by 0, 180, 360 and tiny angles too), lift it off the plane, or be any transform
+    /// pick; `copy` makes `count` copies.
+    SketchMove {
+        sketch: u8,
+        points: Vec<u8>,
+        edges: Vec<u8>,
+        regions: Vec<u8>,
+        all: bool,
+        map: SketchMap,
+        copy: bool,
+        count: u8,
+    },
     /// Offset a face (kind 0), a sketch region (1) or an edge chain of a face (2).
     Offset {
         kind: u8,
@@ -325,6 +342,23 @@ enum PluginStep {
     Garbage(u8),
 }
 
+/// A sketch map, as an intent (lane 22), resolved against the sketch it moves.
+#[derive(Debug, Clone)]
+enum SketchMap {
+    /// Vertex i onto vertex j.
+    Land(u8, u8),
+    /// Vertex i onto the point at `t` along edge e, nudged across it by `n`.
+    OnEdge(u8, u8, f64, f64),
+    /// About the sketch's normal through vertex i, degrees.
+    Spin(u8, f64),
+    /// About the plane's u (0) or v (1) axis, or a skew axis (2), through vertex i, degrees.
+    Tilt(u8, u8, f64),
+    /// Along the plane (u, v) and off it (n).
+    Lift(f64, f64, f64),
+    /// Any transform pick (garbage included).
+    Any(XformPick),
+}
+
 /// A transform, as an intent.
 #[derive(Debug, Clone)]
 enum XformPick {
@@ -381,6 +415,56 @@ fn xform_pick() -> impl Strategy<Value = XformPick> {
         2 => ((factor(), factor(), factor()), v()).prop_map(|((x, y, z), o)| XformPick::Scale([x, y, z], o)),
         1 => any::<u8>().prop_map(XformPick::Bad),
     ]
+}
+
+/// Lane-22 intents: sketch geometry moved, turned, scaled, lifted and copied.
+fn lane22_op() -> impl Strategy<Value = Fuzz> {
+    let angle = || {
+        prop_oneof![
+            2 => Just(0.0),
+            3 => Just(180.0),
+            2 => Just(360.0),
+            3 => Just(90.0),
+            2 => Just(45.0),
+            2 => Just(1e-7),
+            1 => Just(1e-4),
+            3 => -360.0..360.0f64,
+        ]
+    };
+    let map = prop_oneof![
+        4 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| SketchMap::Land(i, j)),
+        3 => (any::<u8>(), any::<u8>(), frac(), prop_oneof![3 => Just(0.0), 1 => Just(5e-6), 1 => Just(1.5e-5)])
+            .prop_map(|(i, e, t, n)| SketchMap::OnEdge(i, e, t, n)),
+        4 => (any::<u8>(), angle()).prop_map(|(i, a)| SketchMap::Spin(i, a)),
+        3 => (0u8..3, any::<u8>(), angle()).prop_map(|(k, i, a)| SketchMap::Tilt(k, i, a)),
+        3 => (grid(), grid(), prop_oneof![Just(0.0), Just(0.25), Just(-0.5), Just(1e-7), Just(3e-6), grid()])
+            .prop_map(|(u, v, n)| SketchMap::Lift(u, v, n)),
+        2 => xform_pick().prop_map(SketchMap::Any),
+    ];
+    let picks = || prop::collection::vec(any::<u8>(), 0..3);
+    (
+        any::<u8>(),
+        picks(),
+        picks(),
+        picks(),
+        prop::bool::weighted(0.2),
+        map,
+        prop::bool::weighted(0.25),
+        prop_oneof![12 => Just(1u8), 4 => 2u8..5, 1 => Just(0u8)],
+    )
+        .prop_map(
+            |(sketch, points, edges, regions, all, map, copy, count)| Fuzz::SketchMove {
+                sketch,
+                points,
+                edges,
+                regions,
+                all,
+                map,
+                copy,
+                // Arrays follow copies; a move with a count, or a count of 0, now and then.
+                count: if copy || sketch % 32 == 31 { count } else { 1 },
+            },
+        )
 }
 
 /// Lane-4 intents.
@@ -601,6 +685,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         1 => any::<u8>().prop_map(Fuzz::EraseGuide),
         1 => any::<u8>().prop_map(Fuzz::EraseDimension),
         9 => lane4_op(),
+        10 => lane22_op(),
         8 => lane5_op(),
         6 => lane10_op(),
         3 => prop::collection::vec(plugin_step(), 1..6).prop_map(Fuzz::PluginBatch),
@@ -2101,6 +2186,112 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 points,
                 xform: xform_of(xform),
                 autofold: *autofold,
+            }
+        }
+        Fuzz::SketchMove {
+            sketch: k,
+            points,
+            edges,
+            regions,
+            all,
+            map,
+            copy,
+            count,
+        } => {
+            // Mostly a sketch of the open context with something in it.
+            let drawn: Vec<u64> = ctx_sketches
+                .iter()
+                .copied()
+                .filter(|&id| m.sketch(id).is_some_and(|sk| sk.edge_count() > 0))
+                .collect();
+            let sid = match pick(&drawn, *k) {
+                Some(id) if k % 8 != 0 => id,
+                _ => sketch(*k),
+            };
+            let (plane, verts, segs, ids) = match m.sketch(sid) {
+                Some(sk) => {
+                    let pl = *sk.plane();
+                    let at = |v| pl.to_world(sk.vertex(v).unwrap_or_default());
+                    (
+                        pl,
+                        sk.vertices()
+                            .map(|(_, p)| pl.to_world(p))
+                            .collect::<Vec<_>>(),
+                        sk.edges()
+                            .map(|(_, [a, b])| [at(a), at(b)])
+                            .collect::<Vec<_>>(),
+                        sk.regions()
+                            .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+                            .collect::<Vec<_>>(),
+                    )
+                }
+                None => (
+                    sawhorse_kernel::plane::Plane::GROUND,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            };
+            let vert = |i: u8| pick(&verts, i).unwrap_or(DVec3::ZERO);
+            let n = plane.normal;
+            let xform = match map {
+                SketchMap::Land(i, j) => Xform::translation(vert(*j) - vert(*i)),
+                SketchMap::OnEdge(i, e, t, nudge) => match pick(&segs, *e) {
+                    Some([a, b]) => {
+                        let across = n.cross(b - a).normalize_or_zero();
+                        Xform::translation(a.lerp(b, *t) + across * *nudge - vert(*i))
+                    }
+                    None => Xform::IDENTITY,
+                },
+                SketchMap::Spin(i, deg) => Xform::rotation(vert(*i), n, deg.to_radians()),
+                SketchMap::Tilt(axis, i, deg) => {
+                    let a = match axis % 3 {
+                        0 => plane.u,
+                        1 => plane.v,
+                        _ => DVec3::new(0.3, -0.5, 0.8),
+                    };
+                    Xform::rotation(vert(*i), a, deg.to_radians())
+                }
+                SketchMap::Lift(u, v, dn) => {
+                    Xform::translation(plane.u * *u + plane.v * *v + n * *dn)
+                }
+                SketchMap::Any(x) => xform_of(x),
+            };
+            // Nothing picked: the regions (or every edge), except now and then.
+            let nothing = points.is_empty() && edges.is_empty() && regions.is_empty();
+            let (points, edges, regions) = if *all || (nothing && ids.is_empty() && k % 16 != 15) {
+                (
+                    Vec::new(),
+                    segs.iter()
+                        .map(|[a, b]| [a.to_array(), b.to_array()])
+                        .collect(),
+                    Vec::new(),
+                )
+            } else {
+                (
+                    points
+                        .iter()
+                        .filter_map(|&i| pick(&verts, i).map(|p| p.to_array()))
+                        .collect(),
+                    edges
+                        .iter()
+                        .filter_map(|&i| pick(&segs, i).map(|[a, b]| [a.to_array(), b.to_array()]))
+                        .collect(),
+                    if nothing && k % 16 != 15 {
+                        ids.clone()
+                    } else {
+                        regions.iter().filter_map(|&i| pick(&ids, i)).collect()
+                    },
+                )
+            };
+            Op::TransformSketch {
+                sketch: sid,
+                points,
+                edges,
+                regions,
+                xform,
+                copy: *copy,
+                count: u32::from(*count),
             }
         }
         Fuzz::Offset {

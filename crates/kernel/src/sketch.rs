@@ -1172,6 +1172,182 @@ impl Sketch {
         self.vertices.remove(from);
     }
 
+    // ---- moving geometry (lane 22, ADR-0012) ---------------------------------------------
+
+    /// The vertex at `p` (sketch frame): the nearest one within `POINT_MERGE`, ties to the
+    /// smaller id.
+    pub fn vertex_at(&self, p: DVec2) -> Option<SVertexId> {
+        self.vertices
+            .iter()
+            .map(|(k, q)| (q.distance(p), k))
+            .filter(|(d, _)| *d <= POINT_MERGE)
+            .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
+            .map(|(_, k)| k)
+    }
+
+    /// Whether an edge joins `a` and `b`.
+    pub fn has_edge(&self, a: SVertexId, b: SVertexId) -> bool {
+        self.edge_between(a, b).is_some()
+    }
+
+    /// The vertices that move with region `id` (its rings').
+    pub fn region_vertices(&self, id: RegionId) -> Vec<SVertexId> {
+        self.regions
+            .get(id)
+            .map(|r| {
+                std::iter::once(&r.outer)
+                    .chain(r.holes.iter())
+                    .flatten()
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Move vertices within the sketch's plane: `to` holds each moving vertex's new
+    /// position (sketch frame). Every edge touching a moving vertex is taken out and drawn
+    /// again between its ends' new positions with the insertion rules, so it welds onto a
+    /// coincident edge, splits where it crosses or touches another, and goes when it has
+    /// shrunk to the merge distance (its ends then merge); the neighbours' edges follow the
+    /// vertices they share. A vertex keeps its id while it lives, so a region whose rings
+    /// only changed shape keeps its id; `anchor` maps the anchor of a region whose every
+    /// vertex moved (a region moved whole keeps its id through a split). Returns the
+    /// sketch and the live regions bounded by any redrawn edge, sorted.
+    pub(crate) fn with_moved_vertices(
+        &self,
+        to: &BTreeMap<SVertexId, DVec2>,
+        anchor: &dyn Fn(DVec2) -> DVec2,
+    ) -> Result<(Sketch, Vec<RegionId>), SketchError> {
+        for p in to.values() {
+            if !(p.is_finite() && in_bounds(p.x) && in_bounds(p.y)) {
+                return Err(SketchError::OutOfBounds);
+            }
+        }
+        let mut next = self.clone();
+        let taken: Vec<(SEdgeId, [SVertexId; 2])> = next
+            .edges
+            .iter()
+            .filter(|(_, [a, b])| to.contains_key(a) || to.contains_key(b))
+            .map(|(e, ab)| (e, *ab))
+            .collect();
+        for (e, _) in &taken {
+            next.edges.remove(*e);
+        }
+        for (&v, &p) in to {
+            if let Some(q) = next.vertices.get_mut(v) {
+                *q = p;
+            }
+        }
+        for r in next.regions.values_mut() {
+            let whole = std::iter::once(&r.outer)
+                .chain(r.holes.iter())
+                .flatten()
+                .all(|v| to.contains_key(v));
+            if whole {
+                r.anchor = anchor(r.anchor);
+            }
+        }
+        let mut made = Vec::new();
+        for (_, [a, b]) in taken {
+            let (pa, pb) = (next.vertices[a], next.vertices[b]);
+            if pa.distance(pb) <= POINT_MERGE {
+                continue; // shrunk to nothing: its ends merge in the repair
+            }
+            match next.add_segment(pa, pb) {
+                Ok(e) => made.extend(e),
+                // Both ends snapped onto one vertex: nothing left of it.
+                Err(SketchError::Degenerate) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        next.remove_isolated_vertices();
+        next.repair()?;
+        made.retain(|&(a, b)| next.edge_between(a, b).is_some());
+        next.recompute_regions();
+        next.debug_check("move");
+        let touched = next.live_regions_touching(&made);
+        Ok((next, touched))
+    }
+
+    /// Draw segments (sketch frame) as one transaction with the insertion rules, skipping
+    /// any no longer than the merge distance (a copy can shrink an edge that way when it is
+    /// projected into a plane). Returns the sketch and the live regions bounded by any new
+    /// edge, sorted; `None` when nothing was drawn (every segment was too short, or each one
+    /// lay exactly on an edge already there).
+    pub(crate) fn with_segments(
+        &self,
+        segs: &[(DVec2, DVec2)],
+    ) -> Result<Option<(Sketch, Vec<RegionId>)>, SketchError> {
+        let mut next = self.clone();
+        let mut made = Vec::new();
+        for &(a, b) in segs {
+            if !(a.is_finite() && b.is_finite())
+                || !(in_bounds(a.x) && in_bounds(a.y) && in_bounds(b.x) && in_bounds(b.y))
+            {
+                return Err(SketchError::OutOfBounds);
+            }
+            if a.distance(b) <= POINT_MERGE {
+                continue;
+            }
+            match next.add_segment(a, b) {
+                Ok(e) => made.extend(e),
+                Err(SketchError::Degenerate) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if made.is_empty() {
+            return Ok(None);
+        }
+        next.repair()?;
+        made.retain(|&(a, b)| next.edge_between(a, b).is_some());
+        next.recompute_regions();
+        next.debug_check("copy");
+        let touched = next.live_regions_touching(&made);
+        Ok(Some((next, touched)))
+    }
+
+    /// Take edges out of the sketch (geometry lifted off its plane): every edge in `carried`
+    /// goes unless it bounds a region that stays (one not in `moving`, live or consumed),
+    /// which keeps it. Junctions left joining two straight edges heal, as an erase does.
+    pub(crate) fn without_edges(
+        &self,
+        carried: &BTreeSet<(SVertexId, SVertexId)>,
+        moving: &BTreeSet<RegionId>,
+    ) -> Sketch {
+        let mut keep: BTreeSet<(SVertexId, SVertexId)> = BTreeSet::new();
+        for (id, r) in &self.regions {
+            if !moving.contains(&id) {
+                keep.extend(r.boundary_edges());
+            }
+        }
+        let mut next = self.clone();
+        let mut ends: BTreeSet<SVertexId> = BTreeSet::new();
+        for &(a, b) in carried {
+            if keep.contains(&(a.min(b), a.max(b))) {
+                continue;
+            }
+            if let Some(e) = next.edge_between(a, b) {
+                next.edges.remove(e);
+                ends.insert(a);
+                ends.insert(b);
+            }
+        }
+        next.remove_isolated_vertices();
+        for v in ends {
+            next.heal_vertex(v);
+        }
+        next.recompute_regions();
+        next.debug_check("lift");
+        next
+    }
+
+    /// Live regions bounded by any of `edges`, sorted.
+    fn live_regions_touching(&self, edges: &[(SVertexId, SVertexId)]) -> Vec<RegionId> {
+        let mut out = self.regions_touching(edges);
+        out.retain(|id| self.regions.get(*id).is_some_and(|r| !r.consumed));
+        out
+    }
+
     // ---- plain data (the .shz snapshot) -------------------------------------------------
 
     /// The sketch as plain data: vertices in slot order, edges and region rings as indices

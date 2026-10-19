@@ -97,6 +97,12 @@ Decisions this lane built to (made before it started): copies and arrays are sep
 | WASM | `crates/wasm-api` | `offset_preview`; `DocState.solids` (display number, bounds, volume per solid) |
 | Tests | `kernel/tests/{transforms,offset,follow_me}.rs`, goldens `transforms`, `offset`, `follow_me` | plus the fuzzer over every lane-4 op (50,000 sequences clean) and six new repros |
 
+### Built in lane 22 (moving sketch geometry, 2026-10-19)
+
+| Area | Where | Notes |
+|---|---|---|
+| Sketch moves | `kernel/src/sketch_move.rs`, `Sketch::with_moved_vertices` / `with_segments` / `without_edges`, `Op::TransformSketch` | Points, edges and whole regions of a sketch move, turn, scale and copy ([ADR-0012](0012-moving-sketch-geometry.md)): within the plane (and for part of a shape, projected into it) the touched edges are redrawn with the insertion rules (welds, splits, merges; never a bow-tie), vertex and region ids kept; a whole shape mapped off its plane goes into the sketch on the plane it lands on; copies and arrays draw the carried edges mapped. Outcomes `SketchMoved { sketch, regions }`, `SketchCopied { regions }`; typed refusals (`NoSuchSketchPoint`, `NoSuchSketchEdge`, `LeavesSketchPlane`, `NothingToMove`, `BadCount`) |
+
 ### Deliberate gaps (owned by later lanes)
 
 - ~~Inference and the draw tools' UI~~ (closed in lane 3, above). Strokes crossing a face's edges are `split_face` cuts (lane-2 open question 1: yes).
