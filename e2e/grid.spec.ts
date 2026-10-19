@@ -81,3 +81,70 @@ test("View > Grid hides the grid; the Styles pane agrees; saved and reopened it 
   await expect.poll(async () => (await grid(page)).enabled).toBe(false);
   await expect(vp).toHaveAttribute("data-kernel", "ready");
 });
+
+// What docs/releases/v0.1.0-alpha.3.md (Known limits) and CHANGELOG lane 21 say about scenes
+// and the grid, checked as written. A scene keeps the style it was saved with only when that
+// style is not the default; the default is stored as no style, and going to such a scene
+// leaves the style (grid included) as it is. Updating that scene while the grid shows stores
+// the default again, so it does not bring the grid back either (the alpha.3 notes first said
+// it did). View > Grid does, and so does a scene saved with any other style.
+test("scenes and the grid: a default-style scene leaves it alone; View > Grid and a styled scene bring it back", async ({ page }) => {
+  await ready(page);
+  const hint = page.locator("#hint");
+  // The hint names the scene once the kernel has gone to it; two frames later the looks it
+  // set (if any) are on the engine, so a grid that stays hidden is really staying hidden.
+  const go = async (name: string) => {
+    await page.getByRole("tab", { name, exact: true }).click();
+    await expect(hint).toContainText(name);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  };
+  const hide = async () => {
+    await viewGrid(page);
+    await expect(hint).toContainText("Grid hidden");
+  };
+  const show = async () => {
+    await viewGrid(page);
+    await expect(hint).toContainText("Grid shown");
+  };
+  const addScene = async (name: string) => {
+    await page.getByRole("button", { name: /Add a scene/ }).click();
+    await expect(page.getByRole("tab", { name, exact: true })).toBeVisible();
+  };
+  const enabled = async () => (await grid(page)).enabled;
+
+  // Saved with the default style (grid shown): going to it leaves a hidden grid hidden.
+  await addScene("Scene 1");
+  await hide();
+  await go("Scene 1");
+  expect(await enabled()).toBe(false);
+
+  // Updated while the grid shows: still the default style, so still no grid on return.
+  await show();
+  await page.getByRole("tab", { name: "Scene 1", exact: true }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Update to this view" }).click();
+  await expect(hint).toContainText("updated to this view");
+  await hide();
+  await go("Scene 1");
+  expect(await enabled()).toBe(false);
+
+  // View > Grid shows it again.
+  await show();
+  expect(await enabled()).toBe(true);
+
+  // Saved with another style (X-ray faces, grid shown): going to it brings the grid back.
+  await page.getByRole("tab", { name: "Styles" }).click();
+  await page.getByRole("radio", { name: "X-ray" }).click();
+  await addScene("Scene 2");
+  await hide();
+  await go("Scene 2");
+  await expect.poll(enabled).toBe(true);
+
+  // Saved with the grid hidden: going to it hides the grid.
+  await hide();
+  await addScene("Scene 3");
+  await show();
+  await go("Scene 3");
+  await expect.poll(enabled).toBe(false);
+  await go("Scene 2");
+  await expect.poll(enabled).toBe(true);
+});

@@ -4,7 +4,7 @@ Sawhorse's installers are not code-signed today: Windows and macOS warn before t
 
 ## Who signs, and where
 
-Sawhorse's Windows installers are to be signed by [SignPath Foundation](https://signpath.org/) once the application is approved. Signing is performed by SignPath's service on artifacts built by GitHub Actions (`.github/workflows/release.yml`) from a tagged commit of the public repository, [github.com/sawhorse3d/sawhorse](https://github.com/sawhorse3d/sawhorse). No maintainer machine is involved in building or signing: what is signed is exactly what the workflow built from that commit, and the build log is public.
+Sawhorse's Windows installers are to be signed by [SignPath Foundation](https://signpath.org/) once the application is approved. Signing is performed by SignPath's service on artifacts built by GitHub Actions (`.github/workflows/release.yml`) from a tagged commit of the public repository, [github.com/sawhorse3d/sawhorse](https://github.com/sawhorse3d/sawhorse). No maintainer machine is involved in building or signing: what is signed is exactly what the workflow built from that commit, and the build log is public. The macOS and Linux builds stay unsigned for now; their checksums are in each release's `SHA256SUMS.txt`.
 
 Every release also carries `SHA256SUMS.txt`, the SHA-256 of every file the workflow uploaded, so a download can be checked against the release whether it is signed or not.
 
