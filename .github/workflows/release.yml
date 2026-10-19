@@ -1,6 +1,8 @@
 name: Release
 
-# Desktop installers for Windows, macOS and Linux, built by tauri-action on a v* tag.
+# Desktop installers for Windows, macOS and Linux, built by tauri-action on a v* tag into
+# a draft pre-release; then SHA256SUMS.txt, the SHA-256 of every file the three builds
+# uploaded, is written, checked and uploaded to the same draft (the checksums job).
 # Unsigned until signing secrets exist: every signing variable is optional and only
 # exported when its secret is set, so this workflow needs no secrets today.
 on:
@@ -83,3 +85,38 @@ jobs:
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+
+  checksums:
+    name: SHA256SUMS.txt
+    # Every platform's build must have uploaded its files first: a failed build skips this
+    # job, and the workflow is already red.
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      # The draft release the build job made (the same expression as its tagName).
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: download every file of the draft release
+        run: |
+          mkdir -p release-files
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-files
+          ls -l release-files
+      - name: write and check SHA256SUMS.txt
+        # Fails on a missing installer kind, a file not listed exactly once, or a sum that
+        # does not check (scripts/release-checksums.sh).
+        run: bash scripts/release-checksums.sh release-files
+      - name: upload SHA256SUMS.txt to the draft release
+        run: gh release upload "$TAG" release-files/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+      - name: check what the release now holds
+        # The uploaded list must be byte-identical to the one checked above, and must name
+        # every other file of the release.
+        run: |
+          mkdir -p check
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir check
+          cmp release-files/SHA256SUMS.txt check/SHA256SUMS.txt
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -vx SHA256SUMS.txt | LC_ALL=C sort > check/assets.txt
+          cut -d' ' -f3- check/SHA256SUMS.txt | LC_ALL=C sort > check/listed.txt
+          diff -u check/assets.txt check/listed.txt
+          echo "SHA256SUMS.txt covers $(wc -l < check/listed.txt) files of $TAG"

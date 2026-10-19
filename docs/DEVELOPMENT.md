@@ -435,6 +435,22 @@ To keep a find: download the artifact, copy its JSON into `crates/kernel/tests/r
 FUZZ_CASES=6250 FUZZ_SEED=<seed> FUZZ_REPORT=1 bash scripts/cargo.sh test -p sawhorse-kernel --test sequences -- --ignored long_fuzz --nocapture
 ```
 
+## Releases (`.github/workflows/release.yml`)
+
+A `v*` tag (or a manual run, which names its draft `v<run>-dev`) runs two jobs:
+
+- `build`, one per platform (windows-latest, macos-latest, ubuntu-22.04): `tauri-action` builds the installers and uploads them to a **draft** pre-release named after the tag. The six installers (`.exe`, `.msi`, `.dmg`, `.AppImage`, `.deb`, `.rpm`) and macOS's `Sawhorse_aarch64.app.tar.gz`: seven files.
+- `checksums` (ubuntu-24.04), after all three builds: downloads every file of the draft, writes `SHA256SUMS.txt` with `scripts/release-checksums.sh`, uploads it to the same draft, downloads it back and checks that it is the same file and that it names every other file of the release. The script writes one `<sha256>  <name>` line per file (sorted, the format `sha256sum -c` reads) and fails on a missing installer kind (a platform that uploaded nothing), a name with whitespace, a list that does not name every file exactly once, or a `sha256sum --strict -c` that disagrees; any of those turns the workflow red. A re-run replaces the file (`--clobber`).
+
+To try the script without a release, on any directory of files named like the installers:
+
+```bash
+bash scripts/release-checksums.sh <dir>     # writes <dir>/SHA256SUMS.txt and checks it
+(cd <dir> && sha256sum -c SHA256SUMS.txt)   # what a downloader runs
+```
+
+Checked on 2026-10-19 on a fake release of the seven alpha.3 names (random bytes), in Git Bash and in WSL Ubuntu: every line `OK`, and the script failed as it should on a file changed after writing, a missing `.dmg`, a name with a space and an empty directory.
+
 ## The public site and the browser demo (`.github/workflows/pages.yml`, lane 14)
 
 https://sawhorse3d.com is GitHub Pages with the "workflow" build type. Every push to `main` runs `pages.yml`: it builds the kernel (`npm run wasm`), assembles the site, checks it, smoke-tests it in Chromium and deploys it. Nothing is committed to a `gh-pages` branch.
