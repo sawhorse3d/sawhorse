@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 glam.workspace = true
 earcut.workspace = true
+robust.workspace = true
 i_overlay.workspace = true
 thiserror.workspace = true
 

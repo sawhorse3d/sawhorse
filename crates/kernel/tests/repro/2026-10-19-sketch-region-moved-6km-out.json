@@ -1,0 +1,150 @@
+{
+  "name": "2026-10-19-sketch-region-moved-6km-out",
+  "error": "op 11 TransformSketch { sketch: 2, points: [], edges: [], regions: [1], xform: Xform { linear: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], translation: [4999.749984, 3750.15625, 0.0] }, copy: false, count: 1 }: view mesh: triangulation area deviates by 4.1572224964603326e-8 (limit 1e-9)",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 1
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 2,
+      "x": 0.5,
+      "y": 0.0,
+      "w": -0.25,
+      "h": -0.75
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "region",
+        "sketch": 2,
+        "region": 1
+      },
+      "distance": 5000.0
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 2,
+      "x": 1e-06,
+      "y": -0.25,
+      "w": 0.75,
+      "h": 0.5
+    },
+    {
+      "op": "redo"
+    },
+    {
+      "op": "transform_sketch",
+      "sketch": 2,
+      "regions": [
+        1
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          4999.749984,
+          3750.15625,
+          0.0
+        ]
+      }
+    }
+  ]
+}

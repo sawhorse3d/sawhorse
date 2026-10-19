@@ -395,9 +395,12 @@ pub fn cross_section(
                 ring.push(pa + (pb - pa) * (da / (da - db)));
             }
         }
+        // About the ring's first corner (lane 22): the same vector area, with rounding
+        // that scales with the triangle, not with its distance from the world origin (a
+        // solid 7 km out lost 4e-9 m2 to products of its coordinates).
         let mut va = glam::DVec3::ZERO;
-        for i in 0..ring.len() {
-            va += ring[i].cross(ring[(i + 1) % ring.len()]) * 0.5;
+        for i in 1..ring.len().saturating_sub(1) {
+            va += (ring[i] - ring[0]).cross(ring[i + 1] - ring[0]) * 0.5;
         }
         area += va.dot(normal);
     }

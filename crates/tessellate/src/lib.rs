@@ -16,7 +16,7 @@ pub mod overlay;
 use glam::DVec2;
 
 /// Largest accepted relative difference between the polygon area and the summed
-/// triangle area. earcut reports it via [`earcut::deviation`].
+/// triangle area, measured by `area_deviation` (robust triangle areas; lane 22).
 pub const MAX_AREA_DEVIATION: f64 = 1e-9;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -34,12 +34,19 @@ pub enum TessellateError {
 }
 
 /// Signed area of a ring (positive = counter-clockwise).
+///
+/// Summed about the ring's first point (lane 22): the same value, but its rounding scales
+/// with the ring's own size, not with how far it lies from the frame's origin. Summed about
+/// the origin, a 0.0044 m2 triangle 7 km out lost 1.5e-9 m2 (3e-7 of itself) to products
+/// of 5,000 m coordinates.
 pub fn signed_area(ring: &[DVec2]) -> f64 {
     let n = ring.len();
+    let Some(&o) = ring.first() else {
+        return 0.0;
+    };
     let mut a = 0.0;
-    for i in 0..n {
-        let p = ring[i];
-        let q = ring[(i + 1) % n];
+    for i in 1..n.saturating_sub(1) {
+        let (p, q) = (ring[i] - o, ring[i + 1] - o);
         a += p.x * q.y - q.x * p.y;
     }
     a * 0.5
@@ -85,7 +92,7 @@ pub fn triangulate(
     let mut out: Vec<u32> = Vec::new();
     earcut::Earcut::new().earcut(data.iter().copied(), &hole_indices, &mut out);
     let bad = |out: &[u32]| -> Option<f64> {
-        let deviation = earcut::deviation(data.iter().copied(), &hole_indices, out);
+        let deviation = area_deviation(&data, &hole_indices, out);
         (deviation.is_nan() || deviation > MAX_AREA_DEVIATION || out.is_empty())
             .then_some(deviation)
     };
@@ -117,6 +124,61 @@ pub fn triangulate(
     }
     cover_all_vertices(&data, &mut tris);
     Ok(tris)
+}
+
+/// Twice the signed area of triangle abc, from the robust orientation predicate: accurate
+/// to its own size wherever the points are, however thin the triangle.
+fn area2(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    robust::orient2d(
+        robust::Coord { x: a[0], y: a[1] },
+        robust::Coord { x: b[0], y: b[1] },
+        robust::Coord { x: c[0], y: c[1] },
+    )
+}
+
+/// Twice a ring's signed area, as a fan of robust triangle areas from its first point.
+fn ring_area2(ring: &[[f64; 2]]) -> f64 {
+    (1..ring.len().saturating_sub(1))
+        .map(|i| area2(ring[0], ring[i], ring[i + 1]))
+        .sum()
+}
+
+/// `earcut::deviation`'s measure, |polygon area - triangles' area| / polygon area, with
+/// every area summed from robust triangle areas (lane 22). earcut's own sums products of
+/// absolute coordinates: a sliver 10 km long, or a region 5 km from its sketch's origin,
+/// lost more to rounding than the 1e-9 the check allows, and correct triangles failed it.
+/// Here each term is accurate to its own size, so the check stays as strict and measures
+/// the triangulation, not the arithmetic.
+fn area_deviation(data: &[[f64; 2]], hole_indices: &[u32], tris: &[u32]) -> f64 {
+    let bounds: Vec<usize> = std::iter::once(0)
+        .chain(hole_indices.iter().map(|&h| h as usize))
+        .chain(std::iter::once(data.len()))
+        .collect();
+    let mut polygon = 0.0;
+    for (k, w) in bounds.windows(2).enumerate() {
+        if w[1] - w[0] < 3 {
+            continue;
+        }
+        let a = ring_area2(&data[w[0]..w[1]]).abs();
+        polygon += if k == 0 { a } else { -a };
+    }
+    let triangles: f64 = tris
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|t| {
+            area2(
+                data[t[0] as usize],
+                data[t[1] as usize],
+                data[t[2] as usize],
+            )
+            .abs()
+        })
+        .sum();
+    if polygon == 0.0 && triangles == 0.0 {
+        return 0.0;
+    }
+    (polygon - triangles).abs() / polygon.abs()
 }
 
 /// earcut drops points that are exactly collinear with their neighbours. A B-rep face keeps

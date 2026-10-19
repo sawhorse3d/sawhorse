@@ -1,0 +1,68 @@
+{
+  "name": "2026-10-19-sketch-copy-turned-a-hair-off-a-10km-region",
+  "error": "op 3 TransformSketch { sketch: 1, points: [], edges: [], regions: [2], xform: Xform { linear: [[1.0, -1.7453292519943295e-9, 0.0], [1.7453292519943295e-9, 1.0, 0.0], [0.0, 0.0, 1.0]], translation: [-8.727082786208484e-6, -8.726646228751633e-6, 0.0] }, copy: true, count: 1 }: view mesh: triangulation area deviates by 7.90211790614671e-9 (limit 1e-9)",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": -0.25,
+      "h": -0.25
+    },
+    {
+      "op": "offset",
+      "source": {
+        "of": "region",
+        "sketch": 1,
+        "region": 1
+      },
+      "distance": 5000.0
+    },
+    {
+      "op": "transform_sketch",
+      "sketch": 1,
+      "regions": [
+        2
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            -1.7453292519943295e-09,
+            0.0
+          ],
+          [
+            1.7453292519943295e-09,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          -8.727082786208484e-06,
+          -8.726646228751633e-06,
+          0.0
+        ]
+      },
+      "copy": true
+    }
+  ]
+}

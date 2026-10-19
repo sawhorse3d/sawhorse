@@ -102,6 +102,7 @@ Decisions this lane built to (made before it started): copies and arrays are sep
 | Area | Where | Notes |
 |---|---|---|
 | Sketch moves | `kernel/src/sketch_move.rs`, `Sketch::with_moved_vertices` / `with_segments` / `without_edges`, `Op::TransformSketch` | Points, edges and whole regions of a sketch move, turn, scale and copy ([ADR-0012](0012-moving-sketch-geometry.md)): within the plane (and for part of a shape, projected into it) the touched edges are redrawn with the insertion rules (welds, splits, merges; never a bow-tie), vertex and region ids kept; a whole shape mapped off its plane goes into the sketch on the plane it lands on; copies and arrays draw the carried edges mapped. Outcomes `SketchMoved { sketch, regions }`, `SketchCopied { regions }`; typed refusals (`NoSuchSketchPoint`, `NoSuchSketchEdge`, `LeavesSketchPlane`, `NothingToMove`, `BadCount`) |
+| Sketch tolerance | `tolerance::SKETCH_MERGE`, `sketch::line_intersection`, `Sketch::check` | The sketch merges, splits and refuses at POINT_MERGE plus the 1 nm noise floor, so what it keeps clears the solid tier's POINT_MERGE tests in world coordinates (a region always pushes into a valid solid); crossings are placed by robust orientations (finite at any angle); the check refuses non-finite or out-of-range vertices. From the lane's property tests (ADR-0012) |
 
 ### Deliberate gaps (owned by later lanes)
 
