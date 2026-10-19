@@ -151,12 +151,23 @@ pub(crate) fn proper_cross(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
     o1 * o2 < 0.0 && o3 * o4 < 0.0
 }
 
-/// Intersection point of lines ab and cd (callers have established a proper crossing).
+/// Intersection point of segments ab and cd (callers have established a proper crossing).
+///
+/// The parameter along ab comes from the two robust orientations of a and b against cd:
+/// a proper crossing puts them on opposite sides, so `t = o_a / (o_a - o_b)` divides by the
+/// sum of two magnitudes and lies in [0, 1] whatever the angle. (Lane 22: the line form,
+/// `(c - a) x s / (r x s)`, divided by a cross product that rounded to zero for two nearly
+/// parallel edges the robust predicate still saw crossing, and put a vertex at infinity;
+/// a turned sketch moved onto its own copy found it.)
 pub(crate) fn line_intersection(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> DVec2 {
-    let r = b - a;
-    let s = d - c;
-    let t = (c - a).perp_dot(s) / r.perp_dot(s);
-    a + r * t
+    let (oa, ob) = (orient(c, d, a), orient(c, d, b));
+    let den = oa - ob;
+    let t = if den != 0.0 && (oa / den).is_finite() {
+        (oa / den).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    a + (b - a) * t
 }
 
 /// True when `p` is strictly inside the rings (outer, minus holes).
@@ -1477,7 +1488,8 @@ impl Sketch {
 
     // ---- invariants --------------------------------------------------------------------
 
-    /// Sketch-graph invariants: edges join two distinct vertices more than `SKETCH_MERGE`
+    /// Sketch-graph invariants: every vertex finite and within 10 km; edges join two
+    /// distinct vertices more than `SKETCH_MERGE`
     /// apart; no two edges cross, overlap or repeat; no vertex lies within `SKETCH_MERGE` of
     /// an edge it does not end; no isolated vertices; regions have simple CCW outers, simple
     /// CW holes and an anchor strictly inside. Runs in `Model::validate` and, in debug
@@ -1490,6 +1502,16 @@ impl Sketch {
     /// come within the merge distance of each other (lane 16: through a grid of edge boxes,
     /// once a sketch has more than a few dozen edges).
     fn check_now(&self) -> Result<(), String> {
+        // Lane 22: a vertex the snapshot could not hold is a broken sketch here too.
+        if let Some(p) = self
+            .vertices
+            .values()
+            .find(|p| !(p.is_finite() && in_bounds(p.x) && in_bounds(p.y)))
+        {
+            return Err(format!(
+                "sketch vertex {p} is not finite or is beyond 10 km"
+            ));
+        }
         let edges: Vec<[SVertexId; 2]> = self.edges.values().copied().collect();
         for &[a, b] in &edges {
             let (Some(pa), Some(pb)) = (self.vertices.get(a), self.vertices.get(b)) else {

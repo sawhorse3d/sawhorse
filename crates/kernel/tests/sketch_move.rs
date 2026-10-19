@@ -811,13 +811,15 @@ fn a_mirror_and_a_scale_of_sketch_geometry() {
     assert!(close(&areas(d.model(), 1), &[4.0]));
 }
 
-/// The property tests' finds (lane 22, `tests/sketch_move_finds/`): op sequences after
-/// which a region the sketch held could not be pushed into a valid solid. The sketch kept
+/// The property tests' finds (lane 22, `tests/sketch_move_finds/`). Three are op sequences
+/// after which a region the sketch held could not be pushed into a valid solid: the sketch kept
 /// an edge, or a corner's clearance from another edge, a rounding error over the merge
 /// distance; the solid tier measured it again in world coordinates and called it a
 /// zero-length edge or a vertex on a face. The sketch now merges at `SKETCH_MERGE`
 /// (POINT_MERGE plus the 1 nm noise floor), so every region pushes, to its area times the
-/// distance. Each sequence is replayed as recorded (an op the kernel now refuses is skipped,
+/// distance. The fourth put a crossing vertex at infinity (two nearly parallel edges whose
+/// cross product rounded to zero); crossings are now placed by the robust orientations, and
+/// `Sketch::check` refuses a vertex that is not finite. Each sequence is replayed as recorded (an op the kernel now refuses is skipped,
 /// as the fuzzer's replay does).
 #[test]
 fn the_property_finds_push_into_valid_solids() {
@@ -827,7 +829,7 @@ fn the_property_finds_push_into_valid_solids() {
         .map(|e| e.unwrap().path())
         .collect();
     files.sort();
-    assert_eq!(files.len(), 3);
+    assert_eq!(files.len(), 4);
     for f in files {
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
