@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: lane 16b, 2026-10-13 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.3, 2026-10-19 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21).
 
 ## Model size
 
@@ -13,6 +13,8 @@ Measured on the development machine (a desktop PC: 24-thread x86-64 CPU, 32 GB o
 | An office fit-out (SketchUp 2023) | 13,562 | 275 solids, 409 instances, 374 meshes | 4.5 s |
 
 An earlier run on the same machine (2026-10-12, before named single placements came in as components) measured 1.9k faces in 0.5 s and 13.5k faces with 352 instances in 3.8 s. Treat these as orders of magnitude: a model of a few thousand faces is quick; tens of thousands of faces take seconds to import and the view stays usable; a whole building of hundreds of thousands of faces is beyond what this alpha has been tried on. Every edit re-validates the solids it touches, so editing inside a large component is slower than editing a single board.
+
+A section cut through the office fit-out (48,612 faces once imported) takes 0.3 to 1.8 ms, and the bookshelf's two planes 0.02 to 0.045 ms (lane 19c, release build, same machine; `crates/kernel/tests/section_perf.rs`).
 
 ### At the model's limit
 
@@ -129,6 +131,10 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | The console | lines cut to 2,000 characters; 100 lines a second; 500 kept; the Plugins pane shows 600 characters of an error | |
 | Packages | 2,000 files, 50 MB, 8 MB per file (each refused by the size its zip declares, before it is inflated; lane 16b); modules 4 MB each and 16 MB in all; at most 20 problems listed | A module of 100,000 forbidden names used to cost 100,000 scans of the whole module. A package over 256 KB is parsed and digested in a worker (60 s at most), never on the app's thread. |
 | Package file names | no drive (`C:`), device (`con.js`), alternate stream (`a.json:x`) or trailing dot or space; no two names that differ only in case; every file exactly the size and checksum its zip says | Installed as files on the desktop; installed into a staging folder and swapped in, so a failed install leaves the old version. |
+
+## Section planes
+
+The alpha.2 known limit is fixed: a face nudged to within a micrometre of an active plane and then drawn on no longer leaves the cut-away half without a cap (about one random edit sequence in 130,000 found it). Lane 19c rebuilt the cut on the solid's own triangles, and it is property-tested at 100,000 cases a run against the solid's cross-section worked out without the cut (`crates/kernel/tests/section_props.rs`, `planes_on_a_nudged_face_drawn_on` among them; `testing::check_sections`; the runs are in docs/DEVELOPMENT.md's fuzz record).
 
 ## The view
 
