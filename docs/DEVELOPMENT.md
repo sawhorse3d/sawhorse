@@ -449,7 +449,7 @@ bash scripts/release-checksums.sh <dir>     # writes <dir>/SHA256SUMS.txt and ch
 (cd <dir> && sha256sum -c SHA256SUMS.txt)   # what a downloader runs
 ```
 
-Checked on 2026-10-19 on a fake release of the seven alpha.3 names (random bytes), in Git Bash and in WSL Ubuntu: every line `OK`, and the script failed as it should on a file changed after writing, a missing `.dmg`, a name with a space and an empty directory.
+Checked on 2026-10-19 on a fake release of the seven alpha.3 names (random bytes), in Git Bash and in WSL Ubuntu: every line `OK`, and the downloader's `sha256sum -c` failed as it should on a file changed after writing, a missing `.dmg`, a name with a space and an empty directory.
 
 ### Release checklist
 

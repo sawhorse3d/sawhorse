@@ -43,7 +43,7 @@ The left button belongs to the tool you are using; the middle button, the right 
 
 The view keeps a look-at point on the line of sight at the depth of whatever you last orbited, panned or zoomed toward. It is what the projection switch keeps the same size, what a scene saves with the camera, and what a sheet's viewport uses when it shows the 3D view's camera.
 
-**The grid:** **View > Grid** (or **Ground grid** in the Styles pane) shows or hides the ground grid. It is part of the model's style, so it is one undo step, it is saved with the model and with each scene, and a model saved before the switch existed shows the grid. Hiding the grid hides its lines only: points on the ground still snap to whole grid steps.
+**The grid:** **View > Grid** (or **Ground grid** in the Styles pane) shows or hides the ground grid. It is part of the model's style, so it is one undo step, it is saved with the model, and a scene brings it back only when the scene was saved with a style of its own (see the known limits). Hiding the grid hides its lines only: points on the ground still snap to whole grid steps.
 
 ## Keys
 
