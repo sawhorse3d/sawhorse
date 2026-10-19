@@ -41,9 +41,13 @@ function Entry({ item: it, sub, setSub, close }: { item: MenuItem; sub: string |
   if (it === "-") return <hr />;
   if ("items" in it) {
     const isOpen = sub === it.label;
+    // Pointing opens the submenu and a click (or Enter) opens it too; a click never closes it.
+    // It used to toggle, so the usual point-then-click shut the submenu the pointer had just
+    // opened, and whether a fast click did depended on whether React had rendered the hover
+    // yet (a red CI run, plugins-ui.spec). Esc, a click outside or another entry closes it.
     return (
       <span className="subwrap" onMouseEnter={() => !it.disabled && setSub(it.label)}>
-        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={isOpen} disabled={it.disabled} onClick={() => setSub(isOpen ? null : it.label)}>
+        <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={isOpen} disabled={it.disabled} onClick={() => setSub(it.label)}>
           <span>{it.label}</span>
           <kbd aria-hidden="true">▸</kbd>
         </button>

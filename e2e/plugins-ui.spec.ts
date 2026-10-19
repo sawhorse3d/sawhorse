@@ -121,9 +121,14 @@ test("install from .zip, enable, use every field, prompt and confirm, reload, di
   await expect(hint(page)).toContainText(`Everything: Go with Shelf, ${18.5 * 0.0254} m, ash, true`);
 
   // The Plugins menu: the command asks with the app's dialogs, titled with the plugin.
+  // Pointing opens the submenu; the click that usually follows must not close it again (it
+  // toggled once, and a slow CI runner lost "Ask Me" that way). TopBar.test.tsx has the rest.
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  const askMe = page.getByRole("menuitem", { name: /Ask Me\s*Alt\+Shift\+K/ });
+  await page.getByRole("menuitem", { name: "Everything" }).hover();
+  await expect(askMe).toBeVisible();
   await page.getByRole("menuitem", { name: "Everything" }).click();
-  await expect(page.getByRole("menuitem", { name: /Ask Me\s*Alt\+Shift\+K/ })).toBeVisible();
+  await expect(askMe).toBeVisible();
   await page.getByRole("menuitem", { name: /Ask Me/ }).click();
   const prompt = page.getByRole("dialog", { name: "Everything: Name it" });
   await expect(prompt).toContainText("from Everything");
