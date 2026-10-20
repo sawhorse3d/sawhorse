@@ -4,7 +4,7 @@ Sawhorse reads `.skp` files with the npm package [`openskp`](https://www.npmjs.c
 
 Import only. There is no `.skp` export in this lane (ADR-0002: export waits for the attorney read and for our own blank template).
 
-Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day); section planes in lane 12 (2026-10-12); named definitions placed once as components, soft / smooth / hidden edges and empty files opening as empty models in lane 15 (same day); curves (what the reader does not give, and so what comes in as plain edges) in lane 23 (2026-10-19). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
+Status of this page: lane 6, 2026-10-11; groups and components brought across as Sawhorse groups, components and instances in lane 5 (same day); section planes in lane 12 (2026-10-12); named definitions placed once as components, soft / smooth / hidden edges and empty files opening as empty models in lane 15 (same day); curves (what the reader does not give, and so what comes in as plain edges) in lane 23 (2026-10-19), the per-file curves note dropped in lane 23b (2026-10-20). The tests that hold it true are `src/io/skp.test.ts` (mapping and kernel results for every corpus family) and the golden-image corpus (`e2e/corpus.spec.ts`).
 
 ## File versions
 
@@ -41,7 +41,7 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 
 Each of these is counted in the import notes when present, never silently dropped:
 
-- **Curves** (circles, arcs, polygons, welded curves) come in as plain edges, in every file version: see [Curves](#curves) below. One note says so on any import with edges.
+- **Curves** (circles, arcs, polygons, welded curves) come in as plain edges, in every file version: see [Curves](#curves) below. The import report says nothing about them (lane 23b).
 - Text and leader text, linear and radial dimensions, guide lines and guide points (the kernel has guides and dimensions; mapping SketchUp's onto them is a later lane).
 - Which section plane was active, and the section state saved in scenes (planes come in inactive; see above). Section fill and section line styles.
 - Image entities (`Image` objects placed in the model).
@@ -64,11 +64,11 @@ Sawhorse has curves since lane 23 ([ADR-0013](adr/0013-curves.md)): a circle, an
 | Classic MFC `CArchive`, SketchUp 2013 to 2020 | Reads each `CEdge`'s curve pointer, and reads each `CArcCurve`'s fourteen parameters and each `CCurve`'s edge count, then builds the parse output's edges (`Edge { id, v1Id, v2Id, soft, smooth, hidden }`) without them: the pointer and the parameters are dropped. | Plain edges |
 | VFF (zip-based), SketchUp 2021 to 2025 | Its edges carry their two vertices and their soft, smooth and hidden flags only. | Plain edges |
 
-(Read from the published package's `dist/index.d.ts` and `dist/index.js`; no SketchUp, OpenSKP repository or Hew source.) So every SketchUp curve comes in as plain edges, and the import report says so in one line: "curves (circles, arcs, polygons) came in as plain edges: the .skp reader does not say which edges make up a curve". Sawhorse does **not** guess curves from the edges' shape (a run of equal segments turning by equal angles is very often a curve, but not always, and a guess that turns a woodworker's faceted rail into a "circle" would be worse than none). The inference engine still finds the centres of such runs, as before, so a SketchUp circle's centre snaps. A circle pulled into a cylinder in SketchUp still arrives round: its soft and smooth flags come across (above).
+(Read from the published package's `dist/index.d.ts` and `dist/index.js`; no SketchUp, OpenSKP repository or Hew source.) So every SketchUp curve comes in as plain edges. Until lane 23b the import report said so in one line on every file with an edge; openskp gives no curve record at all, so it cannot tell a file with curves from one without, and a note on every file (curves or not) was noise. The report now says nothing about curves, and this page and the guide say it once. Sawhorse does **not** guess curves from the edges' shape (a run of equal segments turning by equal angles is very often a curve, but not always, and a guess that turns a woodworker's faceted rail into a "circle" would be worse than none). The inference engine still finds the centres of such runs, as before, so a SketchUp circle's centre snaps. A circle pulled into a cylinder in SketchUp still arrives round: its soft and smooth flags come across (above).
 
 What would change it: openskp exposing each edge's curve id (and a curve's kind and parameters) in its parse output. The request is drafted in [upstream/openskp-curves.md](upstream/openskp-curves.md); the kernel's import op already takes a stroke's curve (DXF circles and arcs use it), so the mapping would be a few lines in `src/io/skp.ts`.
 
-The corpus has one file of each (`201-curve-circle.skp`: a disc whose 24 edges share one `CArcCurve`; `202-curve-arc.skp`: 12 edges of a quarter arc; `203-curve-polygon.skp`: a closed `CCurve` of six edges), written as curves by openskp's writer (`addCircle`, `addArc`, `addPolyline`), so the corpus check imports curves written as SketchUp writes them; `e2e/curves.spec.ts` imports the circle and checks the note.
+The corpus has one file of each (`201-curve-circle.skp`: a disc whose 24 edges share one `CArcCurve`; `202-curve-arc.skp`: 12 edges of a quarter arc; `203-curve-polygon.skp`: a closed `CCurve` of six edges), written as curves by openskp's writer (`addCircle`, `addArc`, `addPolyline`), so the corpus check imports curves written as SketchUp writes them; `e2e/curves.spec.ts` imports the circle and checks it comes in as plain edges with no note (`src/io/skp.test.ts`: no import of the corpus or of the three curve files says anything about curves).
 
 ## Healing and refusals
 
