@@ -10,9 +10,10 @@ A pre-release, [v0.1.0-alpha.4](https://github.com/sawhorse3d/sawhorse/releases/
 
 ### Release (the alpha.4 hygiene pass, 2026-10-20)
 
-- Version 0.1.0-alpha.4 in npm, Tauri (MSI version 0.1.0.4), both Cargo workspaces, the `.shz` generator examples and the site's download links; the release notes in `docs/releases/v0.1.0-alpha.4.md` (curves, #3; sketch geometry that moves, #2; the user-visible fixes; the known limits #6, #7, #8, #11 and #12); the README, the site and `docs/SIGNING.md` point at them.
+- Version 0.1.0-alpha.4 in npm, Tauri (MSI version 0.1.0.4), both Cargo workspaces, the `.shz` generator examples and the site's download links; the release notes in `docs/releases/v0.1.0-alpha.4.md` (curves, #3; sketch geometry that moves, #2; the user-visible fixes; the known limits #6, #7, #8, #9, #11 and #12); the README, the site and `docs/SIGNING.md` point at them.
 - `docs/LIMITS.md` says it is current for alpha.4; the user guide no longer says a circle is a chain of separate edges under Moving sketch shapes (lane 22's note, which lane 23 made untrue), and its Offset section points at a curve's radius offset, and it calls Sawhorse an alpha (it said pre-alpha). The README's feature list names curves and sketch shapes that move, and its Not yet list Weld Edges.
 - `docs/LIMITS.md` has a Moving sketch geometry section (the selection after a move that splits a shape, [#7](https://github.com/sawhorse3d/sawhorse/issues/7); a Move drag's preview in a sketch of more than about 1,500 edges, [#8](https://github.com/sawhorse3d/sawhorse/issues/8)), and the release notes name #8 with the known limits.
+- The release notes, as the hygiene pass's verifier read them: the thanks line credits the SketchUcation report with #2 only, since #3 came up while reproducing it (the report's other request, the grid, was #4 in alpha.3); the Eraser drag across a circle or a polygon is part of curves, not a fix since alpha.3 (it fixed a regression made while curves were being built), so it moved from Fixed into the curve's Erase bullet; #7 reads "the selection is not updated to the pieces it leaves" (in the notes and `docs/LIMITS.md`), as the verifier saw it; and the known limits name #9, a second rectangle that now and then lands on a vertical plane.
 
 ### Fixed (lane 23b's second fix pass, found by lane 23b's verifier, 2026-10-20)
 
