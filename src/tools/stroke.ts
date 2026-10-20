@@ -1,7 +1,7 @@
 // Base for the draw tools: snapping state, axis locks, the drawing plane, region hover,
 // live labels, and committing a stroke through the kernel's Draw op.
 import type { EditResult } from "../kernel/client";
-import type { V3 } from "../kernel/types";
+import type { CurveSpec, V3 } from "../kernel/types";
 import { drawOp, planeFromSnap, type DrawPlane, type DrawTarget } from "./draw";
 import { LockState } from "./lock";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
@@ -74,8 +74,9 @@ export abstract class StrokeTool extends Tool {
     return planeFromSnap(snap, this.prefer);
   }
 
-  protected async stroke(target: DrawTarget, points: V3[], closed: boolean, describe: (r: EditResult) => string): Promise<EditResult | null> {
-    return this.host.apply(drawOp(target, points, closed), describe);
+  /** Commit a stroke; `curve` (lane 23) makes it one curve (a circle, an arc, a polygon). */
+  protected async stroke(target: DrawTarget, points: V3[], closed: boolean, describe: (r: EditResult) => string, curve?: CurveSpec): Promise<EditResult | null> {
+    return this.host.apply(drawOp(target, points, closed, curve), describe);
   }
 
   protected baseView(extra: OverlayItem[] = [], labels: Label[] = []): ToolView {

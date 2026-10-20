@@ -54,6 +54,7 @@ import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
+import { explodeOps } from "./lib/curves";
 import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
 import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, readBrowserFile, saveFile, stem, type FileHandle, type PickedFile } from "./io/files";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
@@ -953,6 +954,16 @@ export function App() {
         }
         return out;
       },
+      // Lane 23: the curves in view (sketch curves and solids' rims) as the mesh names them,
+      // each with how many segments of the view are its own.
+      curves: async () => {
+        await queue.current;
+        const m = live.current.scene?.mesh;
+        if (!m?.curves) return [];
+        const count = new Map<number, number>();
+        for (const c of m.edgeCurve ?? []) if (c > 0) count.set(c - 1, (count.get(c - 1) ?? 0) + 1);
+        return m.curves.map((c, i) => ({ ...c, edges: count.get(i) ?? 0 }));
+      },
     };
   }, []);
 
@@ -1085,7 +1096,16 @@ export function App() {
         const k = kernelRef.current;
         if (!k) return [];
         try {
-          return t.kind === "face" ? await k.outline("face", t.object, t.face) : await k.outline("region", t.sketch, t.region);
+          switch (t.kind) {
+            case "face":
+              return await k.outline("face", t.object, t.face);
+            case "region":
+              return await k.outline("region", t.sketch, t.region);
+            case "curve":
+              return await k.outline("curve", t.sketch, t.curve);
+            case "rim":
+              return await k.outline("rim", t.object, t.curve);
+          }
         } catch {
           return [];
         }
@@ -1507,6 +1527,22 @@ export function App() {
       if (r) {
         live.current.selection = [];
         setSelection([]);
+      }
+    });
+  }, [apply]);
+
+  /** Edit > Explode Curve (lane 23): every selected curve's edges plain again, one undo step;
+   * the selection keeps everything else. */
+  const explodeCurves = useCallback(() => {
+    const sel = live.current.selection;
+    const ops = explodeOps(sel);
+    if (!ops.length) return void setMessage({ text: "Select a circle, an arc, a polygon or a curve to explode.", error: true });
+    const n = ops.length;
+    void apply(n === 1 ? ops[0] : { op: "batch", ops }, () => `Exploded ${n === 1 ? "the curve" : `${n} curves`}: ${n === 1 ? "its" : "their"} edges are plain edges now.`).then((r) => {
+      if (r) {
+        const rest = sel.filter((e) => e.kind !== "curve");
+        live.current.selection = rest;
+        setSelection(rest);
       }
     });
   }, [apply]);
@@ -2484,6 +2520,12 @@ export function App() {
         },
         { label: "Explode", keys: "Ctrl+Shift+G", disabled: !selection.some((x) => x.kind === "node"), onSelect: () => void explode(selection.flatMap((x) => (x.kind === "node" ? [x.node] : []))) },
         {
+          label: "Explode Curve",
+          title: "The selected circles, arcs, polygons and curves become plain edges, each segment its own again; one undo step",
+          disabled: !selection.some((x) => x.kind === "curve"),
+          onSelect: explodeCurves,
+        },
+        {
           label: "Clear Paint",
           title: "Take the paint off what the selection holds, so the group's (or the solid's container's) paint shows; one undo step",
           disabled: !selItems.length,
@@ -2559,7 +2601,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid],
   );
 
   const valueLabel = active?.valueLabel() ?? null;

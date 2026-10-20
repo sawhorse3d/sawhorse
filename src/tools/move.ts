@@ -28,8 +28,9 @@ import { parseVcb } from "../lib/vcb";
 import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
 import { scopeEntity } from "../lib/scope";
+import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
+import { curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
@@ -150,7 +151,7 @@ export class MoveTool extends Tool {
           if (g.to) h.showValue(h.fmt(dist(g.from, g.to)));
         } else {
           const ent = e.picked?.entity ?? null;
-          const o = ent && h.selection().length === 0 ? objectEntity(scopeEntity(ent, h.state())) : null;
+          const o = ent && h.selection().length === 0 ? objectEntity(curveOf(scopeEntity(ent, h.state()), h.mesh())) : null;
           h.hover(o);
         }
         h.changed();
@@ -199,12 +200,14 @@ export class MoveTool extends Tool {
     const h = this.host;
     if (!e.snap) return;
     const sel = h.selection();
-    const picked = e.picked?.entity ?? null;
-    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(picked, h.state()));
+    // Lane 23: a curve's segment under the cursor is the whole curve.
+    const picked = curveOf(e.picked?.entity ?? null, h.mesh());
+    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : curveOf(scopeEntity(picked, h.state()), h.mesh()));
     const subject = subjectOf(sel, picked, outlines, h.state());
-    if (typeof subject === "string") {
+    const refused = typeof subject === "string" ? subject : curvePointRefusal(subject, sel, picked, h.mesh());
+    if (typeof subject === "string" || refused) {
       this.fresh = false;
-      h.status(subject, true);
+      h.status(refused ?? "Nothing to move there.", true);
       return;
     }
     this.copy = this.copy || e.ctrl;
@@ -324,5 +327,6 @@ function objectEntity(e: Entity | null): Entity | null {
   if (e.kind === "node" || isSketchEntity(e)) return e;
   if (e.kind === "face") return { kind: "object", object: e.object };
   if ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object") return { kind: "object", object: e.owner.id };
+  if (e.kind === "curve" && e.owner.kind === "object") return { kind: "object", object: e.owner.id };
   return null;
 }

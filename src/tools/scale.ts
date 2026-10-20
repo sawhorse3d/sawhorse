@@ -21,8 +21,9 @@ import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
+import { curveOf } from "../lib/curves";
 
 /** How close (px) the cursor must be to a grip to take it. */
 export const GRIP_PX = 12;
@@ -184,10 +185,12 @@ export class ScaleTool extends Tool {
   private async refreshTarget(picked: ToolEvent["picked"]): Promise<void> {
     const h = this.host;
     const sel = h.selection();
-    const ent = picked?.entity ?? null;
-    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(ent, h.state()));
+    // Lane 23: a curve's segment under the cursor is the whole curve.
+    const ent = curveOf(picked?.entity ?? null, h.mesh());
+    const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : curveOf(scopeEntity(ent, h.state()), h.mesh()));
     const subject = subjectOf(sel, ent, outlines, h.state());
     if (typeof subject === "string") return;
+    if (curvePointRefusal(subject, sel, ent, h.mesh())) return;
     if (this.target && sel.length === 0 && JSON.stringify(this.target.subject) === JSON.stringify(subject)) return;
     const b = this.bounds(subject);
     if (!b) return;

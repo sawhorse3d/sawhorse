@@ -27,6 +27,10 @@ export const CAP_FACE_ID = 2;
 /** What a Push/Pull acts on: a sketch region (extrude) or an object face (by persistent id). */
 export type Target = { kind: "region"; sketch: number; region: number } | { kind: "face"; object: number; face: number };
 
+/** What an outline is asked of: a target, or (lane 23) a curve: a sketch's, or a solid's rim
+ * (its points in order, as one ring). */
+export type OutlineTarget = Target | { kind: "curve"; sketch: number; curve: number } | { kind: "rim"; object: number; curve: number };
+
 /** Where a rectangle starts: on the ground sketch, or on an object face (imprint). */
 export interface RectAnchor {
   frame: Frame;
@@ -120,7 +124,7 @@ export function pushOp(t: Target, distance: number): KernelOp {
 export function nextTarget(op: KernelOp, outcome: OpOutcome, previous: Target | null): Target | null {
   switch (outcome.kind) {
     case "sketch_edited":
-      return outcome.regions.length && "sketch" in op ? { kind: "region", sketch: op.sketch, region: outcome.regions[0] } : previous;
+      return outcome.regions.length && "sketch" in op && op.sketch !== undefined ? { kind: "region", sketch: op.sketch, region: outcome.regions[0] } : previous;
     case "imprinted":
       return op.op === "imprint" ? { kind: "face", object: op.object, face: outcome.face } : previous;
     case "object_created":

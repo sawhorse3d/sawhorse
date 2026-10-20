@@ -11,7 +11,13 @@
 // Section planes (lane 12): a click on a plane's rectangle selects it (when nothing nearer is
 // under the cursor; a cut face at the plane selects its solid); a click on the arrow at its
 // centre, its reverse control, reverses it.
-import type { DocState, Entity } from "../kernel/types";
+//
+// Curves (lane 23): a circle, an arc, a polygon or a polyline is one curve. Hovering or
+// clicking any of its segments takes the whole curve (a solid's rim too); a click exactly on
+// one of its points still selects that point. A window takes a curve when all of it is
+// inside, a crossing box when it touches any segment.
+import type { DocState, Entity, MeshData } from "../kernel/types";
+import { curveOf, describeCurve } from "../lib/curves";
 import { applySelection, boxSelect, edgeFlagWords, entityKey, modeFor, objectOf } from "../lib/entities";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, reachableContext, scopeEntity } from "../lib/scope";
@@ -47,12 +53,24 @@ export class SelectTool extends Tool {
     return r.t < t - slack || (!cap && r.t <= t + slack) ? r : null;
   }
 
+  /** What a pick means here: the entity in the open context, a curve's segment as the
+   * whole curve. */
+  private unit(raw: Entity | null): Entity | null {
+    return curveOf(scopeEntity(raw, this.host.state()), this.host.mesh());
+  }
+
+  /** The status line for a selected entity. */
+  private say(ent: Entity): string {
+    const h = this.host;
+    return describe(ent, h.state(), { mesh: h.mesh(), fmt: (m) => h.fmt(m), unit: h.unitLabel() });
+  }
+
   onEvent(e: ToolEvent): void {
     const h = this.host;
     switch (e.type) {
       case "move": {
         const sec = this.sectionAt(e);
-        h.hover(scopeEntity(sec ? { kind: "section", section: sec.section } : (e.picked?.entity ?? null), h.state()));
+        h.hover(sec ? scopeEntity({ kind: "section", section: sec.section }, h.state()) : this.unit(e.picked?.entity ?? null));
         return;
       }
       case "leave":
@@ -68,21 +86,21 @@ export class SelectTool extends Tool {
           }
           if (ent) {
             h.setSelection(applySelection(h.selection(), [ent], modeFor(e)));
-            h.status(describe(ent, h.state()));
+            h.status(this.say(ent));
             return;
           }
         }
         const raw = e.picked?.entity ?? null;
-        const ent = scopeEntity(raw, h.state());
+        const ent = this.unit(raw);
         const mode = modeFor(e);
         if (!ent && raw) {
           // Outside the open group or component: close back to where it is, select it.
           const target = reachableContext(raw, h.state());
           void h.apply({ op: "set_context", node: target }).then((r) => {
             if (!r) return;
-            const again = scopeEntity(raw, h.state());
+            const again = this.unit(raw);
             h.setSelection(again ? [again] : []);
-            if (again) h.status(describe(again, h.state()));
+            if (again) h.status(this.say(again));
           });
           return;
         }
@@ -91,7 +109,7 @@ export class SelectTool extends Tool {
           return;
         }
         h.setSelection(applySelection(h.selection(), [ent], mode));
-        h.status(describe(ent, h.state()));
+        h.status(this.say(ent));
         return;
       }
       case "dblclick": {
@@ -145,8 +163,17 @@ export class SelectTool extends Tool {
   }
 }
 
-export function describe(e: Entity, state?: DocState | null): string {
+/** What the status line says of a curve: the view mesh it is in and the display units. */
+export interface DescribeContext {
+  mesh: MeshData | null;
+  fmt: (m: number) => string;
+  unit: string;
+}
+
+export function describe(e: Entity, state?: DocState | null, ctx?: DescribeContext): string {
   switch (e.kind) {
+    case "curve":
+      return describeCurve(e, ctx?.mesh ?? null, ctx?.fmt ?? ((m) => `${m}`), ctx?.unit ?? "m");
     case "face":
       return `Selected ${faceOf(e.object, e.face)}. Delete erases it if it was drawn on a face.`;
     case "edge":

@@ -87,11 +87,11 @@ jobs:
         run: npm run build
       - name: vitest
         run: npx vitest run
-      - name: generate the .skp corpus (200 files, byte for byte against tests/corpus/manifest.json)
+      - name: generate the .skp corpus (203 files, byte for byte against tests/corpus/manifest.json)
         run: npm run corpus:skp
       - name: install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      # One Playwright run covers every spec, the 200-file corpus import and its golden
+      # One Playwright run covers every spec, the 203-file corpus import and its golden
       # images included (REQUIRE_CORPUS makes a missing corpus a failure, not a skip).
       - name: e2e (all specs, corpus included)
         env:

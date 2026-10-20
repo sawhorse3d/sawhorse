@@ -10,6 +10,7 @@
 // get; an offset too far inward shows the refusal before you click.
 import type { EditResult } from "../kernel/client";
 import type { Entity, OffsetSource, V3 } from "../kernel/types";
+import { curveSegments } from "../lib/curves";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { parseVcb } from "../lib/vcb";
 import { add, cross, dot, len, mul, sub, unit } from "./draw";
@@ -238,7 +239,11 @@ export class OffsetTool extends Tool {
 
   private async start(e: ToolEvent): Promise<void> {
     const h = this.host;
-    const edges = h.selection().filter((x): x is Extract<Entity, { kind: "edge" }> => x.kind === "edge");
+    // Lane 23: a selected curve is its segments (its offset is a curve of its kind).
+    const mesh = h.mesh();
+    const edges = h.selection().flatMap((x): Extract<Entity, { kind: "edge" }>[] =>
+      x.kind === "edge" ? [x] : x.kind === "curve" ? curveSegments(mesh, x.owner, x.curve).map(([a, b]) => ({ kind: "edge", owner: x.owner, a, b, drawn: true })) : [],
+    );
     let g: Gesture | null = null;
     if (edges.length) {
       const owners = new Set(edges.map((x) => `${x.owner.kind}:${x.owner.id}`));

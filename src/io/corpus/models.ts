@@ -399,6 +399,40 @@ export const FAMILIES: Record<string, (r: () => number) => SkpBuilder> = {
   reversed,
 };
 
+/** Lane 23: SketchUp curves as SketchUp writes them: a circle (a disc whose 24 edges share
+ * one CArcCurve), an arc (12 edges sharing a CArcCurve, no face) and a polygon (a closed
+ * welded CCurve of 6 edges, no face), each beside a small box so the file has a solid. */
+function curveCircle(): SkpBuilder {
+  const b = create();
+  b.addCircle([0, 0, 0], [0, 0, 1], 6, { numSegments: 24 });
+  box(b, 10, -2, 0, 4, 4, 4);
+  return b;
+}
+
+function curveArc(): SkpBuilder {
+  const b = create();
+  b.addArc([0, 0, 0], [0, 0, 1], 6, 0, Math.PI / 2, { numSegments: 12 });
+  box(b, 10, -2, 0, 4, 4, 4);
+  return b;
+}
+
+function curvePolygon(): SkpBuilder {
+  const b = create();
+  b.addPolyline(
+    circle(0, 0, 6, 6).map(([x, y]) => [round(x), round(y), 0] as P3),
+    { closed: true },
+  );
+  box(b, 10, -2, 0, 4, 4, 4);
+  return b;
+}
+
+/** Lane 23: the curve files, after the 200 (so the families and the golden sample keep
+ * their numbers and their bytes). */
+export function curveModels(): ModelSpec[] {
+  const make = (n: number, family: string, f: () => SkpBuilder): ModelSpec => ({ name: `${n}-${family}`, family, build: () => reproducible(n, () => f().toBytes()) });
+  return [make(201, "curve-circle", curveCircle), make(202, "curve-arc", curveArc), make(203, "curve-polygon", curvePolygon)];
+}
+
 /** The corpus: `count` models cycling through the families, seeded by their index. */
 export function corpus(count = 200): ModelSpec[] {
   const names = Object.keys(FAMILIES);

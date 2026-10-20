@@ -24,6 +24,9 @@ export interface Marker {
   at: Vec3;
   kind: InferenceKind;
   tip: string;
+  /** Lane 23: the centre of the circle, arc or polygon under the cursor (a small dot labelled
+   * "Centre"; moving there snaps to it). */
+  centre?: Vec3 | null;
 }
 
 /** A text label pinned to a world point (dimension text, tape readout). */
@@ -231,6 +234,9 @@ export function Viewport(props: ViewportProps) {
   const engine = engineRef.current;
   void frame; // re-render with the camera so pinned labels follow it
   const markerXY = marker && engine ? engine.worldToScreen(marker.at) : null;
+  // Lane 23: the centre of the curve under the cursor, when the marker is not already on it.
+  const centre = marker?.centre && marker.kind !== "centre" ? marker.centre : null;
+  const centreXY = centre && engine ? engine.worldToScreen(centre) : null;
   const style = marker ? INFERENCE_STYLES[marker.kind] : null;
   // Lane 21: the orbit pivot's marker, while the middle button (or one finger) is down.
   const nav = engine?.navState() ?? null;
@@ -254,6 +260,7 @@ export function Viewport(props: ViewportProps) {
       data-projection={camAttr.projection}
       data-camera={camAttr.eye}
       data-inference={marker?.kind ?? ""}
+      data-centre={centre ? centre.map((x) => x.toFixed(6)).join(",") : ""}
       data-selection={selectionCount ?? 0}
       data-hover={hoverKind ?? ""}
       data-nav={nav?.mode ?? ""}
@@ -298,6 +305,15 @@ export function Viewport(props: ViewportProps) {
         ></div>
       ) : null}
       {pivotXY ? <span className="orbit-pivot" data-testid="orbit-pivot" aria-hidden="true" style={{ left: pivotXY[0], top: pivotXY[1] }}></span> : null}
+      {centreXY ? (
+        <>
+          <span className="snap centre-hint" aria-hidden="true" style={{ left: centreXY[0], top: centreXY[1], background: `var(${INFERENCE_STYLES.centre.token})` }}></span>
+          <div className="tip centre-tip" data-testid="centre-hint" style={{ left: centreXY[0] + 10, top: centreXY[1] - 22 }}>
+            <i style={{ background: `var(${INFERENCE_STYLES.centre.token})` }}></i>
+            {INFERENCE_STYLES.centre.label}
+          </div>
+        </>
+      ) : null}
       {marker && markerXY && style ? (
         <>
           <span className="snap" aria-hidden="true" style={{ left: markerXY[0], top: markerXY[1], background: `var(${style.token})` }}></span>

@@ -42,15 +42,27 @@ pub struct TriSolid {
 }
 
 impl TriSolid {
-    /// Signed volume by the divergence theorem (positive for outward-oriented solids).
+    /// Signed volume by the divergence theorem (positive for outward-oriented solids),
+    /// summed about the solid's own first corner rather than the world origin: a closed
+    /// surface's volume is the same about any point, and about one of its own it does not
+    /// cancel products of its distance from the origin. (Lane 23's fuzzer: a 0.1 mm
+    /// cylinder 6.6 km out, turned 45 degrees, measured 3.5e-6 m3 about the origin, 244
+    /// times its 1.4e-8.)
     pub fn volume(&self) -> f64 {
+        let Some(r) = self
+            .triangles
+            .first()
+            .map(|t| self.positions[t[0] as usize])
+        else {
+            return 0.0;
+        };
         self.triangles
             .iter()
             .map(|t| {
                 let (a, b, c) = (
-                    self.positions[t[0] as usize],
-                    self.positions[t[1] as usize],
-                    self.positions[t[2] as usize],
+                    self.positions[t[0] as usize] - r,
+                    self.positions[t[1] as usize] - r,
+                    self.positions[t[2] as usize] - r,
                 );
                 a.dot(b.cross(c)) / 6.0
             })
@@ -673,6 +685,14 @@ mod tests {
     #[test]
     fn cube_volume() {
         assert!((cube(DVec3::ZERO, 2.0, 0).volume() - 8.0).abs() < 1e-12);
+    }
+
+    /// A 0.1 mm cube 6.6 km out measures its own volume (lane 23): about the world origin
+    /// its triangles' products cancel to rounding far above 1e-12 m3.
+    #[test]
+    fn a_tiny_cube_far_out_measures_its_volume() {
+        let v = cube(DVec3::new(-1983.4556, 4664.0710, -4661.6253), 1e-4, 0).volume();
+        assert!((v - 1e-12).abs() < 1e-20, "volume {v}");
     }
 
     #[test]

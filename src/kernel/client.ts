@@ -280,7 +280,7 @@ export class KernelClient {
   }
 
   /** World rings (outer first) of a face or region: what Push/Pull previews. */
-  async outline(part: "face" | "region", owner: number, index: number): Promise<V3[][]> {
+  async outline(part: "face" | "region" | "curve" | "rim", owner: number, index: number): Promise<V3[][]> {
     return (await this.call({ kind: "outline", part, owner, index })).rings ?? [];
   }
 

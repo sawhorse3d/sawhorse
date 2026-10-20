@@ -8,12 +8,20 @@
 // come from is one `transform_sketch` op; a selection of solids and sketch geometry is one
 // batch (one undo step). Part of a shape (a corner, an edge of a rectangle) moves within
 // its plane, the move projected into it; a whole shape may leave its plane.
+//
+// Curves (lane 23): a selected curve moves as one (its points all move, the kernel keeps a
+// circle a circle under a similarity and makes a copy a new curve); a curve's point selected
+// on its own is refused before the gesture starts, with the kernel's own words.
 import type { DocState, Entity, KernelOp, MeshData, OpOutcome, V3, Xform } from "../kernel/types";
+import { curveSegments, onCurve } from "../lib/curves";
 import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { sectionById, sectionCorners } from "../lib/sections";
-import type { Target } from "../lib/edit";
+import type { OutlineTarget } from "../lib/edit";
+
+/** The message the kernel refuses a curve's point moved on its own with (lane 23). */
+export const CURVE_POINT_REFUSAL = "That point is on a curve: moving it alone would bend the curve. Select the whole curve, or use Edit > Explode Curve first.";
 import { add, cross, dot, len, mul, sub } from "./draw";
 
 export const IDENTITY: Xform = {
@@ -76,6 +84,8 @@ export interface SketchPart {
   points: V3[];
   edges: [V3, V3][];
   regions: number[];
+  /** Lane 23: whole curves, by id (their points are in `moving`). */
+  curves?: number[];
   rings: V3[][];
   origin: V3;
   normal: V3;
@@ -104,9 +114,9 @@ export type Subject =
   /** Part of one solid: its points (a face's corners, an edge's ends, a vertex). */
   | { kind: "geometry"; object: number; points: V3[]; what: string; sketches?: SketchPart[] };
 
-/** An entity that is sketch geometry: a region, or a sketch's edge or point. */
+/** An entity that is sketch geometry: a region, or a sketch's edge, point or curve. */
 export function isSketchEntity(e: Entity): boolean {
-  return e.kind === "region" || ((e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "sketch");
+  return e.kind === "region" || ((e.kind === "edge" || e.kind === "vertex" || e.kind === "curve") && e.owner.kind === "sketch");
 }
 
 function sketchOf(e: Entity): number {
@@ -118,6 +128,8 @@ const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
 /** "region 2", "a sketch edge", "3 sketch points": what of one sketch moves. */
 function sketchPartNames(p: SketchPart): string[] {
   const out = p.regions.map((r) => regionName(p.sketch, r));
+  const nc = p.curves?.length ?? 0;
+  if (nc) out.push(nc === 1 ? "a curve" : `${nc} curves`);
   if (p.edges.length) out.push(p.edges.length === 1 ? "a sketch edge" : `${p.edges.length} sketch edges`);
   if (p.points.length) out.push(p.points.length === 1 ? "a sketch point" : `${p.points.length} sketch points`);
   return out;
@@ -164,6 +176,7 @@ export function sketchOps(parts: SketchPart[], xform: Xform, copy: boolean, coun
       ...(p.points.length ? { points: p.points } : {}),
       ...(p.edges.length ? { edges: p.edges } : {}),
       ...(p.regions.length ? { regions: p.regions } : {}),
+      ...(p.curves?.length ? { curves: p.curves } : {}),
       xform,
       ...(copy ? { copy: true } : {}),
       ...(copy && count > 1 ? { count } : {}),
@@ -195,20 +208,23 @@ export function geometryOp(s: Extract<Subject, { kind: "geometry" }>, xform: Xfo
   return oneOp([{ op: "transform_geometry", object: s.object, points: s.points, xform, autofold }, ...sketchOps(s.sketches ?? [], xform, false)]);
 }
 
-/** The faces and regions whose outlines a subject needs (corners of faces, rings of
- * regions), keyed as `subjectOf` reads them. `picked` counts when nothing is selected. */
-export function outlineTargets(selection: Entity[], picked: Entity | null = null): { key: string; target: Target }[] {
+/** The faces, regions and curves whose outlines a subject needs (corners of faces, rings of
+ * regions, a curve's points), keyed as `subjectOf` reads them. `picked` counts when nothing
+ * is selected. */
+export function outlineTargets(selection: Entity[], picked: Entity | null = null): { key: string; target: OutlineTarget }[] {
   const from = selection.length ? selection : picked ? [picked] : [];
-  const out: { key: string; target: Target }[] = [];
+  const out: { key: string; target: OutlineTarget }[] = [];
   for (const e of from) {
     if (e.kind === "face") out.push({ key: `${e.object}:${e.face}`, target: { kind: "face", object: e.object, face: e.face } });
     else if (e.kind === "region") out.push({ key: `r${e.sketch}:${e.region}`, target: { kind: "region", sketch: e.sketch, region: e.region } });
+    else if (e.kind === "curve" && e.owner.kind === "sketch") out.push({ key: `c${e.owner.id}:${e.curve}`, target: { kind: "curve", sketch: e.owner.id, curve: e.curve } });
+    else if (e.kind === "curve" && e.owner.kind === "object") out.push({ key: `k${e.owner.id}:${e.curve}`, target: { kind: "rim", object: e.owner.id, curve: e.curve } });
   }
   return out;
 }
 
 /** The outlines `subjectOf` needs, from the host. */
-export async function loadOutlines(outline: (t: Target) => Promise<V3[][]>, selection: Entity[], picked: Entity | null = null): Promise<Map<string, V3[][]>> {
+export async function loadOutlines(outline: (t: OutlineTarget) => Promise<V3[][]>, selection: Entity[], picked: Entity | null = null): Promise<Map<string, V3[][]>> {
   const m = new Map<string, V3[][]>();
   for (const { key, target } of outlineTargets(selection, picked)) m.set(key, await outline(target));
   return m;
@@ -247,6 +263,12 @@ export function sketchParts(es: Entity[], outlines: Map<string, V3[][]>, state?:
       for (const ring of outlines.get(`r${e.sketch}:${e.region}`) ?? []) {
         p.rings.push(ring);
         ring.forEach(mv);
+      }
+    } else if (e.kind === "curve") {
+      const curves = (p.curves ??= []);
+      if (!curves.includes(e.curve)) {
+        curves.push(e.curve);
+        for (const ring of outlines.get(`c${e.owner.id}:${e.curve}`) ?? []) ring.forEach(mv);
       }
     }
   }
@@ -298,6 +320,10 @@ export function subjectOf(selection: Entity[], picked: Entity | null, outlines: 
       } else if (e.kind === "vertex") {
         push(e.at);
         what ||= `a point of ${solidName(object)}`;
+      } else if (e.kind === "curve") {
+        // Lane 23: a solid's rim moves all of its points.
+        for (const ring of outlines.get(`k${e.owner.id}:${e.curve}`) ?? []) ring.forEach(push);
+        what ||= `a curve of ${solidName(object)}`;
       }
     }
     if (!points.length) return "Nothing to move there.";
@@ -357,13 +383,34 @@ export function sketchPreviews(s: Subject, mesh: MeshData | null): SketchPreview
     const onRing = (p: V3) => ringPts.some((q) => meshNear(p, q));
     const same = ([a, b]: [V3, V3], [c, d]: [V3, V3]) => (meshNear(a, c) && meshNear(b, d)) || (meshNear(a, d) && meshNear(b, c));
     const ringEdges: [V3, V3][] = part.rings.flatMap((r) => r.map((p, i): [V3, V3] => [p, r[(i + 1) % r.length]]));
-    const carried = (e: [V3, V3]) => part.edges.some((c) => same(e, c)) || ringEdges.some((c) => same(e, c));
+    // Lane 23: a whole curve's segments are carried edges too.
+    const curveEdges: [V3, V3][] = (part.curves ?? []).flatMap((c) => curveSegments(mesh, { kind: "sketch", id: part.sketch }, c));
+    const carried = (e: [V3, V3]) => part.edges.some((c) => same(e, c)) || ringEdges.some((c) => same(e, c)) || curveEdges.some((c) => same(e, c));
     const edges = all.filter(([a, b]) => moves(a) || moves(b));
-    const ends = [...part.edges.flat(), ...ringPts];
+    const ends = [...part.edges.flat(), ...ringPts, ...curveEdges.flat()];
     const lone = part.points.some((p) => !ends.some((q) => meshNear(p, q)));
-    const liftable = !lone && (part.edges.length > 0 || part.regions.length > 0) && edges.every((e) => carried(e) || e.every((p) => !moves(p) || onRing(p)));
+    const liftable = !lone && (part.edges.length > 0 || part.regions.length > 0 || (part.curves?.length ?? 0) > 0) && edges.every((e) => carried(e) || e.every((p) => !moves(p) || onRing(p)));
     return { part, edges, liftable };
   });
+}
+
+/** Lane 23: the refusal for a curve's point moved on its own (a sketch point, or a solid's
+ * point on one of its rims, selected alone), or null. */
+export function curvePointRefusal(s: Subject, selection: Entity[], picked: Entity | null, mesh: MeshData | null): string | null {
+  for (const part of s.sketches ?? []) {
+    const owner = { kind: "sketch" as const, id: part.sketch };
+    // A point at the end of something else that moves is not on its own.
+    const ends = [...part.edges.flat(), ...part.rings.flat(), ...(part.curves ?? []).flatMap((c) => curveSegments(mesh, owner, c).flat())];
+    for (const p of part.points) {
+      if (!ends.some((q) => meshNear(p, q)) && onCurve(mesh, owner, p)) return CURVE_POINT_REFUSAL;
+    }
+  }
+  if (s.kind === "geometry") {
+    const from = selection.length ? selection : picked ? [picked] : [];
+    const parts = from.filter((e) => objectOf(e) === s.object);
+    if (parts.length && parts.every((e) => e.kind === "vertex") && parts.some((e) => e.kind === "vertex" && onCurve(mesh, { kind: "object", id: s.object }, e.at))) return CURVE_POINT_REFUSAL;
+  }
+  return null;
 }
 
 /** Whether `x` maps the plane through `origin` across `normal` onto itself. */
@@ -450,7 +497,13 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
     const sketch = now?.sketch ?? hit.p.sketch;
     if (e.kind === "vertex") out.push({ ...e, owner: { kind: "sketch", id: sketch }, at: map(e.at) });
     else if (e.kind === "edge") out.push({ ...e, owner: { kind: "sketch", id: sketch }, a: map(e.a), b: map(e.b) });
-    else if (sketch === hit.p.sketch) out.push(e);
+    else if (e.kind === "curve") {
+      // Lane 23: the curve where it went: its id in the plane, its new id where it was lifted.
+      const k = (hit.p.curves ?? []).indexOf(e.curve);
+      const now2 = now?.curves?.[k];
+      if (now2) out.push({ kind: "curve", owner: { kind: "sketch", id: now2[0] }, curve: now2[1] });
+      else if (sketch === hit.p.sketch) out.push(e);
+    } else if (sketch === hit.p.sketch) out.push(e);
     else if (now && !added.has(`${hit.i}`)) {
       added.add(`${hit.i}`);
       for (const [s, r] of now.regions) out.push({ kind: "region", sketch: s, region: r });

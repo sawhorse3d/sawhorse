@@ -263,11 +263,17 @@ impl KeptPart {
         self.area += area.abs();
     }
 
-    /// Add a 3D ring's vector area (Newell).
+    /// Add a 3D ring's vector area (Newell), summed about the ring's own first corner: a
+    /// closed ring's vector area is the same about any point, and about the world origin a
+    /// small ring far out cancels products of its distance (lane 23's fuzzer: a 2.5e-5 m2
+    /// cap 9 km out read 3.1e-9 m2 open, 1.3e-4 of its area).
     fn newell(&mut self, ring: &[DVec3]) {
         let n = ring.len();
+        let Some(&r) = ring.first() else {
+            return;
+        };
         for i in 0..n {
-            self.vector_area += ring[i].cross(ring[(i + 1) % n]) * 0.5;
+            self.vector_area += (ring[i] - r).cross(ring[(i + 1) % n] - r) * 0.5;
         }
     }
 

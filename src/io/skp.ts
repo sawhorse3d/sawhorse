@@ -228,6 +228,9 @@ export function faceOfStyle(name: string): FaceStyle | null {
   return null;
 }
 
+/** The import note saying SketchUp curves came in as plain edges (lane 23). */
+export const SKP_CURVES_NOTE = "curves (circles, arcs, polygons) came in as plain edges: the .skp reader does not say which edges make up a curve";
+
 interface Ctx {
   model: SkpModel;
   items: ImportItem[];
@@ -771,6 +774,10 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   if (ctx.summary.components)
     ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} came in as components (placed more than once, or named in SketchUp): editing one copy changes them all`);
   if (ctx.summary.softEdges) ctx.notes.add(`${ctx.summary.softEdges} soft, smooth or hidden edge${ctx.summary.softEdges === 1 ? "" : "s"} came in as they were`);
+  // Lane 23: openskp's parse output does not say which edges make up a SketchUp curve (a
+  // circle, an arc, a polygon, a welded curve), in either file family; Sawhorse never guesses
+  // curves from the edges' shape, so they come in as plain edges (docs/skp-compat.md).
+  if ([model.root, ...model.definitions.values()].some((d) => d.edges.length > 0)) ctx.notes.add(SKP_CURVES_NOTE);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   if (ctx.summary.sections)

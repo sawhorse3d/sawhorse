@@ -2,6 +2,7 @@
 // segments (24 by default). Press C again for Polygon: same gesture, "6s" sets the sides
 // (6 by default). Like every shape, it goes on the face or region under the centre (an
 // imprint inside a face, cuts where it crosses edges) or on the level plane through it.
+// Lane 23: in a sketch it is one curve (a circle, or a polygon), not 24 loose edges.
 import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
@@ -93,7 +94,7 @@ export class CircleTool extends StrokeTool {
     const kind = this.variant === "circle" ? `Circle r ${h.fmt(r)} ${h.unitLabel()}, ${n} segments` : `Polygon r ${h.fmt(r)} ${h.unitLabel()}, ${n} sides`;
     this.reset();
     h.changed();
-    await this.stroke(target.target, pts, true, (res: EditResult) => `${kind} ${target.where(h.fmt)}${faceNote(res)}.`);
+    await this.stroke(target.target, pts, true, (res: EditResult) => `${kind} ${target.where(h.fmt)}${faceNote(res)}.`, { kind: this.variant === "circle" ? "circle" : "polygon", centre: c });
   }
 
   onValue(text: string): void {

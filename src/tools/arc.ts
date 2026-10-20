@@ -3,7 +3,8 @@
 // 3-Point Arc: click the start, a point the arc passes through, and the end.
 //
 // An arc is an open stroke: on a sketch plane it closes regions with the edges it meets;
-// on a solid's face it must run from edge to edge (a rounded notch), like a line.
+// on a solid's face it must run from edge to edge (a rounded notch), like a line. Lane 23: in
+// a sketch it is one curve, an arc, not loose edges.
 import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
@@ -130,7 +131,7 @@ export class ArcTool extends StrokeTool {
       const o = r.outcome;
       const formed = o.kind === "drawn" && (o.regions.length > 0 || o.faces.length > 0) ? ": closed a shape" : "";
       return `Arc r ${h.fmt(g.radius)} ${h.unitLabel()}, ${g.points.length - 1} segments ${target.where(h.fmt)}${formed}.`;
-    });
+    }, { kind: "arc", centre: g.centre });
   }
 
   onValue(text: string): void {

@@ -22,6 +22,11 @@ export interface MeshIndex {
    * `ownerEdges[ownerStart[k]] .. ownerEdges[ownerStart[k + 1] - 1]`, in mesh order. */
   ownerStart: Uint32Array;
   ownerEdges: Uint32Array;
+  /** Lane 23: edge segments by curve (CSR over the mesh's `curves`, as for owners). */
+  curveStart: Uint32Array;
+  curveEdges: Uint32Array;
+  /** Lane 23: a curve's index in `curves`, by `curveKey` (owner kind and id, curve id). */
+  curveAt: Map<string, number>;
 }
 
 const built = new WeakMap<MeshData, MeshIndex>();
@@ -61,7 +66,22 @@ export function meshIndex(mesh: MeshData): MeshIndex {
   const ownerEdges = new Uint32Array(ownerStart[owners]);
   const at = ownerStart.slice(0, owners);
   for (let i = 0; i < eo.length; i++) if (eo[i] < owners) ownerEdges[at[eo[i]]++] = i;
-  const ix: MeshIndex = { objectParts, meshParts, regionParts, objects, objectOwner, ownerStart, ownerEdges };
+  // Lane 23: the same for curves (edgeCurve holds 1 + the curve's index, 0 for none).
+  const curves = mesh.curves?.length ?? 0;
+  const curveStart = new Uint32Array(curves + 1);
+  const ec = mesh.edgeCurve;
+  const curveAt = new Map<string, number>();
+  if (ec && curves) {
+    for (let i = 0; i < ec.length; i++) if (ec[i] > 0 && ec[i] <= curves) curveStart[ec[i]]++;
+    for (let k = 0; k < curves; k++) curveStart[k + 1] += curveStart[k];
+    mesh.curves!.forEach((c, k) => curveAt.set(`${c.owner.kind}${c.owner.id}:${c.curve}`, k));
+  }
+  const curveEdges = new Uint32Array(curveStart[curves]);
+  if (ec && curves) {
+    const cat = curveStart.slice(0, curves);
+    for (let i = 0; i < ec.length; i++) if (ec[i] > 0 && ec[i] <= curves) curveEdges[cat[ec[i] - 1]++] = i;
+  }
+  const ix: MeshIndex = { objectParts, meshParts, regionParts, objects, objectOwner, ownerStart, ownerEdges, curveStart, curveEdges, curveAt };
   built.set(mesh, ix);
   return ix;
 }

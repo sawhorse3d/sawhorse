@@ -136,6 +136,19 @@ Every limit below is checked where the work it bounds starts, before memory is s
 
 The alpha.2 known limit is fixed: a face nudged to within a micrometre of an active plane and then drawn on no longer leaves the cut-away half without a cap (about one random edit sequence in 130,000 found it). Lane 19c rebuilt the cut on the solid's own triangles, and it is property-tested at 100,000 cases a run against the solid's cross-section worked out without the cut (`crates/kernel/tests/section_props.rs`, `planes_on_a_nudged_face_drawn_on` among them; `testing::check_sections`; the runs are in docs/DEVELOPMENT.md's fuzz record).
 
+## Curves
+
+Since lane 23 a circle, an arc or a polygon is one curve ([ADR-0013](adr/0013-curves.md), [USER-GUIDE](USER-GUIDE.md#circles-arcs-and-polygons-are-curves)). What is knowingly left:
+
+- **A curve's point moved on its own is refused**, saying so and naming Edit > Explode Curve (SketchUp bends the curve instead; Sawhorse's one deliberate difference). Explode first to move one point.
+- **A circle drawn on a solid's face** imprints or cuts plain edges, not a curve: its edges would lie between the same two faces, which is how a solid's curve edges are told apart (by face-id pairs, like soft edges). Pull the imprint and the rims of the new walls are not curves either. Draw the circle in a sketch (off the solid, or on its own plane before the solid is there) and push it to get rims.
+- **A rim keeps its edges by face id**: a push of a cap with Ctrl (new walls) or through another part (the boolean path) gives the rim edges new faces, and the rim goes (its edges stay, plain). A line drawn on a cap ending on a rim splits the rim where it ends.
+- **SketchUp files' curves come in as plain edges**: the `.skp` reader (openskp 1.3.0) does not say which edges make up a curve, and Sawhorse does not guess ([skp-compat.md](skp-compat.md#curves)). DXF circles and arcs do come in as curves.
+- **Split arcs are not welded back**: erasing the line that split a circle into two arcs leaves two arcs (SketchUp's Weld Edges is not there yet); their junction points stay as points of the arcs.
+- **Two curves drawn one exactly over the other** share edges, and an edge is in one curve at most: the older keeps the shared edges and the newer becomes the curve pieces that are left (or nothing).
+- **An arc of one segment** reads its sweep from its two points, so one drawn the long way round (more than half a turn in one segment) reads as the short way.
+- **Plugins** see a selected curve as nothing: the plugin API names edges, not curves, so a plugin cannot learn a curve's id (its batches may hold `erase_curve` and `explode_curve` like any op, and a `draw` with a `curve`).
+
 ## The view
 
 | What | Limit |

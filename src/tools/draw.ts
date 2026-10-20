@@ -2,7 +2,7 @@
 // goes on, a frame aligned with the world on that plane, the kernel op, and the geometry of
 // circles, polygons and arcs. Pure functions, unit-tested.
 import { faceOf } from "../lib/names";
-import type { KernelOp, SurfaceHit, V3 } from "../kernel/types";
+import type { CurveSpec, KernelOp, SurfaceHit, V3 } from "../kernel/types";
 import type { Frame } from "../lib/edit";
 import type { Snap } from "./tool";
 
@@ -124,8 +124,8 @@ export function planeForSegment(a: V3, b: V3, facing: V3): DrawPlane {
   return planeAt(a, n);
 }
 
-export function drawOp(target: DrawTarget, points: V3[], closed: boolean): KernelOp {
-  return { op: "draw", target, points, closed } as KernelOp;
+export function drawOp(target: DrawTarget, points: V3[], closed: boolean, curve?: CurveSpec): KernelOp {
+  return (curve ? { op: "draw", target, points, closed, curve } : { op: "draw", target, points, closed }) as KernelOp;
 }
 
 // ---- shapes ------------------------------------------------------------------------------

@@ -589,10 +589,18 @@ pub fn connected_pieces(faces: &[Vec<Vec<u32>>]) -> Vec<Vec<usize>> {
     pieces.into_values().collect()
 }
 
+/// About the mesh's own first corner, as [`crate::boolean::TriSolid::volume`] is.
 fn signed_volume(tris: &[[u32; 3]], pts: &[DVec3]) -> f64 {
+    let Some(r) = tris.first().map(|t| pts[t[0] as usize]) else {
+        return 0.0;
+    };
     tris.iter()
         .map(|t| {
-            let (a, b, c) = (pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
+            let (a, b, c) = (
+                pts[t[0] as usize] - r,
+                pts[t[1] as usize] - r,
+                pts[t[2] as usize] - r,
+            );
             a.dot(b.cross(c)) / 6.0
         })
         .sum()

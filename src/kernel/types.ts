@@ -19,7 +19,13 @@ export type KernelOp =
       target: { on: "sketch"; sketch: number } | { on: "plane"; origin: [number, number, number]; normal: [number, number, number] } | { on: "face"; object: number; face: number };
       points: [number, number, number][];
       closed: boolean;
+      /** Lane 23: the stroke is one curve (the Circle, Arc and Polygon tools). */
+      curve?: CurveSpec;
     }
+  /** Lane 23: erase a whole curve of a sketch. */
+  | { op: "erase_curve"; sketch: number; curve: number }
+  /** Lane 23: Explode Curve: a sketch's curve or a solid's rim becomes plain edges. */
+  | { op: "explode_curve"; sketch?: number; object?: number; curve: number }
   | { op: "erase_edge"; object: number; a: [number, number, number]; b: [number, number, number] }
   | { op: "erase_face"; object: number; face: number }
   | { op: "erase_region"; sketch: number; region: number }
@@ -34,7 +40,7 @@ export type KernelOp =
   | { op: "array"; objects: number[]; xform: Xform; count: number; nodes?: number[] }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
   /** Lane 22: move, turn or scale sketch points, edges (world ends) and whole regions of one sketch; `copy` (with `count`) copies the edges and regions' rings instead. */
-  | { op: "transform_sketch"; sketch: number; points?: V3[]; edges?: [V3, V3][]; regions?: number[]; xform: Xform; copy?: boolean; count?: number }
+  | { op: "transform_sketch"; sketch: number; points?: V3[]; edges?: [V3, V3][]; regions?: number[]; /** Lane 23: whole curves. */ curves?: number[]; xform: Xform; copy?: boolean; count?: number }
   | { op: "offset"; source: OffsetSource; distance: number }
   | { op: "follow_me"; profile: Profile; path: V3[]; closed: boolean }
   | { op: "delete_object"; object: number }
@@ -316,7 +322,7 @@ export type OpOutcome =
   | { kind: "guide_added"; guide: number }
   | { kind: "dimension_added"; dimension: number }
   | { kind: "annotation_erased" }
-  | { kind: "drawn"; sketch: number | null; regions: number[]; faces: number[]; inside: number | null }
+  | { kind: "drawn"; sketch: number | null; regions: number[]; faces: number[]; inside: number | null; /** Lane 23: the curve the stroke became. */ curve?: number }
   | { kind: "batch"; outcomes: OpOutcome[] }
   | { kind: "group_created"; group: number }
   | { kind: "group_deleted" }
@@ -334,8 +340,10 @@ export type OpOutcome =
   | { kind: "copied"; objects: number[]; nodes?: number[] }
   | { kind: "geometry_moved"; faces: number[] }
   /** Lane 22: sketch geometry moved; the sketch it is in now and the (sketch, region) pairs its edges bound. */
-  | { kind: "sketch_moved"; sketch: number; regions: [number, number][] }
-  | { kind: "sketch_copied"; regions: [number, number][] }
+  | { kind: "sketch_moved"; sketch: number; regions: [number, number][]; /** Lane 23: the (sketch, curve) pairs the op's curves are now. */ curves?: [number, number][] }
+  | { kind: "sketch_copied"; regions: [number, number][]; /** Lane 23: the (sketch, curve) pairs the copies made. */ curves?: [number, number][] }
+  /** Lane 23: a curve exploded into `edges` plain edges. */
+  | { kind: "curve_exploded"; edges: number }
   | { kind: "severed"; objects: number[] }
   | { kind: "swept"; objects: number[]; cut: boolean }
   | { kind: "imported"; objects: number[]; meshes: number[]; groups: number[]; sketches: number[]; notes: string[] }
@@ -562,10 +570,36 @@ export interface Owner {
   id: number;
 }
 
+/** Lane 23: what a curve is (crates/kernel/src/curve.rs `CurveKind`). */
+export type CurveKind = "circle" | "arc" | "polygon" | "polyline";
+
+/** Lane 23: what an op says a stroke is: its kind and (circle, arc, polygon) world centre. */
+export interface CurveSpec {
+  kind: CurveKind;
+  centre?: V3;
+}
+
+/** Lane 23: a curve in view (the mesh's `curves`): whose it is, its id there, how it reads
+ * now, and its circle when round (centre and normal in world metres, sweep in radians). */
+export interface CurveView {
+  owner: { kind: "object" | "sketch"; id: number };
+  curve: number;
+  kind: CurveKind;
+  closed: boolean;
+  segments: number;
+  centre?: V3;
+  radius?: number;
+  sweep?: number;
+  normal: V3;
+}
+
 /** Something the user can point at (crates/inference pick::Entity), plus whole objects. */
 export type Entity =
   | { kind: "vertex"; owner: Owner; at: V3 }
-  | { kind: "edge"; owner: Owner; a: V3; b: V3; drawn: boolean; /** Lane 15: soft 1, smooth 2, hidden 4. */ flags?: number }
+  | { kind: "edge"; owner: Owner; a: V3; b: V3; drawn: boolean; /** Lane 15: soft 1, smooth 2, hidden 4. */ flags?: number; /** Lane 23: the id of the curve it is a segment of. */ curve?: number }
+  /** Lane 23: a whole curve (a circle, an arc, a polygon or a polyline of a sketch, or a
+   * solid's rim): its segments are the mesh edges that name it. */
+  | { kind: "curve"; owner: Owner; curve: number }
   | { kind: "face"; object: number; face: number }
   | { kind: "region"; sketch: number; region: number }
   | { kind: "guide"; guide: number }
@@ -638,6 +672,8 @@ export interface Inference {
   picked: Picked | null;
   /** For a snap on a solid's edge or corner: the face beside it facing the eye most. */
   adjacent: SurfaceHit | null;
+  /** Lane 23: the cursor is on a circle's, an arc's or a polygon's segment: its centre. */
+  centre?: { point: V3; kind: CurveKind; radius: number } | null;
 }
 
 /** An inference request (crates/inference infer::InferQuery). */
@@ -706,6 +742,10 @@ export interface MeshData {
   edgeFlags?: Uint8Array;
   /** Lane 15: shading normals, three per render vertex, only when some edge is smooth. */
   normals?: Float32Array;
+  /** Lane 23: one per edge segment, 0 or 1 + the index into `curves` of its curve. */
+  edgeCurve?: Uint32Array;
+  /** Lane 23: the curves in view. */
+  curves?: CurveView[];
 }
 
 /** A texture image the UI has not seen yet (sent once per digest, transferred). */
@@ -740,6 +780,8 @@ export interface WasmMesh {
   edge_normals(): Float32Array;
   edge_flags(): Uint8Array;
   normals(): Float32Array;
+  edge_curves(): Uint32Array;
+  curves_json(): string;
   free(): void;
 }
 
@@ -830,7 +872,7 @@ export type RequestBody =
   | { kind: "graph" }
   | { kind: "pick"; query: PickQuery }
   | { kind: "infer"; query: InferQuery }
-  | { kind: "outline"; part: "face" | "region"; owner: number; index: number }
+  | { kind: "outline"; part: "face" | "region" | "curve" | "rim"; owner: number; index: number }
   | { kind: "offsetPreview"; source: OffsetSource; distance: number }
   | { kind: "export"; format: "stl" | "obj"; object: number }
   | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }

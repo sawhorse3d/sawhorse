@@ -21,8 +21,9 @@ import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
+import { curveOf } from "../lib/curves";
 
 const DEG = Math.PI / 180;
 /** The protractor's ticks, and how near (in degrees) a cursor angle must be to snap to one. */
@@ -214,10 +215,13 @@ export class RotateTool extends Tool {
     const g = this.g;
     if (!g) {
       const sel = h.selection();
-      const picked = e.picked?.entity ?? null;
-      const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : scopeEntity(picked, h.state()));
+      // Lane 23: a curve's segment under the cursor is the whole curve.
+      const picked = curveOf(e.picked?.entity ?? null, h.mesh());
+      const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : curveOf(scopeEntity(picked, h.state()), h.mesh()));
       const subject = subjectOf(sel, picked, outlines, h.state());
       if (typeof subject === "string") return void h.status(subject, true);
+      const refused = curvePointRefusal(subject, sel, picked, h.mesh());
+      if (refused) return void h.status(refused, true);
       // Sketch geometry turns on its own plane unless an arrow key or Shift chose another.
       const own = sketchOnly(subject) && !this.axisLock && !this.heldNormal ? subject.sketches?.[0]?.normal : undefined;
       const normal = unit(own ?? this.normalFor(e.snap));

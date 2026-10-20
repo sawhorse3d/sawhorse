@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// The .skp test corpus: 200 SketchUp files written by openskp's MIT writer from our own
-// procedural models (src/io/corpus/models.ts), into tests/corpus/skp/ (gitignored).
+// The .skp test corpus: 203 SketchUp files written by openskp's MIT writer from our own
+// procedural models (src/io/corpus/models.ts), plus (lane 23) three files of SketchUp curves
+// (a circle, an arc and a polygon written as curves), into tests/corpus/skp/ (gitignored).
 //
-//   npm run corpus:skp                  write the 200 files and check them against the manifest
+//   npm run corpus:skp                  write the 203 files and check them against the manifest
 //   npm run corpus:skp -- --update      write them and rewrite tests/corpus/manifest.json
 //   npm run corpus:skp -- --count 20    only the first N (the golden sample)
 //
@@ -23,9 +24,9 @@ const manifestPath = path.join(root, "tests", "corpus", "manifest.json");
 const args = process.argv.slice(2);
 const update = args.includes("--update");
 const countArg = args.indexOf("--count");
-const count = countArg >= 0 ? Number(args[countArg + 1]) : 200;
-
-const { corpus } = await import(new URL("../src/io/corpus/models.ts", import.meta.url).href);
+const { corpus, curveModels } = await import(new URL("../src/io/corpus/models.ts", import.meta.url).href);
+const all = [...corpus(200), ...curveModels()];
+const count = countArg >= 0 ? Number(args[countArg + 1]) : all.length;
 const { parseSkp } = await import("openskp");
 
 mkdirSync(outDir, { recursive: true });
@@ -34,7 +35,7 @@ for (const f of readdirSync(outDir)) if (f.endsWith(".skp")) rmSync(path.join(ou
 const files = [];
 let total = 0;
 const t0 = performance.now();
-for (const spec of corpus(200).slice(0, count)) {
+for (const spec of all.slice(0, count)) {
   const bytes = spec.build();
   // Every file must parse back with the same library the app uses.
   const model = parseSkp(bytes.slice().buffer);

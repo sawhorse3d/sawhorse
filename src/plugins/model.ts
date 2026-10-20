@@ -197,6 +197,9 @@ export function itemOfEntity(e: Entity | null | undefined, state: DocState | nul
     case "vertex":
       if (e.owner.kind === "guide") return { kind: "guide", id: e.owner.id };
       return { kind: "vertex", owner: { kind: e.owner.kind === "object" ? "solid" : "sketch", id: e.owner.id }, at: e.at };
+    case "curve":
+      // Lane 23: the plugin API names edges, not curves (yet).
+      return null;
     case "region":
       return { kind: "region", sketch: e.sketch, region: e.region };
     case "guide":

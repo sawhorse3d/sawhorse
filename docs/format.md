@@ -71,6 +71,19 @@ A region: `outer` (vertex indices, counter-clockwise seen from `normal`), `holes
 
 `parent` (integer, optional): the node (`nodes[].id`) the sketch was drawn in. Strokes only join strokes of the same parent, so a sketch drawn inside a group never merges with one outside it.
 
+`curves` (curve[], optional, lane 23, ADR-0013): the sketch's curves, in id order: a circle, an arc or a polygon drawn by its tool, or a polyline (what a split polygon or a damaged curve leaves). A curve:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | integer | The curve's id, at least 1, rising through the list, below `next_curve`. |
+| `kind` | `"circle"`, `"arc"`, `"polygon"` or `"polyline"` | What it is. A circle and a polygon are closed, an arc open; a polyline either. |
+| `vertices` | `[i, ...]` | Its points in order, as indices into `vertices`, each once (a closed curve does not repeat its first). Each consecutive pair (and, closed, the last and the first) is an edge; no edge is in two curves. A circle, polygon or closed polyline has at least 3 points; an arc at least 2; an open polyline at least 3. |
+| `closed` | boolean, optional | The last point joins the first. Absent: false. |
+| `segments` | integer | Segments as drawn: a circle's or a polygon's count, otherwise its edges. At least 1. |
+| `centre`, `radius`, `start`, `sweep` | `[u, v]`, number, number, number; all four or none | The circle a circle, arc or polygon lies on (absent for a polyline): centre in the plane's frame, radius in metres, the angle of the first point about the centre and the signed angle the points turn through segment by segment (radians, counter-clockwise seen from `normal`; a closed curve, a whole turn). Every point lies on the circle (within 4e-5 m and one part in 1e9 of its size), or on the segment joining its two neighbours, or, at either end of an arc, no further out than the radius. |
+
+`next_curve` (integer, optional): the id the sketch's next curve gets, written once a curve was ever made; above every id in `curves`. Absent: one past the largest id (1 for none). A file whose curves break these rules is refused. Both are absent from files without curves, which read exactly as before.
+
 ### `objects[]`
 
 An object is a watertight solid.
@@ -88,7 +101,7 @@ An object is a watertight solid.
 | `hidden`, `locked` | boolean, optional | Hidden (not drawn, not exported by default) and locked (not editable). Absent: false. |
 | `part` | part attributes, optional | What was said about the solid as a cut-list part (below). For a solid with a `slot` it repeats its definition member's. |
 
-A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid), and optionally `material` (the face's own material, a name in `materials`; absent: the solid's) and `uv` (how a texture sits on the face, below). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces. Optional `edge_flags` (lane 15) lists `[face id, face id, flags]`: the edge between those two faces is soft (1, not drawn), smooth (2, shaded across) and / or hidden (4, not drawn or picked); flags are 1 to 7 and the two faces must meet along an edge, else the file is refused (ADR-0011). A mesh (and a definition's mesh member) has `edge_flags` too, as `[vertex, vertex, flags]`. Absent: every edge hard.
+A B-rep: `points` (`[[x, y, z], ...]`), `faces` and `user_edges`. A face: `id` (persistent face id, unique in the object, at least 1), `outer` (indices into `points`, counter-clockwise seen from outside the solid), `holes` (lists of indices, clockwise seen from outside), `plane` (as for sketches; the face's frame, with `normal` pointing out of the solid), and optionally `material` (the face's own material, a name in `materials`; absent: the solid's) and `uv` (how a texture sits on the face, below). `user_edges` lists `[a, b]` index pairs of edges a person drew: the only edges allowed between two coplanar faces. Optional `edge_flags` (lane 15) lists `[face id, face id, flags]`: the edge between those two faces is soft (1, not drawn), smooth (2, shaded across) and / or hidden (4, not drawn or picked); flags are 1 to 7 and the two faces must meet along an edge, else the file is refused (ADR-0011). A mesh (and a definition's mesh member) has `edge_flags` too, as `[vertex, vertex, flags]`. Absent: every edge hard. Optional `curves` (lane 23, ADR-0013) lists the solid's rims, the curves a pushed circle, arc or polygon leaves on its ends: each `{ "id", "kind", "closed"?, "segments", "keys" }`, `kind` and `segments` as for a sketch's curves, `keys` the rim's edges in order, each as `[face id, face id]` (the two faces it lies between, smaller first). Ids are distinct and at least 1; every key names exactly one edge, consecutive edges meet (round the loop for a closed rim), no edge is in two rims; else the file is refused. A rim's centre and radius are read from its points, not stored.
 
 **What a face shows**: its own `material`, else its solid's, else the nearest enclosing node's (`nodes[].material`, or the definition member's for a nested node). Absent everywhere: the default look.
 

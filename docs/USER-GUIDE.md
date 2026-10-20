@@ -49,14 +49,14 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 
 | Key | Tool | Gesture | VCB takes |
 |---|---|---|---|
-| Space | Select | Click; double-click selects the whole solid, or opens a group or component; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
-| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; drag across several (one undo step). Ctrl softens and smooths the edges instead, Shift hides them, Ctrl+Shift unsoftens them | - |
+| Space | Select | Click; a circle, arc or polygon selects whole (see [Curves](#circles-arcs-and-polygons-are-curves)); double-click selects the whole solid, or opens a group or component; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
+| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; a circle, arc or polygon erases whole; drag across several (one undo step). Ctrl softens and smooths the edges instead, Shift hides them, Ctrl+Shift unsoftens them | - |
 | L | Line | Click, click, click; stops when it closes, when a face forms, or on Esc | a length along the direction shown |
 | R | Rectangle | Click two corners, or click one and type `w, d`; with nothing clicked, it starts at the origin | `w, d` (a negative value goes the other way) |
 | R again | Rotated Rectangle | Click both ends of one edge, then the width | the edge's length, then the width |
-| C | Circle | Click the centre, then the radius | a radius; `48s` sets segments (24 by default) |
+| C | Circle | Click the centre, then the radius. Draws one curve | a radius; `48s` sets segments (24 by default) |
 | C again | Polygon | As Circle | a radius; `6s` sets sides (6 by default) |
-| A | Arc | Click both ends, then pull out the bulge | a bulge length, `12r` radius, `12s` segments |
+| A | Arc | Click both ends, then pull out the bulge. Draws one curve | a bulge length, `12r` radius, `12s` segments |
 | A again | 3-Point Arc | Click the start, a point it passes through, then the end | - |
 | P | Push/Pull | Press on a face and drag, then release; or click, move, click. Double-click repeats the last distance. Hold Ctrl when you let go to pull out a new face. | a distance (negative flips it) |
 | M | Move | Click a solid or a sketch shape (or select first), move, click; or drag. Ctrl copies. With faces, edges or points selected, moves that part (Alt: autofold). | a distance; after a copy `x3`, `3x`, `*3` or `/4` |
@@ -97,7 +97,7 @@ When the cursor lands on something the tool can use, a coloured point and a tip 
 | Amber | On Edge |
 | Violet | On Face |
 | Magenta | Intersection (two edges, or a guide crossing an edge) |
-| Blue | Centre of a circle, arc or polygon |
+| Blue | Centre of a circle, arc or polygon (hover one of its segments and its centre shows as a small blue dot labelled Centre; move there to snap to it) |
 | Indigo | Parallel or Perpendicular to an edge (a dotted line runs from your start point) |
 | Grey | From Point: lined up with a point you hovered earlier (a dotted line runs to it) |
 | Tan | On Guide or Guide Point |
@@ -112,6 +112,21 @@ How the snapping chooses:
 - The snap distance stays the same number of pixels at any zoom.
 - Along an axis or a locked direction, a length drawn with the mouse snaps to whole grid steps (1 in or 1 ft; 10 mm or 100 mm) once those steps are at least 8 pixels apart on screen. Type a value for anything finer.
 - To line up with a corner that isn't connected to your shape, hover it for a moment and then move away. A grey From Point line stays available from it.
+
+## Circles, arcs and polygons are curves
+
+A circle, an arc or a polygon you draw is **one curve**, not a run of loose segments, as in SketchUp.
+
+- **Select (Space).** Hovering any segment highlights the whole curve; a click selects it, and the status line says what it is in your units: "Selected a circle (24 segments, radius 300 mm)", "an arc (12 segments, radius 1 1/2 in, 90 degrees)", "a polygon (6 sides, radius 2 in)". Shift and Ctrl add and toggle the whole curve. A window takes a curve only when all of it is inside; a crossing box takes it when it touches any segment. A curve's points are still points: a click exactly on one selects that point. Double-click still selects the solid (or does nothing on a loose sketch shape, as before).
+- **Move, Rotate and Scale** move a selected curve as one, with whatever else is selected (edges, regions, solids: one undo step). A circle moved, turned, mirrored or scaled evenly is still a circle, with its new centre and radius; scaled more one way than the other it is still one curve, no longer a circle. **Ctrl** copies: each copy is a new curve. Moving **one point** of a curve on its own is refused, saying why: it would bend the curve (SketchUp bends it; Sawhorse asks you to explode it first). Moving an edge or a shape that shares a point with a curve still drags that point, and the curve, bent, stays one curve.
+- **Drawing across a curve splits it.** A line across a circle splits it into two arcs, each still on the circle (each selects whole); a line ending on one point of a circle leaves the circle whole (two make two arcs). A line ending on an arc's middle point splits the arc in two. A polygon split this way gives two curves of straight segments.
+- **Eraser (E).** Clicking any segment erases the whole curve; dragging across segments of several curves erases each whole; one undo step. With Ctrl or Shift held, the soft, smooth or hidden flag goes on every segment of a solid's rim.
+- **Edit > Explode Curve** turns the selected curves back into plain edges, one undo step: afterwards a click takes one segment, the Eraser one segment, Move one segment or point, as before curves. (There is no right-click menu in the view yet; the Edit menu is where it lives.)
+- **Offset (F)** of a curve (select it, then offset) or of a region bounded by one makes a curve of the same kind: a circle offsets to a circle about the same centre.
+- **Push/Pull** a circle, an arc or a polygon's region into a solid and the curve becomes the **rim** of both ends: clicking any rim segment selects the whole rim ("a polygon (6 sides, radius 200 mm), a rim of solid 1"), and the rims follow the solid through moves, copies and components. The walls between a circle's (or an arc's) segments come out **soft and smooth**, so a pulled circle is a smooth cylinder; a polygon's walls stay hard (a hexagonal prism has six faces). Push the solid back down flat and the circle is a curve again in the sketch.
+- **Centre.** Hovering a segment of a circle, an arc or a polygon (in a sketch or on a solid's rim) with a drawing or moving tool shows its centre as a small blue dot labelled **Centre**; move to it and the cursor snaps there ("Centre"), as SketchUp does.
+- **Files.** `.shz` keeps curves, rims and their ids. A DXF's `CIRCLE` and `ARC` come in as curves, and the import report counts them ("3 curves came in as curves"). A SketchUp file's curves come in as plain edges: the `.skp` reader does not say which edges make up a curve (the import report says so; [skp-compat.md](skp-compat.md#curves)).
+- A circle drawn **on a solid's face** imprints (or cuts) plain edges, as before: a curve on a face is not kept yet ([LIMITS.md](LIMITS.md)).
 
 ## Drawing on solids
 

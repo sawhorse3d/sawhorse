@@ -78,6 +78,8 @@ function scene(d: WasmDoc): SceneData {
       edgeNormals: m.edge_normals(),
       edgeFlags: m.edge_flags(),
       normals: m.normals(),
+      edgeCurve: m.edge_curves(),
+      curves: JSON.parse(m.curves_json()),
     };
     const state = JSON.parse(d.state_json()) as DocState;
     // Section cuts (lane 12): only for a model that has a section plane.
@@ -291,6 +293,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     if (m.edgeNormals) transfer.push(m.edgeNormals.buffer);
     if (m.edgeFlags) transfer.push(m.edgeFlags.buffer);
     if (m.normals) transfer.push(m.normals.buffer);
+    if (m.edgeCurve) transfer.push(m.edgeCurve.buffer);
     for (const t of res.scene.textures ?? []) transfer.push(t.bytes.buffer);
   }
   if (res.ok && res.file instanceof Uint8Array) transfer.push(res.file.buffer);

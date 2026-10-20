@@ -8,7 +8,12 @@
 // Ctrl+Shift unsoftens them (soft, smooth and hidden all cleared; with both keys held, soft
 // and hidden edges can be picked). Nothing is erased then: the kernel's `set_edge_flags`,
 // one undo step for all of them.
-import type { Entity, KernelOp } from "../kernel/types";
+//
+// Curves (lane 23): any segment of a circle, an arc, a polygon or a polyline erases the whole
+// curve, on a click or across a drag, one undo step (Edit > Explode Curve first to erase one
+// segment). With a modifier, the flags go on every segment of the curve.
+import type { Entity, KernelOp, MeshData, V3 } from "../kernel/types";
+import { curveOf, curveSegments } from "../lib/curves";
 import { edgeFlagWords, entityKey, eraseOp, eraseOps } from "../lib/entities";
 import { scopeEntity } from "../lib/scope";
 import { EMPTY_VIEW, Tool, type InferContext, type ToolEvent, type ToolView } from "./tool";
@@ -26,9 +31,17 @@ export function edgeMode(m: { ctrl: boolean; shift: boolean }): { set: number; c
   return null;
 }
 
-/** The kernel op that sets a modifier's flags on solid edges (sketch strokes have none). */
-export function edgeFlagsOp(edges: Entity[], mode: { set: number; clear: number }): KernelOp | null {
-  const at = edges.flatMap((e) => (e.kind === "edge" && e.owner.kind === "object" ? [{ object: e.owner.id, a: e.a, b: e.b }] : []));
+/** The kernel op that sets a modifier's flags on solid edges (sketch strokes have none); a
+ * solid's curve (lane 23) is all of its segments. */
+export function edgeFlagsOp(edges: Entity[], mode: { set: number; clear: number }, mesh: MeshData | null = null): KernelOp | null {
+  const at = edges.flatMap((e) => {
+    if (e.kind === "edge" && e.owner.kind === "object") return [{ object: e.owner.id, a: e.a, b: e.b }];
+    if (e.kind === "curve" && e.owner.kind === "object") {
+      const object = e.owner.id;
+      return curveSegments(mesh, e.owner, e.curve).map(([a, b]: [V3, V3]) => ({ object, a, b }));
+    }
+    return [];
+  });
   if (!at.length) return null;
   return { op: "set_edge_flags", edges: at, set: mode.set, clear: mode.clear };
 }
@@ -60,13 +73,15 @@ export class EraseTool extends Tool {
     // In the open context: a group or component that is not open erases as a whole; what
     // is outside the open one is not touched.
     const raw = e.picked?.entity ?? null;
-    const ent = scopeEntity(raw, h.state());
+    const edge = scopeEntity(raw, h.state());
+    // Lane 23: a curve's segment is the whole curve.
+    const ent = curveOf(edge, h.mesh());
     const mode = edgeMode(e);
     switch (e.type) {
       case "move": {
-        h.hover(ent && ent.kind !== "vertex" && (!mode || ent.kind === "edge") ? ent : null);
+        h.hover(ent && ent.kind !== "vertex" && (!mode || ent.kind === "edge" || ent.kind === "curve") ? ent : null);
         // The edge's tooltip (lane 15): what it is now, so the modifier's effect is plain.
-        const words = ent?.kind === "edge" ? edgeFlagWords(ent.flags) : "";
+        const words = edge?.kind === "edge" ? edgeFlagWords(edge.flags) : "";
         if (words !== this.said) {
           this.said = words;
           h.status(words ? `This edge is ${words}. ${words.includes("soft") || words.includes("hidden") ? "Ctrl+Shift+click unsoftens it." : "Ctrl+click softens and smooths it."}` : null);
@@ -96,7 +111,7 @@ export class EraseTool extends Tool {
       }
       case "drag":
         this.dragging = true;
-        if (ent && (ent.kind === "edge" || (!mode && ent.kind === "region"))) this.swept.set(entityKey(ent), ent);
+        if (ent && (ent.kind === "edge" || ent.kind === "curve" || (!mode && ent.kind === "region"))) this.swept.set(entityKey(ent), ent);
         h.hover(ent);
         h.changed();
         return;
@@ -124,7 +139,7 @@ export class EraseTool extends Tool {
   }
 
   private async flag(edges: Entity[], mode: { set: number; clear: number; verb: string }): Promise<void> {
-    const op = edgeFlagsOp(edges, mode);
+    const op = edgeFlagsOp(edges, mode, this.host.mesh());
     if (!op) {
       this.host.status("Only the edges of solids soften, smooth or hide: click an edge of a solid.", true);
       return;
@@ -141,7 +156,8 @@ export class EraseTool extends Tool {
 
   view(): ToolView {
     if (!this.swept.size) return EMPTY_VIEW;
-    const pts = [...this.swept.values()].flatMap((e) => (e.kind === "edge" ? [e.a, e.b] : []));
+    const mesh = this.host.mesh();
+    const pts = [...this.swept.values()].flatMap((e) => (e.kind === "edge" ? [e.a, e.b] : e.kind === "curve" ? curveSegments(mesh, e.owner, e.curve).flat() : []));
     return { ...EMPTY_VIEW, overlay: pts.length ? [{ kind: "segments", points: pts, color: "--warn", width: 3 }] : [] };
   }
 }

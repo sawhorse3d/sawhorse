@@ -1,0 +1,98 @@
+{
+  "name": "2026-10-19-tiny-triangle-curve-copied-a-hair-over-itself",
+  "error": "op 4 TransformSketch { sketch: 1, points: [], edges: [], regions: [4294967297], curves: [], xform: Xform { linear: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], translation: [0.00012374999999999997, -8.876760388790497e-5, 0.0] }, copy: true, count: 1 } panicked: sketch invalid after copy: curve 1: a curve turns back on itself",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "sketch",
+        "sketch": 1
+      },
+      "points": [
+        [
+          0.0001,
+          0.0,
+          0.0
+        ],
+        [
+          -0.00004999999999999998,
+          0.00008660254037844388,
+          0.0
+        ],
+        [
+          -0.00005000000000000005,
+          -0.00008660254037844384,
+          0.0
+        ]
+      ],
+      "closed": true,
+      "curve": {
+        "kind": "circle",
+        "centre": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "op": "transform_sketch",
+      "sketch": 1,
+      "regions": [
+        4294967297
+      ],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.00012374999999999997,
+          -0.00008876760388790497,
+          0.0
+        ]
+      },
+      "copy": true
+    }
+  ]
+}

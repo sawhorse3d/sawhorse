@@ -841,6 +841,22 @@ impl Sketch {
         if self.edge_between(u, w).is_some() {
             return;
         }
+        // The healed edge must keep the graph's rules (lane 23): `v` may sit up to the merge
+        // distance off the straight line, so another point between the merge distance and
+        // twice it from the two edges can be within it of their replacement, and an edge
+        // can cross it. Then `v` stays (healing is tidiness, never needed). The fuzzer found
+        // it: a 0.1 mm circle erased beside its copy moved 0.14 mm.
+        let clear = self.vertices.iter().all(|(x, px)| {
+            x == u || x == w || x == v || point_segment_distance(*px, pu, pw) > SKETCH_MERGE
+        }) && self.edges.iter().all(|(e, [a, b])| {
+            e == e1
+                || e == e2
+                || [*a, *b].iter().any(|&y| y == u || y == w)
+                || !proper_cross(pu, pw, self.vertices[*a], self.vertices[*b])
+        });
+        if !clear {
+            return;
+        }
         self.edges.remove(e2);
         self.edges[e1] = [u, w];
         self.vertices.remove(v);
@@ -1558,15 +1574,20 @@ impl Sketch {
                 let mut kind = kind;
                 if let Some(r) = round.as_mut() {
                     let pts: Vec<DVec2> = chain.iter().map(|&v| self.vertices[v]).collect();
-                    match fit_angles(r.centre, &pts, closed) {
+                    // A piece whose points no longer fit its circle (a repair bent it, say a
+                    // vertex snapped onto one of its chords zigzags it) is a polyline: the
+                    // validator's rules hold for every curve settling leaves.
+                    let fits = match fit_angles(r.centre, &pts, closed) {
                         Some((start, sweep)) => {
                             r.start = start;
                             r.sweep = sweep;
+                            check_round(r, &pts, closed).is_ok()
                         }
-                        None => {
-                            kind = CurveKind::Polyline;
-                            round = None;
-                        }
+                        None => false,
+                    };
+                    if !fits {
+                        kind = CurveKind::Polyline;
+                        round = None;
                     }
                 }
                 let segments = if kind == CurveKind::Polyline {

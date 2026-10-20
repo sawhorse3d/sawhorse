@@ -13,7 +13,7 @@ import type { ToolId } from "../lib/tools";
 import type { UnitSystem } from "../lib/units";
 import type { Label, Marker, SelectionBox } from "../components/Viewport";
 import type { OverlayItem } from "../viewport/engine";
-import type { Target } from "../lib/edit";
+import type { OutlineTarget, Target } from "../lib/edit";
 
 /** Where the cursor snaps (an inference result; see crates/inference). */
 export interface Snap {
@@ -31,6 +31,8 @@ export interface Snap {
   entity: Entity | null;
   /** Lines to draw for the inference (axis from the start, dotted from-point alignment). */
   lines: { from: V3; to: V3; kind: InferenceKind }[];
+  /** Lane 23: the centre of the circle, arc or polygon whose segment is under the cursor. */
+  centre?: V3 | null;
 }
 
 export type ToolEventType = "move" | "down" | "click" | "dblclick" | "drag" | "dragend" | "leave";
@@ -113,8 +115,9 @@ export interface ToolHost {
    */
   target(): Target | null;
   setTarget(t: Target | null): void;
-  /** World rings of a face or region (empty when it is gone). */
-  outline(t: Target): Promise<V3[][]>;
+  /** World rings of a face or region, or (lane 23) a curve's points as one ring (empty when
+   * it is gone). */
+  outline(t: OutlineTarget): Promise<V3[][]>;
   /** What an offset would draw, or the kernel's reason it would be refused. */
   offsetPreview(source: OffsetSource, distance: number): Promise<OffsetPreview | string>;
   /** The drawn section plane under canvas pixel (x, y), lane 12: its id, the ray parameter
@@ -180,7 +183,7 @@ export abstract class Tool {
 /** A marker for a snap. */
 export function markerOf(s: Snap | null): Marker | null {
   if (!s || s.kind === "free") return null;
-  return { at: s.point, kind: s.kind, tip: s.tip };
+  return { at: s.point, kind: s.kind, tip: s.tip, centre: s.centre ?? null };
 }
 
 /** The overlay lines an inference wants drawn: solid in the axis or parallel colour from

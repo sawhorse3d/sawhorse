@@ -1458,4 +1458,77 @@ mod tests {
         assert_eq!(v1, v2);
         assert!(v1 > 0.6 * 0.4 * 0.3, "the corner moved out: {v1}");
     }
+
+    /// Lane 23: sketch curves (a circle split into arcs by a line, a polygon, an erased and an
+    /// exploded curve, so the counter runs ahead of the ids) and a solid's rims come back
+    /// from a `.shz` with their ids, kinds, circles and the same hash.
+    #[test]
+    fn curves_round_trip() {
+        let mut d = Document::with_ground_sketch();
+        let ring = |c: [f64; 2], r: f64, n: usize| -> String {
+            let p: Vec<String> = (0..n)
+                .map(|k| {
+                    let a = std::f64::consts::TAU * k as f64 / n as f64;
+                    format!("[{},{},0]", c[0] + r * a.cos(), c[1] + r * a.sin())
+                })
+                .collect();
+            p.join(",")
+        };
+        let draw = |pts: String, kind: &str, c: [f64; 2]| {
+            format!(
+                r#"{{"op":"draw","target":{{"on":"sketch","sketch":1}},"points":[{pts}],"closed":true,"curve":{{"kind":"{kind}","centre":[{},{},0]}}}}"#,
+                c[0], c[1]
+            )
+        };
+        for op in [
+            draw(ring([0.0, 0.0], 0.3, 24), "circle", [0.0, 0.0]),
+            r#"{"op":"draw","target":{"on":"sketch","sketch":1},"points":[[-1,0.1,0],[1,0.1,0]],"closed":false}"#.into(),
+            draw(ring([2.0, 0.0], 0.2, 6), "polygon", [2.0, 0.0]),
+            draw(ring([4.0, 0.0], 0.1, 12), "circle", [4.0, 0.0]),
+            draw(ring([6.0, 0.0], 0.1, 12), "circle", [6.0, 0.0]),
+            r#"{"op":"erase_curve","sketch":1,"curve":5}"#.into(),
+            r#"{"op":"explode_curve","sketch":1,"curve":4}"#.into(),
+        ] {
+            d.apply(&serde_json::from_str::<Op>(&op).unwrap())
+                .unwrap_or_else(|e| panic!("{op}: {e}"));
+        }
+        // Push the polygon into a solid with rims.
+        let s = d.model().sketch(1).unwrap();
+        let region = s
+            .regions()
+            .find(|(_, r)| {
+                let (o, _) = s.region_rings(r);
+                o.len() == 6
+            })
+            .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+            .unwrap();
+        d.apply(&Op::Extrude {
+            sketch: 1,
+            region,
+            distance: 0.25,
+        })
+        .unwrap();
+        let m = d.model();
+        let kinds: Vec<_> = m
+            .sketch(1)
+            .unwrap()
+            .curves()
+            .map(|(id, c)| (id, c.kind))
+            .collect();
+        assert_eq!(kinds.len(), 2, "two arcs: {kinds:?}");
+        assert_eq!(m.objects()[0].1.curves().len(), 2);
+        let o = read(&write(m, &SaveOptions::default()).unwrap()).unwrap();
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        assert_eq!(o.document.hash(), d.hash());
+        let back = o.document.model();
+        assert_eq!(
+            m.sketch(1).unwrap().to_raw(),
+            back.sketch(1).unwrap().to_raw()
+        );
+        assert_eq!(
+            back.sketch(1).unwrap().next_curve_id(),
+            m.sketch(1).unwrap().next_curve_id()
+        );
+        assert_eq!(back.objects()[0].1.curves(), m.objects()[0].1.curves());
+    }
 }

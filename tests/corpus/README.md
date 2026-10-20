@@ -1,13 +1,13 @@
 # SketchUp (.skp) test corpus
 
-200 `.skp` files made by openskp's MIT writer from Sawhorse's own procedural models, used to test `.skp` import end to end in the browser build.
+203 `.skp` files made by openskp's MIT writer from Sawhorse's own procedural models (200 cycling through ten families, then, since lane 23, a circle, an arc and a polygon written as SketchUp curves), used to test `.skp` import end to end in the browser build.
 
 | Path | Committed | What |
 |---|---|---|
 | `../../src/io/corpus/models.ts` | yes | The generator: ten families (boxes, tables, bookshelves, houses with windows, stairs, curved parts, nested and mirrored components, loose geometry, an open tray, a reversed face), each seeded by the file's index. GUIDs and timestamps the writer would randomise are seeded too, so every file is reproducible byte for byte. |
 | `../../scripts/corpus-skp.mjs` | yes | Writes the files here and checks them against the manifest (`npm run corpus:skp`; `-- --update` rewrites the manifest). |
 | `manifest.json` | yes | Every file's name, family, size and SHA-256, the openskp version, and face and definition counts. |
-| `skp/` | **no** (gitignored) | The 200 generated files, about 2.1 MB. |
+| `skp/` | **no** (gitignored) | The 203 generated files, about 2.1 MB. |
 | `golden/` | yes | Reference renders of the first 20 files (the sample: two of each family). |
 
 Why the `.skp` files are not committed: openskp's writer starts every file from a blank document SketchUp itself saved (its embedded scaffold). ADR-0002 keeps SketchUp-authored bytes out of this repository until our own blank template replaces that scaffold, so the files are generated wherever they are needed (locally and in CI) instead. Nothing here comes from 3D Warehouse, from OpenSKP's own test fixtures, or from any SketchUp model.

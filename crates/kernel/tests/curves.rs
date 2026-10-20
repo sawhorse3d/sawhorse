@@ -862,3 +862,76 @@ fn a_huge_67_gon_copied_a_hair_turned_pushes_into_solids() {
         }
     }
 }
+
+#[test]
+fn a_huge_circle_on_a_tilted_plane_copied_a_hair_turned_pushes_flat() {
+    // Property-test find (lane 23, seed 2026102302): a 9 km 77-gon circle on the plane
+    // through (0, 0, 0.5) across (0, 1, 1), copied turned 1e-7 degrees about a point: its
+    // slivers pulled into solids had faces whose planes were fitted to their points, and a
+    // sliver's Newell normal was 1e-8 rad off, so its own points read 5.6e-5 m off it
+    // (fixed in `Object::extrude`: every face's plane as built).
+    let mut d = Document::with_ground_sketch();
+    let OpOutcome::SketchCreated { sketch } = ok(
+        &mut d,
+        Op::NewSketch {
+            origin: [0.0, 0.0, 0.5],
+            normal: [0.0, 1.0, 1.0],
+        },
+    ) else {
+        panic!()
+    };
+    let plane = *d.model().sketch(sketch).unwrap().plane();
+    let pts: Vec<[f64; 3]> = (0..77)
+        .map(|k| {
+            let a = TAU * k as f64 / 77.0;
+            plane.to_world(9000.0 * DVec2::from_angle(a)).to_array()
+        })
+        .collect();
+    let out = ok(
+        &mut d,
+        Op::Draw {
+            target: DrawTarget::Sketch { sketch },
+            points: pts,
+            closed: true,
+            curve: Some(CurveSpec {
+                kind: CurveKind::Circle,
+                centre: Some(plane.origin.to_array()),
+            }),
+        },
+    );
+    let id = drawn_curve(&out);
+    let s = d.model().sketch(sketch).unwrap();
+    let verts: Vec<DVec3> = s.vertices().map(|(_, p)| s.plane().to_world(p)).collect();
+    let about = verts[202 % verts.len()];
+    ok(
+        &mut d,
+        Op::TransformSketch {
+            sketch,
+            points: vec![],
+            edges: vec![],
+            regions: vec![],
+            curves: vec![id],
+            xform: Xform::rotation(about, plane.normal, 1e-7f64.to_radians()),
+            copy: true,
+            count: 1,
+        },
+    );
+    let regions: Vec<u64> = d
+        .model()
+        .sketch(sketch)
+        .unwrap()
+        .regions()
+        .map(|(id, _)| sawhorse_kernel::ids::to_public(id))
+        .collect();
+    for region in regions {
+        let mut e = d.clone();
+        match e.apply(&Op::Extrude {
+            sketch,
+            region,
+            distance: 0.5,
+        }) {
+            Ok(_) => sawhorse_kernel::testing::check_model(e.model()).unwrap(),
+            Err(err) => assert!(!err.is_bug(), "{err}"),
+        }
+    }
+}

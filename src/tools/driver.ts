@@ -46,7 +46,7 @@ export function splitCap(s: SurfaceHit | null | undefined): { surface: SurfaceHi
 /** A snap from the inference engine's answer. */
 export function snapOf(inf: Inference): Snap {
   const { surface, cap } = splitCap(inf.surface);
-  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface, cap, entity: inf.entity, lines: inf.lines, adjacent: splitCap(inf.adjacent).surface };
+  return { point: inf.point, kind: inf.kind, tip: inf.tip, surface, cap, entity: inf.entity, lines: inf.lines, adjacent: splitCap(inf.adjacent).surface, centre: inf.centre?.point ?? null };
 }
 
 const ANCHOR_KINDS = new Set(["endpoint", "midpoint", "intersection", "centre", "guide-point"]);

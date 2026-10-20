@@ -1,0 +1,279 @@
+import { expect, test, type Page } from "@playwright/test";
+import { curveModels } from "../src/io/corpus/models";
+
+// Lane 23 (#3): a circle, an arc or a polygon drawn by its tool is one curve, as in
+// SketchUp. Drawn, clicked (the status line says what it is, in mm), moved by a typed
+// distance, scaled from a grip, copied with Ctrl, split by a line into two arcs (each
+// selects whole), one arc erased (only it goes), the other exploded (its segments plain
+// again); a polygon pushed into a solid and its top rim clicked (the whole rim); the rim's
+// Centre offered while hovering it and snapped to; undone step by step and redone; saved as
+// .shz and opened again with its curves; a DXF of circles importing as curves; the corpus's
+// SketchUp circle importing as plain edges, with the reason. Positions are inches (the
+// helpers' unit); the model's display units are millimetres.
+import { IN, at, clickAt, point, selectAt, type, type V3 } from "./helpers";
+
+const requireKernel = !!process.env.REQUIRE_KERNEL;
+const MM = 0.001;
+
+type Curve = { owner: { kind: string; id: number }; curve: number; kind: string; closed: boolean; segments: number; centre?: V3; radius?: number; edges: number };
+
+async function curves(page: Page): Promise<Curve[]> {
+  return page.evaluate(() => (window as unknown as { __sawhorse: { curves(): Promise<Curve[]> } }).__sawhorse.curves());
+}
+
+async function ready(page: Page) {
+  page.on("dialog", (d) => void d.accept());
+  await page.goto("/?autosave=0&io=basic");
+  const vp = page.locator("main.vp");
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  if (!requireKernel && (await vp.getAttribute("data-kernel")) === "missing") test.skip(true, "kernel WASM not built");
+  await expect(vp).toHaveAttribute("data-kernel", "ready");
+  // Millimetres: the status line says lengths in the model's units.
+  for (let i = 0; i < 6 && (await page.locator(".vcb .units").textContent()) !== "mm"; i++) await page.locator(".vcb .units").click();
+  await expect(page.locator(".vcb .units")).toHaveText("mm");
+  return vp;
+}
+
+async function menu(page: Page, top: string, item: string) {
+  await page.getByRole("button", { name: top, exact: true }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
+}
+
+async function download(page: Page, action: () => Promise<void>) {
+  const [d] = await Promise.all([page.waitForEvent("download"), action()]);
+  const fs = await import("node:fs");
+  return fs.readFileSync(await d.path());
+}
+
+/** Metres to the helpers' inches. */
+const inch = (p: [number, number, number]): V3 => [p[0] / IN, p[1] / IN, p[2] / IN];
+/** The point at `deg` on a circle (metres in, inches out). */
+const onCircle = (c: [number, number], r: number, deg: number, z = 0): V3 => inch([c[0] + r * Math.cos((deg * Math.PI) / 180), c[1] + r * Math.sin((deg * Math.PI) / 180), z]);
+/** The middle of the segment from `a` to `b` degrees of an n-gon (metres in, inches out). */
+const midSeg = (c: [number, number], r: number, a: number, b: number, z = 0): V3 => {
+  const p = onCircle(c, r, a, z);
+  const q = onCircle(c, r, b, z);
+  return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
+};
+const byKind = (cs: Curve[]) =>
+  cs
+    .map((c) => `${c.owner.kind}:${c.kind}`)
+    .sort()
+    .join(" ");
+
+/** Put the cursor on a grip (inches) and wait until it is the hot one. */
+async function grip(page: Page, p: V3) {
+  await expect(async () => {
+    const [x, y] = await at(page, p);
+    await page.mouse.move(x + 3, y + 2);
+    await page.mouse.move(x, y, { steps: 2 });
+    await expect(page.locator(".vlabel.grip.hot")).toHaveCount(1, { timeout: 800 });
+  }).toPass({ timeout: 10_000 });
+  return at(page, p);
+}
+
+test("a circle is one curve: select, move, scale, copy, split, erase, explode; a pushed polygon's rim, its Centre; undo, redo, .shz", async ({ page }) => {
+  test.setTimeout(120_000);
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+
+  // 1. A circle of 300 mm at the origin, its first point along red.
+  await page.keyboard.press("c");
+  await clickAt(page, [0, 0, 0], /grid|endpoint|axis/);
+  await point(page, [20, 0, 0]);
+  await type(page, "300");
+  await expect(hint).toContainText("Circle r 300 mm, 24 segments");
+  let cs = await curves(page);
+  expect(cs).toHaveLength(1);
+  expect(cs[0]).toMatchObject({ owner: { kind: "sketch" }, kind: "circle", closed: true, segments: 24, edges: 24 });
+  expect(cs[0].radius).toBeCloseTo(0.3, 9);
+
+  // 2. A click on the rim selects the whole circle; the status line says what it is.
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg([0, 0], 0.3, 0, 15), "curve");
+  await expect(hint).toContainText("Selected a circle (24 segments, radius 300 mm). Delete erases it; Edit > Explode Curve makes its edges plain.");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+
+  // 3. Moved 100 mm along red, typed: still the circle (the same id), its centre moved.
+  await page.keyboard.press("m");
+  await clickAt(page, onCircle([0, 0], 0.3, 0), "endpoint");
+  await point(page, onCircle([0, 0], 0.3, 0, 0).map((x, k) => (k === 0 ? x + 8 : x)) as V3);
+  await expect(vp).toHaveAttribute("data-inference", "axis-x");
+  await type(page, "100");
+  await expect(hint).toContainText("Moved a curve 100 mm along +red");
+  cs = await curves(page);
+  expect(cs).toHaveLength(1);
+  expect(cs[0].kind).toBe("circle");
+  expect(cs[0].centre![0]).toBeCloseTo(0.1, 9);
+  expect(cs[0].centre![1]).toBeCloseTo(0, 9);
+  await expect(vp).toHaveAttribute("data-selection", "1");
+
+  // 4. Scaled x2 from its top-right grip (about the opposite one): a circle of 600 mm.
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(8);
+  const [gx, gy] = await grip(page, inch([0.4, 0.3, 0]));
+  await page.mouse.click(gx, gy);
+  await page.mouse.move(gx + 40, gy - 30, { steps: 3 });
+  await type(page, "2");
+  await expect(hint).toContainText("Scaled a curve ×2");
+  cs = await curves(page);
+  expect(cs[0].kind).toBe("circle");
+  expect(cs[0].radius).toBeCloseTo(0.6, 9);
+  expect(cs[0].centre![0]).toBeCloseTo(0.4, 9);
+  expect(cs[0].centre![1]).toBeCloseTo(0.3, 9);
+  const C: [number, number] = [0.4, 0.3];
+  const R = 0.6;
+
+  // 5. Copied with Ctrl 1500 mm along green: a second circle, a new curve.
+  await page.keyboard.press("m");
+  await page.keyboard.press("Control");
+  await clickAt(page, onCircle(C, R, 0), "endpoint");
+  await point(page, onCircle(C, R, 0).map((x, k) => (k === 1 ? x + 20 : x)) as V3);
+  await expect(vp).toHaveAttribute("data-inference", "axis-y");
+  await type(page, "1500");
+  await expect(hint).toContainText("Copied a curve 1500 mm along +green");
+  cs = await curves(page);
+  expect(byKind(cs)).toBe("sketch:circle sketch:circle");
+  expect(new Set(cs.map((c) => c.curve)).size).toBe(2);
+  const copy = cs.find((c) => c.centre![1] > 1)!;
+  expect(copy.centre![1]).toBeCloseTo(1.8, 9);
+
+  // 6. A line across the first circle (y = 14 in): two arcs, each selected whole.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("l");
+  await clickAt(page, [-20, 14, 0], "grid");
+  // Locked to red (other points around would offer "from point" alignments).
+  await page.keyboard.press("ArrowRight");
+  await point(page, [0, 14, 0]);
+  await type(page, "2000");
+  await expect(hint).toContainText("Line 2000 mm");
+  await page.keyboard.press("Escape");
+  cs = await curves(page);
+  expect(byKind(cs)).toBe("sketch:arc sketch:arc sketch:circle");
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg(C, R, 90, 105), "curve");
+  await expect(hint).toContainText("Selected an arc (");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await selectAt(page, midSeg(C, R, 270, 285), "curve");
+  await expect(hint).toContainText("Selected an arc (");
+
+  // 7. The Eraser on the top arc: only that arc goes (the line and the other arc stay).
+  await page.keyboard.press("e");
+  await selectAt(page, midSeg(C, R, 90, 105), "curve");
+  await expect(hint).toContainText("Erased 1 item");
+  cs = await curves(page);
+  expect(byKind(cs)).toBe("sketch:arc sketch:circle");
+
+  // 8. Explode the other arc: its segments are plain edges; a click takes one segment.
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg(C, R, 270, 285), "curve");
+  await menu(page, "Edit", "Explode Curve");
+  await expect(hint).toContainText("Exploded the curve");
+  cs = await curves(page);
+  expect(byKind(cs)).toBe("sketch:circle");
+  await selectAt(page, midSeg(C, R, 270, 285), "edge");
+  await expect(hint).toContainText("Selected a sketch edge. Delete erases it.");
+
+  // 9. A polygon (6 sides, 200 mm) pulled 100 mm: its top rim selects whole.
+  await page.keyboard.press("c");
+  await page.keyboard.press("c");
+  await expect(hint).toContainText("Polygon (6 sides)");
+  await clickAt(page, [-40, 0, 0], /grid|axis/);
+  await point(page, [-30, 0, 0]);
+  await type(page, "200");
+  await expect(hint).toContainText("Polygon r 200 mm, 6 sides");
+  // Its centre where the click landed (the metric grid snaps it to -1 m).
+  const poly = (await curves(page)).find((c) => c.kind === "polygon")!;
+  const P: [number, number] = [poly.centre![0], poly.centre![1]];
+  expect(poly.radius).toBeCloseTo(0.2, 9);
+  // Push/Pull takes the region the polygon just made, typed.
+  await page.keyboard.press("p");
+  await type(page, "100");
+  await expect(hint).toContainText("Extruded");
+  cs = await curves(page);
+  expect(byKind(cs)).toBe("object:polygon object:polygon sketch:circle");
+  for (const c of cs.filter((x) => x.owner.kind === "object")) expect(c.edges).toBe(6);
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg(P, 0.2, 0, 60, 0.1), "curve");
+  await expect(hint).toContainText("Selected a polygon (6 sides, radius 200 mm), a rim of solid 1. Edit > Explode Curve makes its edges plain.");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+
+  // 10. Hovering the rim with the Line tool offers its Centre; moving there snaps to it.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("l");
+  const centre = `${P[0].toFixed(6)},${(0).toFixed(6)},${(0.1).toFixed(6)}`;
+  await expect(async () => {
+    const [x, y] = await at(page, midSeg(P, 0.2, 0, 60, 0.1), 1, -1);
+    await page.mouse.move(x + 2, y + 1);
+    await page.mouse.move(x, y, { steps: 2 });
+    await expect(vp).toHaveAttribute("data-centre", centre, { timeout: 800 });
+  }).toPass({ timeout: 10_000 });
+  await expect(page.getByTestId("centre-hint")).toHaveText("Centre");
+  await expect(async () => {
+    const [x, y] = await at(page, inch([P[0], 0, 0.1]));
+    await page.mouse.move(x + 2, y + 1);
+    await page.mouse.move(x, y, { steps: 2 });
+    await expect(vp).toHaveAttribute("data-inference", "centre", { timeout: 800 });
+  }).toPass({ timeout: 10_000 });
+  await expect(page.locator("#tip")).toContainText("Centre");
+  await page.keyboard.press("Escape");
+
+  // 11. Undo through all of it, one step at a time, then redo it all.
+  const want = [
+    "sketch:circle sketch:polygon", // the extrusion undone: the polygon is a curve again
+    "sketch:circle", // the polygon
+    "sketch:arc sketch:circle", // the explode
+    "sketch:arc sketch:arc sketch:circle", // the erase
+    "sketch:circle sketch:circle", // the line: one circle again
+    "sketch:circle", // the copy
+    "sketch:circle", // the scale
+    "sketch:circle", // the move
+    "", // the circle
+  ];
+  const final = byKind(await curves(page));
+  for (const w of want) {
+    await page.keyboard.press("Control+z");
+    await expect.poll(async () => byKind(await curves(page))).toBe(w);
+  }
+  expect((await curves(page)).length).toBe(0);
+  for (let i = 0; i < want.length; i++) await page.keyboard.press("Control+y");
+  await expect.poll(async () => byKind(await curves(page))).toBe(final);
+  await expect(vp).toHaveAttribute("data-can-redo", "false");
+
+  // 12. Saved and opened again: the same model, curves and all.
+  const hash = await vp.getAttribute("data-hash");
+  const before = await curves(page);
+  const saved = await download(page, () => page.keyboard.press("Control+s"));
+  await menu(page, "File", "New");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await page.getByTestId("file-input").setInputFiles({ name: "curves.shz", mimeType: "application/octet-stream", buffer: saved });
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  expect((await curves(page)).map((c) => [c.owner.kind, c.curve, c.kind, c.edges])).toEqual(before.map((c) => [c.owner.kind, c.curve, c.kind, c.edges]));
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg(P, 0.2, 0, 60, 0.1), "curve");
+  await expect(hint).toContainText("Selected a polygon (6 sides, radius 200 mm)");
+});
+
+test("a DXF's circles and arc come in as curves; a SketchUp circle as plain edges, with the reason", async ({ page }) => {
+  const vp = await ready(page);
+  const circle = (x: number, y: number, r: number) => `0\nCIRCLE\n8\n0\n10\n${x}\n20\n${y}\n30\n0\n40\n${r}\n`;
+  const dxf = `0\nSECTION\n2\nENTITIES\n${circle(0, 0, 50)}${circle(200, 0, 30)}0\nARC\n8\n0\n10\n400\n20\n0\n30\n0\n40\n40\n50\n0\n51\n135\n0\nENDSEC\n0\nEOF\n`;
+  await page.getByTestId("file-input").setInputFiles({ name: "rounds.dxf", mimeType: "application/dxf", buffer: Buffer.from(dxf) });
+  const report = page.getByTestId("import-report");
+  await expect(report).toContainText("3 curves came in as curves");
+  const cs = await curves(page);
+  expect(byKind(cs)).toBe("sketch:arc sketch:circle sketch:circle");
+  expect(cs.find((c) => c.kind === "arc")!.radius).toBeCloseTo(40 * MM, 9);
+
+  // The corpus's SketchUp circle (a disc whose 24 edges share one CArcCurve): openskp does
+  // not say which edges make up a curve, so they come in as plain edges, and the report says so.
+  await menu(page, "File", "New");
+  const skp = curveModels()[0];
+  expect(skp.name).toBe("201-curve-circle");
+  await page.getByTestId("file-input").setInputFiles({ name: `${skp.name}.skp`, mimeType: "application/octet-stream", buffer: Buffer.from(skp.build()) });
+  await expect(report).toContainText(`Imported ${skp.name}.skp`);
+  await expect(report).toContainText("curves (circles, arcs, polygons) came in as plain edges: the .skp reader does not say which edges make up a curve");
+  expect(await curves(page)).toEqual([]);
+  await expect(vp).toHaveAttribute("data-kernel", "ready");
+});

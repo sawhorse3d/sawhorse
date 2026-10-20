@@ -318,6 +318,29 @@ impl Object {
                 }
             }
         }
+        // Every face's plane as built, not fitted to its points (lane 23): the base lies in
+        // the sketch's plane, the cap in it moved by the distance, each wall across its edge
+        // and the extrusion. A Newell fit of a sliver region 1.5e-5 m wide and a kilometre
+        // long, 9 km out on a tilted plane, tilted its normal by 1e-8 rad and its own points
+        // read 5.6e-5 m off it.
+        // (Origins at the outer ring's centroid, as a fitted plane has them, so the frames
+        // and the triangles of ordinary faces are what they were.)
+        let up = plane.normal * distance.signum();
+        let at = |f: &PolyFace, n: DVec3| {
+            let c = f.outer.iter().map(|&i| points[i]).sum::<DVec3>() / f.outer.len() as f64;
+            Plane::new(c, n).ok()
+        };
+        faces[0].plane = at(&faces[0], -up);
+        faces[1].plane = at(&faces[1], up);
+        let mut w = 2;
+        for b in &base_idx {
+            let n = b.len();
+            for k in 0..n {
+                let (p, q) = (points[b[k]], points[b[(k + 1) % n]]);
+                faces[w].plane = at(&faces[w], (q - p).cross(plane.normal));
+                w += 1;
+            }
+        }
         for (k, f) in faces.iter_mut().enumerate() {
             f.id = Some(k as u64 + 1);
         }

@@ -3,6 +3,7 @@
 // Pure (no DOM, no three.js), so all of it is unit-tested.
 import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
+import { curveSegments } from "./curves";
 import { meshIndex } from "./meshIndex";
 import { contentsOf, graphIndex } from "./scope";
 
@@ -32,6 +33,8 @@ export function entityKey(e: Entity): string {
       return `n:${e.node}`;
     case "section":
       return `s:${e.section}`;
+    case "curve":
+      return `c:${e.owner.kind}${e.owner.id}:${e.curve}`;
   }
 }
 
@@ -50,6 +53,7 @@ export function objectOf(e: Entity): number | null {
       return e.object;
     case "edge":
     case "vertex":
+    case "curve":
       return e.owner.kind === "object" ? e.owner.id : null;
     default:
       return null;
@@ -168,8 +172,10 @@ function covered(es: Entity[], mesh: MeshData | null, graph: SceneGraph | null |
   const faces = new Map<number, Set<number>>();
   const regions = new Map<number, Set<number>>();
   const nodes: number[] = [];
+  const curves: Extract<Entity, { kind: "curve" }>[] = [];
   for (const e of es) {
     if (e.kind === "edge") out.edges.push([e.a, e.b]);
+    else if (e.kind === "curve") curves.push(e);
     else if (e.kind === "vertex") out.points.push(e.at);
     else if (e.kind === "object") objects.add(e.object);
     else if (e.kind === "node") nodes.push(e.node);
@@ -182,6 +188,8 @@ function covered(es: Entity[], mesh: MeshData | null, graph: SceneGraph | null |
     for (const m of inside.meshes) meshes.add(m);
   }
   if (!mesh) return out;
+  // Lane 23: a curve highlights as all of its segments.
+  for (const c of curves) for (const seg of curveSegments(mesh, c.owner, c.curve)) out.edges.push(seg);
   const ix = meshIndex(mesh);
   for (const o of objects) {
     for (const i of ix.objectParts.get(o) ?? []) out.parts.push(i);
@@ -318,6 +326,10 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
     }
     case "vertex":
       return "A point goes with its edges: erase an edge instead.";
+    case "curve":
+      // Lane 23: the Eraser takes a curve whole.
+      if (e.owner.kind === "sketch") return { op: "erase_curve", sketch: e.owner.id, curve: e.curve };
+      return "That curve is a rim of a solid: erasing it would open the solid. Edit > Explode Curve makes its edges plain.";
     case "guide":
       return { op: "erase_guide", guide: e.guide };
     case "dimension":
@@ -337,7 +349,7 @@ export function eraseOps(sel: Entity[], state: DocState | null): { ops: KernelOp
   const deleted = new Set(sel.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object));
   const ops: KernelOp[] = [];
   const skipped: string[] = [];
-  const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, edge: 3, guide: 4, dimension: 4, section: 4, vertex: 5 })[e.kind];
+  const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, curve: 3, edge: 3, guide: 4, dimension: 4, section: 4, vertex: 5 })[e.kind];
   for (const e of [...sel].sort((a, b) => order(a) - order(b))) {
     const o = objectOf(e);
     if (e.kind !== "object" && o !== null && deleted.has(o)) continue;
@@ -430,16 +442,30 @@ export function boxSelect(mesh: MeshData | null, toScreen: (p: V3) => P2, box: B
     }
   });
   for (const [o, whole] of objIn) if (crossing ? objTouched.has(o) || whole : whole) out.push({ kind: "object", object: o });
-  // Sketch strokes.
+  // Sketch strokes. Lane 23: a curve's segments count as one: a window takes the curve when
+  // every segment is inside, a crossing box when it touches any.
   const e = mesh.edges;
+  const curveIn = new Map<number, boolean>();
+  const curveTouched = new Set<number>();
   for (let i = 0; i < mesh.edgeOwner.length; i++) {
     const o = mesh.edgeOwners[mesh.edgeOwner[i]];
     if (!o || o.kind !== "sketch") continue;
     const a: V3 = [e[6 * i], e[6 * i + 1], e[6 * i + 2]];
     const c: V3 = [e[6 * i + 3], e[6 * i + 4], e[6 * i + 5]];
     const [sa, sc] = [toScreen(a), toScreen(c)];
-    const hit = crossing ? segmentTouches(b, sa, sc) : inBox(b, sa) && inBox(b, sc);
+    const inside = inBox(b, sa) && inBox(b, sc);
+    const hit = crossing ? segmentTouches(b, sa, sc) : inside;
+    const k = mesh.edgeCurve?.[i] ?? 0;
+    if (k > 0) {
+      curveIn.set(k - 1, (curveIn.get(k - 1) ?? true) && inside);
+      if (crossing && hit) curveTouched.add(k - 1);
+      continue;
+    }
     if (hit) out.push({ kind: "edge", owner: { kind: "sketch", id: o.id }, a, b: c, drawn: true });
+  }
+  for (const [k, whole] of curveIn) {
+    const v = mesh.curves?.[k];
+    if (v && v.owner.kind === "sketch" && (crossing ? curveTouched.has(k) : whole)) out.push({ kind: "curve", owner: { kind: "sketch", id: v.owner.id }, curve: v.curve });
   }
   return out;
 }

@@ -1,8 +1,8 @@
 {
   "generator": "scripts/corpus-skp.mjs",
   "openskp": "1.3.0",
-  "count": 200,
-  "bytes": 2246703,
+  "count": 203,
+  "bytes": 2270277,
   "files": [
     {
       "name": "001-boxes.skp",
@@ -1602,6 +1602,30 @@
       "bytes": 7559,
       "sha256": "fd1204a14936cf75f9de7db52e8d6d0bc034013f16a132fa17b616863056fc38",
       "definitions": 1,
+      "faces": 6
+    },
+    {
+      "name": "201-curve-circle.skp",
+      "family": "curve-circle",
+      "bytes": 8589,
+      "sha256": "bfb242e1da66fd59f79e92de611aa6ee3682e52742c626d6988467a4aa53b662",
+      "definitions": 0,
+      "faces": 7
+    },
+    {
+      "name": "202-curve-arc.skp",
+      "family": "curve-arc",
+      "bytes": 7714,
+      "sha256": "76a4f8d8dc21200f6c9a6468a6f72eb3d4efb14c8304b2fc16f09f055087597d",
+      "definitions": 0,
+      "faces": 6
+    },
+    {
+      "name": "203-curve-polygon.skp",
+      "family": "curve-polygon",
+      "bytes": 7271,
+      "sha256": "39b3174ad131d0fdca616f9381bc0a706168905e14319e6288517b226d626bb0",
+      "definitions": 0,
       "faces": 6
     }
   ]
