@@ -1,6 +1,6 @@
 [package]
 name = "sawhorse-desktop"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 description = "Sawhorse desktop shell (Tauri 2). The geometry kernel runs as WASM in the webview, not here."
 authors = ["Sawhorse contributors"]
 license = "MIT OR Apache-2.0"

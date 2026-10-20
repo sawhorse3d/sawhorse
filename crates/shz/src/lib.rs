@@ -42,7 +42,7 @@ pub struct Scene {
     pub format: String,
     /// Schema version of the model data (`SNAPSHOT_VERSION`).
     pub version: u32,
-    /// Who wrote the file, e.g. `Sawhorse 0.1.0-alpha.3`.
+    /// Who wrote the file, e.g. `Sawhorse 0.1.0-alpha.4`.
     #[serde(default)]
     pub generator: String,
     #[serde(default)]
@@ -129,7 +129,7 @@ pub struct SaveOptions {
     /// [`MAX_THUMBNAIL_BYTES`] or of another type is left out (lane 15).
     #[serde(skip)]
     pub thumbnail_png: Option<Vec<u8>>,
-    /// e.g. `Sawhorse 0.1.0-alpha.3`.
+    /// e.g. `Sawhorse 0.1.0-alpha.4`.
     #[serde(default)]
     pub generator: Option<String>,
     /// The plugins' document stores, written as `plugin-data.json` (lane 16: the app hands
