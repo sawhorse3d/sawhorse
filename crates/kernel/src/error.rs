@@ -332,6 +332,10 @@ pub enum SectionError {
     /// (with points closer than 0.01 mm merged, none keeps three corners and some area).
     #[error("the section cut here is thinner than 0.01 mm; nothing to slice")]
     SliceTooThin,
+    /// Fix pass of lane 23: the caps reach further apart along the plane than a sketch can
+    /// hold (20 km either way across, from wherever its origin is put).
+    #[error("the section cut here is more than 20 km across; a slice cannot hold it")]
+    SliceTooLarge,
     #[error(
         "a slice cannot be made inside a component (it would not reach the other copies): close the component first"
     )]

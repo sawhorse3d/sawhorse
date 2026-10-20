@@ -1054,3 +1054,103 @@ fn the_section_golden_is_this_bookshelf() {
         );
     }
 }
+
+/// A box on the plane z = `z0` over (x0, y0)..(x1, y1), `h` tall (metres).
+fn block(doc: &mut Document, x0: f64, y0: f64, x1: f64, y1: f64, z0: f64, h: f64) -> u64 {
+    let out = ok(
+        doc,
+        Op::Draw {
+            target: DrawTarget::Plane {
+                origin: [0.0, 0.0, z0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            points: vec![[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]],
+            closed: true,
+            curve: None,
+        },
+    );
+    let OpOutcome::Drawn {
+        sketch: Some(sketch),
+        inside: Some(region),
+        ..
+    } = out
+    else {
+        panic!("{out:?}")
+    };
+    match ok(
+        doc,
+        Op::Extrude {
+            sketch,
+            region,
+            distance: h,
+        },
+    ) {
+        OpOutcome::ObjectCreated { object } => object,
+        o => panic!("{o:?}"),
+    }
+}
+
+#[test]
+fn a_slice_far_along_a_tilted_plane_fits_its_sketch() {
+    // Fuzz find (fix pass of lane 23, seed 20269807, plane snapping off;
+    // `tests/repro/2026-10-19-slice-of-a-wall-offset-14km-out-along-a-tilted-plane.json`): a
+    // plane through the world's origin, tilted, cuts a tall slab 9.9 km out. Every point of
+    // the slab is within the model's bounds, but along the plane the cap lies 10.6 km from the
+    // section's point, past what a sketch holds from its origin, and Create Group from Slice
+    // was refused by the sketch although the cap is representable. The slice's sketch now
+    // puts its origin where the caps fit.
+    let mut d = Document::new();
+    block(&mut d, -9900.0, 7000.0, -9700.0, 7200.0, -5000.0, 10_000.0);
+    let n = [-0.5399464803667886, -0.617294133162572, -0.8492521248611404];
+    let s = add(&mut d, [0.0; 3], n);
+    let cut = d.model().section_cut(s).unwrap();
+    assert!(
+        cut.caps
+            .iter()
+            .flat_map(|c| &c.outer)
+            .any(|p| p[0].abs() > 1e4 || p[1].abs() > 1e4),
+        "the cap lies beyond a sketch's reach from the section's point"
+    );
+    let sketch = match ok(
+        &mut d,
+        Op::SliceToGroup {
+            section: s,
+            name: None,
+        },
+    ) {
+        OpOutcome::Sliced { sketch, .. } => sketch,
+        o => panic!("{o:?}"),
+    };
+    let m = d.model();
+    let sk = m.sketch(sketch).unwrap();
+    assert_eq!(sk.region_count(), 1);
+    // Drawn where the cap is: its region's area is the cap's, its plane the section's.
+    let plane = sk.plane();
+    assert!(plane.normal.dot(DVec3::from_array(n).normalize()) > 1.0 - 1e-12);
+    assert!(plane.signed_distance(DVec3::ZERO).abs() < 1e-6);
+    let area: f64 = cut.caps.iter().map(|c| c.area).sum();
+    let got = sk.region_area(sk.regions().next().unwrap().1).abs();
+    assert!((got - area).abs() <= 1e-6 * area, "{got} vs {area}");
+    sawhorse_kernel::testing::check_model(m).unwrap();
+}
+
+#[test]
+fn a_slice_wider_than_a_sketch_is_refused() {
+    // Two tall slabs at opposite corners of the model, cut by one vertical plane along the
+    // diagonal: the caps lie 27 km apart along the plane, more than one sketch can hold from
+    // any origin. Refused in its own words, nothing changed (fix pass of lane 23).
+    let mut d = Document::new();
+    block(&mut d, -9900.0, -9900.0, -9800.0, -9800.0, 0.0, 1.0);
+    block(&mut d, 9800.0, 9800.0, 9900.0, 9900.0, 0.0, 1.0);
+    let s = add(&mut d, [0.0, 0.0, 0.0], [1.0, -1.0, 0.0]);
+    assert_eq!(d.model().section_cut(s).unwrap().caps.len(), 2);
+    let e = refused(
+        &mut d,
+        Op::SliceToGroup {
+            section: s,
+            name: None,
+        },
+    );
+    assert!(e.to_string().contains("20 km across"), "{e}");
+    sawhorse_kernel::testing::check_model(d.model()).unwrap();
+}

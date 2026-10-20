@@ -189,6 +189,14 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             (Ok(_), false, false) => {}
             (Err(KernelError::Section(SectionError::NothingToSlice)), true, _) => {}
             (Err(KernelError::Section(SectionError::SliceTooThin)), false, true) => {}
+            // Fix pass of lane 23: refused as too large only when some representable cap
+            // does not fit the section's own frame (from which the slice would have drawn it).
+            (Err(KernelError::Section(SectionError::SliceTooLarge)), false, false)
+                if cut.caps.iter().filter(|c| c.representable).any(|c| {
+                    c.outer.iter().any(|p| {
+                        !crate::tolerance::in_bounds(p[0]) || !crate::tolerance::in_bounds(p[1])
+                    })
+                }) => {}
             _ => {
                 return Err(format!(
                     "section {id}: Create Group from Slice gave {slice:?} for {} caps, {} representable",

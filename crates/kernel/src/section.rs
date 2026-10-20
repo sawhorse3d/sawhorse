@@ -1058,6 +1058,38 @@ fn worst(loops: &[Vec<DVec2>]) -> Option<Fix> {
     best.map(|b| b.5)
 }
 
+/// Fix pass of lane 23: where Create Group from Slice puts its sketch's origin, as an offset
+/// along the section's frame: none when every loop it draws lies within MAX_COORD of the
+/// section's own point; otherwise the middle of the loops' extent, or failing that their
+/// mean point (inside the model's bounds whenever the loops are), whichever first keeps
+/// every point within MAX_COORD of it with the origin itself in bounds. `None` when neither
+/// does: the caps are too far apart for one sketch.
+pub(crate) fn slice_shift(frame: &Plane, loops: &[Vec<DVec2>]) -> Option<DVec2> {
+    let fits = |s: DVec2| {
+        let o = frame.to_world(s);
+        o.is_finite()
+            && o.abs().max_element() <= crate::tolerance::MAX_COORD
+            && loops.iter().flatten().all(|p| {
+                let q = *p - s;
+                crate::tolerance::in_bounds(q.x) && crate::tolerance::in_bounds(q.y)
+            })
+    };
+    if fits(DVec2::ZERO) {
+        return Some(DVec2::ZERO);
+    }
+    let pts: Vec<DVec2> = loops.iter().flatten().copied().collect();
+    if pts.is_empty() {
+        return None;
+    }
+    let (lo, hi) = pts.iter().fold(
+        (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
+    let middle = (lo + hi) * 0.5;
+    let mean = pts.iter().fold(DVec2::ZERO, |a, p| a + *p) / pts.len() as f64;
+    [middle, mean].into_iter().find(|&s| fits(s))
+}
+
 /// Lane 18: **the one rule for what Create Group from Slice can draw** of a ring of the cut
 /// (an outer ring or a hole): its loops after merging points closer than POINT_MERGE
 /// ([`weld`], the ring alone) that keep three corners or more and an area above [`cap_area_floor`],
@@ -1972,9 +2004,23 @@ impl Model {
                 loops.extend(representable(&ring, scale));
             }
         }
-        for l in weld(loops) {
+        let loops = weld(loops);
+        // Fix pass of lane 23: the sketch holds coordinates within MAX_COORD of its origin,
+        // and a cap can lie further than that from the section's own point along a tilted
+        // plane (14 km out on a plane through the world's origin, its points all in the
+        // model's bounds); the sketch refused it and a representable cap was not drawn. The
+        // slice keeps the section's frame when everything fits it, and otherwise moves the
+        // sketch's origin along the plane to where the caps fit ([`slice_shift`]).
+        let shift = slice_shift(&frame, &loops).ok_or(SectionError::SliceTooLarge)?;
+        if shift != DVec2::ZERO {
+            sketch = crate::sketch::Sketch::new(Plane {
+                origin: frame.to_world(shift),
+                ..frame
+            });
+        }
+        for l in loops {
             for i in 0..l.len() {
-                sketch.insert_segment(l[i], l[(i + 1) % l.len()])?;
+                sketch.insert_segment(l[i] - shift, l[(i + 1) % l.len()] - shift)?;
             }
         }
         debug_assert!(sketch.edge_count() > 0, "a representable cap drew nothing");
