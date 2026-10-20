@@ -1,6 +1,6 @@
 # Code signing policy
 
-Sawhorse's installers are not code-signed today: Windows and macOS warn before the first launch, and the release notes walk through it ([alpha.3](releases/v0.1.0-alpha.3.md#unsigned-installers)). This page says how signing will work and who decides what gets signed.
+Sawhorse's installers are not code-signed today: Windows and macOS warn before the first launch, and the release notes walk through it ([alpha.4](releases/v0.1.0-alpha.4.md#unsigned-installers)). This page says how signing will work and who decides what gets signed.
 
 ## Who signs, and where
 

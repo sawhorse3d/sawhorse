@@ -82,7 +82,7 @@ test("View > Grid hides the grid; the Styles pane agrees; saved and reopened it 
   await expect(vp).toHaveAttribute("data-kernel", "ready");
 });
 
-// What docs/releases/v0.1.0-alpha.3.md (Known limits) and CHANGELOG lane 21 say about scenes
+// What docs/releases/v0.1.0-alpha.3.md and v0.1.0-alpha.4.md (Known limits) and CHANGELOG lane 21 say about scenes
 // and the grid, checked as written. A scene keeps the style it was saved with only when that
 // style is not the default; the default is stored as no style, and going to such a scene
 // leaves the style (grid included) as it is. Updating that scene while the grid shows stores

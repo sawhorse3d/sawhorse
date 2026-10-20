@@ -1,6 +1,6 @@
 # Sawhorse
 
-**[sawhorse3d.com](https://sawhorse3d.com)** · **[Try it in your browser](https://sawhorse3d.com/app/)** (nothing to install, nothing uploaded) · [Download the desktop app](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.3) (0.1.0-alpha.3, unsigned for now) · [User guide](https://sawhorse3d.com/guide/)
+**[sawhorse3d.com](https://sawhorse3d.com)** · **[Try it in your browser](https://sawhorse3d.com/app/)** (nothing to install, nothing uploaded) · [Download the desktop app](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.4) (0.1.0-alpha.4, unsigned for now) · [User guide](https://sawhorse3d.com/guide/)
 
 A free, local-first, open-source push/pull 3D modeler for woodworkers and makers. Draw a rectangle, push it up, type `3/4` and press Enter. Sawhorse keeps the keys your hands already know, works out a cut list and lays your parts out on real sheets and boards as you draw, opens SketchUp files, and exports watertight files for printing and CNC. It runs in a browser tab with nothing to install, or as a desktop app on Windows, macOS and Linux. No account, no subscription, no tracking.
 
@@ -9,7 +9,7 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 ## What it does today
 
 **Modeling**
-- Line, Rectangle (and rotated), Circle, Polygon, Arc and 3-point Arc; Push/Pull on any face (through, into and flush with other parts); Move, Rotate, Scale with copies and arrays; Offset; Follow Me; Erase.
+- Line, Rectangle (and rotated), Circle, Polygon, Arc and 3-point Arc (a circle, arc or polygon is one curve: selected, moved and erased whole); Push/Pull on any face (through, into and flush with other parts); Move, Rotate, Scale with copies and arrays, for sketch shapes too before they are pulled; Offset; Follow Me; Erase.
 - Inference snapping (endpoints, midpoints, edges, faces, axes, parallel and perpendicular, guides) with arrow-key locks; exact typed values in fractions, decimals, feet and inches or metric (`1-1/2"`, `1 1/2`, `1.5"`, `38mm`, `2'6"`).
 - Tape measure with guides, linear dimensions.
 - Groups and components (edit one copy, all follow; Make Unique), tags, scenes, an Outliner.
@@ -37,7 +37,7 @@ So nobody finds out the hard way:
 - **Copy and paste in place**.
 - **Back and Bottom views** (Top, Front, Right, Iso and perspective are there).
 - **Text, and radius or diameter dimensions in the model** (linear dimensions only; drawing sheets have radius and diameter).
-- **Signed installers**: Windows and macOS warn before the first launch ([how to get past it](docs/releases/v0.1.0-alpha.3.md#unsigned-installers)).
+- **Signed installers**: Windows and macOS warn before the first launch ([how to get past it](docs/releases/v0.1.0-alpha.4.md#unsigned-installers)).
 - **Render credits**: an AI render service exists in the code but is not launched; the app shows nothing about it unless you point it at a service of your own (Edit > Settings).
 
 Known limits (model size, `.skp` versions that do not open): [docs/LIMITS.md](docs/LIMITS.md).

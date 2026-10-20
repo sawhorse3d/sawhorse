@@ -4,6 +4,15 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2026-10-20
+
+A pre-release, [v0.1.0-alpha.4](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.4); every change since alpha.3: [v0.1.0-alpha.3...v0.1.0-alpha.4](https://github.com/sawhorse3d/sawhorse/compare/v0.1.0-alpha.3...v0.1.0-alpha.4). The release notes: [docs/releases/v0.1.0-alpha.4.md](docs/releases/v0.1.0-alpha.4.md).
+
+### Release (the alpha.4 hygiene pass, 2026-10-20)
+
+- Version 0.1.0-alpha.4 in npm, Tauri (MSI version 0.1.0.4), both Cargo workspaces, the `.shz` generator examples and the site's download links; the release notes in `docs/releases/v0.1.0-alpha.4.md` (curves, #3; sketch geometry that moves, #2; the user-visible fixes; the known limits #6, #7, #11 and #12); the README, the site and `docs/SIGNING.md` point at them.
+- `docs/LIMITS.md` says it is current for alpha.4; the user guide no longer says a circle is a chain of separate edges under Moving sketch shapes (lane 22's note, which lane 23 made untrue), and its Offset section points at a curve's radius offset, and it calls Sawhorse an alpha (it said pre-alpha). The README's feature list names curves and sketch shapes that move.
+
 ### Fixed (lane 23b's second fix pass, found by lane 23b's verifier, 2026-10-20)
 
 - **A section's two halves add up to the solid whatever its faces' bends** (the fuzzer, seed 20281103, plane snapping on; a regression of lane 23b): a 700 m ring wall, two corners of its outer wall nudged up a micrometre, was cut through its centre, and the fuzzer's check read the whole 0.47 m3 above its 265.7 m3. Lane 23b measured each half as fans over its kept face rings, and a fan over a ring round a hole spans the hole: on a face bent within tolerance that is a different surface from the face's triangles. A section's kept volume is now the cone over the solid's own triangles (the ones its volume is measured by), each clipped to the kept side, so the halves make the solid's volume to rounding (9e-14 of it here, 1.5e-14 on lane 23b's fin, which lane 23b held only to 1e-4); the check holds them to it within 1e-6, as before lane 23b, without the bend allowance lane 23b had added.
