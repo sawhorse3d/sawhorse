@@ -97,6 +97,7 @@ fn a_moulding_routed_around_the_top_of_a_box() {
             target: DrawTarget::Face { object: 1, face: 6 },
             points: vec![[0.0, 0.05, 0.3], [0.0, 0.0, 0.25]],
             closed: false,
+            curve: None,
         },
     );
     let OpOutcome::Drawn { faces, .. } = out else {
@@ -155,6 +156,7 @@ fn the_profile_can_sit_at_any_corner_of_a_closed_path() {
             target: DrawTarget::Face { object: 1, face: 4 },
             points: vec![[1.0, 0.05, 0.3], [1.0, 0.0, 0.25]],
             closed: false,
+            curve: None,
         },
     );
     let OpOutcome::Drawn { faces, .. } = out else {
@@ -235,6 +237,7 @@ fn a_slot_through_a_block_severs_it() {
                 target: DrawTarget::Face { object: 1, face: 6 },
                 points: vec![[0.0, y, 0.2], [0.0, y, 0.0]],
                 closed: false,
+                curve: None,
             },
         );
     }

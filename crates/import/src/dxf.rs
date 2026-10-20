@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DVec2, DVec3};
+use sawhorse_kernel::curve::{CurveKind, CurveSpec};
 use sawhorse_kernel::model::ImportStroke;
 
 use crate::util::{plural, soup};
@@ -245,7 +246,9 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             .1
             .push(vec![(base..base + pts.len() as u32).collect()]);
     };
-    let mut strokes: Vec<(Vec<DVec3>, bool)> = Vec::new();
+    // Each stroke with, for a CIRCLE or an ARC, its kind and centre (lane 23: a curve).
+    type Stroke = (Vec<DVec3>, bool, Option<(CurveKind, DVec3)>);
+    let mut strokes: Vec<Stroke> = Vec::new();
     let mut lines: Vec<(DVec3, DVec3)> = Vec::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut tilted = 0usize;
@@ -287,7 +290,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                     let closed = e.i(70) & 1 == 1;
                     let pl = polyline(&verts, closed);
                     budget.stroke("DXF", pl.0.len())?;
-                    strokes.push(pl);
+                    strokes.push((pl.0, pl.1, None));
                 }
             }
             "POLYLINE" => {
@@ -344,7 +347,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                         .collect();
                     let pl = polyline(&pts, flags & 1 == 1);
                     budget.stroke("DXF", pl.0.len())?;
-                    strokes.push(pl);
+                    strokes.push((pl.0, pl.1, None));
                 }
                 i = j;
                 continue;
@@ -360,12 +363,12 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
                             let mut pts = arc_points(c, r, 0.0, 360.0);
                             pts.pop();
                             budget.stroke("DXF", pts.len())?;
-                            strokes.push((pts, true));
+                            strokes.push((pts, true, Some((CurveKind::Circle, c))));
                         } else {
                             let pts =
                                 arc_points(c, r, e.f(50).unwrap_or(0.0), e.f(51).unwrap_or(360.0));
                             budget.stroke("DXF", pts.len())?;
-                            strokes.push((pts, false));
+                            strokes.push((pts, false, Some((CurveKind::Arc, c))));
                         }
                     }
                 }
@@ -382,7 +385,7 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             on_faces += 1;
         } else {
             budget.stroke("DXF", 2)?;
-            strokes.push((vec![a, b], false));
+            strokes.push((vec![a, b], false, None));
         }
     }
     for (positions, faces) in layers.values() {
@@ -394,12 +397,16 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
         item.tag = (layer != "0").then(|| layer.clone());
         out.items.push(item);
     }
-    for (pts, closed) in strokes {
+    for (pts, closed, curve) in strokes {
         let pts: Vec<[f64; 3]> = pts.iter().map(|p| (*p * s).to_array()).collect();
         if pts.len() >= 2 {
             out.strokes.push(ImportStroke {
                 points: pts,
                 closed,
+                curve: curve.map(|(kind, c)| CurveSpec {
+                    kind,
+                    centre: Some((c * s).to_array()),
+                }),
             });
         }
     }

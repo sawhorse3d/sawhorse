@@ -111,6 +111,7 @@ mod tests {
                 },
                 points: pts,
                 closed: true,
+                curve: None,
             })
             .unwrap()
         };

@@ -23,6 +23,13 @@ pub const POINT_MERGE: f64 = 1e-5;
 /// above the rounding of any coordinate within MAX_COORD (about 2e-12 m).
 pub const SKETCH_MERGE: f64 = POINT_MERGE + LENGTH_EPS;
 
+/// How far a curve's point may sit off the circle its parameters describe (lane 23,
+/// ADR-0013): four merge distances (40 micrometres), plus one part in 1e9 of the circle's
+/// size for rounding. A circle's points are where the tool put them, except that inserting
+/// them may merge one into a point already there (up to the merge distance each time, and
+/// a repair can merge again); anything further off is a curve whose parameters went stale.
+pub const CURVE_FIT: f64 = 4.0 * SKETCH_MERGE;
+
 /// Smallest area a face or region may have (POINT_MERGE squared).
 pub const AREA_EPS: f64 = POINT_MERGE * POINT_MERGE;
 

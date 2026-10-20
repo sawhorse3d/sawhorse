@@ -72,6 +72,8 @@ pub enum Violation {
     /// before 2026-10-11 it showed up as a volume of exactly 0.
     Untessellatable(String),
     SketchInvalid(String),
+    /// Lane 23: a solid's curve (a rim) breaks its rules (see `crate::curve`).
+    CurveInvalid(String),
     /// The model's tree (groups, component instances and definitions, tags, the editing
     /// context) is inconsistent (see `crate::nodes`).
     Structure(String),

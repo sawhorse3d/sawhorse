@@ -193,6 +193,9 @@ pub struct Object {
     /// Soft, smooth and hidden edges (lane 15), by the pair of persistent face ids each lies
     /// between (see [`crate::edges`]). Only flagged edges are listed.
     pub(crate) edge_flags: BTreeMap<(u64, u64), u8>,
+    /// Curves on the solid (lane 23): the rims pushed circles, arcs and polygons leave, by
+    /// id, each edge keyed by its face-id pair like the flags (see [`crate::curve`]).
+    pub(crate) curves: BTreeMap<u64, crate::curve::RimCurve>,
 }
 
 /// Give every face of `p` a persistent id: a face keeps the id it carries unless an
@@ -332,6 +335,7 @@ impl Object {
             part: Default::default(),
             paint: Default::default(),
             edge_flags: Default::default(),
+            curves: Default::default(),
         };
         obj.watertight = validate(&obj.brep).map(|r| r.watertight).unwrap_or(false);
         Ok(obj)
@@ -396,6 +400,12 @@ impl Object {
         let own = std::mem::take(&mut self.edge_flags);
         self.edge_flags = from.edge_flags.clone();
         self.edge_flags.extend(own);
+        // Curves (lane 23) likewise: the original's, then any of this one's own.
+        let own = std::mem::take(&mut self.curves);
+        self.curves = from.curves.clone();
+        for (k, c) in own {
+            self.curves.entry(k).or_insert(c);
+        }
         self.settle_paint(&[]);
     }
 
@@ -531,6 +541,9 @@ impl Object {
         if let Some(hit) = c.hit {
             v.push(Violation::SelfIntersectingSolid(hit));
         }
+        if let Err(e) = self.check_curves() {
+            v.push(Violation::CurveInvalid(e));
+        }
         // Every face can be locally consistent while the whole solid is inside out (a face
         // pushed backwards through itself): the enclosed volume must be positive.
         match &c.volume {
@@ -617,6 +630,7 @@ impl Object {
             part: Default::default(),
             paint: Default::default(),
             edge_flags: Default::default(),
+            curves: Default::default(),
         }
     }
 

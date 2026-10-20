@@ -17,6 +17,7 @@
 pub(crate) mod arrangement;
 pub mod boolean;
 pub mod brep;
+pub mod curve;
 pub mod cutlist;
 pub mod document;
 pub mod draw;

@@ -46,6 +46,7 @@ use slotmap::SlotMap;
 
 use sawhorse_tessellate::{interior_point, signed_area};
 
+use crate::curve::{Curve, CurveKind, RawCurve, Round, check_round, fit_angles};
 use crate::error::SketchError;
 use crate::ids::{RegionId, SEdgeId, SVertexId};
 use crate::plane::Plane;
@@ -80,6 +81,12 @@ pub struct RawSketch {
     /// Edges as vertex index pairs.
     pub edges: Vec<[u32; 2]>,
     pub regions: Vec<RawRegion>,
+    /// Lane 23: the sketch's curves (absent when it has none, so older files read as they
+    /// were), and the next id one gets (absent: one past the largest).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<crate::curve::RawCurve>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_curve: Option<u64>,
 }
 
 /// A region as plain data: rings as vertex indices, a point inside, its flags.
@@ -260,6 +267,10 @@ pub struct SketchData {
     vertices: SlotMap<SVertexId, DVec2>,
     edges: SlotMap<SEdgeId, [SVertexId; 2]>,
     regions: SlotMap<RegionId, Region>,
+    /// Lane 23: curves by id (see [`crate::curve`]), and the id the next one gets (always
+    /// above every id in use).
+    curves: BTreeMap<u64, Curve>,
+    next_curve: u64,
     /// [`Sketch::check`]'s answer, once worked out (dropped by any change).
     checked: std::sync::OnceLock<Result<(), String>>,
 }
@@ -483,6 +494,8 @@ impl Sketch {
                 vertices: SlotMap::with_key(),
                 edges: SlotMap::with_key(),
                 regions: SlotMap::with_key(),
+                curves: BTreeMap::new(),
+                next_curve: 1,
                 checked: std::sync::OnceLock::new(),
             }),
             parent: None,
@@ -507,6 +520,11 @@ impl Sketch {
                     128 + r.outer.len() * 8
                         + r.holes.iter().map(|h| 24 + h.len() * 8).sum::<usize>()
                 })
+                .sum::<usize>()
+            + self
+                .curves
+                .values()
+                .map(|c| 96 + c.chain.len() * 8)
                 .sum::<usize>()
     }
 
@@ -665,7 +683,7 @@ impl Sketch {
             next.edges.remove(e);
         }
         next.remove_isolated_vertices();
-        next.recompute_regions();
+        next.settle();
         next.debug_check("consume_region");
         *self = next;
         Ok(())
@@ -742,7 +760,7 @@ impl Sketch {
         for v in ends {
             next.heal_vertex(v);
         }
-        next.recompute_regions();
+        next.settle();
         next.debug_check("erase_region");
         let changed = next.changed_regions(self);
         *self = next;
@@ -783,18 +801,22 @@ impl Sketch {
         for v in ends {
             next.heal_vertex(v);
         }
-        next.recompute_regions();
+        next.settle();
         next.debug_check("erase_segment");
         let changed = next.changed_regions(self);
         *self = next;
         Ok(changed)
     }
 
-    /// Remove `v` when it joins exactly two edges that run straight through it.
+    /// Remove `v` when it joins exactly two edges that run straight through it. A curve's
+    /// point stays (lane 23: it is a point of the curve, and the curve's chain names it).
     fn heal_vertex(&mut self, v: SVertexId) {
         let Some(&pv) = self.vertices.get(v) else {
             return;
         };
+        if self.curves.values().any(|c| c.chain.contains(&v)) {
+            return;
+        }
         let incident: Vec<(SEdgeId, SVertexId)> = self
             .edges
             .iter()
@@ -870,7 +892,7 @@ impl Sketch {
             }
         }
         next.repair()?;
-        next.recompute_regions();
+        next.settle();
         next.debug_check("insert");
         *self = next;
         Ok(())
@@ -890,7 +912,7 @@ impl Sketch {
         }
         next.repair()?;
         new_edges.retain(|&(a, b)| next.edge_between(a, b).is_some());
-        next.recompute_regions();
+        next.settle();
         next.debug_check("insert");
         Ok((next, new_edges))
     }
@@ -1105,7 +1127,14 @@ impl Sketch {
         let verts: Vec<(SVertexId, DVec2)> = self.vertices.iter().map(|(k, p)| (k, *p)).collect();
         // 1. Two vertices within the merge distance: the first pair in vertex order.
         if let Some((i, j)) = first_close_pair(&verts) {
-            self.merge_vertex(verts[j].0, verts[i].0);
+            // Lane 23: a curve's point survives a merge with a plain one (its chain names it).
+            let on_curve = |v: SVertexId| self.curves.values().any(|c| c.chain.contains(&v));
+            let (from, into) = if on_curve(verts[j].0) && !on_curve(verts[i].0) {
+                (verts[i].0, verts[j].0)
+            } else {
+                (verts[j].0, verts[i].0)
+            };
+            self.merge_vertex(from, into);
             return true;
         }
         let edges: Vec<(SEdgeId, [SVertexId; 2])> =
@@ -1232,6 +1261,7 @@ impl Sketch {
         &self,
         to: &BTreeMap<SVertexId, DVec2>,
         anchor: &dyn Fn(DVec2) -> DVec2,
+        round: &dyn Fn(&Round) -> Option<(DVec2, f64)>,
     ) -> Result<(Sketch, Vec<RegionId>), SketchError> {
         for p in to.values() {
             if !(p.is_finite() && in_bounds(p.x) && in_bounds(p.y)) {
@@ -1239,6 +1269,9 @@ impl Sketch {
             }
         }
         let mut next = self.clone();
+        // Lane 23: curves moved whole keep their circle (mapped); bent ones are polylines.
+        let moving: BTreeSet<SVertexId> = to.keys().copied().collect();
+        next.map_curves(&moving, round);
         let taken: Vec<(SEdgeId, [SVertexId; 2])> = next
             .edges
             .iter()
@@ -1278,7 +1311,7 @@ impl Sketch {
         next.remove_isolated_vertices();
         next.repair()?;
         made.retain(|&(a, b)| next.edge_between(a, b).is_some());
-        next.recompute_regions();
+        next.settle();
         next.debug_check("move");
         let touched = next.live_regions_touching(&made);
         Ok((next, touched))
@@ -1315,7 +1348,7 @@ impl Sketch {
         }
         next.repair()?;
         made.retain(|&(a, b)| next.edge_between(a, b).is_some());
-        next.recompute_regions();
+        next.settle();
         next.debug_check("copy");
         let touched = next.live_regions_touching(&made);
         Ok(Some((next, touched)))
@@ -1351,7 +1384,7 @@ impl Sketch {
         for v in ends {
             next.heal_vertex(v);
         }
-        next.recompute_regions();
+        next.settle();
         next.debug_check("lift");
         next
     }
@@ -1361,6 +1394,548 @@ impl Sketch {
         let mut out = self.regions_touching(edges);
         out.retain(|id| self.regions.get(*id).is_some_and(|r| !r.consumed));
         out
+    }
+
+    // ---- curves (lane 23, ADR-0013) ------------------------------------------------------
+
+    /// After an edit: regions re-detected, then curves settled against the graph.
+    fn settle(&mut self) {
+        self.recompute_regions();
+        self.settle_curves();
+    }
+
+    /// The curves, by id.
+    pub fn curves(&self) -> impl Iterator<Item = (u64, &Curve)> + '_ {
+        self.curves.iter().map(|(k, c)| (*k, c))
+    }
+
+    pub fn curve(&self, id: u64) -> Option<&Curve> {
+        self.curves.get(&id)
+    }
+
+    pub fn curve_count(&self) -> usize {
+        self.curves.len()
+    }
+
+    /// The id the next curve gets.
+    pub fn next_curve_id(&self) -> u64 {
+        self.next_curve
+    }
+
+    /// Each curve edge's curve, by vertex pair (smaller id first).
+    pub fn edge_curves(&self) -> BTreeMap<(SVertexId, SVertexId), u64> {
+        let mut out = BTreeMap::new();
+        for (&id, c) in &self.curves {
+            for (a, b) in c.pairs() {
+                out.insert((a.min(b), a.max(b)), id);
+            }
+        }
+        out
+    }
+
+    /// The curves a vertex is a point of.
+    pub fn curves_at(&self, v: SVertexId) -> Vec<u64> {
+        self.curves
+            .iter()
+            .filter(|(_, c)| c.chain.contains(&v))
+            .map(|(k, _)| *k)
+            .collect()
+    }
+
+    /// A curve's points in order (sketch frame).
+    pub fn curve_points(&self, id: u64) -> Option<Vec<DVec2>> {
+        let c = self.curves.get(&id)?;
+        c.chain
+            .iter()
+            .map(|&v| self.vertices.get(v).copied())
+            .collect()
+    }
+
+    /// How the UI shows curve `id` (world coordinates).
+    pub fn curve_info(&self, id: u64) -> Option<crate::curve::CurveInfo> {
+        let c = self.curves.get(&id)?;
+        let pts = self.curve_points(id)?;
+        let p = &self.plane;
+        Some(crate::curve::CurveInfo {
+            kind: c.kind,
+            closed: c.closed,
+            segments: c.shown_segments(),
+            centre: c.round.map(|r| p.to_world(r.centre).to_array()),
+            radius: c.round.map(|r| r.radius),
+            sweep: c.round.map(|r| r.sweep),
+            normal: p.normal.to_array(),
+            points: pts.iter().map(|&q| p.to_world(q).to_array()).collect(),
+        })
+    }
+
+    /// The vertex nearest `p` within `reach`, ties to the smaller id.
+    fn vertex_near(&self, p: DVec2, reach: f64) -> Option<SVertexId> {
+        self.vertices
+            .iter()
+            .map(|(k, q)| (q.distance(p), k))
+            .filter(|(d, _)| *d <= reach)
+            .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
+            .map(|(_, k)| k)
+    }
+
+    /// The vertices strictly between `u` and `w` along a straight run of edges from one to
+    /// the other, `w` included (just `[w]` when an edge joins them): a curve segment another
+    /// edge split. `None` when no such run exists.
+    fn link(
+        &self,
+        u: SVertexId,
+        w: SVertexId,
+        adj: &BTreeMap<SVertexId, Vec<SVertexId>>,
+    ) -> Option<Vec<SVertexId>> {
+        let nbrs = adj.get(&u)?;
+        if nbrs.contains(&w) {
+            return Some(vec![w]);
+        }
+        let (pu, pw) = (*self.vertices.get(u)?, *self.vertices.get(w)?);
+        let d = pw - pu;
+        let len2 = d.length_squared();
+        if len2.is_nan() || len2 <= 0.0 {
+            return None;
+        }
+        let param = |p: DVec2| (p - pu).dot(d) / len2;
+        let mut out = Vec::new();
+        let (mut cur, mut t) = (u, 0.0f64);
+        for _ in 0..=self.vertices.len() {
+            let next = adj
+                .get(&cur)?
+                .iter()
+                .filter_map(|&x| {
+                    let px = *self.vertices.get(x)?;
+                    let tx = if x == w { 1.0 } else { param(px) };
+                    let along = x == w
+                        || (tx < 1.0 && point_segment_distance(px, pu, pw) <= 2.0 * SKETCH_MERGE);
+                    (along && tx > t).then_some((tx, x))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))?;
+            out.push(next.1);
+            if next.1 == w {
+                return Some(out);
+            }
+            (cur, t) = (next.1, next.0);
+        }
+        None
+    }
+
+    /// Settle every curve against the graph (see [`crate::curve`]): split segments taken in,
+    /// curves split at junctions, curves that lost an edge broken into polyline pieces, each
+    /// edge in one curve at most (the older curve keeps it), angles re-read from the points.
+    fn settle_curves(&mut self) {
+        if self.curves.is_empty() {
+            return;
+        }
+        let mut adj: BTreeMap<SVertexId, Vec<SVertexId>> = BTreeMap::new();
+        for [a, b] in self.edges.values() {
+            adj.entry(*a).or_default().push(*b);
+            adj.entry(*b).or_default().push(*a);
+        }
+        let mut claimed: BTreeSet<(SVertexId, SVertexId)> = BTreeSet::new();
+        let old = std::mem::take(&mut self.curves);
+        let mut next = self.next_curve;
+        let mut out: BTreeMap<u64, Curve> = BTreeMap::new();
+        for (id, c) in old {
+            let (pieces, lost) = self.curve_pieces(&c, &adj, &mut claimed);
+            let split = !(pieces.len() == 1 && pieces[0].1 == c.closed);
+            let mut first = true;
+            for (chain, closed) in pieces {
+                let edges = if closed { chain.len() } else { chain.len() - 1 };
+                let (kind, mut round, segments) = if lost {
+                    (CurveKind::Polyline, None, edges as u32)
+                } else if !split {
+                    (c.kind, c.round, c.segments)
+                } else {
+                    match (c.kind, closed) {
+                        (CurveKind::Circle | CurveKind::Arc, false) => {
+                            (CurveKind::Arc, c.round, edges as u32)
+                        }
+                        _ => (CurveKind::Polyline, None, edges as u32),
+                    }
+                };
+                let mut kind = kind;
+                if let Some(r) = round.as_mut() {
+                    let pts: Vec<DVec2> = chain.iter().map(|&v| self.vertices[v]).collect();
+                    match fit_angles(r.centre, &pts, closed) {
+                        Some((start, sweep)) => {
+                            r.start = start;
+                            r.sweep = sweep;
+                        }
+                        None => {
+                            kind = CurveKind::Polyline;
+                            round = None;
+                        }
+                    }
+                }
+                let segments = if kind == CurveKind::Polyline {
+                    edges as u32
+                } else {
+                    segments
+                };
+                let min = match (kind, closed) {
+                    (_, true) => 3,
+                    (CurveKind::Polyline, false) => 2,
+                    _ => 1,
+                };
+                if edges < min {
+                    continue;
+                }
+                let key = if first {
+                    first = false;
+                    id
+                } else {
+                    next += 1;
+                    next - 1
+                };
+                out.insert(
+                    key,
+                    Curve {
+                        kind,
+                        chain,
+                        closed,
+                        segments,
+                        round,
+                    },
+                );
+            }
+        }
+        self.curves = out;
+        self.next_curve = next;
+    }
+
+    /// The pieces of curve `c` in the graph as it is now (chains, closed), and whether it
+    /// lost an edge or a point. Claims the edges it keeps.
+    fn curve_pieces(
+        &self,
+        c: &Curve,
+        adj: &BTreeMap<SVertexId, Vec<SVertexId>>,
+        claimed: &mut BTreeSet<(SVertexId, SVertexId)>,
+    ) -> (Vec<(Vec<SVertexId>, bool)>, bool) {
+        let n = c.chain.len();
+        let pairs = c.edge_count();
+        let key = |a: SVertexId, b: SVertexId| (a.min(b), a.max(b));
+        let mut runs: Vec<Vec<SVertexId>> = Vec::new();
+        let mut cur: Vec<SVertexId> = Vec::new();
+        let mut lost = false;
+        let (mut first_ok, mut last_ok) = (false, false);
+        for i in 0..pairs {
+            let (u, w) = (c.chain[i], c.chain[(i + 1) % n]);
+            let path = self.link(u, w, adj).filter(|p| {
+                let mut prev = u;
+                let mut mine = BTreeSet::new();
+                p.iter().all(|&x| {
+                    let k = key(prev, x);
+                    prev = x;
+                    !claimed.contains(&k) && mine.insert(k)
+                })
+            });
+            match path {
+                Some(p) => {
+                    let mut prev = u;
+                    for &x in &p {
+                        claimed.insert(key(prev, x));
+                        prev = x;
+                    }
+                    if cur.is_empty() {
+                        cur.push(u);
+                    }
+                    cur.extend(p);
+                    if i == 0 {
+                        first_ok = true;
+                    }
+                    if i + 1 == pairs {
+                        last_ok = true;
+                    }
+                }
+                None => {
+                    lost = true;
+                    if cur.len() >= 2 {
+                        runs.push(std::mem::take(&mut cur));
+                    }
+                    cur.clear();
+                }
+            }
+        }
+        if cur.len() >= 2 {
+            runs.push(cur);
+        }
+        // Runs with their closedness: a closed curve that kept every edge is one closed run;
+        // one that lost some continues from its last run into its first.
+        let mut closed_runs: Vec<(Vec<SVertexId>, bool)> = Vec::new();
+        if c.closed && !lost && runs.len() == 1 {
+            let mut r = runs.pop().unwrap_or_default();
+            r.pop(); // back at the first vertex
+            closed_runs.push((r, true));
+        } else {
+            if c.closed && lost && first_ok && last_ok && runs.len() >= 2 {
+                let head = runs.remove(0);
+                if let Some(tail) = runs.last_mut() {
+                    tail.extend(head.into_iter().skip(1));
+                }
+            }
+            closed_runs.extend(runs.into_iter().map(|r| (r, false)));
+        }
+        // Split at junctions: a chain point where another edge meets the curve.
+        let junction = |v: SVertexId| adj.get(&v).map_or(0, Vec::len) != 2;
+        let mut pieces: Vec<(Vec<SVertexId>, bool)> = Vec::new();
+        for (run, closed) in closed_runs {
+            let at: Vec<usize> = if closed {
+                (0..run.len()).filter(|&i| junction(run[i])).collect()
+            } else {
+                (1..run.len().saturating_sub(1))
+                    .filter(|&i| junction(run[i]))
+                    .collect()
+            };
+            if closed {
+                if at.len() <= 1 {
+                    pieces.push((run, true));
+                    continue;
+                }
+                // Start at the first junction, then cut at each.
+                let m = run.len();
+                let rot: Vec<SVertexId> = (0..=m).map(|k| run[(at[0] + k) % m]).collect();
+                let cuts: Vec<usize> = at.iter().map(|&i| (i + m - at[0]) % m).chain([m]).collect();
+                for w in cuts.windows(2) {
+                    pieces.push((rot[w[0]..=w[1]].to_vec(), false));
+                }
+            } else {
+                let cuts: Vec<usize> = std::iter::once(0)
+                    .chain(at)
+                    .chain([run.len() - 1])
+                    .collect();
+                for w in cuts.windows(2) {
+                    pieces.push((run[w[0]..=w[1]].to_vec(), false));
+                }
+            }
+        }
+        // A piece back where it started is a loop (a lobe of a figure eight).
+        for (p, closed) in &mut pieces {
+            if !*closed && p.len() >= 4 && p.first() == p.last() {
+                p.pop();
+                *closed = true;
+            }
+        }
+        pieces.retain(|(p, closed)| {
+            let distinct: BTreeSet<&SVertexId> = p.iter().collect();
+            distinct.len() == p.len() && p.len() >= if *closed { 3 } else { 2 }
+        });
+        (pieces, lost)
+    }
+
+    /// Lane 23: make the stroke just drawn through `pts` (sketch frame, as drawn; `closed`
+    /// as drawn) a curve of `kind` with `segments`, on the circle about `centre` for a round
+    /// kind (radius: the farthest drawn point). Its points are found where the insertion put
+    /// them (within twice the merge distance); a stroke that did not land whole, or whose
+    /// points do not fit the circle, stays plain edges. Settles at once (a curve drawn across
+    /// others splits there). Returns the curve's id, or the first piece's.
+    pub(crate) fn add_curve(
+        &mut self,
+        pts: &[DVec2],
+        closed: bool,
+        kind: CurveKind,
+        centre: Option<DVec2>,
+        segments: u32,
+    ) -> Option<u64> {
+        let mut chain: Vec<SVertexId> = Vec::with_capacity(pts.len());
+        for &p in pts {
+            let v = self.vertex_near(p, 2.0 * SKETCH_MERGE)?;
+            if chain.last() != Some(&v) {
+                chain.push(v);
+            }
+        }
+        if closed && chain.len() > 1 && chain.first() == chain.last() {
+            chain.pop();
+        }
+        if chain.len() < if closed { 3 } else { 2 } {
+            return None;
+        }
+        let round = match (kind.is_round(), centre) {
+            (true, Some(c)) => {
+                let radius = pts.iter().map(|p| p.distance(c)).fold(0.0, f64::max);
+                let at: Vec<DVec2> = chain.iter().map(|&v| self.vertices[v]).collect();
+                let (start, sweep) = fit_angles(c, &at, closed)?;
+                Some(Round {
+                    centre: c,
+                    radius,
+                    start,
+                    sweep,
+                })
+            }
+            (true, None) => return None,
+            (false, _) => None,
+        };
+        let id = self.next_curve;
+        let before = self.curves.clone();
+        let next_before = self.next_curve;
+        self.next_curve += 1;
+        self.curves.insert(
+            id,
+            Curve {
+                kind,
+                chain,
+                closed,
+                segments,
+                round,
+            },
+        );
+        self.settle_curves();
+        // The new curve's pieces must fit their circle; a stroke that does not (points the
+        // insertion moved too far) stays plain edges, never a curve that lies.
+        let mine: Vec<u64> = self.curves.keys().copied().filter(|&k| k >= id).collect();
+        let fits = mine.iter().all(|k| {
+            let c = &self.curves[k];
+            c.round.is_none_or(|r| {
+                let at: Vec<DVec2> = c.chain.iter().map(|&v| self.vertices[v]).collect();
+                check_round(&r, &at, c.closed).is_ok()
+            })
+        });
+        if !fits {
+            self.curves = before;
+            self.next_curve = next_before;
+            return None;
+        }
+        mine.first().copied()
+    }
+
+    /// Lane 23: erase a whole curve (the Eraser on any of its segments): every edge of it
+    /// goes, junctions it leaves joining two straight edges heal, regions are re-detected.
+    /// Returns the live regions that are new or changed.
+    pub fn erase_curve(&mut self, id: u64) -> Result<Vec<RegionId>, SketchError> {
+        let c = self.curves.get(&id).ok_or(SketchError::NoSuchCurve(id))?;
+        let pairs: Vec<(SVertexId, SVertexId)> = c.pairs().collect();
+        let mut next = self.clone();
+        next.curves.remove(&id);
+        let mut ends: BTreeSet<SVertexId> = BTreeSet::new();
+        for (u, w) in pairs {
+            if let Some(e) = next.edge_between(u, w) {
+                next.edges.remove(e);
+                ends.insert(u);
+                ends.insert(w);
+            }
+        }
+        next.remove_isolated_vertices();
+        for v in ends {
+            next.heal_vertex(v);
+        }
+        next.settle();
+        next.debug_check("erase_curve");
+        let changed = next.changed_regions(self);
+        *self = next;
+        Ok(changed)
+    }
+
+    /// Lane 23: Explode Curve: the curve's edges stay as plain edges.
+    pub fn explode_curve(&mut self, id: u64) -> Result<usize, SketchError> {
+        let n = self
+            .curves
+            .get(&id)
+            .ok_or(SketchError::NoSuchCurve(id))?
+            .edge_count();
+        self.curves.remove(&id);
+        self.debug_check("explode_curve");
+        Ok(n)
+    }
+
+    /// Lane 23: what a move does to the curves before their points move: a curve whose
+    /// every point moves takes `map`'s centre and radius (`None` from it: the map is not a
+    /// similarity in the plane, and the curve becomes a polyline); a curve only some of
+    /// whose points move is bent and becomes a polyline. Angles are re-read by the settle.
+    pub(crate) fn map_curves(
+        &mut self,
+        moving: &BTreeSet<SVertexId>,
+        map: &dyn Fn(&Round) -> Option<(DVec2, f64)>,
+    ) {
+        for c in self.curves.values_mut() {
+            let n = c.chain.iter().filter(|v| moving.contains(v)).count();
+            if n == 0 {
+                continue;
+            }
+            let mapped = if n == c.chain.len() {
+                c.round.and_then(|r| map(&r))
+            } else {
+                None
+            };
+            match (c.round.as_mut(), mapped) {
+                (Some(r), Some((centre, radius))) => {
+                    r.centre = centre;
+                    r.radius = radius;
+                }
+                (Some(_), None) => {
+                    c.kind = CurveKind::Polyline;
+                    c.round = None;
+                    c.segments = c.edge_count() as u32;
+                }
+                (None, _) => {}
+            }
+        }
+    }
+
+    /// The curves among `carried` edges: every curve whose edges are all carried.
+    pub(crate) fn whole_curves(&self, carried: &BTreeSet<(SVertexId, SVertexId)>) -> Vec<u64> {
+        self.curves
+            .iter()
+            .filter(|(_, c)| {
+                c.pairs()
+                    .all(|(a, b)| carried.contains(&(a.min(b), a.max(b))))
+            })
+            .map(|(k, _)| *k)
+            .collect()
+    }
+
+    /// Check the curves (part of [`Sketch::check`]): ids below the counter, chains of
+    /// distinct live vertices joined by edges in order (and back round for a closed one), no
+    /// edge in two curves, kinds consistent (circles and polygons closed, arcs open, round
+    /// kinds with a circle and polylines without), and every round curve's points on its
+    /// circle ([`check_round`]).
+    fn check_curves(&self, edge_set: &BTreeSet<(SVertexId, SVertexId)>) -> Result<(), String> {
+        let mut seen: BTreeSet<(SVertexId, SVertexId)> = BTreeSet::new();
+        for (&id, c) in &self.curves {
+            if id == 0 || id >= self.next_curve {
+                return Err(format!("curve {id} is not below the sketch's counter"));
+            }
+            if let Some(closes) = c.kind.closes()
+                && closes != c.closed
+            {
+                return Err(format!(
+                    "curve {id}: a {} that does not close as one",
+                    c.kind.word()
+                ));
+            }
+            if c.kind.is_round() != c.round.is_some() {
+                return Err(format!(
+                    "curve {id}: a {} with the wrong parameters",
+                    c.kind.word()
+                ));
+            }
+            let min = match (c.kind, c.closed) {
+                (_, true) => 3,
+                (CurveKind::Polyline, false) => 2,
+                _ => 1,
+            };
+            if c.edge_count() < min || c.segments == 0 {
+                return Err(format!("curve {id} is too short"));
+            }
+            let distinct: BTreeSet<&SVertexId> = c.chain.iter().collect();
+            if distinct.len() != c.chain.len() {
+                return Err(format!("curve {id} passes a point twice"));
+            }
+            for (a, b) in c.pairs() {
+                let k = (a.min(b), a.max(b));
+                if !edge_set.contains(&k) {
+                    return Err(format!("curve {id} names an edge that is not there"));
+                }
+                if !seen.insert(k) {
+                    return Err(format!("curve {id} shares an edge with another curve"));
+                }
+            }
+            if let Some(r) = &c.round {
+                let at: Vec<DVec2> = c.chain.iter().map(|&v| self.vertices[v]).collect();
+                check_round(r, &at, c.closed).map_err(|e| format!("curve {id}: {e}"))?;
+            }
+        }
+        Ok(())
     }
 
     // ---- plain data (the .shz snapshot) -------------------------------------------------
@@ -1393,6 +1968,23 @@ impl Sketch {
                     consumed: r.consumed,
                 })
                 .collect(),
+            curves: self
+                .curves
+                .iter()
+                .map(|(&id, c)| RawCurve {
+                    id,
+                    kind: c.kind,
+                    vertices: ring(&c.chain),
+                    closed: c.closed,
+                    segments: c.segments,
+                    centre: c.round.map(|r| r.centre.to_array()),
+                    radius: c.round.map(|r| r.radius),
+                    start: c.round.map(|r| r.start),
+                    sweep: c.round.map(|r| r.sweep),
+                })
+                .collect(),
+            // The counter once a curve was ever made (absent in older files).
+            next_curve: (self.next_curve != 1).then_some(self.next_curve),
         }
     }
 
@@ -1435,6 +2027,33 @@ impl Sketch {
                 consumed: r.consumed,
             });
         }
+        let mut last = 0u64;
+        for c in &raw.curves {
+            if c.id <= last {
+                return Err("curve ids must rise".into());
+            }
+            last = c.id;
+            let chain: Vec<SVertexId> = c
+                .vertices
+                .iter()
+                .map(|&i| key(i))
+                .collect::<Result<_, _>>()?;
+            s.curves.insert(
+                c.id,
+                Curve {
+                    kind: c.kind,
+                    chain,
+                    closed: c.closed,
+                    segments: c.segments,
+                    round: c.round()?,
+                },
+            );
+        }
+        s.next_curve = match raw.next_curve {
+            Some(n) if n > last => n,
+            Some(_) => return Err("the curve counter is not above every curve id".into()),
+            None => last + 1,
+        };
         s.check()?;
         let mut stored: Vec<BoundaryKey> = s.regions.values().map(Region::boundary_key).collect();
         let mut found: Vec<BoundaryKey> =
@@ -1474,6 +2093,46 @@ impl Sketch {
                 for h in &mut r.holes {
                     h.reverse();
                 }
+            }
+        }
+        // Lane 23: a round curve keeps its circle when the map is a similarity in the plane
+        // (the centre mapped, the radius scaled, the angles read again from the points);
+        // otherwise it is a polyline now.
+        let at = |q: DVec2| plane.to_local(a.transform_point3(self.plane.to_world(q)));
+        let scale = crate::curve::similarity_scale(
+            at(DVec2::X) - at(DVec2::ZERO),
+            at(DVec2::Y) - at(DVec2::ZERO),
+        );
+        for c in &mut raw.curves {
+            let pts: Vec<DVec2> = c
+                .vertices
+                .iter()
+                .filter_map(|&i| raw.vertices.get(i as usize).map(|p| DVec2::from_array(*p)))
+                .collect();
+            let fitted = match (c.centre, c.radius, scale) {
+                (Some(cc), Some(r), Some(k)) => {
+                    let centre = DVec2::from_array(map(cc));
+                    fit_angles(centre, &pts, c.closed).map(|(s0, w)| (centre, r * k, s0, w))
+                }
+                _ => None,
+            };
+            match fitted {
+                Some((centre, radius, start, sweep)) => {
+                    c.centre = Some(centre.to_array());
+                    c.radius = Some(radius);
+                    c.start = Some(start);
+                    c.sweep = Some(sweep);
+                }
+                None if c.centre.is_some() => {
+                    c.kind = crate::curve::CurveKind::Polyline;
+                    c.segments = if c.closed {
+                        c.vertices.len() as u32
+                    } else {
+                        c.vertices.len().saturating_sub(1) as u32
+                    };
+                    (c.centre, c.radius, c.start, c.sweep) = (None, None, None, None);
+                }
+                None => {}
             }
         }
         let mut s = Sketch::from_raw(plane, &raw).map_err(TransformError::InvalidResult)?;
@@ -1582,6 +2241,7 @@ impl Sketch {
         }
         let edge_set: BTreeSet<(SVertexId, SVertexId)> =
             edges.iter().map(|&[a, b]| (a.min(b), a.max(b))).collect();
+        self.check_curves(&edge_set)?;
         for (_, r) in &self.regions {
             for ring in std::iter::once(&r.outer).chain(r.holes.iter()) {
                 let distinct: BTreeSet<_> = ring.iter().collect();

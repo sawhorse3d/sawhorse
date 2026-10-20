@@ -44,6 +44,7 @@ fn board(doc: &mut Document, x: f64, y: f64, z: f64, w: f64, d: f64, h: f64) -> 
             },
             points: vec![[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -586,6 +587,7 @@ fn a_tube_cut_across_has_a_hole() {
                 [0.0, 4.0 * IN, 0.0],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -607,6 +609,7 @@ fn a_tube_cut_across_has_a_hole() {
                 [1.0 * IN, 3.0 * IN, 0.0],
             ],
             closed: true,
+            curve: None,
         },
     );
     ok(

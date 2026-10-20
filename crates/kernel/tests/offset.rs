@@ -198,6 +198,7 @@ fn a_framed_face_offsets_as_a_whole_shape() {
                 [0.4, 0.35, 0.2],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {

@@ -5,6 +5,8 @@
 //! never by ordinal) or a sketch region (by public id). The UI raycasts a triangle, reads
 //! its part, and sends the op.
 
+use std::collections::BTreeMap;
+
 use glam::{DVec2, DVec3};
 use sawhorse_tessellate::{TessellateError, triangulate};
 
@@ -100,6 +102,45 @@ pub struct ViewMesh {
     pub normals: Vec<f32>,
     /// Fill `normals` (set when some edge in view is smooth).
     want_normals: bool,
+    /// One per edge segment (lane 23): 0, or 1 + the index into `curves` of the curve the
+    /// edge is a segment of.
+    pub edge_curve: Vec<u32>,
+    /// The curves in view (lane 23): sketch curves and solids' rims.
+    pub curves: Vec<CurveView>,
+}
+
+/// A curve in the view (lane 23): whose it is, its id there, and how it reads (see
+/// [`crate::curve::CurveInfo`]; no points: its segments are the edges that name it).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CurveView {
+    pub owner: EdgeOwner,
+    pub curve: u64,
+    pub kind: crate::curve::CurveKind,
+    pub closed: bool,
+    pub segments: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub centre: Option<[f64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<f64>,
+    pub normal: [f64; 3],
+}
+
+impl CurveView {
+    fn of(owner: EdgeOwner, curve: u64, i: crate::curve::CurveInfo) -> CurveView {
+        CurveView {
+            owner,
+            curve,
+            kind: i.kind,
+            closed: i.closed,
+            segments: i.segments,
+            centre: i.centre,
+            radius: i.radius,
+            sweep: i.sweep,
+            normal: i.normal,
+        }
+    }
 }
 
 /// What a run of view-mesh edges belongs to (for window / crossing selection).
@@ -144,11 +185,13 @@ impl ViewMesh {
         Ok(())
     }
 
-    fn push_edge(&mut self, a: DVec3, b: DVec3) {
-        self.push_edge_n(a, b, [DVec3::ZERO; 2], 0);
+    fn push_edge_n(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2], flags: u8) {
+        self.push_edge_c(a, b, n, flags, 0);
     }
 
-    fn push_edge_n(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2], flags: u8) {
+    /// An edge segment of curve `curve` (1 + its index in `curves`; 0 for none).
+    fn push_edge_c(&mut self, a: DVec3, b: DVec3, n: [DVec3; 2], flags: u8, curve: u32) {
+        self.edge_curve.push(curve);
         self.edge_flags.push(flags);
         self.edges.extend([
             a.x as f32, a.y as f32, a.z as f32, b.x as f32, b.y as f32, b.z as f32,
@@ -234,13 +277,33 @@ impl ViewMesh {
                 .and_then(|l| b.face(l.face))
                 .map_or(DVec3::ZERO, |f| f.plane.normal)
         };
+        // Lane 23: the solid's rims, and which edges are theirs.
+        let mut rim: BTreeMap<u64, u32> = BTreeMap::new();
+        let on_rim = if o.curves().is_empty() {
+            BTreeMap::new()
+        } else {
+            for &cid in o.curves().keys() {
+                if let Some(info) = o.curve_info(cid) {
+                    let owner = EdgeOwner { kind: "object", id };
+                    self.curves.push(CurveView::of(owner, cid, info));
+                    rim.insert(cid, self.curves.len() as u32);
+                }
+            }
+            o.edge_curves()
+        };
         for (e, edge) in b.edges() {
             let (p, q) = b.edge_points(e);
-            self.push_edge_n(
+            let curve = on_rim
+                .get(&e)
+                .and_then(|c| rim.get(c))
+                .copied()
+                .unwrap_or(0);
+            self.push_edge_c(
                 p,
                 q,
                 [normal_of(Some(edge.he)), normal_of(edge.twin)],
                 o.flags_of(e),
+                curve,
             );
         }
         Ok(())
@@ -375,9 +438,36 @@ pub fn view_mesh(model: &Model) -> Result<ViewMesh, TessellateError> {
             m.push_face(part, &outer, &holes, |p| plane.to_local(p), |_| [0.0; 2])?;
         }
         m.begin_owner("sketch", sid);
+        // Lane 23: the sketch's curves, and which edges are theirs.
+        let mut index: BTreeMap<u64, u32> = BTreeMap::new();
+        for (cid, _) in s.curves() {
+            if let Some(info) = s.curve_info(cid) {
+                m.curves.push(CurveView::of(
+                    EdgeOwner {
+                        kind: "sketch",
+                        id: sid,
+                    },
+                    cid,
+                    info,
+                ));
+                index.insert(cid, m.curves.len() as u32);
+            }
+        }
+        let on_curve = s.edge_curves();
         for (_, [a, b]) in s.edges() {
             if let (Some(p), Some(q)) = (s.vertex(a), s.vertex(b)) {
-                m.push_edge(plane.to_world(p), plane.to_world(q));
+                let curve = on_curve
+                    .get(&(a.min(b), a.max(b)))
+                    .and_then(|c| index.get(c))
+                    .copied()
+                    .unwrap_or(0);
+                m.push_edge_c(
+                    plane.to_world(p),
+                    plane.to_world(q),
+                    [DVec3::ZERO; 2],
+                    0,
+                    curve,
+                );
             }
         }
     }

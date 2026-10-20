@@ -39,6 +39,7 @@ fn board(doc: &mut Document, x: f64, y: f64, z: f64, w: f64, d: f64, h: f64) -> 
             },
             points: vec![[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {

@@ -258,6 +258,7 @@ fn same_member(a: &Member, b: &Member) -> bool {
                 && x.part == y.part
                 && x.paint == y.paint
                 && x.edge_flags == y.edge_flags
+                && x.curves == y.curves
         }
         (MemberKind::Mesh(x), MemberKind::Mesh(y)) => {
             x.material == y.material && x.name == y.name && x.edge_flags == y.edge_flags
@@ -1837,6 +1838,7 @@ impl Model {
                             g.part = o.part.clone();
                             g.paint = o.paint.clone();
                             g.edge_flags = o.edge_flags.clone();
+                            g.curves = o.curves.clone();
                             g
                         }
                         _ => {
@@ -2388,6 +2390,7 @@ impl Model {
                             || o.material != g.material
                             || o.paint != g.paint
                             || o.edge_flags != g.edge_flags
+                            || o.curves != g.curves
                             || o.part != g.part
                             || o.name != member.name
                             || o.tag != member.tag

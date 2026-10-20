@@ -629,6 +629,7 @@ pub fn read(bytes: &[u8], _opts: &ImportOptions) -> Result<Parsed, ImportError> 
         out.strokes.push(ImportStroke {
             points: p.iter().map(|q| [q.x, q.y, 0.0]).collect(),
             closed: closed && p.len() > 2,
+            curve: None,
         });
     }
     out.notes = notes;

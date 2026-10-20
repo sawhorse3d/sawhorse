@@ -118,6 +118,25 @@ pub struct Seg {
     /// Soft (1), smooth (2) and hidden (4) flags (lane 15): a soft or hidden edge is not
     /// picked unless the query asks for it; a hidden one is not inferred on either.
     pub flags: u8,
+    /// Lane 23: the curve it is a segment of (index into [`Scene::curves`]; [`NO_CURVE`]
+    /// for none: a plain `u32`, so the segment stays the size it was on the picking path).
+    pub curve: u32,
+}
+
+/// [`Seg::curve`] of a segment that is in no curve.
+pub const NO_CURVE: u32 = u32::MAX;
+
+/// A curve in the scene (lane 23): a sketch's curve or a solid's rim, its id there, and its
+/// circle (for a circle, an arc or a polygon that still reads as one).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SceneCurve {
+    pub owner: Owner,
+    pub id: u64,
+    pub kind: sawhorse_kernel::curve::CurveKind,
+    pub closed: bool,
+    pub centre: Option<DVec3>,
+    pub normal: DVec3,
+    pub radius: Option<f64>,
 }
 
 /// A run of equal segments turning by equal angles (an arc, a circle, a regular polygon):
@@ -147,6 +166,8 @@ pub struct Scene {
     pub surfaces: Vec<Surface>,
     pub segs: Vec<Seg>,
     pub arcs: Vec<Arc>,
+    /// Lane 23: the curves (sketch curves and solids' rims) segments name.
+    pub curves: Vec<SceneCurve>,
     pub guides: Vec<GuideLine>,
     /// Dimension lines (id, the two ends of the drawn line): pickable, never snapped to.
     pub dims: Vec<(u64, DVec3, DVec3)>,
@@ -207,11 +228,29 @@ impl Scene {
                     s.find_arcs(ring, true, owner);
                 }
             }
+            // Lane 23: the solid's rims (their centres are inference points).
+            let mut rim: std::collections::BTreeMap<u64, u32> = Default::default();
+            let on_rim = if o.curves().is_empty() {
+                Default::default()
+            } else {
+                for &cid in o.curves().keys() {
+                    if let Some(info) = o.curve_info(cid) {
+                        rim.insert(cid, s.curves.len() as u32);
+                        s.add_curve(owner, cid, &info);
+                    }
+                }
+                o.edge_curves()
+            };
             for (e, edge) in b.edges() {
                 let (a, bb) = b.edge_points(e);
                 let Some((a, bb)) = clip_segment(a, bb, &clip) else {
                     continue;
                 };
+                let curve = on_rim
+                    .get(&e)
+                    .and_then(|c| rim.get(c))
+                    .copied()
+                    .unwrap_or(NO_CURVE);
                 let side = |h: Option<sawhorse_kernel::ids::HalfEdgeId>| {
                     let he = b.half_edge(h?)?;
                     let face = b.lp(he.lp)?.face;
@@ -224,6 +263,7 @@ impl Scene {
                     drawn: edge.user,
                     faces: [side(Some(edge.he)), side(edge.twin)],
                     flags: o.flags_of(e),
+                    curve,
                 });
             }
         }
@@ -259,6 +299,15 @@ impl Scene {
                     &clip,
                 );
             }
+            // Lane 23: the sketch's curves (their centres are inference points).
+            let mut index: std::collections::BTreeMap<u64, u32> = Default::default();
+            for (cid, _) in sk.curves() {
+                if let Some(info) = sk.curve_info(cid) {
+                    index.insert(cid, s.curves.len() as u32);
+                    s.add_curve(owner, cid, &info);
+                }
+            }
+            let on_curve = sk.edge_curves();
             // Arcs among sketch strokes: chains through vertices with exactly two edges.
             let mut adj: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
             for (_, [a, b]) in sk.edges() {
@@ -267,6 +316,11 @@ impl Scene {
                 if let (Some(p), Some(q)) = (sk.vertex(a), sk.vertex(b))
                     && let Some((p, q)) = clip_segment(plane.to_world(p), plane.to_world(q), &clip)
                 {
+                    let curve = on_curve
+                        .get(&(a.min(b), a.max(b)))
+                        .and_then(|c| index.get(c))
+                        .copied()
+                        .unwrap_or(NO_CURVE);
                     s.segs.push(Seg {
                         a: p,
                         b: q,
@@ -274,6 +328,7 @@ impl Scene {
                         drawn: true,
                         faces: [None, None],
                         flags: 0,
+                        curve,
                     });
                 }
             }
@@ -376,6 +431,7 @@ impl Scene {
                                 drawn: false,
                                 faces: [Some(surface), None],
                                 flags: 0,
+                                curve: NO_CURVE,
                             });
                         }
                     }
@@ -385,6 +441,37 @@ impl Scene {
         s.dedup_arcs();
         s.index();
         s
+    }
+
+    /// Lane 23: a curve, and its centre as an arc centre when it is round.
+    fn add_curve(&mut self, owner: Owner, id: u64, info: &sawhorse_kernel::curve::CurveInfo) {
+        let centre = info.centre.map(DVec3::from_array);
+        let normal = DVec3::from_array(info.normal);
+        self.curves.push(SceneCurve {
+            owner,
+            id,
+            kind: info.kind,
+            closed: info.closed,
+            centre,
+            normal,
+            radius: info.radius,
+        });
+        if let (Some(centre), Some(radius)) = (centre, info.radius) {
+            self.arcs.push(Arc {
+                centre,
+                normal,
+                radius,
+                owner,
+                closed: info.closed,
+            });
+        }
+    }
+
+    /// Lane 23: the curve segment `i` belongs to, if any.
+    pub fn curve_of(&self, i: usize) -> Option<&SceneCurve> {
+        self.segs
+            .get(i)
+            .and_then(|s| self.curves.get(s.curve as usize))
     }
 
     /// Add guide lines (and points, with a zero direction) after building.

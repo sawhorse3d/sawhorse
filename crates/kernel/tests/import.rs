@@ -57,6 +57,7 @@ fn import_op() -> Op {
             ImportStroke {
                 points: vec![[-1.0, -1.0, 0.0], [-0.5, -1.0, 0.0], [-0.5, -0.5, 0.0]],
                 closed: true,
+                curve: None,
             },
             ImportStroke {
                 points: vec![
@@ -66,6 +67,7 @@ fn import_op() -> Op {
                     [5.0, 5.0, 0.0],
                 ],
                 closed: false,
+                curve: None,
             },
         ],
         materials: vec![MaterialDef::plain(

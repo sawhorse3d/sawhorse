@@ -138,6 +138,8 @@ impl Object {
 
     /// After an edit: flags stay only on face pairs that still meet along an edge.
     pub(crate) fn settle_edges(&mut self) {
+        // Lane 23: the rims (keyed the same way) settle with the flags.
+        self.settle_curves();
         if self.edge_flags.is_empty() {
             return;
         }

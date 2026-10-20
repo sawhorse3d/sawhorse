@@ -25,6 +25,10 @@ pub enum Entity {
         /// Lane 15: soft (1), smooth (2) and hidden (4); absent when none.
         #[serde(default, skip_serializing_if = "is_zero")]
         flags: u8,
+        /// Lane 23: the id of the curve the edge is a segment of (in its sketch, or on its
+        /// solid), absent when none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        curve: Option<u64>,
     },
     Face {
         object: u64,
@@ -252,6 +256,7 @@ pub fn pick(scene: &Scene, q: &PickQuery) -> Option<Picked> {
                 b: s.b.to_array(),
                 drawn: s.drawn,
                 flags: s.flags,
+                curve: scene.curve_of(i).map(|c| c.id),
             }
         };
         return Some(Picked {

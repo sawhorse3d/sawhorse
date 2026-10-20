@@ -38,6 +38,7 @@ fn board(doc: &mut Document, x: f64, y: f64, z: f64, w: f64, d: f64, h: f64) -> 
             },
             points: vec![[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -457,6 +458,7 @@ fn strokes_stick_only_within_their_editing_context() {
                 [2.5, 1.5, 0.0],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -548,6 +550,7 @@ fn a_cut_that_severs_a_shared_component_makes_that_copy_unique() {
                 [1.9, 1.0, 0.5],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {

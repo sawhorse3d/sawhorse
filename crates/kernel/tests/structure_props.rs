@@ -32,6 +32,7 @@ fn board(doc: &mut Document, x: f64, y: f64, w: f64, d: f64, h: f64) -> u64 {
                 [x, y + d, 0.0],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {

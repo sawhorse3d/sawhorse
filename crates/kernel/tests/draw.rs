@@ -70,6 +70,7 @@ fn a_rectangle_across_a_face_cuts_a_strip_and_pushes_into_a_dado() {
                 p(0.75, 0.0, 22.25),
             ],
             closed: true,
+            curve: None,
         })
         .unwrap();
     let OpOutcome::Drawn {
@@ -131,6 +132,7 @@ fn a_line_from_edge_to_edge_splits_and_a_dangling_line_is_refused() {
             target: on_face(1, 2),
             points: vec![p(10.0, 0.0, 12.0), p(10.0, 8.0, 12.0)],
             closed: false,
+            curve: None,
         })
         .unwrap_err();
     assert_eq!(e, KernelError::FaceEdit(FaceEditError::Dangling));
@@ -140,6 +142,7 @@ fn a_line_from_edge_to_edge_splits_and_a_dangling_line_is_refused() {
             target: on_face(1, 2),
             points: vec![p(10.0, 0.0, 12.0), p(10.0, 8.0, 12.0), p(14.0, 16.0, 12.0)],
             closed: false,
+            curve: None,
         })
         .unwrap();
     assert!(matches!(out, OpOutcome::Drawn { ref faces, .. } if faces.len() == 2));
@@ -158,6 +161,7 @@ fn a_closed_stroke_inside_a_face_imprints_and_one_sticking_out_cuts() {
             p(4.0, 8.0, 12.0),
         ],
         closed: true,
+        curve: None,
     })
     .unwrap();
     let st = m.stats();
@@ -173,6 +177,7 @@ fn a_closed_stroke_inside_a_face_imprints_and_one_sticking_out_cuts() {
             p(12.0, 3.0, 12.0),
         ],
         closed: true,
+        curve: None,
     })
     .unwrap();
     let st = m.stats();
@@ -191,6 +196,7 @@ fn a_closed_stroke_inside_a_face_imprints_and_one_sticking_out_cuts() {
             target: on_face(1, 2),
             points: pts,
             closed: false,
+            curve: None,
         });
         assert!(e.is_err(), "{why}");
         assert!(!e.unwrap_err().is_bug());
@@ -206,6 +212,7 @@ fn a_stroke_crosses_every_face_on_the_plane() {
         target: on_face(1, 2),
         points: vec![p(12.0, 0.0, 12.0), p(12.0, 16.0, 12.0)],
         closed: false,
+        curve: None,
     })
     .unwrap();
     assert_eq!(m.stats().faces, 7);
@@ -214,6 +221,7 @@ fn a_stroke_crosses_every_face_on_the_plane() {
             target: on_face(1, 2),
             points: vec![p(0.0, 8.0, 12.0), p(24.0, 8.0, 12.0)],
             closed: false,
+            curve: None,
         })
         .unwrap();
     assert!(
@@ -240,6 +248,7 @@ fn planes_find_or_create_their_sketch() {
                 [0.0, 1.0, 0.0],
             ],
             closed: true,
+            curve: None,
         })
         .unwrap();
     assert!(
@@ -260,6 +269,7 @@ fn planes_find_or_create_their_sketch() {
             [x0, 0.3, at],
         ],
         closed: true,
+        curve: None,
     };
     let out = m.apply(&shelf(0.0)).unwrap();
     let OpOutcome::Drawn {
@@ -278,6 +288,7 @@ fn planes_find_or_create_their_sketch() {
             target: DrawTarget::Sketch { sketch: 1 },
             points: vec![[0.0, 0.0, 0.1], [1.0, 0.0, 0.1]],
             closed: false,
+            curve: None,
         })
         .unwrap_err();
     assert_eq!(e, KernelError::Sketch(SketchError::OffPlane));
@@ -301,6 +312,7 @@ fn draw_ops_round_trip_through_json() {
         target: DrawTarget::Face { object: 1, face: 2 },
         points: vec![[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
         closed: false,
+        curve: None,
     };
     let json = serde_json::to_string(&op).unwrap();
     assert!(

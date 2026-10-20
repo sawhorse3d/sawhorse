@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3f266d1e911f76c4e67e23366caadc368660119a6a21d64dce18b90685686a78 # shrinks to p = ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]), steps = [Arc { c: [0, 0], r: 62, n: 21, a0: 0.0, sweep: 359.999 }, Explode { curve: 0, solid: true }, Move { curves: [], region: None, lone: Some((0, 0)), map: Land(72, 99), copy: false, count: 1 }]
+cc 3f6367a726068de920f2eb19fbbdf9fe58d709126814a788bd4f4ebbc624ea10 # shrinks to p = ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]), steps = [Round { c: [0, 0], r: 0, n: 3, a0: 0.0, polygon: false }, Extrude { region: 0, d: 0.5 }, Push { object: 0, flat: true, d: 0.25 }, Extrude { region: 0, d: 0.5 }]
+cc cd7d13499f85ce3895e44f8c834813a108f3c54b8535cf093ba542e39ca279a3 # shrinks to p = ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]), steps = [Round { c: [0, 0], r: 26, n: 9, a0: 0.0, polygon: false }, Move { curves: [], region: Some(0), lone: None, map: Spin(0, 1e-7), copy: true, count: 1 }]
+cc 11d0c7825c996fe22a4a5129742b86d6d7f4163a73d1ab482a51b4c81fd62268 # shrinks to p = ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]), steps = [Round { c: [0, 0], r: 80, n: 67, a0: 0.0, polygon: false }, Move { curves: [0], region: None, lone: None, map: Spin(71, 1e-7), copy: true, count: 1 }, Extrude { region: 1, d: 0.5 }]

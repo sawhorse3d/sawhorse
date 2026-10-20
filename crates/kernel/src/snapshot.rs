@@ -132,6 +132,22 @@ pub struct SnapBrep {
     /// persistent face ids the edge lies between; flags 1 soft, 2 smooth, 4 hidden).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_flags: Vec<[u64; 3]>,
+    /// Lane 23: curves on the solid (the rims of pushed circles, arcs and polygons), each
+    /// edge as the pair of face ids it lies between, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<SnapRimCurve>,
+}
+
+/// A solid's curve as saved (lane 23).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SnapRimCurve {
+    pub id: u64,
+    pub kind: crate::curve::CurveKind,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
+    pub segments: u32,
+    pub keys: Vec<[u64; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -724,6 +740,17 @@ pub fn snap_brep(o: &Object) -> SnapBrep {
             .iter()
             .map(|(&(a, b), &f)| [a, b, u64::from(f)])
             .collect(),
+        curves: o
+            .curves
+            .iter()
+            .map(|(&id, c)| SnapRimCurve {
+                id,
+                kind: c.kind,
+                closed: c.closed,
+                segments: c.segments,
+                keys: c.keys.iter().map(|&(a, b)| [a, b]).collect(),
+            })
+            .collect(),
     }
 }
 
@@ -797,13 +824,37 @@ pub fn brep_object(what: &str, b: &SnapBrep, next_face_id: u64) -> Result<Object
         obj.edge_flags
             .insert(crate::edges::pair(e[0], e[1]), e[2] as u8);
     }
+    for c in &b.curves {
+        if c.id == 0 || obj.curves.contains_key(&c.id) {
+            return Err(bad(format!("{what}: curve ids must be distinct and not 0")));
+        }
+        obj.curves.insert(
+            c.id,
+            crate::curve::RimCurve {
+                kind: c.kind,
+                closed: c.closed,
+                segments: c.segments,
+                keys: c
+                    .keys
+                    .iter()
+                    .map(|k| crate::edges::pair(k[0], k[1]))
+                    .collect(),
+            },
+        );
+    }
+    obj.check_curves()
+        .map_err(|e| bad(format!("{what}: {e}")))?;
     // Flags on faces that do not meet are dropped (a hand-edited file), never kept.
     let before = obj.edge_flags.len();
+    let curves = obj.curves.clone();
     obj.settle_edges();
     if obj.edge_flags.len() != before {
         return Err(bad(format!(
             "{what}: an edge flag between faces that do not meet"
         )));
+    }
+    if obj.curves != curves {
+        return Err(bad(format!("{what}: a curve on edges that are not there")));
     }
     Ok(obj)
 }

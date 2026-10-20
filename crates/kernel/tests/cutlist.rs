@@ -31,6 +31,7 @@ fn board(doc: &mut Document, x: f64, y: f64, z: f64, w: f64, d: f64, h: f64) -> 
             },
             points: vec![[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -931,6 +932,7 @@ fn prism(doc: &mut Document, name: &str, pts: &[[f64; 2]], h: f64) -> u64 {
             },
             points: pts.iter().map(|p| [p[0] * IN, p[1] * IN, 0.0]).collect(),
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {

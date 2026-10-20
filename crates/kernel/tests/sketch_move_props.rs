@@ -336,6 +336,7 @@ fn run(
             target: DrawTarget::Sketch { sketch: 1 },
             points,
             closed,
+            curve: None,
         };
         if d.apply(&op).is_ok() {
             ops.push(op);
@@ -388,6 +389,7 @@ fn run(
             xform,
             copy: m.copy,
             count: m.count,
+            curves: vec![],
         };
         let before = d.hash();
         let shape_before = counts_and_areas(d.model(), v.id);

@@ -489,6 +489,7 @@ fn a_through_cut_severs_the_board_into_two_solids() {
                 [0.4, 0.4, 0.05],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn { inside, .. } = out else {
@@ -567,6 +568,7 @@ fn severed_pieces_stay_in_their_group() {
                 [0.5, 0.4, 0.05],
             ],
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn { inside, .. } = out else {

@@ -51,6 +51,7 @@ fn circle(c: [f64; 2], r: f64, n: usize) -> Op {
         target: DrawTarget::Sketch { sketch: 1 },
         points,
         closed: true,
+        curve: None,
     }
 }
 
@@ -69,6 +70,7 @@ fn op(
         xform,
         copy: false,
         count: 1,
+        curves: vec![],
     }
 }
 
@@ -81,6 +83,7 @@ fn copy_op(sketch: u64, regions: &[u64], edges: &[[[f64; 3]; 2]], xform: Xform, 
         xform,
         copy: true,
         count,
+        curves: vec![],
     }
 }
 
@@ -158,7 +161,8 @@ fn a_whole_rectangle_moves_and_keeps_its_region() {
         out,
         OpOutcome::SketchMoved {
             sketch: 1,
-            regions: vec![[1, 1]]
+            regions: vec![[1, 1]],
+            curves: vec![],
         }
     );
     let m = d.model();
@@ -382,7 +386,8 @@ fn a_whole_shape_turned_upright_goes_to_the_sketch_on_its_new_plane() {
         out,
         OpOutcome::SketchMoved {
             sketch: up,
-            regions: vec![[up, region_ids(m, up)[0]]]
+            regions: vec![[up, region_ids(m, up)[0]]],
+            curves: vec![],
         }
     );
     assert_eq!(
@@ -429,7 +434,10 @@ fn lifting_a_whole_shape_and_putting_it_back() {
     let r = region_ids(d.model(), up);
     // Back down: into the ground sketch that is already there.
     let out = one_step(&mut d, &op(up, &[], &[], &r, shift(0.0, 0.0, -0.5)));
-    let OpOutcome::SketchMoved { sketch, regions } = out else {
+    let OpOutcome::SketchMoved {
+        sketch, regions, ..
+    } = out
+    else {
         panic!()
     };
     assert_eq!((sketch, regions[0][0]), (1, 1), "back in the ground sketch");
@@ -491,7 +499,7 @@ fn an_island_in_a_lifted_hole_goes_along_and_a_dangling_stroke_stays() {
 fn copies_are_independent_and_weld_where_they_touch() {
     let mut d = doc(&[rect(0.0, 0.0, 1.0, 1.0)]);
     let out = one_step(&mut d, &copy_op(1, &[1], &[], shift(3.0, 0.0, 0.0), 1));
-    let OpOutcome::SketchCopied { regions } = out else {
+    let OpOutcome::SketchCopied { regions, .. } = out else {
         panic!()
     };
     assert_eq!(regions.len(), 1);
@@ -508,7 +516,7 @@ fn copies_are_independent_and_weld_where_they_touch() {
     let mut d = doc(&[circle([0.0, 0.0], 0.1, 24)]);
     let r = region_ids(d.model(), 1);
     let out = one_step(&mut d, &copy_op(1, &r, &[], shift(0.5, 0.0, 0.0), 3));
-    let OpOutcome::SketchCopied { regions } = out else {
+    let OpOutcome::SketchCopied { regions, .. } = out else {
         panic!()
     };
     assert_eq!(regions.len(), 3);
@@ -534,6 +542,7 @@ fn copies_are_independent_and_weld_where_they_touch() {
         xform: shift(1.0, 1.0, 0.0),
         copy: true,
         count: 1,
+        curves: vec![],
     };
     let e = refused(&mut d, &lone);
     assert_eq!(e, KernelError::Transform(TransformError::NothingToMove));
@@ -894,6 +903,7 @@ fn an_edge_a_rounding_error_over_the_merge_distance_is_too_short() {
             target: DrawTarget::Sketch { sketch: 1 },
             points: p,
             closed: true,
+            curve: None,
         }
     };
     let e = refused(&mut d, &square(true));

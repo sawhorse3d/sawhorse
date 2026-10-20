@@ -19,7 +19,12 @@
 //! the document, its log and its undo depth untouched, with undo / redo interleaved
 //! anywhere; and (lane 22) sketch geometry moved, turned, scaled, lifted off its plane and
 //! copied (points, edges, regions and whole sketches, landing on vertices and edges, turns
-//! by 0, 180, 360 and tiny angles, off-plane moves, arrays). After every accepted op every face is sampled and its texture coordinates
+//! by 0, 180, 360 and tiny angles, off-plane moves, arrays), and (lane 23) curves: circles,
+//! polygons and arcs drawn as curves (3 to 96 segments, radii from 0.1 mm to 9 km, arcs of
+//! 0.001 to 359.999 degrees), lines ending on a curve's point or a segment's middle,
+//! crossing a segment, crossing two curves at once and lying along a segment, a whole curve
+//! erased, curves exploded (in sketches and on solids), and whole curves moved, turned,
+//! scaled, lifted and copied. After every accepted op every face is sampled and its texture coordinates
 //! checked (`testing::check_looks`), the cut list is worked out and checked against a
 //! brute-force count of the world (`testing::check_cut_list`), and the parts are nested
 //! with both algorithms and every layout invariant checked
@@ -200,6 +205,8 @@ enum Fuzz {
         points: Vec<u8>,
         edges: Vec<u8>,
         regions: Vec<u8>,
+        /// Lane 23: whole curves by pick.
+        curves: Vec<u8>,
         all: bool,
         map: SketchMap,
         copy: bool,
@@ -295,6 +302,34 @@ enum Fuzz {
     MoveSheetItems(u8, Vec<u8>, [f64; 2]),
     DeleteSheetItems(u8, Vec<u8>),
     OrderSheetItem(u8, u8, u8),
+    /// Lane 23: a circle (kind 0), polygon (1) or arc (2) drawn as a curve into a sketch of
+    /// the open context: grid centre, radius pick, segments, start and sweep (degrees); a
+    /// wrong centre now and then (refused).
+    CurveDraw {
+        sketch: u8,
+        kind: u8,
+        centre: [f64; 2],
+        radius: u8,
+        segments: u8,
+        start: f64,
+        sweep: f64,
+        bad: bool,
+    },
+    /// Lane 23: a line against a curve of a sketch: 0 ending on one of its points, 1 ending
+    /// on a segment's middle, 2 across a segment, 3 across two curves, 4 along a segment.
+    CurveLine {
+        sketch: u8,
+        how: u8,
+        curve: u8,
+        k: u8,
+        other: u8,
+        t: f64,
+        from: [f64; 2],
+    },
+    /// Lane 23: erase a whole curve of a sketch (an unknown one now and then).
+    CurveErase(u8, u8),
+    /// Lane 23: Explode Curve, of a sketch's curve or (`solid`) a solid's rim.
+    CurveExplode(u8, u8, bool),
 }
 
 /// A sheet item, as an intent (lane 12): `pick` fields choose among what exists.
@@ -447,17 +482,19 @@ fn lane22_op() -> impl Strategy<Value = Fuzz> {
         picks(),
         picks(),
         picks(),
+        prop::collection::vec(any::<u8>(), 0..2),
         prop::bool::weighted(0.2),
         map,
         prop::bool::weighted(0.25),
         prop_oneof![12 => Just(1u8), 4 => 2u8..5, 1 => Just(0u8)],
     )
         .prop_map(
-            |(sketch, points, edges, regions, all, map, copy, count)| Fuzz::SketchMove {
+            |(sketch, points, edges, regions, curves, all, map, copy, count)| Fuzz::SketchMove {
                 sketch,
                 points,
                 edges,
                 regions,
+                curves,
                 all,
                 map,
                 copy,
@@ -465,6 +502,41 @@ fn lane22_op() -> impl Strategy<Value = Fuzz> {
                 count: if copy || sketch % 32 == 31 { count } else { 1 },
             },
         )
+}
+
+/// Radii the lane-23 intents draw curves at: tiny (some refused as too small), ordinary,
+/// huge.
+const CURVE_RADII: [f64; 8] = [1e-4, 3e-4, 0.002, 0.125, 0.5, 1.75, 700.0, 9000.0];
+
+/// Lane-23 intents: curves drawn, crossed, erased and exploded.
+fn lane23_op() -> impl Strategy<Value = Fuzz> {
+    let pt = || (grid(), grid()).prop_map(|(x, y)| [x, y]);
+    let sweep = || {
+        prop_oneof![
+            1 => Just(0.001),
+            1 => Just(359.999),
+            1 => Just(-359.999),
+            1 => Just(180.0),
+            4 => -359.999..359.999f64,
+        ]
+    };
+    prop_oneof![
+        6 => (any::<u8>(), 0u8..3, pt(), any::<u8>(), 1u8..=96, -360.0..360.0f64, sweep(), prop::bool::weighted(0.05))
+            .prop_map(|(sketch, kind, centre, radius, segments, start, sweep, bad)| Fuzz::CurveDraw {
+                sketch,
+                kind,
+                centre,
+                radius,
+                segments,
+                start,
+                sweep,
+                bad,
+            }),
+        6 => (any::<u8>(), 0u8..5, any::<u8>(), any::<u8>(), any::<u8>(), prop_oneof![Just(0.5), Just(0.25), 0.0..1.0f64], pt())
+            .prop_map(|(sketch, how, curve, k, other, t, from)| Fuzz::CurveLine { sketch, how, curve, k, other, t, from }),
+        2 => (any::<u8>(), any::<u8>()).prop_map(|(s, c)| Fuzz::CurveErase(s, c)),
+        1 => (any::<u8>(), any::<u8>(), prop::bool::weighted(0.4)).prop_map(|(s, c, solid)| Fuzz::CurveExplode(s, c, solid)),
+    ]
 }
 
 /// Lane-4 intents.
@@ -690,6 +762,7 @@ fn fuzz_op() -> impl Strategy<Value = Fuzz> {
         6 => lane10_op(),
         3 => prop::collection::vec(plugin_step(), 1..6).prop_map(Fuzz::PluginBatch),
         16 => lane12_op(),
+        12 => lane23_op(),
     ]
 }
 
@@ -1478,6 +1551,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     target,
                     points: vec![],
                     closed: *closed,
+                    curve: None,
                 };
             };
             let q: Vec<DVec2> = ring.iter().map(|&p| plane.to_local(p)).collect();
@@ -1507,6 +1581,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     .map(|&c| plane.to_world(c).to_array())
                     .collect(),
                 closed: *closed,
+                curve: None,
             }
         }
         Fuzz::DrawPlane(z, pts, closed) => Op::Draw {
@@ -1516,6 +1591,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             },
             points: pts.iter().map(|p| [p[0], p[1], *z]).collect(),
             closed: *closed,
+            curve: None,
         },
         Fuzz::EraseFace(o, k) => {
             let oid = object(*o);
@@ -2193,6 +2269,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             points,
             edges,
             regions,
+            curves: curve_picks,
             all,
             map,
             copy,
@@ -2284,6 +2361,18 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                     },
                 )
             };
+            // Lane 23: whole curves of the sketch by pick (an unknown id now and then).
+            let curve_ids: Vec<u64> = m
+                .sketch(sid)
+                .map(|sk| sk.curves().map(|(id, _)| id).collect())
+                .unwrap_or_default();
+            let curves: Vec<u64> = curve_picks
+                .iter()
+                .map(|&i| match pick(&curve_ids, i) {
+                    Some(id) if i % 32 != 31 => id,
+                    _ => 900 + u64::from(i % 3),
+                })
+                .collect();
             Op::TransformSketch {
                 sketch: sid,
                 points,
@@ -2292,6 +2381,153 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 xform,
                 copy: *copy,
                 count: u32::from(*count),
+                curves,
+            }
+        }
+        Fuzz::CurveDraw {
+            sketch: k,
+            kind,
+            centre,
+            radius,
+            segments,
+            start,
+            sweep,
+            bad,
+        } => {
+            let sid = sketch(*k);
+            let plane = m
+                .sketch(sid)
+                .map_or(sawhorse_kernel::plane::Plane::GROUND, |s| *s.plane());
+            let c = DVec2::from_array(*centre);
+            let r = CURVE_RADII[*radius as usize % CURVE_RADII.len()];
+            let (closed, n) = match kind {
+                0 | 1 => (true, usize::from((*segments).max(3))),
+                _ => (false, usize::from((*segments).clamp(1, 48))),
+            };
+            let (a0, total) = (
+                start.to_radians(),
+                if closed {
+                    std::f64::consts::TAU
+                } else {
+                    sweep.to_radians()
+                },
+            );
+            let m_pts = if closed { n } else { n + 1 };
+            let points: Vec<[f64; 3]> = (0..m_pts)
+                .map(|i| {
+                    let a = a0 + total * i as f64 / n as f64;
+                    plane.to_world(c + r * DVec2::from_angle(a)).to_array()
+                })
+                .collect();
+            let kind = match kind {
+                0 => sawhorse_kernel::curve::CurveKind::Circle,
+                1 => sawhorse_kernel::curve::CurveKind::Polygon,
+                _ => sawhorse_kernel::curve::CurveKind::Arc,
+            };
+            let centre = if *bad {
+                c + DVec2::new(r * 0.5, 0.0)
+            } else {
+                c
+            };
+            Op::Draw {
+                target: sawhorse_kernel::model::DrawTarget::Sketch { sketch: sid },
+                points,
+                closed,
+                curve: Some(sawhorse_kernel::curve::CurveSpec {
+                    kind,
+                    centre: Some(plane.to_world(centre).to_array()),
+                }),
+            }
+        }
+        Fuzz::CurveLine {
+            sketch: k,
+            how,
+            curve,
+            k: seg,
+            other,
+            t,
+            from,
+        } => {
+            let sid = sketch(*k);
+            let Some(sk) = m.sketch(sid) else {
+                return Op::DeleteGuides;
+            };
+            let plane = *sk.plane();
+            let curves: Vec<Vec<DVec3>> = sk
+                .curves()
+                .filter_map(|(id, _)| sk.curve_info(id))
+                .map(|i| i.points.iter().map(|p| DVec3::from_array(*p)).collect())
+                .collect();
+            let line = |a: DVec3, b: DVec3| Op::Draw {
+                target: sawhorse_kernel::model::DrawTarget::Sketch { sketch: sid },
+                points: vec![a.to_array(), b.to_array()],
+                closed: false,
+                curve: None,
+            };
+            let out = plane.to_world(DVec2::from_array(*from));
+            let Some(c) = pick_ref(&curves, *curve) else {
+                return line(out, out + plane.u);
+            };
+            let n = c.len();
+            let i = *seg as usize % n;
+            let j = (i + 1) % n;
+            let (a, b) = (c[i], c[j]);
+            match how {
+                0 => line(out, a),
+                1 => line(out, a.lerp(b, 0.5)),
+                2 => {
+                    let p = a.lerp(b, *t);
+                    let across =
+                        plane.normal.cross(b - a).normalize_or_zero() * (b - a).length().max(1e-3);
+                    line(p - across, p + across)
+                }
+                3 => {
+                    let o = pick_ref(&curves, *other).unwrap_or(c);
+                    let p = a.lerp(b, *t);
+                    let q = o[*other as usize % o.len()];
+                    let d = q - p;
+                    line(p - d * 0.37, q + d * 0.41)
+                }
+                _ => line(a, b),
+            }
+        }
+        Fuzz::CurveErase(k, c) => {
+            let sid = sketch(*k);
+            let ids: Vec<u64> = m
+                .sketch(sid)
+                .map(|sk| sk.curves().map(|(id, _)| id).collect())
+                .unwrap_or_default();
+            Op::EraseCurve {
+                sketch: sid,
+                curve: match pick(&ids, *c) {
+                    Some(id) if c % 16 != 15 => id,
+                    _ => 900,
+                },
+            }
+        }
+        Fuzz::CurveExplode(k, c, solid) => {
+            if *solid {
+                let oid = object(*k);
+                let ids: Vec<u64> = m
+                    .object(oid)
+                    .map(|o| o.curves().keys().copied().collect())
+                    .unwrap_or_default();
+                Op::ExplodeCurve {
+                    sketch: None,
+                    object: Some(oid),
+                    curve: pick(&ids, *c).unwrap_or(900),
+                }
+            } else {
+                let sid = sketch(*k);
+                let ids: Vec<u64> = m
+                    .sketch(sid)
+                    .map(|sk| sk.curves().map(|(id, _)| id).collect())
+                    .unwrap_or_default();
+                Op::ExplodeCurve {
+                    sketch: Some(sid),
+                    object: None,
+                    curve: pick(&ids, *c).unwrap_or(900),
+                }
             }
         }
         Fuzz::Offset {

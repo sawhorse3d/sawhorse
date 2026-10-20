@@ -16,7 +16,8 @@ pub mod overlay;
 use glam::DVec2;
 
 /// Largest accepted relative difference between the polygon area and the summed
-/// triangle area, measured by `area_deviation` (robust triangle areas; lane 22).
+/// triangle area, measured by `area_deviation` (areas accurate to their own size; lanes 22
+/// and 23).
 pub const MAX_AREA_DEVIATION: f64 = 1e-9;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -131,25 +132,72 @@ pub fn triangulate(
     Ok(tris)
 }
 
-/// Twice the signed area of triangle abc, from the robust orientation predicate: accurate
-/// to its own size wherever the points are, however thin the triangle.
+/// Twice the signed area of triangle abc, accurate to its own size wherever the points are,
+/// however thin the triangle ([`ring_area2`] of the three).
 fn area2(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
-    robust::orient2d(
-        robust::Coord { x: a[0], y: a[1] },
-        robust::Coord { x: b[0], y: b[1] },
-        robust::Coord { x: c[0], y: c[1] },
-    )
+    ring_area2(&[a, b, c])
 }
 
-/// Twice a ring's signed area, as a fan of robust triangle areas from its first point.
+/// Twice a ring's signed area, accurate to its own size however long and thin the ring is
+/// (lane 23). The shoelace sum's products are split exactly into a value and its rounding
+/// error (`two_product`, by a fused multiply-add) and all of them summed with Neumaier's
+/// compensated sum, whose error is a rounding of the result plus a term in the square of
+/// the machine epsilon times the terms. Lane 22 measured both sides of the check with the
+/// robust orientation predicate, on the belief that its value is accurate to the triangle's
+/// own size; only its sign is (its value may be off by a rounding of the products it is made
+/// of). A sliver 1.5e-5 m wide bent round a corner of a 9 km nonagon (the region between it
+/// and a copy turned 1e-7 degrees) is 0.14 m2: as a fan from its first point, triangles of
+/// 5e6 m2 either way whose roundings were 1e-8 of it, and earcut's correct triangles, 0.06
+/// m2 each, came back 1.2e-8 off. Correct triangles failed the check and the view could not
+/// be built.
 fn ring_area2(ring: &[[f64; 2]]) -> f64 {
-    (1..ring.len().saturating_sub(1))
-        .map(|i| area2(ring[0], ring[i], ring[i + 1]))
-        .sum()
+    let n = ring.len();
+    let mut sum = Neumaier::default();
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        let (p, e) = two_product(a[0], b[1]);
+        let (q, f) = two_product(a[1], b[0]);
+        sum.add(p);
+        sum.add(e);
+        sum.add(-q);
+        sum.add(-f);
+    }
+    sum.value()
+}
+
+/// `a * b` as `p + e` exactly (`p` the rounded product, `e` its error), for finite products.
+fn two_product(a: f64, b: f64) -> (f64, f64) {
+    let p = a * b;
+    (p, a.mul_add(b, -p))
+}
+
+/// Neumaier's compensated sum (Kahan-Babuska): the running sum and the low-order parts it
+/// lost, added back at the end.
+#[derive(Debug, Default, Clone, Copy)]
+struct Neumaier {
+    sum: f64,
+    lost: f64,
+}
+
+impl Neumaier {
+    fn add(&mut self, x: f64) {
+        let t = self.sum + x;
+        self.lost += if self.sum.abs() >= x.abs() {
+            (self.sum - t) + x
+        } else {
+            (x - t) + self.sum
+        };
+        self.sum = t;
+    }
+
+    fn value(&self) -> f64 {
+        self.sum + self.lost
+    }
 }
 
 /// `earcut::deviation`'s measure, |polygon area - triangles' area| / polygon area, with
-/// every area summed from robust triangle areas (lane 22). earcut's own sums products of
+/// every area worked out to its own size (lane 22; lane 23: exactly split products and a
+/// compensated sum, [`ring_area2`]). earcut's own sums products of
 /// absolute coordinates: a sliver 10 km long, or a region 5 km from its sketch's origin,
 /// lost more to rounding than the 1e-9 the check allows, and correct triangles failed it.
 /// Here each term is accurate to its own size, so the check stays as strict and measures
@@ -532,6 +580,40 @@ mod tests {
         hole.reverse();
         let t = triangulate(&outer, &[hole]).unwrap();
         assert!(t.len() >= 8);
+    }
+
+    #[test]
+    fn a_sliver_bent_round_a_far_corner_triangulates() {
+        // Lane 23's property-test find: a 9 km nonagon and its copy turned 1e-7 degrees about
+        // a corner bound a 0.14 m2 sliver 1.5e-5 m wide bent round the next corner. earcut's
+        // three triangles are right (a fan from the last point, 0.117 + 0.062 + 0.106 m2,
+        // twice over, checked in exact arithmetic), but the robust predicate's values came
+        // back 1.2e-8 off and the check refused them.
+        let p = |x: f64, y: f64| DVec2::new(x, y);
+        let sliver = [
+            p(6894.3999880708025, 5785.088487178853),
+            p(1562.8335990023738, 8863.269777109872),
+            p(-4499.999999999998, 7794.2286340599485),
+            p(-4500.000017222627, 7794.228613534819),
+            p(1562.83358353305, 8863.269764129569),
+        ];
+        let t = triangulate(&sliver, &[]).unwrap();
+        assert_eq!(t.len(), 3);
+        // The same on the other side of the nonagon.
+        let other = [
+            p(-4500.000000000004, -7794.228634059946),
+            p(-4499.999986396509, -7794.22865762189),
+            p(1562.8336144716936, -8863.269790090177),
+            p(6894.3999880708, -5785.088487178857),
+            p(1562.8335990023697, -8863.269777109874),
+        ];
+        assert_eq!(triangulate(&other, &[]).unwrap().len(), 3);
+        // The ring's area to its own size: twice it is 0.2850115512220417 exactly rounded.
+        let data: Vec<[f64; 2]> = sliver.iter().map(|q| [q.x, q.y]).collect();
+        assert!((ring_area2(&data) - 0.2850115512220417).abs() <= 1e-16);
+        // A wrong triangulation of it still fails: a fan from its first point covers
+        // 2.4e7 m2 twice over.
+        assert!(area_deviation(&data, &[], &[0, 1, 2, 0, 2, 3, 0, 3, 4]) > 1.0);
     }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Vec<DVec2> {

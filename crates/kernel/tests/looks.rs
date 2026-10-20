@@ -41,6 +41,7 @@ fn board_ops(x: f64, y: f64, z: f64, w: f64, d: f64, h: f64) -> Vec<Op> {
         },
         points: vec![[x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z]],
         closed: true,
+        curve: None,
     }]
     .into_iter()
     .chain(std::iter::once(Op::Extrude {
@@ -198,6 +199,7 @@ fn paint_follows_splits_imprints_pushes_and_merges() {
             target: DrawTarget::Face { object: b, face: 2 },
             points: vec![[5.0 * IN, 0.0, z], [5.0 * IN, 4.0 * IN, z]],
             closed: false,
+            curve: None,
         },
     );
     let OpOutcome::Drawn { faces, .. } = out else {
@@ -218,6 +220,7 @@ fn paint_follows_splits_imprints_pushes_and_merges() {
             },
             points: pts.to_vec(),
             closed: true,
+            curve: None,
         },
     );
     let OpOutcome::Drawn {
@@ -889,6 +892,7 @@ fn painted_ops() -> Vec<Op> {
             },
             points: vec![[12.0 * IN, 0.0, z], [12.0 * IN, 11.0 * IN, z]],
             closed: false,
+            curve: None,
         },
     );
     let pts = [[3.0, 3.0], [6.0, 3.0], [6.0, 6.0], [3.0, 6.0]].map(|[x, y]| [x * IN, y * IN, z]);
@@ -904,6 +908,7 @@ fn painted_ops() -> Vec<Op> {
             },
             points: pts.to_vec(),
             closed: true,
+            curve: None,
         },
     )
     else {

@@ -1566,6 +1566,7 @@ fn nudged_box(n: &Nudged) -> (Document, u64, [f64; 3], [f64; 3]) {
                 target: sawhorse_kernel::model::DrawTarget::Face { object, face: id },
                 points,
                 closed: true,
+                curve: None,
             });
         }
     };

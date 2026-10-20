@@ -123,6 +123,26 @@ pub enum Op {
         target: DrawTarget,
         points: Vec<[f64; 3]>,
         closed: bool,
+        /// Lane 23: the stroke is one curve (the Circle, Arc and Polygon tools): its kind and
+        /// centre; the points must lie on a circle about the centre (a circle or a polygon
+        /// closed, an arc open). Drawn into a sketch it becomes a curve there; on a solid's
+        /// face it is drawn as plain edges (see ADR-0013).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        curve: Option<crate::curve::CurveSpec>,
+    },
+    /// Lane 23: erase a whole curve of a sketch (the Eraser on any of its segments).
+    EraseCurve {
+        sketch: u64,
+        curve: u64,
+    },
+    /// Lane 23: Explode Curve: a curve of a sketch, or of a solid (its rim), becomes plain
+    /// edges again. Exactly one of `sketch` and `object`.
+    ExplodeCurve {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        object: Option<u64>,
+        curve: u64,
     },
     /// Erase the edge of `object` from `a` to `b` (world points at its two ends). Only a
     /// line drawn on a face can go: its two coplanar faces merge (with every other edge they
@@ -227,6 +247,10 @@ pub enum Op {
         edges: Vec<[[f64; 3]; 2]>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         regions: Vec<u64>,
+        /// Lane 23: whole curves of the sketch, by id (their edges are carried; a moved
+        /// circle stays a circle, a copy is a new curve).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<u64>,
         xform: Xform,
         #[serde(default, skip_serializing_if = "is_false")]
         copy: bool,
@@ -692,6 +716,10 @@ pub struct ImportStroke {
     pub points: Vec<[f64; 3]>,
     #[serde(default)]
     pub closed: bool,
+    /// Lane 23: the stroke is one curve in the file (a DXF `CIRCLE` or `ARC`): it comes in
+    /// as a curve when its points fit (see [`crate::curve::CurveSpec`]), else as plain edges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve: Option<crate::curve::CurveSpec>,
 }
 
 /// A material as an op or a file carries it: an sRGB colour with alpha, a texture (a path
@@ -909,6 +937,10 @@ pub enum OpOutcome {
         faces: Vec<u64>,
         /// A closed stroke: the region or face it now encloses (what Push/Pull acts on next).
         inside: Option<u64>,
+        /// Lane 23: the curve the stroke became in the sketch (the first piece, when it was
+        /// drawn across other edges and split), absent for plain strokes.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        curve: Option<u64>,
     },
     /// An edge or face was erased; the merged face's persistent id.
     FacesMerged {
@@ -976,11 +1008,23 @@ pub enum OpOutcome {
     SketchMoved {
         sketch: u64,
         regions: Vec<[u64; 2]>,
+        /// Lane 23: the curves the op's `curves` are now, in its order, as (sketch, curve)
+        /// pairs (the same ids within the plane; new ones in the sketch a shape was lifted
+        /// to; a curve the move broke up is its first piece, one that went is absent).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<[u64; 2]>,
     },
     /// Sketch geometry was copied (or arrayed): the live regions the copies bound, as
     /// (sketch, region) public id pairs.
     SketchCopied {
         regions: Vec<[u64; 2]>,
+        /// Lane 23: the curves the copies made, as (sketch, curve) pairs.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<[u64; 2]>,
+    },
+    /// Lane 23: a curve was exploded into `edges` plain edges.
+    CurveExploded {
+        edges: u64,
     },
     /// A push/pull (or a sweep) cut a solid into pieces: each piece is its own solid. The
     /// first id is the original solid (the piece holding its smallest face id).
@@ -1274,6 +1318,134 @@ fn check_name(n: &str) -> Result<(), DocumentError> {
     } else {
         Ok(())
     }
+}
+
+/// Lane 23: give a solid just extruded from region `r` of sketch `s` the rims of the
+/// region's curves (every curve whose every edge bounds the region): one on the base and
+/// one on the cap each, keyed by the cap's face id (1 the base, 2 the cap) and the side
+/// wall each curve edge raised ([`Object::extrude`] numbers the walls ring by ring, edge by
+/// edge, from 3). The walls between two segments of a circle or an arc are soft and smooth
+/// (SketchUp: a pulled circle is a smooth cylinder); a polygon's and a polyline's stay hard.
+fn rim_curves(obj: &mut Object, s: &Sketch, r: &crate::sketch::Region) {
+    use crate::curve::{CurveKind, RimCurve};
+    if s.curve_count() == 0 {
+        return;
+    }
+    let mut side: BTreeMap<(crate::ids::SVertexId, crate::ids::SVertexId), u64> = BTreeMap::new();
+    let mut next = 3u64;
+    for ring in std::iter::once(&r.outer).chain(r.holes.iter()) {
+        let n = ring.len();
+        for k in 0..n {
+            let (a, b) = (ring[k], ring[(k + 1) % n]);
+            side.insert((a.min(b), a.max(b)), next);
+            next += 1;
+        }
+    }
+    let mut id = 1u64;
+    for (_, c) in s.curves() {
+        let walls: Option<Vec<u64>> = c
+            .pairs()
+            .map(|(a, b)| side.get(&(a.min(b), a.max(b))).copied())
+            .collect();
+        let Some(walls) = walls else { continue };
+        for cap in [1u64, 2] {
+            obj.curves.insert(
+                id,
+                RimCurve {
+                    kind: c.kind,
+                    closed: c.closed,
+                    segments: c.segments,
+                    keys: walls.iter().map(|&w| crate::edges::pair(cap, w)).collect(),
+                },
+            );
+            id += 1;
+        }
+        if matches!(c.kind, CurveKind::Circle | CurveKind::Arc) {
+            let n = walls.len();
+            let m = if c.closed { n } else { n - 1 };
+            for i in 0..m {
+                let key = crate::edges::pair(walls[i], walls[(i + 1) % n]);
+                obj.set_edge_flags(key, crate::edges::SOFT | crate::edges::SMOOTH, 0);
+            }
+        }
+    }
+    obj.settle_edges();
+}
+
+/// Lane 23: a round curve an offset starts from ([`Model::offset_rounds`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OffsetRound {
+    kind: crate::curve::CurveKind,
+    centre: DVec3,
+    points: usize,
+    closed: bool,
+    segments: u32,
+}
+
+/// Lane 23: a stroke's curve, checked ([`stroke_curve`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct StrokeCurve {
+    pub kind: crate::curve::CurveKind,
+    /// World centre (round kinds).
+    pub centre: Option<DVec3>,
+    /// Segments as drawn: a circle's or polygon's points, an arc's or polyline's edges.
+    pub segments: u32,
+}
+
+/// Lane 23: check what an op says a stroke is: a circle or a polygon closed with three
+/// points or more, an arc open with two or more, all at one distance from the given centre
+/// (within two merge distances and rounding; the tool computes them on the circle), a
+/// polyline any stroke.
+pub(crate) fn stroke_curve(
+    c: &crate::curve::CurveSpec,
+    pts: &[DVec3],
+    closed: bool,
+) -> Result<StrokeCurve, SketchError> {
+    let kind = c.kind;
+    let bad = |why: &'static str| SketchError::NotACurve {
+        kind: kind.word(),
+        why,
+    };
+    if let Some(want) = kind.closes()
+        && want != closed
+    {
+        return Err(bad(if want {
+            "a circle or a polygon is a closed stroke"
+        } else {
+            "an arc is an open stroke"
+        }));
+    }
+    let need = if closed { 3 } else { 2 };
+    if pts.len() < need {
+        return Err(bad("too few points"));
+    }
+    let n = pts.len() as u32;
+    let segments = if closed { n } else { n - 1 };
+    if !kind.is_round() {
+        return Ok(StrokeCurve {
+            kind,
+            centre: None,
+            segments,
+        });
+    }
+    let centre = c
+        .centre
+        .map(DVec3::from_array)
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| bad("it has no centre"))?;
+    let (lo, hi) = pts.iter().fold((f64::INFINITY, 0.0f64), |(lo, hi), p| {
+        let d = p.distance(centre);
+        (lo.min(d), hi.max(d))
+    });
+    let slack = 2.0 * crate::tolerance::SKETCH_MERGE + 1e-9 * (centre.length() + hi);
+    if !(hi.is_finite() && lo > 0.0 && hi - lo <= slack) {
+        return Err(bad("its points are not on one circle about its centre"));
+    }
+    Ok(StrokeCurve {
+        kind,
+        centre: Some(centre),
+        segments,
+    })
 }
 
 /// Counts for the UI and tests.
@@ -1639,6 +1811,8 @@ impl Model {
                 }
                 let (outer, holes) = s.region_rings(r);
                 let mut obj = Object::extrude(s.plane(), &outer, &holes, *distance)?;
+                // Lane 23: the region's curves become the rims of both caps.
+                rim_curves(&mut obj, s, r);
                 obj.source = Some(Provenance { sketch: sid });
                 obj.member.parent = self.context;
                 self.sketches[sid].consume_region(rid)?;
@@ -1681,8 +1855,12 @@ impl Model {
                         let removed = self.objects.remove(oid).expect("object exists");
                         self.object_order.retain(|&k| k != oid);
                         self.mark(removed.member.parent);
-                        let regions = match removed.source {
-                            Some(src) => self.return_footprint(src.sketch, &footprint)?,
+                        let regions = match removed.source.clone() {
+                            Some(src) => {
+                                let r = self.return_footprint(src.sketch, &footprint)?;
+                                self.return_rims(src.sketch, &removed);
+                                r
+                            }
                             None => Vec::new(),
                         };
                         Ok(OpOutcome::ObjectCollapsed {
@@ -1713,8 +1891,14 @@ impl Model {
                 target,
                 points,
                 closed,
+                curve,
             } => {
                 let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                let spec = match curve {
+                    Some(c) => Some(stroke_curve(c, &pts, *closed)?),
+                    None => None,
+                };
+                let spec = spec.as_ref();
                 match target {
                     // A stroke on a face or sketch outside the open context goes into the
                     // context's own sketch on that plane (strokes never stick across
@@ -1736,7 +1920,7 @@ impl Model {
                             .to_polys()
                             .plane(fi)
                             .ok_or(FaceEditError::Degenerate)?;
-                        self.draw_on_plane(&plane, &pts, *closed)
+                        self.draw_on_plane(&plane, &pts, *closed, spec)
                     }
                     DrawTarget::Sketch { sketch }
                         if self
@@ -1747,7 +1931,7 @@ impl Model {
                             }) =>
                     {
                         let plane = *self.sketches[from_public::<SketchId>(*sketch)].plane();
-                        self.draw_on_plane(&plane, &pts, *closed)
+                        self.draw_on_plane(&plane, &pts, *closed, spec)
                     }
                     DrawTarget::Face { object, face } => {
                         let (o, fi) = self.face_edit_target(*object, *face)?;
@@ -1757,23 +1941,29 @@ impl Model {
                             regions: Vec::new(),
                             faces,
                             inside,
+                            curve: None,
                         })
                     }
                     DrawTarget::Sketch { sketch } => {
                         let sid = self.sketch_edit_key(*sketch)?;
                         let regions = self.draw_in_sketch(sid, &pts, *closed)?;
+                        let curve = match spec {
+                            Some(c) => self.stroke_to_curve(sid, &pts, *closed, c)?,
+                            None => None,
+                        };
                         Ok(OpOutcome::Drawn {
                             sketch: Some(*sketch),
                             regions: regions.into_iter().map(to_public).collect(),
                             faces: Vec::new(),
                             inside: self.region_inside(sid, &pts, *closed),
+                            curve,
                         })
                     }
                     DrawTarget::Plane { origin, normal } => {
                         let plane =
                             Plane::new(DVec3::from_array(*origin), DVec3::from_array(*normal))
                                 .map_err(SketchError::from)?;
-                        self.draw_on_plane(&plane, &pts, *closed)
+                        self.draw_on_plane(&plane, &pts, *closed, spec)
                     }
                 }
             }
@@ -1798,6 +1988,38 @@ impl Model {
                 let r = self.sketches[sid].erase_region(from_public::<RegionId>(*region))?;
                 Ok(Self::edited(r))
             }
+            Op::EraseCurve { sketch, curve } => {
+                let sid = self.sketch_edit_key(*sketch)?;
+                let r = self.sketches[sid].erase_curve(*curve)?;
+                Ok(Self::edited(r))
+            }
+            Op::ExplodeCurve {
+                sketch,
+                object,
+                curve,
+            } => match (sketch, object) {
+                (Some(s), None) => {
+                    let sid = self.sketch_edit_key(*s)?;
+                    let n = self.sketches[sid].explode_curve(*curve)?;
+                    Ok(OpOutcome::CurveExploded { edges: n as u64 })
+                }
+                (None, Some(o)) => {
+                    let k = from_public::<ObjectId>(*o);
+                    if !self.objects.contains_key(k) {
+                        return Err(DocumentError::NoSuchObject(*o).into());
+                    }
+                    self.editable_object(k)?;
+                    let c = self.objects[k]
+                        .curves
+                        .remove(curve)
+                        .ok_or(SketchError::NoSuchCurve(*curve))?;
+                    self.touch(k);
+                    Ok(OpOutcome::CurveExploded {
+                        edges: c.keys.len() as u64,
+                    })
+                }
+                _ => Err(SketchError::NoSuchCurve(*curve).into()),
+            },
             Op::Batch { ops } => {
                 if ops.is_empty() {
                     return Err(DocumentError::EmptyBatch.into());
@@ -1933,10 +2155,13 @@ impl Model {
                 points,
                 edges,
                 regions,
+                curves,
                 xform,
                 copy,
                 count,
-            } => self.transform_sketch(*sketch, points, edges, regions, xform, *copy, *count),
+            } => self.transform_sketch(
+                *sketch, points, edges, regions, curves, xform, *copy, *count,
+            ),
             Op::Offset { source, distance } => self.offset(source, *distance),
             Op::FollowMe {
                 profile,
@@ -2420,9 +2645,12 @@ impl Model {
                     regions: Vec::new(),
                     faces,
                     inside,
+                    curve: None,
                 });
             }
         }
+        // Lane 23: the round curves the source is made of (before anything is drawn).
+        let rounds = self.offset_rounds(source, &plane);
         // Into a sketch: the region's own, or the sketch on the plane.
         let sid = match source {
             OffsetSource::Region { sketch, .. } => self.sketch_edit_key(*sketch)?,
@@ -2434,13 +2662,151 @@ impl Model {
         }
         regions.sort_unstable();
         regions.dedup();
+        let mut curve = None;
+        for ring in &loops {
+            for id in self.offset_curves(sid, ring, closed, &rounds) {
+                curve.get_or_insert(id);
+            }
+        }
         let inside = self.region_inside(sid, &loops[0], closed);
         Ok(OpOutcome::Drawn {
             sketch: Some(to_public(sid)),
             regions: regions.into_iter().map(to_public).collect(),
             faces: Vec::new(),
             inside,
+            curve,
         })
+    }
+
+    /// Lane 23: the round curves (circles, arcs, polygons) an offset's source is made of:
+    /// a region's whole curves on its rings, or the curves of the open context's sketch on
+    /// the chain's plane whose every point is a point of the chain. Each as (kind, world
+    /// centre, its point count, closed, segments).
+    fn offset_rounds(&self, source: &OffsetSource, plane: &Plane) -> Vec<OffsetRound> {
+        let take = |s: &Sketch, keep: &dyn Fn(&crate::curve::Curve) -> bool| -> Vec<OffsetRound> {
+            s.curves()
+                .filter(|(_, c)| c.round.is_some() && keep(c))
+                .filter_map(|(_, c)| {
+                    let r = c.round?;
+                    Some(OffsetRound {
+                        kind: c.kind,
+                        centre: s.plane().to_world(r.centre),
+                        points: c.chain.len(),
+                        closed: c.closed,
+                        segments: c.segments,
+                    })
+                })
+                .collect()
+        };
+        match source {
+            OffsetSource::Region { sketch, region } => {
+                let Some(s) = self.sketch(*sketch) else {
+                    return Vec::new();
+                };
+                let Some(r) = s.region(from_public::<RegionId>(*region)) else {
+                    return Vec::new();
+                };
+                let ring = r.boundary_edges();
+                take(s, &|c| {
+                    c.pairs().all(|(a, b)| ring.contains(&(a.min(b), a.max(b))))
+                })
+            }
+            OffsetSource::Edges {
+                points,
+                object: None,
+                ..
+            } => {
+                let Some(s) = self
+                    .sketch_order
+                    .iter()
+                    .map(|&k| &self.sketches[k])
+                    .find(|s| {
+                        let sp = s.plane();
+                        s.parent == self.context
+                            && sp.normal.dot(plane.normal).abs() >= 1.0 - 1e-12
+                            && sp.signed_distance(plane.origin).abs() <= PLANARITY
+                    })
+                else {
+                    return Vec::new();
+                };
+                let pts: Vec<DVec2> = points
+                    .iter()
+                    .map(|p| s.plane().to_local(DVec3::from_array(*p)))
+                    .collect();
+                take(s, &|c| {
+                    c.chain.iter().all(|&v| {
+                        s.vertex(v).is_some_and(|q| {
+                            pts.iter()
+                                .any(|p| p.distance(q) <= crate::tolerance::SKETCH_MERGE)
+                        })
+                    })
+                })
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Lane 23: the curves an offset loop holds, made in sketch `sid`: a loop of a closed
+    /// round source's point count, all of its points at one distance from that source's
+    /// centre, is a circle (or a polygon) there; a run of a round arc's point count (or two
+    /// fewer, where the ends were cut to meet the lines beside it) at one distance from its
+    /// centre is an arc. Returns the ids made.
+    fn offset_curves(
+        &mut self,
+        sid: SketchId,
+        ring: &[DVec3],
+        closed: bool,
+        rounds: &[OffsetRound],
+    ) -> Vec<u64> {
+        let mut made = Vec::new();
+        let n = ring.len();
+        if n < 2 {
+            return made;
+        }
+        let tol = |c: DVec3, r: f64| 0.5 * crate::tolerance::CURVE_FIT + 1e-9 * (c.length() + r);
+        for src in rounds {
+            let d: Vec<f64> = ring.iter().map(|p| p.distance(src.centre)).collect();
+            let even =
+                |i: usize, j: usize| (d[i % n] - d[j % n]).abs() <= tol(src.centre, d[i % n]);
+            if src.closed {
+                if closed && n == src.points && (1..n).all(|i| even(0, i)) {
+                    let c = StrokeCurve {
+                        kind: src.kind,
+                        centre: Some(src.centre),
+                        segments: src.segments,
+                    };
+                    if let Ok(Some(id)) = self.stroke_to_curve(sid, ring, true, &c) {
+                        made.push(id);
+                    }
+                }
+                continue;
+            }
+            // An arc: the longest run of even points, of about the arc's length.
+            let mut best: Option<(usize, usize)> = None;
+            for i in 0..n {
+                let mut len = 1;
+                while len < n && (if closed { true } else { i + len < n }) && even(i, i + len) {
+                    len += 1;
+                }
+                if best.is_none_or(|(_, l)| len > l) {
+                    best = Some((i, len));
+                }
+            }
+            let Some((i, len)) = best else { continue };
+            if len < 2 || len > src.points || len + 2 < src.points {
+                continue;
+            }
+            let run: Vec<DVec3> = (0..len).map(|k| ring[(i + k) % n]).collect();
+            let c = StrokeCurve {
+                kind: crate::curve::CurveKind::Arc,
+                centre: Some(src.centre),
+                segments: (len - 1) as u32,
+            };
+            if let Ok(Some(id)) = self.stroke_to_curve(sid, &run, false, &c) {
+                made.push(id);
+            }
+        }
+        made
     }
 
     /// The live objects and nodes named (duplicates dropped, order kept), each directly in
@@ -2766,6 +3132,8 @@ impl Model {
         // (sketch, made for these strokes, its strokes in its own coordinates and closed)
         type Strokes = Vec<(Vec<DVec2>, bool)>;
         let mut by_sketch: Vec<(SketchId, bool, Strokes)> = Vec::new();
+        // Lane 23: strokes that are curves in the file, made curves once drawn.
+        let mut curved: Vec<(SketchId, Vec<DVec3>, bool, StrokeCurve)> = Vec::new();
         for st in strokes {
             let pts: Vec<DVec3> = st.points.iter().map(|p| DVec3::from_array(*p)).collect();
             if pts.len() < 2 || pts.iter().any(|p| !p.is_finite()) {
@@ -2806,7 +3174,11 @@ impl Model {
                 continue;
             }
             let local: Vec<DVec2> = pts.iter().map(|&p| sp.to_local(p)).collect();
-            let stroke = (local, st.closed && pts.len() > 2);
+            let closed = st.closed && pts.len() > 2;
+            if let Some(Ok(c)) = st.curve.as_ref().map(|c| stroke_curve(c, &pts, closed)) {
+                curved.push((sid, pts.clone(), closed, c));
+            }
+            let stroke = (local, closed);
             match by_sketch.iter_mut().find(|(k, _, _)| *k == sid) {
                 Some((_, _, list)) => list.push(stroke),
                 None => by_sketch.push((sid, self.sketch_order.len() > existed, vec![stroke])),
@@ -2833,6 +3205,28 @@ impl Model {
                 self.sketches.remove(sid);
                 self.sketch_order.retain(|&k| k != sid);
             }
+        }
+        // Lane 23: the file's curves, as curves (those whose points landed as drawn).
+        if !curved.is_empty() {
+            let mut made = 0usize;
+            for (sid, pts, closed, c) in &curved {
+                if self.sketches.contains_key(*sid)
+                    && let Ok(Some(_)) = self.stroke_to_curve(*sid, pts, *closed, c)
+                {
+                    made += 1;
+                }
+            }
+            let plain = curved.len() - made;
+            notes.push(format!(
+                "{made} curve{} came in as curve{}{}",
+                if made == 1 { "" } else { "s" },
+                if made == 1 { "" } else { "s" },
+                if plain > 0 {
+                    format!(" ({plain} as plain edges: their points did not land as drawn)")
+                } else {
+                    String::new()
+                }
+            ));
         }
         if skipped > 0 {
             notes.push(format!(
@@ -3185,15 +3579,50 @@ impl Model {
         plane: &Plane,
         pts: &[DVec3],
         closed: bool,
+        curve: Option<&StrokeCurve>,
     ) -> Result<OpOutcome, KernelError> {
         let sid = self.sketch_on(plane);
         let regions = self.draw_in_sketch(sid, pts, closed)?;
+        let curve = match curve {
+            Some(c) => self.stroke_to_curve(sid, pts, closed, c)?,
+            None => None,
+        };
         Ok(OpOutcome::Drawn {
             sketch: Some(to_public(sid)),
             regions: regions.into_iter().map(to_public).collect(),
             faces: Vec::new(),
             inside: self.region_inside(sid, pts, closed),
+            curve,
         })
+    }
+
+    /// Lane 23: the stroke just drawn into sketch `sid` becomes curve `c` (see
+    /// [`Sketch::add_curve`]): its centre must lie on the sketch's plane. Returns the curve's
+    /// id (its first piece's), `None` when the stroke did not land as one.
+    pub(crate) fn stroke_to_curve(
+        &mut self,
+        sid: SketchId,
+        pts: &[DVec3],
+        closed: bool,
+        c: &StrokeCurve,
+    ) -> Result<Option<u64>, KernelError> {
+        let s = &mut self.sketches[sid];
+        let plane = *s.plane();
+        let centre = match c.centre {
+            Some(w) => {
+                if plane.signed_distance(w).abs() > PLANARITY {
+                    return Err(SketchError::NotACurve {
+                        kind: c.kind.word(),
+                        why: "its centre is off its plane",
+                    }
+                    .into());
+                }
+                Some(plane.to_local(w))
+            }
+            None => None,
+        };
+        let local: Vec<DVec2> = pts.iter().map(|&p| plane.to_local(p)).collect();
+        Ok(s.add_curve(&local, closed, c.kind, centre, c.segments))
     }
 
     /// A sketch that may be edited: it exists and belongs to the open context.
@@ -3281,6 +3710,38 @@ impl Model {
             .map(|ring| ring.iter().map(|&p| plane.to_local(p)).collect())
             .collect();
         s.release_footprint(&rings2)
+    }
+
+    /// Lane 23: a solid pushed flat onto its source sketch gives back the curves of its rims
+    /// that lie on the sketch's plane (the base's), as curves of the sketch again.
+    fn return_rims(&mut self, sketch: SketchId, o: &Object) {
+        let Some(s) = self.sketches.get_mut(sketch) else {
+            return;
+        };
+        let plane = *s.plane();
+        for &id in o.curves().keys() {
+            let Some(info) = o.curve_info(id) else {
+                continue;
+            };
+            let pts: Vec<DVec3> = info.points.iter().map(|p| DVec3::from_array(*p)).collect();
+            if pts
+                .iter()
+                .any(|p| plane.signed_distance(*p).abs() > PLANARITY)
+            {
+                continue;
+            }
+            let local: Vec<DVec2> = pts.iter().map(|&p| plane.to_local(p)).collect();
+            let centre = info.centre.map(|c| plane.to_local(DVec3::from_array(c)));
+            let kind = if centre.is_some() || !info.kind.is_round() {
+                info.kind
+            } else {
+                crate::curve::CurveKind::Polyline
+            };
+            if kind == crate::curve::CurveKind::Polyline && local.len() < 3 {
+                continue;
+            }
+            s.add_curve(&local, info.closed, kind, centre, info.segments);
+        }
     }
 
     /// Validate every object (topology + watertight), every sketch graph, and the

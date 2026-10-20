@@ -619,6 +619,24 @@ impl DocCore {
                     })
                     .collect()
             }
+            // Lane 23: a sketch's curve (owner: sketch id, index: curve id) or a solid's rim
+            // (owner: object id), as one ring of its points in order.
+            "curve" => {
+                let s = m
+                    .sketch(owner)
+                    .ok_or_else(|| format!("no sketch #{owner}"))?;
+                let info = s
+                    .curve_info(index)
+                    .ok_or_else(|| format!("no curve #{index}"))?;
+                vec![info.points]
+            }
+            "rim" => {
+                let info = self
+                    .object(owner)?
+                    .curve_info(index)
+                    .ok_or_else(|| format!("no curve #{index}"))?;
+                vec![info.points]
+            }
             _ => return Err(format!("unknown part kind {kind}")),
         };
         serde_json::to_string(&rings).map_err(|e| e.to_string())
@@ -1239,6 +1257,15 @@ impl Mesh {
     /// `[{kind: "object" | "sketch", id}]`.
     pub fn edge_owners_json(&self) -> String {
         serde_json::to_string(&self.inner.edge_owners).unwrap_or_else(|_| "[]".to_string())
+    }
+    /// Lane 23: one per edge segment, 0 or 1 + its curve's index in `curves_json`.
+    pub fn edge_curves(&self) -> Vec<u32> {
+        self.inner.edge_curve.clone()
+    }
+    /// Lane 23: the curves in view, `[{owner, curve, kind, closed, segments, centre?,
+    /// radius?, sweep?, normal}]`.
+    pub fn curves_json(&self) -> String {
+        serde_json::to_string(&self.inner.curves).unwrap_or_else(|_| "[]".to_string())
     }
     /// The pickable parts (object faces, sketch regions) with their plane frames, as JSON.
     pub fn parts_json(&self) -> String {

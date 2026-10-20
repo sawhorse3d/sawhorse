@@ -25,6 +25,15 @@ pub enum SketchError {
     NothingToErase,
     #[error("a point is off the sketch's plane")]
     OffPlane,
+    /// Lane 23: a curve named by an op is not there.
+    #[error("no curve #{0} there")]
+    NoSuchCurve(u64),
+    /// Lane 23: a stroke said to be a circle, an arc or a polygon is not one.
+    #[error("that stroke is not a {kind}: {why}")]
+    NotACurve {
+        kind: &'static str,
+        why: &'static str,
+    },
     #[error("bad sketch plane: {0}")]
     Plane(#[from] PlaneError),
 }
@@ -136,6 +145,12 @@ pub enum TransformError {
     NoSuchSketchPoint,
     #[error("there is no sketch edge there")]
     NoSuchSketchEdge,
+    /// Lane 23 (ADR-0013): a point of a curve moved on its own would bend the curve
+    /// (SketchUp bends it; Sawhorse says why not and how).
+    #[error(
+        "that point is on a curve: moving it alone would bend the curve. Select the whole curve, or use Edit > Explode Curve first"
+    )]
+    CurvePoint,
     /// Part of a sketch shape moves only within its plane (the move is projected into it):
     /// this one went straight off the plane, so nothing would move.
     #[error(

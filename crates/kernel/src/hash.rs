@@ -136,6 +136,26 @@ fn hash_sketch(h: &mut StableHasher, s: &Sketch) {
         h.u64(u64::from(pinched));
         h.u64(u64::from(consumed));
     }
+    // Curves (lane 23): only when the sketch ever had one, so every older document keeps
+    // its hash. Ids are written: ops name curves by id.
+    if s.curve_count() > 0 || s.next_curve_id() != 1 {
+        h.tag("curves");
+        h.u64(s.next_curve_id());
+        h.usize(s.curve_count());
+        for (id, c) in s.curves() {
+            h.u64(id);
+            h.u64(c.kind as u64);
+            h.u64(u64::from(c.closed));
+            h.u64(u64::from(c.segments));
+            h.usize(c.chain.len());
+            c.chain.iter().for_each(|v| h.usize(ord[v]));
+            if let Some(r) = &c.round {
+                for x in [r.centre.x, r.centre.y, r.radius, r.start, r.sweep] {
+                    h.len(x);
+                }
+            }
+        }
+    }
 }
 
 /// Canonical hash of one sketch (for order-independence tests and the UI).
@@ -193,6 +213,22 @@ fn hash_solid(h: &mut StableHasher, o: &crate::object::Object) {
             h.u64(a);
             h.u64(b);
             h.u64(u64::from(f));
+        }
+    }
+    // Curves on the solid (lane 23): likewise only when there are any.
+    if !o.curves.is_empty() {
+        h.tag("curves");
+        h.usize(o.curves.len());
+        for (&id, c) in &o.curves {
+            h.u64(id);
+            h.u64(c.kind as u64);
+            h.u64(u64::from(c.closed));
+            h.u64(u64::from(c.segments));
+            h.usize(c.keys.len());
+            for &(a, b) in &c.keys {
+                h.u64(a);
+                h.u64(b);
+            }
         }
     }
 }

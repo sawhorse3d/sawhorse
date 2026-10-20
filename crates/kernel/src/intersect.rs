@@ -37,7 +37,7 @@ use glam::{DVec2, DVec3};
 
 use crate::brep::Brep;
 use crate::sketch::point_segment_distance;
-use crate::tolerance::POINT_MERGE;
+use crate::tolerance::{PLANARITY, POINT_MERGE};
 use crate::validate::point_in_ring;
 
 fn c3(p: DVec3) -> robust::Coord3D<f64> {
@@ -402,6 +402,15 @@ fn detail(b: &Brep, grid: bool) -> Option<SelfHit> {
                     if len <= 2.0 * POINT_MERGE {
                         continue;
                     }
+                    // A straight edge from a point of the face's plane meets that plane only
+                    // there: unless it lies in the plane, it cannot pass through the face.
+                    // (Lane 23: the old test alone, from a point POINT_MERGE along, failed
+                    // valid solids. Two edges leaving a sliver's tip 1.3e-8 rad apart, 4 km
+                    // out: that point lies 1.3e-13 m off the other edge's wall, under the
+                    // 1e-12 m its coordinates round to, so it fell on the wrong side.)
+                    if f.plane.signed_distance(to).abs() > PLANARITY {
+                        continue;
+                    }
                     (from + (to - from) * (POINT_MERGE / len), to)
                 }
             };
@@ -525,6 +534,37 @@ mod tests {
 
     fn v(x: f64, y: f64, z: f64) -> DVec3 {
         DVec3::new(x, y, z)
+    }
+
+    #[test]
+    fn a_wedge_whose_tip_is_a_hair_wide_far_out_is_no_contact() {
+        // Lane 23's property-test find: a 9 km 67-gon and its copy turned 1e-7 degrees bound
+        // slivers whose tips are 1.3e-8 rad wide, 4 km out. Pulled 0.5 m, the edge leaving
+        // the tip lies 1.3e-13 m off the other side's wall a merge distance along, under the
+        // rounding of its coordinates; the test from that point called it a crossing.
+        let plane = crate::plane::Plane::GROUND;
+        let ring = vec![
+            DVec2::new(4621.267741633579, 7722.945322876298),
+            DVec2::new(3877.773704468734, 8121.752957147295),
+            DVec2::new(3877.7736960486855, 8121.752949299573),
+        ];
+        let ring = if sawhorse_tessellate::signed_area(&ring) > 0.0 {
+            ring
+        } else {
+            ring.into_iter().rev().collect()
+        };
+        let o = crate::object::Object::extrude(&plane, &ring, &[], 0.5).unwrap();
+        assert_eq!(self_intersection(o.brep()), None);
+        o.validate().unwrap();
+        // An edge folding back flat over a face it starts on is still caught: a cube with a
+        // corner pulled across its top face's plane is refused elsewhere; here the plain
+        // cube stays clean.
+        let cube = Brep::from_polygons(
+            &cube_polys(v(0.0, 0.0, 0.0), 1.0).points,
+            &cube_polys(v(0.0, 0.0, 0.0), 1.0).faces,
+        )
+        .unwrap();
+        assert_eq!(self_intersection(&cube), None);
     }
 
     fn cube_polys(o: DVec3, s: f64) -> Polys {

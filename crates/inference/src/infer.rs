@@ -113,6 +113,19 @@ pub struct Inference {
     /// For a snap on a solid's edge or corner: the face beside it that faces the eye most
     /// (where a shape started there is drawn when the ray itself misses the solid).
     pub adjacent: Option<SurfaceHit>,
+    /// Lane 23: the cursor is on a segment of a circle, an arc or a polygon: its centre,
+    /// which the UI marks (SketchUp shows the centre of the curve under the cursor). Moving
+    /// to it snaps to it ("Centre").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub centre: Option<CentreHint>,
+}
+
+/// The centre of the curve under the cursor (lane 23).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CentreHint {
+    pub point: [f64; 3],
+    pub kind: sawhorse_kernel::curve::CurveKind,
+    pub radius: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +321,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
                 b: s.b.to_array(),
                 drawn: s.drawn,
                 flags: s.flags,
+                curve: scene.curve_of(i).map(|c| c.id),
             }
         }
     };
@@ -676,6 +690,18 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
         }
     }
 
+    // Lane 23: the nearest curve segment within reach names its centre.
+    let centre = near
+        .iter()
+        .filter(|c| c.3 <= q.line_px)
+        .filter_map(|c| scene.curve_of(c.0).map(|k| (c.3, k)))
+        .filter(|(_, k)| k.centre.is_some() && k.radius.is_some())
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, k)| CentreHint {
+            point: k.centre.unwrap_or_default().to_array(),
+            kind: k.kind,
+            radius: k.radius.unwrap_or_default(),
+        });
     Some(Inference {
         kind: chosen.kind,
         point: chosen.point.to_array(),
@@ -686,6 +712,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
         edge: near_edge.map(|(_, e)| e),
         picked,
         adjacent: adjacent_surface(scene, &ray, chosen.point),
+        centre,
     })
 }
 
