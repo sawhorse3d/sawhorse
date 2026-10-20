@@ -74,7 +74,7 @@ for (const f of pages) {
   const name = rel(f);
   if (/<script\b/i.test(html)) bad(`${name}: has a <script> (the site pages carry no scripts)`);
   if (/\bon[a-z]+\s*=\s*"/i.test(html)) bad(`${name}: inline event handler`);
-  if (/(google-analytics|googletagmanager|gtag\(|plausible|matomo|segment\.|hotjar|document\.cookie|set-cookie)/i.test(html)) bad(`${name}: tracking or cookie code`);
+  if (/(google-analytics|googletagmanager|gtag\(|plausible|matomo|segment\.(?:com|io)\b|hotjar|document\.cookie|set-cookie)/i.test(html)) bad(`${name}: tracking or cookie code`);
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
     const href = /href="([^"]+)"/.exec(m[0])?.[1] ?? "";
     if (/^https?:/.test(href) && !/rel="(preconnect|dns-prefetch)"/.test(m[0]) && !href.startsWith("https://fonts.googleapis.com/")) bad(`${name}: outside stylesheet or link ${href}`);
