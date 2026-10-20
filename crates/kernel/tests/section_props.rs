@@ -2116,10 +2116,16 @@ proptest! {
 
     /// Lane 23b's second fix pass: a bent ring wall, far out or not, cut anywhere, with plane
     /// snapping on and off: the fuzzer's checks both ways round (`cut_cleanly`), and the two
-    /// halves make the solid's tessellated volume to rounding: 1e-9 of it, plus 1e-13 of the
-    /// most a cone over its triangles from its centre can sum to (its area times its size;
-    /// the halves are those triangles clipped). Lane 23b's ring fans were off by the bend
-    /// times the hole's area (fuzz seed 20281103: 0.47 m3 of 265.7).
+    /// halves make the solid's tessellated volume: to rounding (1e-9 of it, plus 1e-13 of the
+    /// most a cone over its triangles from its centre can sum to, its area times its size;
+    /// the halves are those triangles clipped), and to how far each half is from closed. A
+    /// corner the tie rule puts on the plane is up to LENGTH_EPS off it, so a half closes
+    /// across the normal only to twice that times its seam (ADR-0010), and a cone over a
+    /// surface that open moves with its apex by up to its size times the gap over three: the
+    /// run's three finds (`PROPTEST_RNG_SEED` 2026102081..83) were 5 cm rings whose bottom
+    /// corner was nudged 1e-10 up, cut along the bottom, the half below a sheet and its cap
+    /// open by 7e-12 m2 across the normal and reading 1.2e-13 m3. Lane 23b's ring fans were
+    /// off by the bend times the hole's area (fuzz seed 20281103: 0.47 m3 of 265.7).
     #[test]
     fn bent_ring_walls_cut_into_halves_that_make_their_volume(
         r in bent_ring(),
@@ -2147,10 +2153,15 @@ proptest! {
             let vs = vertices(d.model(), object);
             let lo = vs.iter().fold(DVec3::splat(f64::INFINITY), |a, v| a.min(*v));
             let hi = vs.iter().fold(DVec3::splat(f64::NEG_INFINITY), |a, v| a.max(*v));
-            let kept = d.model().kept_volume(section).unwrap();
+            let kept = d.model().kept_part(section).unwrap();
             d.apply(&Op::FlipSection { section }).unwrap();
-            let other = d.model().kept_volume(section).unwrap();
-            let allowed = 1e-9 * whole.abs() + 1e-13 * area * (hi - lo).length();
+            let other_part = d.model().kept_part(section).unwrap();
+            let (kept, other, seam) =
+                (kept.volume, other_part.volume, kept.cap_length + other_part.cap_length);
+            let size = (hi - lo).length();
+            let allowed = 1e-9 * whole.abs()
+                + 1e-13 * area * size
+                + 2.0 * sawhorse_kernel::tolerance::LENGTH_EPS * seam * size / 3.0;
             prop_assert!(
                 (kept + other - whole).abs() <= allowed,
                 "{kept} + {other} vs {whole} (allowed {allowed})"
