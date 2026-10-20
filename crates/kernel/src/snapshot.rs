@@ -825,8 +825,10 @@ pub fn brep_object(what: &str, b: &SnapBrep, next_face_id: u64) -> Result<Object
             .insert(crate::edges::pair(e[0], e[1]), e[2] as u8);
     }
     for c in &b.curves {
-        if c.id == 0 || obj.curves.contains_key(&c.id) {
-            return Err(bad(format!("{what}: curve ids must be distinct and not 0")));
+        if c.id == 0 || c.id > crate::curve::MAX_CURVE_ID || obj.curves.contains_key(&c.id) {
+            return Err(bad(format!(
+                "{what}: curve ids must be distinct, from 1 to 2^53 - 1"
+            )));
         }
         obj.curves.insert(
             c.id,
@@ -1747,5 +1749,94 @@ mod tests {
         let mut s = good;
         s.objects[0].brep.as_mut().unwrap().faces[0].outer[0] = 99;
         assert!(Model::from_snapshot(&s).is_err());
+
+        // Lane 23b: curves. A pulled circle (its two rims on the solid) and a circle left in
+        // the sketch; every tamper below is refused with a typed error, never a panic (a rim
+        // id of u64::MAX overflowed `k + 1` while settling the rims in a debug build, 33 of
+        // the verifier's 60,000 mutations).
+        use crate::curve::{CurveKind, CurveSpec};
+        use crate::model::DrawTarget;
+        let circle = |c: [f64; 2], r: f64, n: usize| Op::Draw {
+            target: DrawTarget::Sketch { sketch: 1 },
+            points: (0..n)
+                .map(|k| {
+                    let a = std::f64::consts::TAU * k as f64 / n as f64;
+                    [c[0] + r * a.cos(), c[1] + r * a.sin(), 0.0]
+                })
+                .collect(),
+            closed: true,
+            curve: Some(CurveSpec {
+                kind: CurveKind::Circle,
+                centre: Some([c[0], c[1], 0.0]),
+            }),
+        };
+        let d = Document::replay(&[
+            Op::NewSketch {
+                origin: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            },
+            circle([0.0, 0.0], 0.3, 24),
+            Op::Extrude {
+                sketch: 1,
+                region: 1,
+                distance: 0.2,
+            },
+            circle([2.0, 0.0], 0.3, 24),
+        ])
+        .unwrap();
+        let good = d.model().snapshot();
+        assert_eq!(Model::from_snapshot(&good).unwrap().hash(), d.hash());
+        assert!(good.objects[0].brep.as_ref().unwrap().curves.len() >= 2);
+        let refused = |what: &str, tamper: &dyn Fn(&mut Snapshot)| {
+            let mut s = good.clone();
+            tamper(&mut s);
+            match Model::from_snapshot(&s) {
+                Err(KernelError::Document(DocumentError::BadSnapshot(_))) => {}
+                other => panic!("{what}: {other:?}"),
+            }
+        };
+        fn rims(s: &mut Snapshot) -> &mut Vec<SnapRimCurve> {
+            &mut s.objects[0].brep.as_mut().unwrap().curves
+        }
+        refused("a rim id of u64::MAX", &|s| rims(s)[0].id = u64::MAX);
+        refused("a rim id past 2^53 - 1", &|s| {
+            rims(s)[0].id = crate::curve::MAX_CURVE_ID + 1
+        });
+        refused("a rim naming an edge that is not there", &|s| {
+            rims(s)[0].keys[0] = [998, 999]
+        });
+        refused("an edge in two rims", &|s| {
+            let mut twin = rims(s)[0].clone();
+            twin.id = 77;
+            twin.keys.truncate(3);
+            twin.kind = CurveKind::Polyline;
+            twin.closed = false;
+            rims(s).push(twin);
+        });
+        fn sketch(s: &mut Snapshot) -> &mut crate::sketch::RawSketch {
+            &mut s.sketches[0].graph
+        }
+        let open = good.sketches[0]
+            .graph
+            .curves
+            .iter()
+            .position(|c| c.kind == CurveKind::Circle)
+            .expect("the sketch's circle");
+        refused("a sketch curve id of u64::MAX", &|s| {
+            sketch(s).curves[open].id = u64::MAX;
+            sketch(s).next_curve = None;
+        });
+        refused("a sketch curve counter of u64::MAX", &|s| {
+            sketch(s).next_curve = Some(u64::MAX)
+        });
+        refused("a circle whose points are off its circle", &|s| {
+            let v = sketch(s).curves[open].vertices[3] as usize;
+            let p = &mut sketch(s).vertices[v];
+            p[0] += 0.0005;
+        });
+        refused("a circle whose radius is not its points'", &|s| {
+            let r = sketch(s).curves[open].radius.unwrap();
+            sketch(s).curves[open].radius = Some(r + 0.001);
+        });
     }
 }

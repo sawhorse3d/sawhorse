@@ -2025,7 +2025,30 @@ impl Model {
                     return Err(DocumentError::EmptyBatch.into());
                 }
                 let mut outcomes = Vec::with_capacity(ops.len());
-                for op in ops {
+                // Lane 23b: the curves the batch's EraseCurve ops name that are there before
+                // it runs. An earlier op of the same batch may take one with it (erasing the
+                // region a circle bounds erases the circle): that curve is then already
+                // erased, as an edge already gone is for EraseSegment, and the op does
+                // nothing. A curve that was never there is still refused.
+                let curve_there = |m: &Self, sketch: u64, curve: u64| {
+                    m.sketch_key(sketch)
+                        .is_ok_and(|k| m.sketches[k].curve(curve).is_some())
+                };
+                let named: Vec<bool> = ops
+                    .iter()
+                    .map(|op| match op {
+                        Op::EraseCurve { sketch, curve } => curve_there(self, *sketch, *curve),
+                        _ => false,
+                    })
+                    .collect();
+                for (op, was_there) in ops.iter().zip(named) {
+                    if let Op::EraseCurve { sketch, curve } = op
+                        && was_there
+                        && !curve_there(self, *sketch, *curve)
+                    {
+                        outcomes.push(Self::edited(Vec::new()));
+                        continue;
+                    }
                     if matches!(
                         op,
                         Op::Undo
@@ -2447,7 +2470,7 @@ impl Model {
                 })
                 .collect()
         };
-        let (plane, loops, closed) = match source {
+        let (plane, mut loops, closed) = match source {
             OffsetSource::Face { object, face } => {
                 let o = self
                     .object(*object)
@@ -2492,6 +2515,10 @@ impl Model {
                 }
             }
         };
+        // Lane 23b: a circle, an arc or a polygon on its own offsets its radius.
+        if let Some(exact) = self.round_offset(source, &plane, distance)? {
+            loops = vec![exact];
+        }
         if loops.is_empty() {
             return Err(OffsetError::Vanishes.into());
         }
@@ -2500,6 +2527,141 @@ impl Model {
             .map(|r| r.iter().map(|&q| plane.to_world(q)).collect())
             .collect();
         Ok((world, closed, plane))
+    }
+
+    /// Lane 23b: when an offset's source is exactly one circle, arc or polygon (a sketch's
+    /// curve, or a solid's rim: a region or a face bounded by it alone, or its chain of
+    /// points), the offset is that curve with its radius moved by the distance: the same
+    /// centre, kind and segment count, every point moved along its radius (a woodworker
+    /// offsetting a 200 mm circle by 50 mm expects a 250 mm circle, as SketchUp draws it; the
+    /// polygon offset moves the edges 50 mm, which left the radius 249.57 mm for 24
+    /// segments). Closed: a positive distance grows; open (an arc): positive is to the left
+    /// of the chain's way, as for any chain. `None` for any other source (it offsets as a
+    /// polygon); refused when the radius would be gone.
+    fn round_offset(
+        &self,
+        source: &OffsetSource,
+        plane: &Plane,
+        distance: f64,
+    ) -> Result<Option<Vec<DVec2>>, KernelError> {
+        use crate::curve::CurveInfo;
+        let tol = |p: DVec3| crate::tolerance::SKETCH_MERGE + 1e-9 * p.length();
+        // The source's points (world, in order) and whether they close, and the curves
+        // they might be.
+        let (pts, closed, candidates): (Vec<DVec3>, bool, Vec<CurveInfo>) = match source {
+            OffsetSource::Region { sketch, region } => {
+                let Some(s) = self.sketch(*sketch) else {
+                    return Ok(None);
+                };
+                let Some(r) = s.region(from_public::<RegionId>(*region)) else {
+                    return Ok(None);
+                };
+                let (outer, holes) = s.region_rings(r);
+                if !holes.is_empty() {
+                    return Ok(None);
+                }
+                let pts = outer.iter().map(|&q| s.plane().to_world(q)).collect();
+                let cs = s.curves().filter_map(|(id, _)| s.curve_info(id)).collect();
+                (pts, true, cs)
+            }
+            OffsetSource::Face { object, face } => {
+                let Some(o) = self.object(*object) else {
+                    return Ok(None);
+                };
+                let Some(fi) = o.face_ordinal(*face) else {
+                    return Ok(None);
+                };
+                let p = o.brep().to_polys();
+                let rings: Vec<Vec<DVec3>> = p.faces[fi]
+                    .rings()
+                    .map(|r| r.iter().map(|&i| p.points[i]).collect())
+                    .collect();
+                let [ring] = &rings[..] else {
+                    return Ok(None);
+                };
+                let cs = o
+                    .curves()
+                    .keys()
+                    .filter_map(|&id| o.curve_info(id))
+                    .collect();
+                (ring.clone(), true, cs)
+            }
+            OffsetSource::Edges {
+                points,
+                closed,
+                object,
+                ..
+            } => {
+                let pts: Vec<DVec3> = points.iter().map(|p| DVec3::from_array(*p)).collect();
+                let cs: Vec<CurveInfo> = match object {
+                    Some(o) => match self.object(*o) {
+                        Some(o) => o
+                            .curves()
+                            .keys()
+                            .filter_map(|&id| o.curve_info(id))
+                            .collect(),
+                        None => Vec::new(),
+                    },
+                    None => self
+                        .sketch_order
+                        .iter()
+                        .map(|&k| &self.sketches[k])
+                        .filter(|s| {
+                            let sp = s.plane();
+                            s.parent == self.context
+                                && sp.normal.dot(plane.normal).abs() >= 1.0 - 1e-12
+                                && sp.signed_distance(plane.origin).abs() <= PLANARITY
+                        })
+                        .flat_map(|s| {
+                            s.curves()
+                                .filter_map(|(id, _)| s.curve_info(id))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect(),
+                };
+                (pts, *closed, cs)
+            }
+        };
+        let Some((centre, radius)) = candidates.iter().find_map(|c| {
+            let (centre, radius) = (c.centre?, c.radius?);
+            let same = c.kind.is_round()
+                && c.closed == closed
+                && c.points.len() == pts.len()
+                && pts.iter().all(|&p| {
+                    c.points
+                        .iter()
+                        .any(|q| DVec3::from_array(*q).distance(p) <= tol(p))
+                });
+            same.then_some((DVec3::from_array(centre), radius))
+        }) else {
+            return Ok(None);
+        };
+        if radius.is_nan() || radius <= 0.0 {
+            return Ok(None);
+        }
+        let c = plane.to_local(centre);
+        let mut q: Vec<DVec2> = pts.iter().map(|&p| plane.to_local(p)).collect();
+        let to = if closed {
+            // Wound counter-clockwise, as the polygon offset winds an outer ring.
+            if sawhorse_tessellate::signed_area(&q) < 0.0 {
+                q.reverse();
+            }
+            radius + distance
+        } else {
+            // Left of the way: towards the centre when the arc turns counter-clockwise.
+            let turn: f64 = q.windows(2).map(|w| (w[0] - c).perp_dot(w[1] - c)).sum();
+            if turn > 0.0 {
+                radius - distance
+            } else {
+                radius + distance
+            }
+        };
+        if to <= crate::tolerance::SKETCH_MERGE {
+            return Err(OffsetError::Vanishes.into());
+        }
+        Ok(Some(
+            q.iter().map(|&p| c + (p - c) * (to / radius)).collect(),
+        ))
     }
 
     /// Apply Follow Me (see [`Op::FollowMe`]).

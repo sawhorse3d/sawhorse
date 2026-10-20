@@ -239,7 +239,16 @@ impl SectionCut {
 /// every face and the cap, summed as a surface.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct KeptPart {
-    /// Enclosed volume, cubic metres (the divergence theorem about the world origin).
+    /// Enclosed volume, cubic metres: the cone from a point beside each solid (its box's
+    /// centre) over every kept face ring's own 3D corners (a fan of tetrahedra), plus the
+    /// cap's. Lane 23b: it was the divergence theorem about the world origin over each
+    /// face's stored plane and its ring's area in that plane, and a face whose corners sit
+    /// within the planarity tolerance of its plane but tilt across a narrow width (a fin a
+    /// hundredth of a millimetre wide and 2 m tall) has a stored normal that is not its
+    /// corners': the half's surface was closed (its Newell sum cancels) but the stored
+    /// normals' sum did not, and 1.5 m from the origin that read a hair of the fin as half
+    /// the solid, below zero (fuzz seed 20271003). Over the corners and about a point
+    /// beside the solid, a closed surface's volume does not depend on the point.
     pub volume: f64,
     /// The surface's vector area, square metres: every kept face ring's own (Newell's sum
     /// over its 3D corners and crossings) plus the cap's (its area along -normal). Every
@@ -258,9 +267,24 @@ pub struct KeptPart {
 }
 
 impl KeptPart {
-    fn add(&mut self, normal: DVec3, origin: DVec3, area: f64) {
-        self.volume += normal.dot(origin) * area / 3.0;
+    /// A planar face (the cap) of `area` on the plane through `origin` with outward unit
+    /// `normal`: its cone from `at`.
+    fn add(&mut self, normal: DVec3, origin: DVec3, area: f64, at: DVec3) {
+        self.volume += normal.dot(origin - at) * area / 3.0;
         self.area += area.abs();
+    }
+
+    /// A kept face ring (3D corners, wound outward): its cone from `at`, a fan of
+    /// tetrahedra over the corners themselves, so a face's bend within tolerance is
+    /// measured as it is, never through its stored plane.
+    fn cone(&mut self, ring: &[DVec3], at: DVec3) {
+        let Some(&p0) = ring.first() else {
+            return;
+        };
+        let r0 = p0 - at;
+        for w in ring[1..].windows(2) {
+            self.volume += r0.dot((w[0] - at).cross(w[1] - at)) / 6.0;
+        }
     }
 
     /// Add a 3D ring's vector area (Newell), summed about the ring's own first corner: a
@@ -1385,6 +1409,16 @@ fn kept_under(o: &Object, frame: &Plane, dist: &Distances) -> KeptPart {
     let tol = ARRANGE_TOL * solid_scale(o);
     let cut = clip_solid(b, frame, dist, tol);
     let mut part = KeptPart::default();
+    // The cones' apex: the centre of the solid's box (lane 23b; see KeptPart::volume).
+    let (lo, hi) = b.vertices().fold(
+        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+        |(lo, hi), (_, v)| (lo.min(v.pos), hi.max(v.pos)),
+    );
+    let at = if lo.is_finite() && hi.is_finite() {
+        (lo + hi) * 0.5
+    } else {
+        DVec3::ZERO
+    };
     for (fk, rings) in &cut.faces {
         let fp = &b.faces[*fk].plane;
         let mut area = 0.0;
@@ -1393,8 +1427,9 @@ fn kept_under(o: &Object, frame: &Plane, dist: &Distances) -> KeptPart {
             let flat: Vec<DVec2> = ring.iter().map(|p| fp.to_local(*p)).collect();
             area += sawhorse_tessellate::signed_area(&flat);
             part.newell(&ring);
+            part.cone(&ring, at);
         }
-        part.add(fp.normal, fp.origin, area);
+        part.area += area.abs();
     }
     let rings = cap_rings(b, frame, dist, &cut.chords, tol);
     part.cap_length += rings
@@ -1416,7 +1451,7 @@ fn kept_under(o: &Object, frame: &Plane, dist: &Distances) -> KeptPart {
         })
         .sum();
     // The cap is a face of the kept part whose outward normal is -normal.
-    part.add(-frame.normal, frame.origin, cap);
+    part.add(-frame.normal, frame.origin, cap, at);
     part.vector_area -= frame.normal * cap;
     part
 }

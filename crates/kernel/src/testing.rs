@@ -18,6 +18,7 @@
 //! Failing sequences are written as JSON by [`write_repro`] and replayed forever after by
 //! `tests/repro.rs`.
 
+use glam::DVec3;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::document::Document;
@@ -233,8 +234,17 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         // the plane-integrated whole exactly but missed the tessellated one by 3.4 ppm). So
         // the halves are held to the whole measured their own way, and that whole is
         // held to the tessellated volume within the planarity the validator allows.
+        //
+        // Lane 23b: the halves are measured over the faces' own corners now (a cone from
+        // the solid's centre, KeptPart::volume), not through the stored planes (a fin too
+        // narrow to pin its plane's normal down read half a solid below zero, fuzz seed
+        // 20271003), so their whole is the same cone over each whole face's corners. A bent
+        // face's kept and cut-away rings meet along the chord and span the face between
+        // them differently from the whole ring's fan, by at most twice its bend times its
+        // area.
         let mut area = 0.0;
         let mut by_planes = 0.0;
+        let mut by_corners = 0.0;
         // The same two measures over the objects that tessellate as closed solids (an open
         // mesh has no tessellated volume to hold its plane integral to).
         let (mut solid_area, mut solid_planes, mut solid_tess) = (0.0, 0.0, 0.0);
@@ -243,15 +253,26 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             let (area0, planes0) = (area, by_planes);
             let pos: std::collections::BTreeMap<_, _> =
                 b.vertices().map(|(k, v)| (k, v.pos)).collect();
+            let (lo, hi) = pos.values().fold(
+                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+                |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+            );
+            let apex = if lo.is_finite() && hi.is_finite() {
+                (lo + hi) * 0.5
+            } else {
+                DVec3::ZERO
+            };
             for (_, f) in b.faces() {
                 let mut signed = 0.0;
                 for l in f.loops() {
-                    let ring: Vec<_> = b
-                        .loop_vertices(l)
-                        .iter()
-                        .map(|v| f.plane.to_local(pos[v]))
-                        .collect();
+                    let corners: Vec<DVec3> = b.loop_vertices(l).iter().map(|v| pos[v]).collect();
+                    let ring: Vec<_> = corners.iter().map(|p| f.plane.to_local(*p)).collect();
                     signed += sawhorse_tessellate::signed_area(&ring);
+                    if let Some(&p0) = corners.first() {
+                        for w in corners[1..].windows(2) {
+                            by_corners += (p0 - apex).dot((w[0] - apex).cross(w[1] - apex)) / 6.0;
+                        }
+                    }
                 }
                 area += signed.abs();
                 by_planes += f.plane.normal.dot(f.plane.origin) * signed / 3.0;
@@ -341,9 +362,12 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         // the two then differ by up to its area times that distance. So a half may come out
         // a little below zero, never by more than the solids' area times POINT_MERGE.
         let slack = crate::tolerance::POINT_MERGE * area + 1e-12;
-        if (a + b - by_planes).abs() > 1e-6 * (1.0 + by_planes.abs()) || a < -slack || b < -slack {
+        if (a + b - by_corners).abs() > 1e-6 * (1.0 + by_corners.abs()) + 2.0 * bend * area
+            || a < -slack
+            || b < -slack
+        {
             return Err(format!(
-                "section {id}: the halves kept {a} + {b} do not make the whole {by_planes} (tessellated {reached})"
+                "section {id}: the halves kept {a} + {b} do not make the whole {by_corners} (over its planes {by_planes}, tessellated {reached})"
             ));
         }
         if (solid_planes - solid_tess).abs()

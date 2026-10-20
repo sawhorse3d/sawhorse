@@ -38,6 +38,12 @@
 //! round reads as a polyline.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+/// The largest curve id a file may hold (lane 23b): 2^53 - 1. Ids reach the app as JSON
+/// numbers, which JavaScript reads exactly only up to here, and a counter this far below
+/// `u64::MAX` can never wrap. A `.shz` with a curve id, or a sketch's curve counter, beyond
+/// it is refused on open ([`crate::snapshot`]).
+pub const MAX_CURVE_ID: u64 = (1 << 53) - 1;
 use std::f64::consts::TAU;
 
 use glam::{DVec2, DVec3};
@@ -480,7 +486,10 @@ impl Object {
         let usable = |k: &(u64, u64)| by_key.get(k).is_some_and(|v| v.len() == 1);
         let mut claimed: BTreeSet<(u64, u64)> = BTreeSet::new();
         let old = std::mem::take(&mut self.curves);
-        let mut next = old.keys().next_back().map_or(1, |k| k + 1);
+        // Checked (lane 23b): a hostile file's rim id of u64::MAX overflowed here in a
+        // debug build; files are refused beyond MAX_CURVE_ID now, and an id that cannot be
+        // had leaves its piece plain edges rather than wrapping onto another curve's.
+        let mut next = old.keys().next_back().map_or(Some(1), |k| k.checked_add(1));
         let mut out: BTreeMap<u64, RimCurve> = BTreeMap::new();
         for (id, c) in old {
             if Self::rim_chain(&c.keys, c.closed, &by_key).is_some()
@@ -546,8 +555,11 @@ impl Object {
                     first = false;
                     id
                 } else {
-                    next += 1;
-                    next - 1
+                    let Some(n) = next else {
+                        continue;
+                    };
+                    next = n.checked_add(1);
+                    n
                 };
                 out.insert(k, piece);
             }

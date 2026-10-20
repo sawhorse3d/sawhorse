@@ -969,3 +969,270 @@ fn a_huge_circle_offset_a_hair_in_still_draws() {
             .unwrap_or_else(|e| panic!("{n} segments, curve {curve}: {e}"));
     }
 }
+
+#[test]
+fn an_eraser_drag_across_a_circle_erases_it_and_its_face_in_one_step() {
+    // Lane 23b (verifier F1): an Eraser drag across a closed circle or polygon sweeps its
+    // face and the curve. The app sends Batch[EraseRegion, EraseCurve]: erasing the region
+    // takes the curve (its ring) with it, and the curve's own erase must then be a no-op, as
+    // an edge already gone is for EraseSegment, not a refusal that rolls the batch back.
+    for spec in [circle([0.0, 0.0], 0.3, 24), polygon([0.0, 0.0], 0.3, 6)] {
+        let mut d = Document::with_ground_sketch();
+        let before = d.hash();
+        let out = ok(&mut d, spec);
+        let OpOutcome::Drawn {
+            inside: Some(region),
+            curve: Some(curve),
+            ..
+        } = out
+        else {
+            panic!("{out:?}")
+        };
+        let drawn = d.hash();
+        let out = ok(
+            &mut d,
+            Op::Batch {
+                ops: vec![
+                    Op::EraseRegion { sketch: 1, region },
+                    Op::EraseCurve { sketch: 1, curve },
+                ],
+            },
+        );
+        let OpOutcome::Batch { outcomes } = out else {
+            panic!("{out:?}")
+        };
+        assert_eq!(outcomes.len(), 2);
+        let s = d.model().sketch(1).unwrap();
+        assert_eq!(s.edge_count(), 0, "the shape is gone");
+        assert_eq!(s.region_count(), 0, "and its face");
+        assert!(curves(d.model()).is_empty());
+        sawhorse_kernel::testing::check_model(d.model()).unwrap();
+        // One undo step brings both back.
+        d.undo().unwrap();
+        assert_eq!(d.hash(), drawn);
+        d.undo().unwrap();
+        assert_eq!(d.hash(), before);
+    }
+    // A curve that was never there is still refused, inside a batch too, and the batch
+    // changes nothing.
+    let mut d = Document::with_ground_sketch();
+    let out = ok(&mut d, circle([0.0, 0.0], 0.3, 24));
+    let OpOutcome::Drawn {
+        inside: Some(region),
+        ..
+    } = out
+    else {
+        panic!("{out:?}")
+    };
+    let drawn = d.hash();
+    let err = d
+        .apply(&Op::Batch {
+            ops: vec![
+                Op::EraseRegion { sketch: 1, region },
+                Op::EraseCurve {
+                    sketch: 1,
+                    curve: 99,
+                },
+            ],
+        })
+        .unwrap_err();
+    assert!(matches!(err, KernelError::Sketch(_)), "{err}");
+    assert_eq!(d.hash(), drawn);
+    // A circle beside a rectangle in one sweep: both go; the rectangle's edges were
+    // already tolerated (EraseSegment of an edge already gone does nothing).
+    let mut d = Document::with_ground_sketch();
+    let c = drawn_curve(&ok(&mut d, circle([0.0, 0.0], 0.3, 24)));
+    ok(
+        &mut d,
+        Op::AddRectangle {
+            sketch: 1,
+            x: 1.0,
+            y: 0.0,
+            w: 0.5,
+            h: 0.5,
+        },
+    );
+    let regions: Vec<u64> = d
+        .model()
+        .sketch(1)
+        .unwrap()
+        .regions()
+        .map(|(r, _)| sawhorse_kernel::ids::to_public(r))
+        .collect();
+    assert_eq!(regions.len(), 2);
+    let mut ops: Vec<Op> = regions
+        .iter()
+        .map(|&region| Op::EraseRegion { sketch: 1, region })
+        .collect();
+    ops.push(Op::EraseCurve {
+        sketch: 1,
+        curve: c,
+    });
+    for (a, b) in [
+        ([1.0, 0.0], [1.5, 0.0]),
+        ([1.5, 0.0], [1.5, 0.5]),
+        ([1.5, 0.5], [1.0, 0.5]),
+        ([1.0, 0.5], [1.0, 0.0]),
+    ] {
+        ops.push(Op::EraseSegment { sketch: 1, a, b });
+    }
+    ok(&mut d, Op::Batch { ops });
+    let s = d.model().sketch(1).unwrap();
+    assert_eq!((s.edge_count(), s.region_count()), (0, 0));
+}
+
+#[test]
+fn offsetting_a_circle_moves_its_radius() {
+    // Lane 23b (verifier R6): a 24-segment circle of 200 mm offset 50 mm out came back at
+    // 249.57 mm (the polygon's edges moved 50 mm, so its apothem did); SketchUp, and a
+    // woodworker, expect 250 mm. A lone circle, arc or polygon now offsets its radius: the
+    // same centre, kind and segment count.
+    let radius_of = |d: &Document, c: u64| d.model().sketch(1).unwrap().curve_info(c).unwrap();
+    for (n, kind) in [(24, CurveKind::Circle), (6, CurveKind::Polygon)] {
+        for (by, want) in [(0.05, 0.25), (-0.05, 0.15)] {
+            // By its region (the face inside it) and by its chain (the curve selected).
+            for by_region in [true, false] {
+                let mut d = Document::with_ground_sketch();
+                let spec = if kind == CurveKind::Circle {
+                    circle([1.0, 2.0], 0.2, n)
+                } else {
+                    polygon([1.0, 2.0], 0.2, n)
+                };
+                let out = ok(&mut d, spec);
+                let OpOutcome::Drawn {
+                    inside: Some(region),
+                    curve: Some(c),
+                    ..
+                } = out
+                else {
+                    panic!("{out:?}")
+                };
+                let source = if by_region {
+                    OffsetSource::Region { sketch: 1, region }
+                } else {
+                    OffsetSource::Edges {
+                        points: radius_of(&d, c).points,
+                        closed: true,
+                        normal: [0.0, 0.0, 1.0],
+                        object: None,
+                    }
+                };
+                let made = drawn_curve(&ok(
+                    &mut d,
+                    Op::Offset {
+                        source,
+                        distance: by,
+                    },
+                ));
+                let info = radius_of(&d, made);
+                assert_eq!(info.kind, kind);
+                assert_eq!(info.segments, n as u32);
+                assert!(
+                    (info.radius.unwrap() - want).abs() < 1e-12,
+                    "{kind:?} {by} region {by_region}: {}",
+                    info.radius.unwrap()
+                );
+                let centre = DVec3::from_array(info.centre.unwrap());
+                assert!((centre - DVec3::new(1.0, 2.0, 0.0)).length() < 1e-12);
+                for p in &info.points {
+                    assert!(
+                        ((DVec3::from_array(*p) - centre).length() - want).abs() < 1e-12,
+                        "every point at the new radius"
+                    );
+                }
+                sawhorse_kernel::testing::check_model(d.model()).unwrap();
+            }
+        }
+    }
+    // An arc: positive is to the left of its way, so a counter-clockwise arc's radius
+    // shrinks, and grows the other way.
+    for (by, want) in [(0.1, 0.9), (-0.1, 1.1)] {
+        let mut d = Document::with_ground_sketch();
+        let a = drawn_curve(&ok(&mut d, arc([0.0, 0.0], 1.0, 12, 0.0, 2.0)));
+        let pts = d.model().sketch(1).unwrap().curve_info(a).unwrap().points;
+        let made = drawn_curve(&ok(
+            &mut d,
+            Op::Offset {
+                source: OffsetSource::Edges {
+                    points: pts,
+                    closed: false,
+                    normal: [0.0, 0.0, 1.0],
+                    object: None,
+                },
+                distance: by,
+            },
+        ));
+        let info = radius_of(&d, made);
+        assert_eq!(info.kind, CurveKind::Arc);
+        assert_eq!(info.segments, 12);
+        assert!(
+            (info.radius.unwrap() - want).abs() < 1e-12,
+            "{}",
+            info.radius.unwrap()
+        );
+    }
+    // Inward past the centre: refused, nothing drawn.
+    let mut d = Document::with_ground_sketch();
+    let out = ok(&mut d, circle([0.0, 0.0], 0.2, 24));
+    let OpOutcome::Drawn {
+        inside: Some(region),
+        ..
+    } = out
+    else {
+        panic!()
+    };
+    let before = d.hash();
+    assert!(
+        d.apply(&Op::Offset {
+            source: OffsetSource::Region { sketch: 1, region },
+            distance: -0.2,
+        })
+        .is_err()
+    );
+    assert_eq!(d.hash(), before);
+    // A hexagon offset inward by more than its apothem (173 mm) but less than its radius
+    // (200 mm): still a hexagon, at 15 mm.
+    let mut d = Document::with_ground_sketch();
+    let out = ok(&mut d, polygon([0.0, 0.0], 0.2, 6));
+    let OpOutcome::Drawn {
+        inside: Some(region),
+        ..
+    } = out
+    else {
+        panic!()
+    };
+    let made = drawn_curve(&ok(
+        &mut d,
+        Op::Offset {
+            source: OffsetSource::Region { sketch: 1, region },
+            distance: -0.185,
+        },
+    ));
+    assert!((radius_of(&d, made).radius.unwrap() - 0.015).abs() < 1e-12);
+    // Not a lone curve (a rectangle): offsets as a polygon, as before.
+    let mut d = Document::with_ground_sketch();
+    ok(
+        &mut d,
+        Op::AddRectangle {
+            sketch: 1,
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+        },
+    );
+    let out = ok(
+        &mut d,
+        Op::Offset {
+            source: OffsetSource::Region {
+                sketch: 1,
+                region: 1,
+            },
+            distance: 0.1,
+        },
+    );
+    assert!(
+        matches!(out, OpOutcome::Drawn { curve: None, .. }),
+        "{out:?}"
+    );
+}

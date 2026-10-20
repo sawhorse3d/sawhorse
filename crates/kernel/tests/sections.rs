@@ -1154,3 +1154,38 @@ fn a_slice_wider_than_a_sketch_is_refused() {
     assert!(e.to_string().contains("20 km across"), "{e}");
     sawhorse_kernel::testing::check_model(d.model()).unwrap();
 }
+
+#[test]
+fn a_section_across_a_hair_thin_fin_keeps_two_halves_above_zero() {
+    // Lane 23b (fuzz seed 20271003, snapping on, sequence 10,317): a 0.1 mm circle pulled
+    // 3 m down, two neighbouring points of its rim moved 2.2 m up (autofold): a fin a few
+    // hundredths of a millimetre wide. A plane at 45 degrees across the fin kept halves of
+    // 1.43e-7 and -4.5e-8 m3 of a 9.7e-8 m3 solid: each kept face was measured through its
+    // stored plane, whose normal a face that narrow does not pin down (its corners sit within
+    // tolerance of it, but tilt across its width), about the world origin 1.5 m away. Now
+    // the kept volume is the cone over the faces' own corners from the solid's centre.
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/repro/2026-10-20-section-across-a-fin-pulled-up-from-a-tiny-cylinder.json"
+    ))
+    .unwrap();
+    let repro: sawhorse_kernel::testing::Repro = serde_json::from_str(&text).unwrap();
+    sawhorse_kernel::snap::set_plane_snapping(true);
+    let mut d = Document::replay(&repro.ops).unwrap();
+    let s = d.model().sections()[0].0;
+    let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
+    let kept = d.model().kept_volume(s).unwrap();
+    ok(&mut d, Op::FlipSection { section: s });
+    let other = d.model().kept_volume(s).unwrap();
+    assert!(kept > 0.0 && other > 0.0, "{kept} + {other} of {whole}");
+    // The whole here is the tessellated volume (the faces' triangles); the halves are cones
+    // over the faces' rings, and the fin's faces bend within tolerance, which the two
+    // measures span differently (3e-5 of the whole here, 3e-12 m3).
+    assert!(
+        (kept + other - whole).abs() <= 1e-4 * whole,
+        "{kept} + {other} vs {whole}"
+    );
+    // The fin above the plane is a sliver of the whole.
+    assert!(other < 0.05 * whole, "{other} of {whole}");
+    sawhorse_kernel::testing::check_model(d.model()).unwrap();
+}

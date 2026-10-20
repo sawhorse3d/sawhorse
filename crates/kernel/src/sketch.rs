@@ -2053,6 +2053,9 @@ impl Sketch {
             if c.id <= last {
                 return Err("curve ids must rise".into());
             }
+            if c.id > crate::curve::MAX_CURVE_ID {
+                return Err("a curve id is beyond 2^53 - 1".into());
+            }
             last = c.id;
             let chain: Vec<SVertexId> = c
                 .vertices
@@ -2071,6 +2074,9 @@ impl Sketch {
             );
         }
         s.next_curve = match raw.next_curve {
+            Some(n) if n > crate::curve::MAX_CURVE_ID => {
+                return Err("the curve counter is beyond 2^53 - 1".into());
+            }
             Some(n) if n > last => n,
             Some(_) => return Err("the curve counter is not above every curve id".into()),
             None => last + 1,
