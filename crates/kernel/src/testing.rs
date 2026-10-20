@@ -225,62 +225,81 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
             })
             .collect();
         let reached: f64 = reached_objects.iter().map(|(_, x)| x.volume()).sum();
-        // The kept volume integrates every face over its STORED plane (the divergence
-        // theorem on the face's 2D polygon), while an object's volume sums the triangles of
-        // its tessellation through the actual vertices. A face's vertices may sit up to
-        // PLANARITY off its stored plane, so the two measures of the same solid differ by up
-        // to that times the face's area (fuzz seed 20261802, 2026-10-12: a copy squashed to a
-        // quarter and stretched to 12 m had faces 5e-7 off their planes, and the halves made
-        // the plane-integrated whole exactly but missed the tessellated one by 3.4 ppm). So
-        // the halves are held to the whole measured their own way, and that whole is
-        // held to the tessellated volume within the planarity the validator allows.
+        // Two measures of the whole. (1) Over its triangles: the cone over every triangle of
+        // every face (the tessellation `Object::volume` sums) from the solid's box centre.
+        // Since lane 23b's second fix pass the halves are the same cones over the same
+        // triangles, each clipped to its side (KeptPart::volume): a triangle's kept and
+        // cut-away pieces tile it through the same crossings, and the two caps are one set of
+        // chords walked opposite ways, so the halves make this whole to rounding, whatever the
+        // faces' bends, and no bend enters the check below. Lane 23b had taken the halves
+        // over each kept face ring's fan and this whole over each whole ring's, which a bent
+        // ring round a hole spans across the hole: a 700 m ring wall with two corners nudged
+        // up a micrometre read 0.47 m3 over its tessellated 265.7 m3, beyond the twice-bend-
+        // times-area slack lane 23b had added here (fuzz seed 20281103); both are gone.
         //
-        // Lane 23b: the halves are measured over the faces' own corners now (a cone from
-        // the solid's centre, KeptPart::volume), not through the stored planes (a fin too
-        // narrow to pin its plane's normal down read half a solid below zero, fuzz seed
-        // 20271003), so their whole is the same cone over each whole face's corners. A bent
-        // face's kept and cut-away rings meet along the chord and span the face between
-        // them differently from the whole ring's fan, by at most twice its bend times its
-        // area.
+        // (2) Over the STORED planes (the divergence theorem on each face's 2D polygon, about
+        // the same box centre c), the measure the kept volume was until lane 23b, held to the
+        // tessellated volume: it ties every face's stored plane to the solid's own corners.
+        // How far apart the two may be, face by face, for a face whose corners lie within
+        // `bend` of its plane (the validator allows PLANARITY): its triangles and their
+        // projection onto the plane enclose at most bend x its area between them; and the
+        // projections of neighbouring faces do not meet (each moves the shared edge along
+        // its own normal), so the projected faces leave a strip along every edge, at most
+        // bend wide, through which the field (x - c) / 3 the theorem integrates flows: at
+        // most bend x the face's perimeter x its farthest corner's distance from c / 3. So
+        // the faces' planes may read the solid off by the sum over its faces of
+        // bend x (area + perimeter x reach / 3), and no more.
+        //
+        // To lane 23b this allowed PLANARITY x the solids' area (fuzz seed 20261802,
+        // 2026-10-12: a copy squashed to a quarter and stretched to 12 m had faces 5e-7 off
+        // their planes and missed the tessellated volume by 3.4 ppm), about the world origin:
+        // it left out the strips, which about a point far from a solid weigh in its distance.
+        // A sliver of a 700 m circle, 3.8 mm across, had side faces whose stored normals
+        // tilt 2.5e-6 rad off their corners' within 1e-8 m of them, and 700 m out its
+        // 1.84e-6 m3 read 3.17e-6 (fuzz seed 20281207, snapping off; about its own centre it
+        // reads 1.842745e-6 of 1.842747e-6). About the box centre the strips still weigh in
+        // the size of the solid where its faces are long and thin: lane 23b's second fix
+        // pass's ring wall 50 m across and 0.2 mm wide, one corner nudged up a micrometre,
+        // read 0.012742 m3 over its planes and 0.011888 tessellated, which the strips bound
+        // (`section_props::bent_ring_walls_cut_into_halves_that_make_their_volume`); its
+        // faces' area times PLANARITY did not. A face flat to rounding (bend 0) is allowed
+        // nothing beyond the 1e-6 floor.
         let mut area = 0.0;
         let mut by_planes = 0.0;
-        let mut by_corners = 0.0;
+        let mut by_triangles = 0.0;
         // The same two measures over the objects that tessellate as closed solids (an open
         // mesh has no tessellated volume to hold its plane integral to).
-        let (mut solid_area, mut solid_planes, mut solid_tess) = (0.0, 0.0, 0.0);
+        let (mut solid_planes, mut solid_tess, mut solid_strips) = (0.0, 0.0, 0.0);
         for (_, x) in &reached_objects {
             let b = x.brep();
-            let (area0, planes0) = (area, by_planes);
-            let pos: std::collections::BTreeMap<_, _> =
-                b.vertices().map(|(k, v)| (k, v.pos)).collect();
-            let (lo, hi) = pos.values().fold(
-                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
-                |(lo, hi), p| (lo.min(*p), hi.max(*p)),
-            );
-            let apex = if lo.is_finite() && hi.is_finite() {
-                (lo + hi) * 0.5
-            } else {
-                DVec3::ZERO
-            };
+            let (planes0, mut strips) = (by_planes, 0.0);
+            let apex = crate::section::cone_apex(b);
             for (_, f) in b.faces() {
+                let loops: Vec<Vec<_>> = f.loops().map(|l| b.loop_vertices(l)).collect();
                 let mut signed = 0.0;
-                for l in f.loops() {
-                    let corners: Vec<DVec3> = b.loop_vertices(l).iter().map(|v| pos[v]).collect();
+                let (mut bend, mut perimeter, mut reach) = (0.0f64, 0.0, 0.0f64);
+                for l in &loops {
+                    let corners: Vec<DVec3> = l.iter().map(|v| b.vertices[*v].pos).collect();
                     let ring: Vec<_> = corners.iter().map(|p| f.plane.to_local(*p)).collect();
                     signed += sawhorse_tessellate::signed_area(&ring);
-                    if let Some(&p0) = corners.first() {
-                        for w in corners[1..].windows(2) {
-                            by_corners += (p0 - apex).dot((w[0] - apex).cross(w[1] - apex)) / 6.0;
-                        }
+                    for (i, p) in corners.iter().enumerate() {
+                        bend = bend.max(f.plane.signed_distance(*p).abs());
+                        perimeter += p.distance(corners[(i + 1) % corners.len()]);
+                        reach = reach.max(p.distance(apex));
                     }
                 }
+                strips += bend * (signed.abs() + perimeter * (reach + bend) / 3.0);
+                for t in crate::section::face_triangles(b, f, &loops) {
+                    let [p, q, r] = t.map(|v| b.vertices[v].pos - apex);
+                    by_triangles += p.dot(q.cross(r)) / 6.0;
+                }
                 area += signed.abs();
-                by_planes += f.plane.normal.dot(f.plane.origin) * signed / 3.0;
+                by_planes += f.plane.normal.dot(f.plane.origin - apex) * signed / 3.0;
             }
             if let Ok(t) = x.tri_solid() {
-                solid_area += area - area0;
                 solid_planes += by_planes - planes0;
                 solid_tess += t.volume();
+                solid_strips += strips;
             }
         }
         // Watertight: each kept half (its faces clipped to the kept side, and its cap) is
@@ -362,19 +381,17 @@ pub fn check_sections(m: &Model) -> Result<(), String> {
         // the two then differ by up to its area times that distance. So a half may come out
         // a little below zero, never by more than the solids' area times POINT_MERGE.
         let slack = crate::tolerance::POINT_MERGE * area + 1e-12;
-        if (a + b - by_corners).abs() > 1e-6 * (1.0 + by_corners.abs()) + 2.0 * bend * area
+        if (a + b - by_triangles).abs() > 1e-6 * (1.0 + by_triangles.abs())
             || a < -slack
             || b < -slack
         {
             return Err(format!(
-                "section {id}: the halves kept {a} + {b} do not make the whole {by_corners} (over its planes {by_planes}, tessellated {reached})"
+                "section {id}: the halves kept {a} + {b} do not make the whole {by_triangles} (over its planes {by_planes}, tessellated {reached})"
             ));
         }
-        if (solid_planes - solid_tess).abs()
-            > 1e-6 * (1.0 + solid_tess) + crate::tolerance::PLANARITY * solid_area
-        {
+        if (solid_planes - solid_tess).abs() > 1e-6 * (1.0 + solid_tess) + solid_strips {
             return Err(format!(
-                "section {id}: the solids it reaches measure {solid_planes} over their faces' planes but {solid_tess} tessellated"
+                "section {id}: the solids it reaches measure {solid_planes} over their faces' planes but {solid_tess} tessellated (their bends allow {solid_strips})"
             ));
         }
     }

@@ -1163,7 +1163,9 @@ fn a_section_across_a_hair_thin_fin_keeps_two_halves_above_zero() {
     // 1.43e-7 and -4.5e-8 m3 of a 9.7e-8 m3 solid: each kept face was measured through its
     // stored plane, whose normal a face that narrow does not pin down (its corners sit within
     // tolerance of it, but tilt across its width), about the world origin 1.5 m away. Now
-    // the kept volume is the cone over the faces' own corners from the solid's centre.
+    // the kept volume is the cone over the solid's own triangles, each clipped to the kept
+    // side, from the solid's centre (lane 23b's second fix pass; 23b itself took the fan
+    // over each kept face ring's corners).
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/repro/2026-10-20-section-across-a-fin-pulled-up-from-a-tiny-cylinder.json"
@@ -1178,14 +1180,87 @@ fn a_section_across_a_hair_thin_fin_keeps_two_halves_above_zero() {
     ok(&mut d, Op::FlipSection { section: s });
     let other = d.model().kept_volume(s).unwrap();
     assert!(kept > 0.0 && other > 0.0, "{kept} + {other} of {whole}");
-    // The whole here is the tessellated volume (the faces' triangles); the halves are cones
-    // over the faces' rings, and the fin's faces bend within tolerance, which the two
-    // measures span differently (3e-5 of the whole here, 3e-12 m3).
+    // The whole is the tessellated volume (the faces' triangles) and the halves are those
+    // triangles clipped, so they make it to rounding (1.5e-14 of it; lane 23b's ring fans
+    // were 3e-5 off, the fin's faces bending within tolerance).
     assert!(
-        (kept + other - whole).abs() <= 1e-4 * whole,
+        (kept + other - whole).abs() <= 1e-11 * whole,
         "{kept} + {other} vs {whole}"
     );
     // The fin above the plane is a sliver of the whole.
     assert!(other < 0.05 * whole, "{other} of {whole}");
     sawhorse_kernel::testing::check_model(d.model()).unwrap();
+}
+
+/// Replays a named fuzzer find (`tests/repro/<name>`) with its plane snapping, as the fuzzer
+/// played it: an op the kernel refuses changes nothing and the sequence goes on.
+fn replay_find(name: &str) -> Document {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/repro")
+            .join(name),
+    )
+    .unwrap();
+    let repro: sawhorse_kernel::testing::Repro = serde_json::from_str(&text).unwrap();
+    sawhorse_kernel::snap::set_plane_snapping(repro.plane_snap.unwrap_or(true));
+    let mut d = Document::new();
+    for op in &repro.ops {
+        let _ = d.apply(op);
+    }
+    sawhorse_kernel::snap::set_plane_snapping(true);
+    d
+}
+
+#[test]
+fn a_section_of_a_bent_ring_wall_keeps_halves_that_make_its_tessellated_volume() {
+    // Lane 23b's second fix pass (fuzz seed 20281103, snapping on, sequence 17,214): a 700 m
+    // 14-gon offset 0.25 m inward and the ring pulled 0.25 m down, then the four corners of
+    // one outer wall moved up a micrometre, bending the ring's top and bottom faces within
+    // tolerance; a plane through the centre across x. Lane 23b measured each half as fans
+    // over its kept face rings and held them to the fan over each whole ring: a ring round
+    // a hole fans across the hole (1.5e6 m2 for a 1,063 m2 face), so the whole read 266.19 m3
+    // against 265.72 tessellated, while the halves (whose rings the plane had split) read
+    // 265.72. Both are now cones over the solid's own triangles, clipped to each side.
+    let mut d = replay_find(
+        "2026-10-20-section-of-a-700m-ring-wall-with-two-corners-nudged-a-micrometre.json",
+    );
+    let s = d.model().sections()[0].0;
+    let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
+    assert!((whole - 265.721_959_175_5).abs() < 1e-9, "{whole}");
+    let kept = d.model().kept_volume(s).unwrap();
+    ok(&mut d, Op::FlipSection { section: s });
+    let other = d.model().kept_volume(s).unwrap();
+    // Measured: 9e-14 of the whole apart.
+    assert!(
+        (kept + other - whole).abs() <= 1e-11 * whole,
+        "{kept} + {other} vs {whole}"
+    );
+    // The plane through the centre cuts the ring in two nearly equal halves.
+    assert!((kept - other).abs() < 0.1, "{kept} {other}");
+    sawhorse_kernel::testing::check_model(d.model()).unwrap();
+}
+
+#[test]
+fn a_sliver_of_a_700m_circle_measures_its_planes_about_itself() {
+    // Lane 23b's second fix pass (fuzz seed 20281207, snapping off, sequence 6,000; on
+    // 1baa37d too): a 700 m arc drawn as 0.34 mm segments and a chord, copied turned 45
+    // degrees, a 3.8 mm sliver of it pulled 0.5 m down. Its side faces lie within 1e-8 m of
+    // their stored planes, whose normals tilt 2.5e-6 rad off their corners' across 3.8 mm.
+    // The oracle's measure over the stored planes was taken about the world origin, 700 m
+    // away, and read the 1.84e-6 m3 sliver as 3.17e-6; about the solid's own centre (as the
+    // kept volume and `TriSolid::volume` are taken) it reads it to 1e-6 of itself.
+    let d = replay_find("2026-10-20-section-of-a-sliver-of-a-700m-circle-snap-off.json");
+    let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
+    assert!((whole - 1.842_746_758e-6).abs() < 1e-14, "{whole}");
+    sawhorse_kernel::testing::check_model(d.model()).unwrap();
+    // The section at z = 0 runs along the sliver's top face: one half keeps it all.
+    let s = d.model().sections()[0].0;
+    let kept = d.model().kept_volume(s).unwrap();
+    let mut flipped = d.clone();
+    flipped.apply(&Op::FlipSection { section: s }).unwrap();
+    let other = flipped.model().kept_volume(s).unwrap();
+    assert!(
+        (kept + other - whole).abs() <= 1e-11 * whole,
+        "{kept} + {other} vs {whole}"
+    );
 }

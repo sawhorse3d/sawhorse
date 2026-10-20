@@ -19,7 +19,10 @@
 //!   plane along where the face was: a sliver face within a micrometre of the plane;
 //! - planes through one, two, three or four vertices of a folded box;
 //! - nested holes: a box with a pocket around a post that has a hole of its own;
-//! - planes exactly on a face, facing either way.
+//! - planes exactly on a face, facing either way;
+//! - ring walls (a polygon with a polygon hole, pulled up) from 5 cm to a kilometre across,
+//!   up to 5 km from the origin, with some corners nudged by up to a few micrometres, so the
+//!   ring round the hole bends within tolerance (lane 23b's second fix pass).
 //!
 //! And they check, for the plane and for its flip:
 //!
@@ -46,7 +49,7 @@
 
 use glam::{DVec2, DVec3};
 use proptest::prelude::*;
-use sawhorse_kernel::model::{Model, Op, OpOutcome};
+use sawhorse_kernel::model::{DrawTarget, Model, Op, OpOutcome};
 use sawhorse_kernel::testing::{Repro, check_sections};
 use sawhorse_kernel::transform::Xform;
 use sawhorse_kernel::{Document, snap};
@@ -1706,18 +1709,90 @@ fn replay(name: &str) -> Document {
 }
 
 /// Both halves of `section` (as it is and flipped): the cap areas, each half's vector area
-/// and volume, and the whole they make, checked with every property along the way.
+/// and volume, and the whole they make, checked with every property along the way. Since
+/// lane 23b's second fix pass each half's volume is also held to [`volume_kept`], worked out
+/// without the cut: they differ only where the tie rule puts a corner within `LENGTH_EPS` of
+/// the plane on it (the cut measures the corner where it is, `volume_kept` reads its
+/// distance as zero), by at most that times the solids' area.
 fn halves(d: &Document, section: u64) -> [(f64, DVec3, f64); 2] {
     let mut d = d.clone();
     let mut out = [(0.0, DVec3::ZERO, 0.0); 2];
+    let surface: f64 = d
+        .model()
+        .objects()
+        .iter()
+        .filter_map(|(_, o)| o.tri_solid().ok())
+        .flat_map(|t| {
+            t.triangles
+                .iter()
+                .map(|k| {
+                    let [a, b, c] = k.map(|i| t.positions[i as usize]);
+                    (b - a).cross(c - a).length() * 0.5
+                })
+                .collect::<Vec<f64>>()
+        })
+        .sum();
     for half in &mut out {
         let cut = d.model().section_cut(section).unwrap();
         let kept = d.model().kept_part(section).unwrap();
         *half = (cut.area, kept.vector_area, kept.volume);
+        let apart = volume_kept(d.model(), section);
+        assert!(
+            (kept.volume - apart).abs()
+                <= sawhorse_kernel::tolerance::LENGTH_EPS * surface + 1e-12 * apart.abs(),
+            "kept {} measured without the cut {apart}",
+            kept.volume
+        );
         cut_cleanly(&mut d.clone(), section).unwrap();
         d.apply(&Op::FlipSection { section }).unwrap();
     }
     out
+}
+
+/// What `section` keeps of the solids it reaches, measured without the cut, its cap or any
+/// cone (lane 23b's second fix pass): the divergence theorem with the field `g(x) n`, where
+/// `g` is a point's distance beyond the plane along its normal `n` and zero behind it (zero
+/// within `LENGTH_EPS` of the plane, the tie rule), whose divergence is 1 on the kept side
+/// and 0 behind: the flux of `g n` through the solid's own triangles (`tri_solid`), each
+/// clipped to the kept side, is the volume it keeps. The plane adds nothing (`g` is zero on
+/// it), so no cap enters; nor does any reference point.
+fn volume_kept(m: &Model, section: u64) -> f64 {
+    let s = m.section(section).unwrap();
+    let (o, n) = (s.origin, s.normal);
+    let mut v = 0.0;
+    for (_, x) in m.objects() {
+        let Ok(t) = x.tri_solid() else { continue };
+        let g = |p: DVec3| {
+            let d = (p - o).dot(n);
+            if d.abs() <= sawhorse_kernel::tolerance::LENGTH_EPS {
+                0.0
+            } else {
+                d
+            }
+        };
+        for tri in &t.triangles {
+            let p = tri.map(|i| t.positions[i as usize]);
+            let d = p.map(g);
+            let mut ring: Vec<(DVec3, f64)> = Vec::with_capacity(4);
+            for k in 0..3 {
+                let j = (k + 1) % 3;
+                if d[k] >= 0.0 {
+                    ring.push((p[k], d[k]));
+                }
+                if (d[k] > 0.0 && d[j] < 0.0) || (d[k] < 0.0 && d[j] > 0.0) {
+                    ring.push((p[k] + (p[j] - p[k]) * (d[k] / (d[k] - d[j])), 0.0));
+                }
+            }
+            // g is linear over the (planar) piece: its integral over each fan triangle is
+            // the triangle's area times the mean of its corners' g.
+            for i in 1..ring.len().saturating_sub(1) {
+                let (a, b, c) = (ring[0], ring[i], ring[i + 1]);
+                let along = (b.0 - a.0).cross(c.0 - a.0).dot(n) * 0.5;
+                v += along * (a.1 + b.1 + c.1) / 3.0;
+            }
+        }
+    }
+    v
 }
 
 /// The lane-19 verifier's find (`planes_on_a_nudged_face_drawn_on`, `PROPTEST_CASES=100000`,
@@ -1756,14 +1831,16 @@ fn the_lane_19_verification_find() {
         "{open} {open_beyond}"
     );
     assert!(beyond > 0.0 && beyond < 2e-8, "{beyond}");
-    // The halves integrate each face over its stored plane, the whole is the volume of the
-    // tessellation through the corners: they differ by up to the faces' bend (1e-6) times
-    // their area (0.0625 m2 on this face). check_sections holds them exactly to the
-    // plane-integrated whole.
+    // Since lane 23b's second fix pass the halves are the solid's own triangles clipped to
+    // each side (as is the whole, `Object::volume`), so they make it to rounding (9e-19 m3
+    // apart; to lane 23b each face was integrated over its stored plane or its rings' fans,
+    // and the two measures were held only to 1e-7 here). The sliver beyond is 1.42082e-8 m3,
+    // measured without the cut too (`halves`, `volume_kept`).
     assert!(
-        (kept + beyond - whole).abs() < 1e-7,
+        (kept + beyond - whole).abs() < 1e-12 * whole,
         "{kept} + {beyond} of {whole}"
     );
+    assert!((beyond - 1.420_82e-8).abs() < 1e-13, "{beyond}");
 }
 
 /// The lane-19b property tests' two finds (`planes_on_a_nudged_face_drawn_on` as widened,
@@ -1784,7 +1861,8 @@ fn the_lane_19_verification_find() {
 /// or 0.22 micrometres inside the face, and every other corner of the face is that far outside
 /// it, so the plane cuts a sliver that thin off the whole face. Both halves have the same cap,
 /// the whole face less what the moved corner takes off it (0.078125 m2 to 1e-7), and both close
-/// to 1e-15; the half outside is the sliver (5e-9 and 1.5e-8 m3).
+/// to 1e-15; the half outside is the sliver (5e-9 and 1.5e-8 m3), and the halves make the
+/// whole to rounding (lane 23b's second fix pass: both are the solid's own triangles).
 #[test]
 fn the_lane_19b_property_finds() {
     for name in [
@@ -1805,7 +1883,7 @@ fn the_lane_19b_property_finds() {
         assert!(open_beyond.length() < 1e-15, "{name}: {open_beyond}");
         assert!(beyond > 1e-9 && beyond < 2e-8, "{name}: {beyond}");
         assert!(
-            (kept + beyond - whole).abs() < 1e-7,
+            (kept + beyond - whole).abs() < 1e-12 * whole,
             "{name}: {kept} + {beyond} of {whole}"
         );
     }
@@ -1823,7 +1901,12 @@ fn the_lane_19b_property_finds() {
 /// cap (a cap 0 m around).
 /// Lane 19c: every corner is where it is, the top is clipped along its own triangles, and the
 /// part of it above the plane is the cap of both halves, 0.0251 m2: the box below is closed
-/// by it, and so is the sliver above (1.2e-8 m3), each to 1e-15.
+/// by it, and so is the sliver above, each to 1e-15. The sliver is 8.354e-9 m3: the volume
+/// its triangles enclose with the cap, and the flux of the distance beyond the plane through
+/// the solid's triangles alike (`volume_kept`). Lanes 19c to 23b read it as 1.2e-8 (asserted
+/// here between 1e-8 and 1.5e-8): the bent top face integrated over its stored plane, then
+/// over its rings' fans; the halves made the tessellated whole only to 1e-7. Lane 23b's
+/// second fix pass measures the halves over the solid's own triangles.
 #[test]
 fn the_lane_19b_verification_find() {
     for name in [
@@ -1843,9 +1926,9 @@ fn the_lane_19b_verification_find() {
         }
         assert!(open.length() < 1e-15, "{name}: {open}");
         assert!(open_beyond.length() < 1e-15, "{name}: {open_beyond}");
-        assert!(beyond > 1e-8 && beyond < 1.5e-8, "{name}: {beyond}");
+        assert!((beyond - 8.354e-9).abs() < 1e-13, "{name}: {beyond}");
         assert!(
-            (kept + beyond - whole).abs() < 1e-7,
+            (kept + beyond - whole).abs() < 1e-12 * whole,
             "{name}: {kept} + {beyond} of {whole}"
         );
         // What the cut-away half had no cap for: its cap now runs round the whole region.
@@ -1874,11 +1957,205 @@ fn the_lane_19c_resumed_find() {
     let whole: f64 = d.model().objects().iter().map(|(_, o)| o.volume()).sum();
     assert!(cap_in == 0.0, "{cap_in}");
     assert!(open_in.length() < 1e-15, "{open_in}");
-    // The kept half is the whole box: its volume measured over the faces' stored planes,
-    // the whole's over its triangles, 2e-9 m3 apart (the faces bend by up to 1 micrometre).
-    assert!((kept_in - whole).abs() < 1e-8, "{kept_in} {whole}");
+    // The kept half is the whole box: both over the solid's own triangles since lane 23b's
+    // second fix pass (to then the half was measured over the faces' stored planes or their
+    // rings' fans, 2e-9 m3 off the triangles, the faces bending by up to 1 micrometre).
+    assert!((kept_in - whole).abs() < 1e-12 * whole, "{kept_in} {whole}");
     assert!((cap_out - 0.019_752_246).abs() < 1e-9, "{cap_out}");
     assert!(open_out.length() < 1e-15, "{open_out}");
-    // No volume, measured over the bent end face's stored plane: 1e-9 m3.
-    assert!(kept_out.abs() < 1e-8, "{kept_out}");
+    // No volume: sheets on the plane and their caps (exactly 0 over the triangles; 1e-9 m3
+    // over the bent end face's stored plane, to lane 23b).
+    assert!(kept_out.abs() < 1e-15, "{kept_out}");
+}
+
+/// Lane 23b's second fix pass: a ring wall (a regular polygon of `sides` with the same
+/// polygon `width` inside it as its hole, pulled up `height`), its centre anywhere within
+/// 5 km of the origin, then some of its corners (a face's, as the four of a side face in
+/// fuzz seed 20281103, or any few) nudged by up to a few micrometres without autofold, which
+/// bends its top and bottom rings within tolerance (or is refused, leaving the ring as drawn).
+#[derive(Debug, Clone)]
+struct BentRing {
+    sides: usize,
+    radius: f64,
+    /// The wall's width, as a fraction of the radius (at least 0.2 mm).
+    width: f64,
+    height: f64,
+    centre: [f64; 3],
+    start: f64,
+    which: Moved,
+    nudge: [f64; 3],
+    at: At,
+    normal: [f64; 3],
+}
+
+#[derive(Debug, Clone)]
+enum Moved {
+    /// The corners of one face (picked modulo the count).
+    Face(usize),
+    /// Any of the corners (vertex `k` when entry `k` modulo the length is set).
+    Some(Vec<bool>),
+}
+
+fn bent_ring() -> impl Strategy<Value = BentRing> {
+    (
+        (
+            3usize..25,
+            prop_oneof![1 => 0.05..1.0f64, 1 => 1.0..50.0f64, 1 => 50.0..1000.0f64],
+            prop_oneof![2 => 0.002..0.5f64, 1 => 1e-6..0.002f64],
+            prop_oneof![2 => 0.01..2.0f64, 1 => Just(0.25)],
+            prop_oneof![2 => Just([0.0; 3]), 1 => prop::array::uniform3(-5000.0..5000.0f64)],
+            0.0..std::f64::consts::TAU,
+        ),
+        prop_oneof![
+            1 => (0usize..128).prop_map(Moved::Face),
+            1 => prop::collection::vec(prop::bool::weighted(0.1), 4..96).prop_map(Moved::Some),
+        ],
+        nudge(),
+        at(),
+        normal(),
+    )
+        .prop_map(
+            |((sides, radius, width, height, centre, start), which, nudge, at, normal)| BentRing {
+                sides,
+                radius,
+                width,
+                height,
+                centre,
+                start,
+                which,
+                nudge,
+                at,
+                normal,
+            },
+        )
+}
+
+/// The ring wall, nudged ([`BentRing`]); `None` when the kernel refuses to draw or pull it.
+fn bent_ring_wall(r: &BentRing) -> Option<(Document, u64)> {
+    let mut d = Document::new();
+    let c = DVec3::from_array(r.centre);
+    let sketch = match d
+        .apply(&Op::NewSketch {
+            origin: c.to_array(),
+            normal: [0.0, 0.0, 1.0],
+        })
+        .ok()?
+    {
+        OpOutcome::SketchCreated { sketch } => sketch,
+        o => panic!("{o:?}"),
+    };
+    let width = (r.radius * r.width).max(2e-4);
+    for radius in [r.radius, r.radius - width] {
+        let points: Vec<[f64; 3]> = (0..r.sides)
+            .map(|k| {
+                let a = r.start + std::f64::consts::TAU * k as f64 / r.sides as f64;
+                (c + DVec3::new(radius * a.cos(), radius * a.sin(), 0.0)).to_array()
+            })
+            .collect();
+        d.apply(&Op::Draw {
+            target: DrawTarget::Sketch { sketch },
+            points,
+            closed: true,
+            curve: None,
+        })
+        .ok()?;
+    }
+    let region = d
+        .model()
+        .sketch(sketch)?
+        .regions()
+        .find(|(_, g)| !g.holes.is_empty())
+        .map(|(id, _)| sawhorse_kernel::ids::to_public(id))?;
+    let object = match d
+        .apply(&Op::Extrude {
+            sketch,
+            region,
+            distance: r.height,
+        })
+        .ok()?
+    {
+        OpOutcome::ObjectCreated { object } => object,
+        o => panic!("{o:?}"),
+    };
+    let points: Vec<[f64; 3]> = {
+        let b = d.model().object(object)?.brep();
+        match &r.which {
+            Moved::Face(k) => {
+                let fs: Vec<_> = b.faces().map(|(_, f)| f).collect();
+                let f = fs[k % fs.len()];
+                f.loops()
+                    .flat_map(|l| b.loop_points(l))
+                    .map(|p| p.to_array())
+                    .collect()
+            }
+            Moved::Some(set) => b
+                .vertices()
+                .enumerate()
+                .filter(|(k, _)| set[k % set.len()])
+                .map(|(_, (_, v))| v.pos.to_array())
+                .collect(),
+        }
+    };
+    if !points.is_empty() {
+        // A move the kernel refuses (a face bent beyond tolerance) leaves the ring as drawn.
+        let _ = d.apply(&Op::TransformGeometry {
+            object,
+            points,
+            xform: Xform::translation(DVec3::from_array(r.nudge)),
+            autofold: false,
+        });
+    }
+    Some((d, object))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(256),
+        ..ProptestConfig::default()
+    })]
+
+    /// Lane 23b's second fix pass: a bent ring wall, far out or not, cut anywhere, with plane
+    /// snapping on and off: the fuzzer's checks both ways round (`cut_cleanly`), and the two
+    /// halves make the solid's tessellated volume to rounding: 1e-9 of it, plus 1e-13 of the
+    /// most a cone over its triangles from its centre can sum to (its area times its size;
+    /// the halves are those triangles clipped). Lane 23b's ring fans were off by the bend
+    /// times the hole's area (fuzz seed 20281103: 0.47 m3 of 265.7).
+    #[test]
+    fn bent_ring_walls_cut_into_halves_that_make_their_volume(
+        r in bent_ring(),
+        snap_on in any::<bool>(),
+    ) {
+        prop_assume!(DVec3::from_array(r.normal).length() > 0.05);
+        snapping(snap_on, || -> Result<(), TestCaseError> {
+            let Some((mut d, object)) = bent_ring_wall(&r) else {
+                return Ok(());
+            };
+            let origin = plane_origin(d.model(), object, &r.at);
+            let section = add_section(&mut d, origin, unit(DVec3::from_array(r.normal), DVec3::Z));
+            cut_cleanly(&mut d, section)?;
+            let o = d.model().object(object).unwrap();
+            let whole = o.volume();
+            let t = o.tri_solid().unwrap();
+            let area: f64 = t
+                .triangles
+                .iter()
+                .map(|k| {
+                    let [a, b, c] = k.map(|i| t.positions[i as usize]);
+                    (b - a).cross(c - a).length() * 0.5
+                })
+                .sum();
+            let vs = vertices(d.model(), object);
+            let lo = vs.iter().fold(DVec3::splat(f64::INFINITY), |a, v| a.min(*v));
+            let hi = vs.iter().fold(DVec3::splat(f64::NEG_INFINITY), |a, v| a.max(*v));
+            let kept = d.model().kept_volume(section).unwrap();
+            d.apply(&Op::FlipSection { section }).unwrap();
+            let other = d.model().kept_volume(section).unwrap();
+            let allowed = 1e-9 * whole.abs() + 1e-13 * area * (hi - lo).length();
+            prop_assert!(
+                (kept + other - whole).abs() <= allowed,
+                "{kept} + {other} vs {whole} (allowed {allowed})"
+            );
+            Ok(())
+        })?;
+    }
 }

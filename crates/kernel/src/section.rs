@@ -240,15 +240,25 @@ impl SectionCut {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct KeptPart {
     /// Enclosed volume, cubic metres: the cone from a point beside each solid (its box's
-    /// centre) over every kept face ring's own 3D corners (a fan of tetrahedra), plus the
-    /// cap's. Lane 23b: it was the divergence theorem about the world origin over each
+    /// centre) over the solid's own triangles (the ones [`crate::object::Object::tri_solid`]
+    /// measures it by), each clipped to the kept side ([`clip_triangle`]: the whole triangle
+    /// of a face kept whole, the polygon a split triangle keeps), plus the cap's. Every piece
+    /// lies in its triangle, so its cone is exact, and a triangle's kept and cut-away pieces
+    /// tile it through the same crossings: the two halves add up to the solid's tessellated
+    /// volume, whatever its faces' bends.
+    ///
+    /// History. To lane 23 it was the divergence theorem about the world origin over each
     /// face's stored plane and its ring's area in that plane, and a face whose corners sit
     /// within the planarity tolerance of its plane but tilt across a narrow width (a fin a
     /// hundredth of a millimetre wide and 2 m tall) has a stored normal that is not its
-    /// corners': the half's surface was closed (its Newell sum cancels) but the stored
-    /// normals' sum did not, and 1.5 m from the origin that read a hair of the fin as half
-    /// the solid, below zero (fuzz seed 20271003). Over the corners and about a point
-    /// beside the solid, a closed surface's volume does not depend on the point.
+    /// corners': 1.5 m from the origin that read a hair of the fin as half the solid, below
+    /// zero (fuzz seed 20271003). Lane 23b took the cone over each kept face ring's corners
+    /// (a fan of tetrahedra from the ring's first corner): exact for a flat ring, but a fan
+    /// spans the ring's whole hull, so over a bent ring it is a different surface from the
+    /// face's triangles, off by its bend times the fan's area, which for a ring round a hole
+    /// is the hole's too: a 700 m ring wall with two corners nudged up a micrometre read its
+    /// whole 0.47 m3 above its tessellated 265.7 m3 (fuzz seed 20281103,
+    /// `tests/repro/2026-10-20-section-of-a-700m-ring-wall-with-two-corners-nudged-a-micrometre.json`).
     pub volume: f64,
     /// The surface's vector area, square metres: every kept face ring's own (Newell's sum
     /// over its 3D corners and crossings) plus the cap's (its area along -normal). Every
@@ -274,9 +284,9 @@ impl KeptPart {
         self.area += area.abs();
     }
 
-    /// A kept face ring (3D corners, wound outward): its cone from `at`, a fan of
-    /// tetrahedra over the corners themselves, so a face's bend within tolerance is
-    /// measured as it is, never through its stored plane.
+    /// A planar polygon (3D corners, wound outward; a triangle of a face, or the part of one
+    /// a plane keeps): its cone from `at`, a fan of tetrahedra over its corners, exact since
+    /// they lie in one plane.
     fn cone(&mut self, ring: &[DVec3], at: DVec3) {
         let Some(&p0) = ring.first() else {
             return;
@@ -382,7 +392,7 @@ fn node_point(b: &Brep, dist: &Distances, n: Node) -> DVec3 {
 /// committed solid has none: the validator refuses such a solid first), a fan from the first
 /// corner of each loop. Either way they are a 2-chain whose boundary is the face's loops
 /// (every diagonal is walked once each way), which is all the cut needs.
-fn face_triangles(b: &Brep, f: &Face, loops: &[Vec<VertexId>]) -> Vec<[VertexId; 3]> {
+pub(crate) fn face_triangles(b: &Brep, f: &Face, loops: &[Vec<VertexId>]) -> Vec<[VertexId; 3]> {
     crate::object::face_triangles(b, f, loops).unwrap_or_else(|_| {
         loops
             .iter()
@@ -474,6 +484,12 @@ struct Clipped {
     /// Every face with anything kept, in face order: the rings of its kept part (nodes, in
     /// the face's turn), its kept triangles merged back into one face.
     faces: Vec<(FaceId, Vec<Vec<Node>>)>,
+    /// The faces the plane splits, and what each of their triangles keeps (the polygons of
+    /// [`clip_triangle`], in the face's turn, each lying in its own triangle): the kept
+    /// part's own surface, triangle by triangle, before the merge into rings straightens the
+    /// runs of chords. A face in `faces` and not here is kept whole. [`kept_under`] measures
+    /// the kept volume over these.
+    pieces: BTreeMap<FaceId, Vec<Vec<Node>>>,
     /// The chords, in order: every segment the kept faces leave open, the kept part on its
     /// left, so the material is on its left seen from the plane's normal.
     chords: Vec<(Node, Node)>,
@@ -540,6 +556,7 @@ struct Run {
 fn clip_solid(b: &Brep, plane: &Plane, dist: &Distances, tol: f64) -> Clipped {
     let mut out = Clipped {
         faces: Vec::new(),
+        pieces: BTreeMap::new(),
         chords: Vec::new(),
     };
     let below = dist.values().any(|&d| d < 0.0);
@@ -576,9 +593,21 @@ fn clip_solid(b: &Brep, plane: &Plane, dist: &Distances, tol: f64) -> Clipped {
         if loops.iter().flatten().all(|v| dist[*v] < 0.0) {
             continue;
         }
-        let rings = clip_face(b, plane, dist, tol, f, &loops, place, &mut runs);
+        let mut pieces = Vec::new();
+        let rings = clip_face(
+            b,
+            plane,
+            dist,
+            tol,
+            f,
+            &loops,
+            place,
+            &mut runs,
+            &mut pieces,
+        );
         if !rings.is_empty() {
             out.faces.push((fk, rings));
+            out.pieces.insert(fk, pieces);
         }
     }
     // The solid's edges with both ends on the plane: one kept from both sides closes.
@@ -608,7 +637,8 @@ fn clip_solid(b: &Brep, plane: &Plane, dist: &Distances, tol: f64) -> Clipped {
 }
 
 /// One face the plane splits ([`clip_solid`]): its triangles clipped, merged back into the
-/// rings of its kept part (returned), and its runs of chords added to `runs`.
+/// rings of its kept part (returned), its runs of chords added to `runs`, and what each
+/// triangle keeps added to `pieces`.
 #[allow(clippy::too_many_arguments)]
 fn clip_face(
     b: &Brep,
@@ -619,6 +649,7 @@ fn clip_face(
     loops: &[Vec<VertexId>],
     place: usize,
     runs: &mut Vec<Run>,
+    pieces: &mut Vec<Vec<Node>>,
 ) -> Vec<Vec<Node>> {
     // The face's own edges; any other segment between two of its corners is a diagonal.
     let edges: BTreeSet<Node> = loops
@@ -637,6 +668,9 @@ fn clip_face(
                 b: e,
                 chord: c.chord == Some((a, e)),
             });
+        }
+        if k >= 3 {
+            pieces.push(c.kept);
         }
     }
     // A segment two kept triangles walk opposite ways (a diagonal, or part of one) closes.
@@ -1400,6 +1434,21 @@ fn clip_exactly(rings: &[Vec<DVec2>], others: &[HalfPlane], tol: f64) -> Vec<Vec
     .collect()
 }
 
+/// The point the kept volume's cones are taken from ([`KeptPart::volume`]): the centre of
+/// the solid's box (the world origin for a solid with no finite corner). Beside the solid,
+/// so no product of its distance from the world origin enters the sum (lane 23b).
+pub(crate) fn cone_apex(b: &Brep) -> DVec3 {
+    let (lo, hi) = b.vertices().fold(
+        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+        |(lo, hi), (_, v)| (lo.min(v.pos), hi.max(v.pos)),
+    );
+    if lo.is_finite() && hi.is_finite() {
+        (lo + hi) * 0.5
+    } else {
+        DVec3::ZERO
+    }
+}
+
 /// What `frame` keeps of solid `o` under the distances `dist` (one per vertex; [`distances`]
 /// gives the tie rule's), as a closed surface: the kept part of every face (its kept
 /// triangles merged back into rings, [`clip_solid`]) plus the cap facing `-normal`, laid from
@@ -1409,27 +1458,34 @@ fn kept_under(o: &Object, frame: &Plane, dist: &Distances) -> KeptPart {
     let tol = ARRANGE_TOL * solid_scale(o);
     let cut = clip_solid(b, frame, dist, tol);
     let mut part = KeptPart::default();
-    // The cones' apex: the centre of the solid's box (lane 23b; see KeptPart::volume).
-    let (lo, hi) = b.vertices().fold(
-        (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
-        |(lo, hi), (_, v)| (lo.min(v.pos), hi.max(v.pos)),
-    );
-    let at = if lo.is_finite() && hi.is_finite() {
-        (lo + hi) * 0.5
-    } else {
-        DVec3::ZERO
-    };
+    let at = cone_apex(b);
     for (fk, rings) in &cut.faces {
-        let fp = &b.faces[*fk].plane;
+        let f = &b.faces[*fk];
+        let fp = &f.plane;
         let mut area = 0.0;
         for r in rings {
             let ring: Vec<DVec3> = r.iter().map(|n| node_point(b, dist, *n)).collect();
             let flat: Vec<DVec2> = ring.iter().map(|p| fp.to_local(*p)).collect();
             area += sawhorse_tessellate::signed_area(&flat);
             part.newell(&ring);
-            part.cone(&ring, at);
         }
         part.area += area.abs();
+        // The volume over the face's own triangles (see KeptPart::volume): what each split
+        // triangle keeps, or every triangle of a face kept whole.
+        match cut.pieces.get(fk) {
+            Some(pieces) => {
+                for piece in pieces {
+                    let ring: Vec<DVec3> = piece.iter().map(|n| node_point(b, dist, *n)).collect();
+                    part.cone(&ring, at);
+                }
+            }
+            None => {
+                let loops: Vec<Vec<VertexId>> = f.loops().map(|l| b.loop_vertices(l)).collect();
+                for t in face_triangles(b, f, &loops) {
+                    part.cone(&t.map(|v| b.vertices[v].pos), at);
+                }
+            }
+        }
     }
     let rings = cap_rings(b, frame, dist, &cut.chords, tol);
     part.cap_length += rings
@@ -1662,8 +1718,9 @@ impl Model {
     }
 
     /// Volume, cubic metres, of what section `id` keeps of the solids it reaches (ignoring
-    /// other sections): the divergence theorem over every face clipped to the kept side
-    /// plus the cap. Tests and the fuzzer check it against the whole volume.
+    /// other sections): the cone over every triangle of every face clipped to the kept side
+    /// plus the cap ([`KeptPart::volume`]). Tests and the fuzzer check it against the whole
+    /// volume.
     pub fn kept_volume(&self, id: u64) -> Result<f64, KernelError> {
         Ok(self.kept_part(id)?.volume)
     }
