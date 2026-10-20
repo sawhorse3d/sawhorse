@@ -9,6 +9,14 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        # An existing release tag to build for again from the dispatched ref (2026-10-20:
+        # the v0.1.0-alpha.4 macOS build never got a runner on its tag's workflow file).
+        # Empty: a v<run>-dev draft, as before.
+        description: "Release tag to build into (empty: a v<run>-dev draft)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -25,7 +33,10 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
-          - platform: macos-latest
+          # macos-14 (arm64, like macos-latest), pinned 2026-10-20: for a whole afternoon
+          # macos-latest, macos-15 and macos-26 handed out no runner ("not acquired by
+          # Runner of type hosted"), nine attempts, while a macos-14 job started in 5 s.
+          - platform: macos-14
             args: ""
           - platform: ubuntu-22.04
             args: ""
@@ -79,7 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+          tagName: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || format('v{0}-dev', github.run_number) }}
           releaseName: "Sawhorse __VERSION__"
           releaseBody: "Pre-alpha build. Installers are unsigned until signing is set up; your OS will warn before opening them."
           releaseDraft: true
@@ -94,7 +105,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       # The draft release the build job made (the same expression as its tagName).
-      TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+      TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || format('v{0}-dev', github.run_number) }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
