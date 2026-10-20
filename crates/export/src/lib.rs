@@ -226,6 +226,17 @@ pub fn object_3mf(object: &Object) -> Result<Vec<u8>, ExportError> {
 }
 
 /// sRGB byte to linear float (glTF colour factors are linear).
+/// Lane 23b: whether an edge between faces with outward normals `n` is where the surface
+/// turns away from the eye (`to_eye`: towards the eye from the edge): exactly one of its two
+/// faces faces the eye. A soft edge is drawn only there, as the outline of a round surface
+/// (a pulled circle's side seen from the front is two outline lines, not its 24 seams), in
+/// SVG drawings and sheet viewports alike. A face seen edge-on faces neither way, so of the
+/// two seams beside it the one next to a face turned to the eye is the outline.
+pub(crate) fn soft_outline(n: [glam::DVec3; 2], to_eye: glam::DVec3) -> bool {
+    let faces = |m: glam::DVec3| m != glam::DVec3::ZERO && m.dot(to_eye) > 1e-9;
+    faces(n[0]) != faces(n[1])
+}
+
 pub(crate) fn srgb_to_linear(c: u8) -> f64 {
     let c = f64::from(c) / 255.0;
     if c <= 0.04045 {

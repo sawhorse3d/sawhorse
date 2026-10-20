@@ -259,6 +259,9 @@ struct Edge3 {
     b: DVec3,
     normals: [DVec3; 2],
     cut: bool,
+    /// A solid's soft edge (lane 23b): drawn only where it is the outline of the surface
+    /// (`crate::soft_outline`), as SketchUp's elevations draw a softened cylinder.
+    soft: bool,
     /// A solid's edge: its index in [`Picture::refs`] and where `a` and `b` are along it.
     src: Option<(usize, f64, f64)>,
 }
@@ -369,6 +372,11 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
         let corners = b.corner_face_ids();
         let faces_at = |v| corners.get(&v).cloned().unwrap_or_default();
         for (e, edge) in b.edges() {
+            // Lane 23b: hidden edges are not drawn; soft ones only as the outline (draw()).
+            let flags = o.flags_of(e);
+            if flags & sawhorse_kernel::edges::HIDDEN != 0 {
+                continue;
+            }
             let (p, q) = b.edge_points(e);
             if let Some((t0, t1)) = clip_params(p, q, &clip) {
                 let src = b.half_edge(edge.he).map(|h| {
@@ -384,6 +392,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: p.lerp(q, t1),
                     normals: [normal_of(Some(edge.he)), normal_of(edge.twin)],
                     cut: false,
+                    soft: flags & sawhorse_kernel::edges::SOFT != 0,
                     src,
                 });
             }
@@ -400,7 +409,13 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
         }
         let mut seen = std::collections::BTreeSet::new();
         let mut push = |pic: &mut Picture, a: u32, b: u32| {
+            // Lane 23b: a mesh's soft and hidden edges are left out, as SVG drawings do (a
+            // mesh edge carries no face normals to find an outline by).
+            let flagged = m.flags_between(a, b)
+                & (sawhorse_kernel::edges::SOFT | sawhorse_kernel::edges::HIDDEN)
+                != 0;
             if seen.insert((a.min(b), a.max(b)))
+                && !flagged
                 && let Some((p, q)) =
                     clip_segment(m.positions[a as usize], m.positions[b as usize], &clip)
             {
@@ -409,6 +424,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: q,
                     normals: [DVec3::ZERO; 2],
                     cut: false,
+                    soft: false,
                     src: None,
                 });
             }
@@ -444,6 +460,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: q,
                     normals: [DVec3::ZERO; 2],
                     cut: false,
+                    soft: false,
                     src: None,
                 });
             }
@@ -467,6 +484,7 @@ fn gather(model: &Model, frame: &Frame) -> Result<Picture, ExportError> {
                     b: cut.to_world(*b),
                     normals: [DVec3::ZERO; 2],
                     cut: true,
+                    soft: false,
                     src: None,
                 });
             }
@@ -659,6 +677,9 @@ pub fn draw(
     };
     let mut lines = Vec::new();
     for e in &pic.edges {
+        if e.soft && !crate::soft_outline(e.normals, -view_dir(e.a.lerp(e.b, 0.5))) {
+            continue;
+        }
         let (qa, qb) = (project(e.a), project(e.b));
         let (a2, b2) = (qa.truncate(), qb.truncate());
         if a2.distance(b2) <= tol2 {
@@ -691,7 +712,7 @@ pub fn draw(
             let (n0, n1) = (e.normals[0], e.normals[1]);
             let v = view_dir(e.a.lerp(e.b, 0.5));
             let (h0, h1) = (n0 != DVec3::ZERO, n1 != DVec3::ZERO);
-            let profile = if h0 != h1 {
+            let profile = if e.soft || h0 != h1 {
                 true
             } else if h0 {
                 let (d0, d1) = (n0.dot(v), n1.dot(v));
@@ -854,6 +875,81 @@ mod tests {
             .iter()
             .filter(|l| l.kind != LineKind::Hidden)
             .count()
+    }
+
+    /// A 24-segment circle of radius 0.3 m at the origin pulled 0.4 m up: as a curve (its
+    /// walls soft and smooth, lane 23) or as plain edges (hard seams).
+    fn cylinder(curve: bool) -> Model {
+        use sawhorse_kernel::curve::{CurveKind, CurveSpec};
+        let mut m = Model::with_ground_sketch();
+        let points: Vec<[f64; 3]> = (0..24)
+            .map(|k| {
+                let a = std::f64::consts::TAU * k as f64 / 24.0;
+                [0.3 * a.cos(), 0.3 * a.sin(), 0.0]
+            })
+            .collect();
+        m.apply(&Op::Draw {
+            target: sawhorse_kernel::model::DrawTarget::Sketch { sketch: 1 },
+            points,
+            closed: true,
+            curve: curve.then_some(CurveSpec {
+                kind: CurveKind::Circle,
+                centre: Some([0.0; 3]),
+            }),
+        })
+        .unwrap();
+        m.apply(&Op::Extrude {
+            sketch: 1,
+            region: 1,
+            distance: 0.4,
+        })
+        .unwrap();
+        m
+    }
+
+    /// The visible lines that run straight up the drawing.
+    fn uprights(d: &Drawing) -> Vec<&Line> {
+        d.lines
+            .iter()
+            .filter(|l| l.kind != LineKind::Hidden)
+            .filter(|l| (l.a[0] - l.b[0]).abs() < 1e-9 && (l.a[1] - l.b[1]).abs() > 1e-6)
+            .collect()
+    }
+
+    #[test]
+    fn a_pulled_circle_seen_from_the_front_is_its_outline_not_its_seams() {
+        // Lane 23b (verifier R5): the walls of a pulled circle are soft, and a sheet's
+        // viewport drew all their seams (13 upright lines in front). Now a soft edge is drawn
+        // only where the surface turns away: the two sides of the outline, as SketchUp's
+        // elevations and the SVG export draw it.
+        for view in [StdView::Front, StdView::Back, StdView::Left, StdView::Right] {
+            let d = draw(&cylinder(true), &std(view), &DrawOptions::default()).unwrap();
+            let up = uprights(&d);
+            assert_eq!(up.len(), 2, "{view:?}: {up:?}");
+            assert!(up.iter().all(|l| l.kind == LineKind::Profile), "{up:?}");
+            // At the cylinder's sides, 0.6 m apart.
+            let xs: Vec<f64> = up.iter().map(|l| l.a[0]).collect();
+            assert!(((xs[0] - xs[1]).abs() - 0.6).abs() < 1e-9, "{xs:?}");
+        }
+        // Hard seams (the same circle drawn as plain edges) are all drawn, as before.
+        let d = draw(
+            &cylinder(false),
+            &std(StdView::Front),
+            &DrawOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(uprights(&d).len(), 13);
+        // From the top the soft cylinder is its rim; turned a little, still two outlines.
+        let d = draw(&cylinder(true), &std(StdView::Top), &DrawOptions::default()).unwrap();
+        assert_eq!(visible(&d), 24);
+        let iso = draw(&cylinder(true), &std(StdView::Iso), &DrawOptions::default()).unwrap();
+        let seams = iso
+            .lines
+            .iter()
+            .filter(|l| l.kind != LineKind::Hidden)
+            .filter(|l| (l.a3[2] - l.b3[2]).abs() > 0.39)
+            .count();
+        assert_eq!(seams, 2, "{:?}", iso.lines);
     }
 
     #[test]

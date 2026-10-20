@@ -24,8 +24,9 @@ use sawhorse_kernel::Model;
 
 use crate::{ExportError, MM_PER_M, Scope, dxf::normalised_rings};
 
-/// An edge to draw, with the outward normals of the faces that meet at it (zero: none).
-type DrawEdge = (DVec3, DVec3, [DVec3; 2]);
+/// An edge to draw, with the outward normals of the faces that meet at it (zero: none), and
+/// whether it is soft (drawn only where it is the outline, lane 23b).
+type DrawEdge = (DVec3, DVec3, [DVec3; 2], bool);
 
 /// Triangles that hide things, and the edges to draw.
 type Picture = (Vec<[DVec3; 3]>, Vec<DrawEdge>);
@@ -181,14 +182,16 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
                 .map_or(DVec3::ZERO, |f| f.plane.normal)
         };
         for (e, edge) in b.edges() {
-            // Lane 15: soft and hidden edges are not drawn (a softened cylinder is a
-            // silhouette, not 24 lines).
-            if o.flags_of(e) & (sawhorse_kernel::edges::SOFT | sawhorse_kernel::edges::HIDDEN) != 0
-            {
+            // Lane 15: hidden edges are not drawn; soft ones only where the surface turns
+            // away from the eye (lane 23b: a softened cylinder is its outline, not 24 lines,
+            // and not nothing).
+            let flags = o.flags_of(e);
+            if flags & sawhorse_kernel::edges::HIDDEN != 0 {
                 continue;
             }
             let (p, q) = b.edge_points(e);
-            edges.push((p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)]));
+            let soft = flags & sawhorse_kernel::edges::SOFT != 0;
+            edges.push((p, q, [normal_of(Some(edge.he)), normal_of(edge.twin)], soft));
         }
     }
     for (_, m) in scope.loose(model)? {
@@ -206,6 +209,7 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
                         m.positions[a as usize],
                         m.positions[b as usize],
                         [DVec3::ZERO; 2],
+                        false,
                     ));
                 }
             }
@@ -216,6 +220,7 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
                     m.positions[l[0] as usize],
                     m.positions[l[1] as usize],
                     [DVec3::ZERO; 2],
+                    false,
                 ));
             }
         }
@@ -227,7 +232,12 @@ fn gather(model: &Model, scope: &Scope) -> Result<Picture, ExportError> {
         let plane = s.plane();
         for (_, [a, b]) in s.edges() {
             if let (Some(p), Some(q)) = (s.vertex(a), s.vertex(b)) {
-                edges.push((plane.to_world(p), plane.to_world(q), [DVec3::ZERO; 2]));
+                edges.push((
+                    plane.to_world(p),
+                    plane.to_world(q),
+                    [DVec3::ZERO; 2],
+                    false,
+                ));
             }
         }
     }
@@ -289,14 +299,17 @@ pub fn view(model: &Model, scope: &Scope, spec: &ViewSpec) -> Result<String, Exp
         0.0
     };
     let tip = 4.0 * stroke * 4.0;
-    for (a, b, n) in edges {
+    for (a, b, n, soft) in edges {
         let (Some((pa, _)), Some((pb, _))) = (cam.project(a), cam.project(b)) else {
             continue;
         };
+        if soft && !crate::soft_outline(n, cam.to_eye(a.lerp(b, 0.5))) {
+            continue;
+        }
         // A profile: one face turns towards the eye and the other away, or only one face.
         let profile = style.edges.profiles && {
             let (h1, h2) = (n[0] != DVec3::ZERO, n[1] != DVec3::ZERO);
-            if h1 != h2 {
+            if soft || h1 != h2 {
                 true
             } else if h1 {
                 let v = cam.to_eye(a.lerp(b, 0.5));
@@ -472,6 +485,75 @@ mod tests {
                 "{p}"
             );
         }
+    }
+
+    #[test]
+    fn a_softened_cylinder_from_the_front_is_its_two_sides() {
+        // Lane 23b: soft edges were left out altogether, so a pulled circle's sides (soft
+        // seams where the surface turns away) were not drawn at all; now exactly those two
+        // are, and the other seams are not.
+        use sawhorse_kernel::curve::{CurveKind, CurveSpec};
+        let cylinder = |curve: bool| {
+            let mut m = Model::with_ground_sketch();
+            let points: Vec<[f64; 3]> = (0..24)
+                .map(|k| {
+                    let a = std::f64::consts::TAU * k as f64 / 24.0;
+                    [0.3 * a.cos(), 0.3 * a.sin(), 0.0]
+                })
+                .collect();
+            m.apply(&sawhorse_kernel::Op::Draw {
+                target: sawhorse_kernel::model::DrawTarget::Sketch { sketch: 1 },
+                points,
+                closed: true,
+                curve: curve.then_some(CurveSpec {
+                    kind: CurveKind::Circle,
+                    centre: Some([0.0; 3]),
+                }),
+            })
+            .unwrap();
+            m.apply(&sawhorse_kernel::Op::Extrude {
+                sketch: 1,
+                region: 1,
+                distance: 0.4,
+            })
+            .unwrap();
+            m
+        };
+        let front = ViewSpec {
+            eye: [0.0, -5.0, 0.2],
+            target: [0.0, 0.0, 0.2],
+            up: [0.0, 0.0, 1.0],
+            ortho: true,
+            fov: 35.0,
+            half_height: 0.5,
+            width: 800.0,
+            height: 800.0,
+        };
+        // Upright runs: "Mx yLx y" with the same x and a different y.
+        let uprights = |svg: &str| {
+            svg.split('M')
+                .skip(1)
+                .filter_map(|r| {
+                    let (a, b) = r.split_once('L')?;
+                    let p: Vec<f64> = a.split(' ').filter_map(|x| x.parse().ok()).collect();
+                    let q: Vec<f64> = b
+                        .trim_end_matches(|c: char| !c.is_ascii_digit())
+                        .split(' ')
+                        .filter_map(|x| x.parse().ok())
+                        .collect();
+                    (p.len() == 2 && q.len() == 2).then(|| (p[0], q[0], (p[1] - q[1]).abs()))
+                })
+                .filter(|(x0, x1, dy)| (x0 - x1).abs() < 1e-3 && *dy > 1.0)
+                .map(|(x, _, _)| x)
+                .collect::<Vec<f64>>()
+        };
+        let m = cylinder(true);
+        let soft = uprights(&view(&m, &Scope::visible(&m), &front).unwrap());
+        assert_eq!(soft.len(), 2, "{soft:?}");
+        assert!(((soft[0] - soft[1]).abs() - 600.0).abs() < 1e-3, "{soft:?}");
+        let m = cylinder(false);
+        let hard = uprights(&view(&m, &Scope::visible(&m), &front).unwrap());
+        assert!(hard.len() > 2, "{hard:?}");
     }
 
     #[test]
