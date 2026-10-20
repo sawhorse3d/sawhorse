@@ -935,3 +935,37 @@ fn a_huge_circle_on_a_tilted_plane_copied_a_hair_turned_pushes_flat() {
         }
     }
 }
+
+#[test]
+fn a_huge_circle_offset_a_hair_in_still_draws() {
+    // Property-test find (fix pass of lane 23, `PROPTEST_CASES=100000 PROPTEST_RNG_SEED=7303`):
+    // a 9 km 15-segment circle offset 6.8e-5 m inwards leaves a band of 3.84 m2 between two
+    // rings of 2.47e8 m2. The area check took the band's area as the outer ring's less the
+    // hole's, each rounded to its own size, which lost 2.3e-8 m2 (5.9e-9 of the band); earcut's
+    // triangles were right and the view could not be built (fixed in sawhorse-tessellate: the
+    // net area in one compensated sum). The 88-segment version the verifier shrank to, and the
+    // same offset of a plain polyline (curves stripped), too.
+    for (n, curve) in [(15, true), (88, true), (15, false), (88, false)] {
+        let mut d = Document::with_ground_sketch();
+        let pts = ring([0.0, 0.0], 9000.0, n, 0.0, TAU, true);
+        let spec = curve.then_some(CurveSpec {
+            kind: CurveKind::Circle,
+            centre: Some([0.0; 3]),
+        });
+        ok(&mut d, draw(pts.clone(), true, spec));
+        ok(
+            &mut d,
+            Op::Offset {
+                source: OffsetSource::Edges {
+                    points: pts,
+                    closed: true,
+                    normal: [0.0, 0.0, 1.0],
+                    object: None,
+                },
+                distance: -6.839698443395447e-5,
+            },
+        );
+        sawhorse_kernel::testing::check_model(d.model())
+            .unwrap_or_else(|e| panic!("{n} segments, curve {curve}: {e}"));
+    }
+}

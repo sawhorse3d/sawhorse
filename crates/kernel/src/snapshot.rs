@@ -1586,6 +1586,130 @@ mod tests {
         assert!(n >= 14);
     }
 
+    /// Fix pass of lane 23: a saved curve that breaks a rule of ADR-0013 is refused on open,
+    /// never opened as something else (the verifier's ten hand-made cases, kept).
+    #[test]
+    fn tampered_curves_are_refused() {
+        use crate::curve::{CurveKind, CurveSpec};
+        use crate::model::DrawTarget;
+        let ring = |c: [f64; 2], r: f64, n: usize, sweep: f64, closed: bool| {
+            let m = if closed { n } else { n + 1 };
+            (0..m)
+                .map(|k| {
+                    let a = sweep * k as f64 / n as f64;
+                    [c[0] + r * a.cos(), c[1] + r * a.sin(), 0.0]
+                })
+                .collect::<Vec<_>>()
+        };
+        let draw = |points: Vec<[f64; 3]>, closed: bool, kind: CurveKind, c: [f64; 2]| Op::Draw {
+            target: DrawTarget::Sketch { sketch: 1 },
+            points,
+            closed,
+            curve: Some(CurveSpec {
+                kind,
+                centre: Some([c[0], c[1], 0.0]),
+            }),
+        };
+        let tau = std::f64::consts::TAU;
+        let d = Document::replay(&[
+            Op::NewSketch {
+                origin: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            },
+            draw(
+                ring([5.0, 0.0], 0.2, 6, tau, true),
+                true,
+                CurveKind::Polygon,
+                [5.0, 0.0],
+            ),
+            Op::Extrude {
+                sketch: 1,
+                region: 1,
+                distance: 0.1,
+            },
+            draw(
+                ring([0.0, 0.0], 0.3, 24, tau, true),
+                true,
+                CurveKind::Circle,
+                [0.0, 0.0],
+            ),
+            draw(
+                ring([2.0, 0.0], 0.3, 10, 2.0, false),
+                false,
+                CurveKind::Arc,
+                [2.0, 0.0],
+            ),
+        ])
+        .unwrap();
+        let good = d.model().snapshot();
+        let opened = Model::from_snapshot(&good).unwrap();
+        assert_eq!(opened.hash(), d.hash());
+        let at = |kind: CurveKind| {
+            good.sketches[0]
+                .graph
+                .curves
+                .iter()
+                .position(|c| c.kind == kind)
+                .unwrap()
+        };
+        let (circle, arc) = (at(CurveKind::Circle), at(CurveKind::Arc));
+        assert!(
+            !good.objects[0].brep.as_ref().unwrap().curves.is_empty(),
+            "the solid has its rims"
+        );
+        let refused = |what: &str, tamper: &dyn Fn(&mut Snapshot)| {
+            let mut s = good.clone();
+            tamper(&mut s);
+            assert!(Model::from_snapshot(&s).is_err(), "{what} was opened");
+        };
+        fn c(s: &mut Snapshot, k: usize) -> &mut crate::curve::RawCurve {
+            &mut s.sketches[0].graph.curves[k]
+        }
+        refused("chain out of order", &|s| c(s, circle).vertices.swap(0, 1));
+        refused("radius off its points", &|s| {
+            let r = c(s, circle).radius.unwrap();
+            c(s, circle).radius = Some(r * 1.5);
+        });
+        refused("centre moved", &|s| {
+            let m = c(s, circle).centre.unwrap();
+            c(s, circle).centre = Some([m[0] + 0.1, m[1]]);
+        });
+        refused("an arc that is closed", &|s| {
+            c(s, circle).kind = CurveKind::Arc
+        });
+        refused("a circle missing a point", &|s| {
+            c(s, circle).vertices.pop();
+        });
+        refused("sweep the wrong way round", &|s| {
+            let w = c(s, arc).sweep.unwrap();
+            c(s, arc).sweep = Some(-w);
+        });
+        refused("start angle off", &|s| {
+            let a = c(s, arc).start.unwrap();
+            c(s, arc).start = Some(a + 0.5);
+        });
+        refused("two curves on the same edges", &|s| {
+            let mut twin = c(s, circle).clone();
+            twin.id = 99;
+            s.sketches[0].graph.curves.push(twin);
+            s.sketches[0].graph.next_curve = Some(100);
+        });
+        refused("a curve id the counter has not reached", &|s| {
+            s.sketches[0].graph.next_curve = Some(1);
+        });
+        refused("a vertex that is not there", &|s| {
+            c(s, circle).vertices[0] = 9999
+        });
+        refused("curve id 0", &|s| c(s, arc).id = 0);
+        refused("a rim on edges that are not there", &|s| {
+            s.objects[0].brep.as_mut().unwrap().curves[0].keys[0] = [998, 999];
+        });
+        refused("two rims with one id", &|s| {
+            let rims = &mut s.objects[0].brep.as_mut().unwrap().curves;
+            rims.push(rims[0].clone());
+        });
+    }
+
     #[test]
     fn tampered_snapshots_are_refused() {
         let d = Document::replay(&[
