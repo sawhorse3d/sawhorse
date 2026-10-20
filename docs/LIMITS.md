@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.3, 2026-10-19 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.4, 2026-10-20 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; curves in lanes 23 and 23b).
 
 ## Model size
 

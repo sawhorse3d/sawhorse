@@ -1,6 +1,6 @@
 # Sawhorse user guide
 
-Sawhorse is pre-alpha. This page covers what works today (lane 11): looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, the cut list, materials, paint, styles and shadows, and plugins.
+Sawhorse is an alpha. This page covers what works today: looking around, drawing, push/pull, measuring, guides and dimensions, the transform tools (Move, Rotate, Scale, Offset, Follow Me), groups and components, tags and scenes, the cut list, materials, paint, styles and shadows, and plugins.
 
 ## The first ten minutes
 
@@ -162,7 +162,7 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 - **What it lands on** joins it the way drawing there would: dropped against another shape, the touching edges become one edge; dropped across one, both are split where they cross into separate faces. A move that would twist a face into a bow-tie splits it into two faces instead.
 - Moved or copied shapes push/pull like any other: the solid has exactly the shape's area times the distance.
 - What you moved stays selected where it went, so you can move it again, or press P and type a distance.
-- Today a circle, arc or polygon is a chain of separate edges: clicking its rim selects one segment or point, and moving that point bends the curve ([#3](https://github.com/sawhorse3d/sawhorse/issues/3)). Click inside the shape to move it whole.
+- A circle, arc or polygon is one curve: click its rim (or inside it, for its face) and it moves whole. Moving one of its points on its own is refused; Edit > Explode Curve makes its edges plain first ([Curves](#circles-arcs-and-polygons-are-curves)).
 
 **Rotate (Q).** The protractor appears on the face under the cursor, or level on the ground.
 - Right, Left and Up lock it upright facing red, upright facing green, or level. Hold Shift to keep the plane it is on.
@@ -192,6 +192,7 @@ Sawhorse refuses a scale that would flatten the solid, turn it inside out or fol
 - A sketch region offsets inside its own sketch.
 - With edges selected, Offset offsets that chain of edges to the side the cursor is on.
 - Corners stay sharp. A face with a hole offsets as one shape.
+- A circle, an arc or a polygon on its own (or the face it alone bounds) offsets its radius: a 200 mm circle offset 50 mm out is a 250 mm circle ([Curves](#circles-arcs-and-polygons-are-curves)).
 
 **Follow Me (W).**
 1. Select the path: edges joined end to end (Shift-click to add them), or one face to go round its edge.
