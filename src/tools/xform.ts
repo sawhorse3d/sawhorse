@@ -13,7 +13,7 @@
 // circle a circle under a similarity and makes a copy a new curve); a curve's point selected
 // on its own is refused before the gesture starts, with the kernel's own words.
 import type { DocState, Entity, KernelOp, MeshData, OpOutcome, V3, Xform } from "../kernel/types";
-import { curveSegments, onCurve } from "../lib/curves";
+import { curveSegments, curveView, onCurve } from "../lib/curves";
 import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
@@ -86,6 +86,10 @@ export interface SketchPart {
   regions: number[];
   /** Lane 23: whole curves, by id (their points are in `moving`). */
   curves?: number[];
+  /** Lane 23b: [curve, region] pairs where the curve's points are exactly the selected
+   * region's outer ring (a circle and its face): one shape to the user, named and counted
+   * once. */
+  faced?: [number, number][];
   rings: V3[][];
   origin: V3;
   normal: V3;
@@ -126,22 +130,53 @@ function sketchOf(e: Entity): number {
 const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 1e-9;
 
 /** "region 2", "a sketch edge", "3 sketch points": what of one sketch moves. */
-function sketchPartNames(p: SketchPart): string[] {
-  const out = p.regions.map((r) => regionName(p.sketch, r));
-  const nc = p.curves?.length ?? 0;
-  if (nc) out.push(nc === 1 ? "a curve" : `${nc} curves`);
-  if (p.edges.length) out.push(p.edges.length === 1 ? "a sketch edge" : `${p.edges.length} sketch edges`);
-  if (p.points.length) out.push(p.points.length === 1 ? "a sketch point" : `${p.points.length} sketch points`);
+/** A name in a status line and how many things it stands for ("3 circles" is three). */
+interface Named {
+  text: string;
+  n: number;
+}
+
+const CURVE_NOUN: Record<string, [string, string]> = {
+  circle: ["a circle", "circles"],
+  arc: ["an arc", "arcs"],
+  polygon: ["a polygon", "polygons"],
+  polyline: ["a curve", "curves"],
+};
+
+/** "a circle", "an arc", "a polygon", "a curve": what a sketch's curve is in the view. */
+export function curveNoun(mesh: MeshData | null | undefined, sketch: number, curve: number): string {
+  const kind = curveView(mesh ?? null, { kind: "sketch", id: sketch }, curve)?.view.kind ?? "polyline";
+  return CURVE_NOUN[kind][0];
+}
+
+/** "region 2", "a circle", "3 sketch edges": what of one sketch moves. A curve and the face
+ * it bounds are one shape (lane 23b: 200 circles with their faces were "201 items"). */
+function sketchPartNames(p: SketchPart, mesh?: MeshData | null): Named[] {
+  const facedRegions = new Set((p.faced ?? []).map(([, r]) => r));
+  const curves = p.curves ?? [];
+  // Regions bounded by a selected curve are named by that curve.
+  const out: Named[] = p.regions.filter((r) => !facedRegions.has(r)).map((r) => ({ text: regionName(p.sketch, r), n: 1 }));
+  const byKind = new Map<string, number>();
+  for (const c of curves) {
+    const kind = curveView(mesh ?? null, { kind: "sketch", id: p.sketch }, c)?.view.kind ?? "polyline";
+    byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
+  }
+  for (const [kind, n] of byKind) out.push({ text: n === 1 ? CURVE_NOUN[kind][0] : `${n} ${CURVE_NOUN[kind][1]}`, n });
+  if (p.edges.length) out.push({ text: p.edges.length === 1 ? "a sketch edge" : `${p.edges.length} sketch edges`, n: p.edges.length });
+  if (p.points.length) out.push({ text: p.points.length === 1 ? "a sketch point" : `${p.points.length} sketch points`, n: p.points.length });
   return out;
 }
 
-/** "solid 3", "solids 2 and 5", "component Shelf (2 of 4)", "face 6 of solid 3", "region 1". */
-export function describeSubject(s: Subject): string {
-  const sk = (s.sketches ?? []).flatMap(sketchPartNames);
-  const names = s.kind === "geometry" ? [s.what, ...sk] : [...s.objects.map(solidName), ...(s.names ?? []), ...sk];
-  if (names.length === 1) return names[0];
-  if (names.length <= 3) return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-  return `${names.length} items`;
+/** "solid 3", "solids 2 and 5", "component Shelf (2 of 4)", "face 6 of solid 3", "region 1",
+ * "a circle", "200 circles". `mesh` names curves by kind ("a curve" without it). */
+export function describeSubject(s: Subject, mesh?: MeshData | null): string {
+  const sk = (s.sketches ?? []).flatMap((p) => sketchPartNames(p, mesh));
+  const one = (text: string): Named => ({ text, n: 1 });
+  const names: Named[] = s.kind === "geometry" ? [one(s.what), ...sk] : [...s.objects.map((o) => one(solidName(o))), ...(s.names ?? []).map(one), ...sk];
+  const total = names.reduce((a, x) => a + x.n, 0);
+  if (names.length === 1) return names[0].text;
+  if (names.length <= 3) return `${names.slice(0, -1).map((x) => x.text).join(", ")} and ${names.at(-1)!.text}`;
+  return `${total} items`;
 }
 
 /** Every solid a whole-objects subject moves. */
@@ -271,6 +306,30 @@ export function sketchParts(es: Entity[], outlines: Map<string, V3[][]>, state?:
         for (const ring of outlines.get(`c${e.owner.id}:${e.curve}`) ?? []) ring.forEach(mv);
       }
     }
+  }
+  // Lane 23b: a curve whose points are exactly a selected region's outer ring is that
+  // region's boundary (a circle and its face): one shape. Matched by the rings' point sets.
+  const ringKey = (ring: V3[]) =>
+    ring
+      .map((q) => q.map((x) => Math.round(x * 1e7)).join(","))
+      .sort()
+      .join(";");
+  for (const p of by.values()) {
+    if (!p.curves?.length || !p.regions.length) continue;
+    const outers = new Map<string, number[]>();
+    for (const r of p.regions) {
+      const outer = outlines.get(`r${p.sketch}:${r}`)?.[0];
+      if (!outer) continue;
+      const k = ringKey(outer);
+      outers.set(k, [...(outers.get(k) ?? []), r]);
+    }
+    const faced: [number, number][] = [];
+    for (const c of p.curves) {
+      const ring = outlines.get(`c${p.sketch}:${c}`)?.[0];
+      const r = ring ? outers.get(ringKey(ring))?.shift() : undefined;
+      if (r !== undefined) faced.push([c, r]);
+    }
+    if (faced.length) p.faced = faced;
   }
   return [...by.values()];
 }

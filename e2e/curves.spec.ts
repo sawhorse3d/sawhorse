@@ -28,10 +28,14 @@ async function ready(page: Page) {
   await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
   if (!requireKernel && (await vp.getAttribute("data-kernel")) === "missing") test.skip(true, "kernel WASM not built");
   await expect(vp).toHaveAttribute("data-kernel", "ready");
-  // Millimetres: the status line says lengths in the model's units.
+  await millimetres(page);
+  return vp;
+}
+
+/** Millimetres: the status line says lengths in the model's units. */
+async function millimetres(page: Page) {
   for (let i = 0; i < 6 && (await page.locator(".vcb .units").textContent()) !== "mm"; i++) await page.locator(".vcb .units").click();
   await expect(page.locator(".vcb .units")).toHaveText("mm");
-  return vp;
 }
 
 async function menu(page: Page, top: string, item: string) {
@@ -100,7 +104,7 @@ test("a circle is one curve: select, move, scale, copy, split, erase, explode; a
   await point(page, onCircle([0, 0], 0.3, 0, 0).map((x, k) => (k === 0 ? x + 8 : x)) as V3);
   await expect(vp).toHaveAttribute("data-inference", "axis-x");
   await type(page, "100");
-  await expect(hint).toContainText("Moved a curve 100 mm along +red");
+  await expect(hint).toContainText("Moved a circle 100 mm along +red");
   cs = await curves(page);
   expect(cs).toHaveLength(1);
   expect(cs[0].kind).toBe("circle");
@@ -111,11 +115,15 @@ test("a circle is one curve: select, move, scale, copy, split, erase, explode; a
   // 4. Scaled x2 from its top-right grip (about the opposite one): a circle of 600 mm.
   await page.keyboard.press("s");
   await expect(page.locator(".vlabel.grip")).toHaveCount(8);
+  // Lane 23b: a factor has no unit: no "mm" chip beside the Scale box.
+  await expect(page.locator("#vcbName")).toHaveText("Scale");
+  await expect(page.locator(".vcb button.units")).toHaveCount(0);
+  await expect(page.getByTestId("vcb-unit")).toHaveText("");
   const [gx, gy] = await grip(page, inch([0.4, 0.3, 0]));
   await page.mouse.click(gx, gy);
   await page.mouse.move(gx + 40, gy - 30, { steps: 3 });
   await type(page, "2");
-  await expect(hint).toContainText("Scaled a curve ×2");
+  await expect(hint).toContainText("Scaled a circle ×2: radius 600 mm.");
   cs = await curves(page);
   expect(cs[0].kind).toBe("circle");
   expect(cs[0].radius).toBeCloseTo(0.6, 9);
@@ -131,7 +139,7 @@ test("a circle is one curve: select, move, scale, copy, split, erase, explode; a
   await point(page, onCircle(C, R, 0).map((x, k) => (k === 1 ? x + 20 : x)) as V3);
   await expect(vp).toHaveAttribute("data-inference", "axis-y");
   await type(page, "1500");
-  await expect(hint).toContainText("Copied a curve 1500 mm along +green");
+  await expect(hint).toContainText("Copied a circle 1500 mm along +green");
   cs = await curves(page);
   expect(byKind(cs)).toBe("sketch:circle sketch:circle");
   expect(new Set(cs.map((c) => c.curve)).size).toBe(2);
@@ -255,7 +263,7 @@ test("a circle is one curve: select, move, scale, copy, split, erase, explode; a
   await expect(hint).toContainText("Selected a polygon (6 sides, radius 200 mm)");
 });
 
-test("a DXF's circles and arc come in as curves; a SketchUp circle as plain edges, with the reason", async ({ page }) => {
+test("a DXF's circles and arc come in as curves; a SketchUp circle as plain edges, without a note", async ({ page }) => {
   const vp = await ready(page);
   const circle = (x: number, y: number, r: number) => `0\nCIRCLE\n8\n0\n10\n${x}\n20\n${y}\n30\n0\n40\n${r}\n`;
   const dxf = `0\nSECTION\n2\nENTITIES\n${circle(0, 0, 50)}${circle(200, 0, 30)}0\nARC\n8\n0\n10\n400\n20\n0\n30\n0\n40\n40\n50\n0\n51\n135\n0\nENDSEC\n0\nEOF\n`;
@@ -267,13 +275,153 @@ test("a DXF's circles and arc come in as curves; a SketchUp circle as plain edge
   expect(cs.find((c) => c.kind === "arc")!.radius).toBeCloseTo(40 * MM, 9);
 
   // The corpus's SketchUp circle (a disc whose 24 edges share one CArcCurve): openskp does
-  // not say which edges make up a curve, so they come in as plain edges, and the report says so.
+  // not say which edges make up a curve, so they come in as plain edges. Lane 23b: the report
+  // no longer says so on every import (openskp cannot tell a file with curves from one
+  // without); docs/skp-compat.md and the guide do.
   await menu(page, "File", "New");
   const skp = curveModels()[0];
   expect(skp.name).toBe("201-curve-circle");
   await page.getByTestId("file-input").setInputFiles({ name: `${skp.name}.skp`, mimeType: "application/octet-stream", buffer: Buffer.from(skp.build()) });
   await expect(report).toContainText(`Imported ${skp.name}.skp`);
-  await expect(report).toContainText("curves (circles, arcs, polygons) came in as plain edges: the .skp reader does not say which edges make up a curve");
+  await expect(report).not.toContainText("came in as plain edges");
+  await expect(report).not.toContainText("curves (circles");
   expect(await curves(page)).toEqual([]);
   await expect(vp).toHaveAttribute("data-kernel", "ready");
+});
+
+type P2 = [number, number];
+type SheetRender = { items: { id: number; kind: string; prims: [number, number] }[]; viewports: { factor: number }[]; prims: { p: string; a?: P2; b?: P2; dash?: P2 }[] };
+type Region = { sketch: number; region: number };
+
+async function regions(page: Page): Promise<Region[]> {
+  return page.evaluate(() => (window as unknown as { __sawhorse: { regions(): Promise<Region[]> } }).__sawhorse.regions());
+}
+
+/** A press at `a`, a drag through to `b` (inches), and the release there. */
+async function sweep(page: Page, a: V3, b: V3) {
+  const [x0, y0] = await at(page, a);
+  const [x1, y1] = await at(page, b);
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x1, y1, { steps: 60 });
+  await page.mouse.up();
+}
+
+/** The Circle tool in its circle variant (C again toggles Polygon, and it remembers). */
+async function circleTool(page: Page) {
+  const hint = page.locator("#hint");
+  await page.keyboard.press("c");
+  await expect(hint).toContainText(/Circle \(|Polygon \(/);
+  if ((await hint.textContent())?.includes("Polygon (")) await page.keyboard.press("c");
+  await expect(hint).toContainText("Circle (");
+}
+
+test("lane 23b: the Eraser across a circle or a polygon, two circles moved, a pulled circle's front elevation", async ({ page }) => {
+  test.setTimeout(120_000);
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+
+  // 1. A circle of 300 mm, then an Eraser drag from outside it, across it, to outside it:
+  // the circle and its face go, one undo step (it used to say "no curve that one there").
+  await page.keyboard.press("c");
+  await clickAt(page, [0, 0, 0], /grid|endpoint|axis/);
+  await point(page, [20, 0, 0]);
+  await type(page, "300");
+  await expect(hint).toContainText("Circle r 300 mm, 24 segments");
+  expect(await curves(page)).toHaveLength(1);
+  expect(await regions(page)).toHaveLength(1);
+  await page.keyboard.press("e");
+  await sweep(page, inch([-0.5, 0.02, 0]), inch([0.5, 0.03, 0]));
+  await expect(hint).toContainText("Erased 1 item.");
+  await expect(hint).not.toContainText("Can't do that");
+  await expect.poll(async () => (await curves(page)).length).toBe(0);
+  expect(await regions(page)).toHaveLength(0);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await curves(page)).length).toBe(1);
+  expect(await regions(page)).toHaveLength(1);
+  await page.keyboard.press("Control+y");
+  await expect.poll(async () => (await curves(page)).length).toBe(0);
+
+  // 2. A polygon (6 sides, 200 mm), swept diagonally corner to corner: the same.
+  await page.keyboard.press("c");
+  await page.keyboard.press("c");
+  await expect(hint).toContainText("Polygon (6 sides)");
+  await clickAt(page, [0, 0, 0], /grid|endpoint|axis/);
+  await point(page, [10, 0, 0]);
+  await type(page, "200");
+  await expect(hint).toContainText("Polygon r 200 mm, 6 sides");
+  expect(byKind(await curves(page))).toBe("sketch:polygon");
+  expect(await regions(page)).toHaveLength(1);
+  await page.keyboard.press("e");
+  await sweep(page, inch([-0.3, -0.27, 0]), inch([0.31, 0.28, 0]));
+  await expect(hint).toContainText("Erased 1 item.");
+  await expect.poll(async () => (await curves(page)).length).toBe(0);
+  expect(await regions(page)).toHaveLength(0);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => byKind(await curves(page))).toBe("sketch:polygon");
+  expect(await regions(page)).toHaveLength(1);
+
+  // 3. Two circles with their faces, window-selected and moved: "2 circles", not 3 items.
+  await menu(page, "File", "New");
+  await expect.poll(async () => (await curves(page)).length).toBe(0);
+  await millimetres(page);
+  // At the origin and 1 m along red (the metric grid's points).
+  for (const cx of [0, 1 / IN]) {
+    await circleTool(page);
+    await clickAt(page, [cx, 0, 0], /grid|endpoint|axis|from-point/);
+    await point(page, [cx + 10, 0, 0]);
+    await type(page, "200");
+    await expect(hint).toContainText("Circle r 200 mm, 24 segments");
+    await page.keyboard.press("Escape");
+  }
+  expect(await regions(page)).toHaveLength(2);
+  const xs = (cs: Curve[]) => cs.map((c) => c.centre![0]).sort((a, b) => a - b);
+  const was = xs(await curves(page));
+  // A crossing box (right to left) over both: each circle and its face.
+  await page.keyboard.press("Space");
+  await sweep(page, [1 / IN + 12, -12, 0], [-12, 12, 0]);
+  await expect(vp).toHaveAttribute("data-selection", "4");
+  await page.keyboard.press("m");
+  await clickAt(page, onCircle([0, 0], 0.2, 0), "endpoint");
+  await point(page, onCircle([0, 0], 0.2, 0).map((x, k) => (k === 0 ? x + 8 : x)) as V3);
+  await expect(vp).toHaveAttribute("data-inference", "axis-x");
+  await type(page, "100");
+  await expect(hint).toContainText("Moved 2 circles 100 mm along +red");
+  const moved = await curves(page);
+  expect(xs(moved)).toEqual(was.map((x) => expect.closeTo(x + 0.1, 9)));
+  expect(byKind(moved)).toBe("sketch:circle sketch:circle");
+
+  // 4. A circle pulled 400 mm up, drawn on a sheet from the front: its outline (two
+  // upright lines at its sides), not its 24 soft seams (13 upright lines in front).
+  await menu(page, "File", "New");
+  await expect.poll(async () => (await curves(page)).length).toBe(0);
+  await millimetres(page);
+  await circleTool(page);
+  await clickAt(page, [0, 0, 0], /grid|endpoint|axis|from-point/);
+  await point(page, [20, 0, 0]);
+  await type(page, "300");
+  await expect(hint).toContainText("Circle r 300 mm, 24 segments");
+  await page.keyboard.press("p");
+  await type(page, "400");
+  await expect(hint).toContainText("Extruded");
+  await page.locator('.scenes:not(.sheet-tabs) .mode-switch [data-mode="sheets"]').click();
+  await expect(page.locator(".sheet-area")).toBeVisible();
+  await page.getByRole("button", { name: "Add a sheet", exact: true }).first().click();
+  const render = () => page.evaluate(() => (window as unknown as { __sawhorse: { sheet: { render(): SheetRender | null } } }).__sawhorse.sheet.render());
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __sawhorse: { sheet: { tool(): string } } }).__sawhorse.sheet.tool())).toBe("viewport");
+  await page.getByRole("combobox", { name: "Shows" }).selectOption("std:front");
+  const client = (p: P2) => page.evaluate((q) => (window as unknown as { __sawhorse: { sheet: { toClient(p: P2): P2 | null } } }).__sawhorse.sheet.toClient(q), p);
+  const [p0, p1] = [await client([0.75 * IN, 0.625 * IN]), await client([4.75 * IN, 7.625 * IN])];
+  await page.mouse.move(p0![0], p0![1]);
+  await page.mouse.down();
+  await page.mouse.move(p1![0], p1![1], { steps: 8 });
+  await page.mouse.up();
+  await expect(hint).toContainText("Viewport: Front");
+  await expect.poll(async () => (await render())?.viewports.length).toBe(1);
+  const r = (await render())!;
+  const item = r.items.find((i) => i.kind === "viewport")!;
+  const f = r.viewports[0].factor;
+  const upright = r.prims.slice(item.prims[0], item.prims[1]).filter((q) => q.p === "line" && !q.dash && Math.abs(q.a![0] - q.b![0]) < 1e-9 && Math.abs(Math.abs(q.a![1] - q.b![1]) - 0.4 * f) < 1e-6);
+  expect(upright, JSON.stringify(upright)).toHaveLength(2);
+  expect(Math.abs(upright[0].a![0] - upright[1].a![0])).toBeCloseTo(0.6 * f, 6);
 });

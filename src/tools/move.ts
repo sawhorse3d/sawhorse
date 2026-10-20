@@ -220,8 +220,8 @@ export class MoveTool extends Tool {
 
   /** The status line during a gesture: says plainly whether it moves or copies. */
   gestureStatus(subject: Subject): string {
-    if (this.copy && subject.kind === "objects") return `Copying ${describeSubject(subject)}: the original stays. Move and click (or drag), or type a distance. Tap Ctrl to move it instead.`;
-    return `Moving ${describeSubject(subject)}: move and click (or drag), or type a distance. ${subject.kind === "objects" ? "Ctrl copies." : "Alt toggles autofold."}`;
+    if (this.copy && subject.kind === "objects") return `Copying ${describeSubject(subject, this.host.mesh())}: the original stays. Move and click (or drag), or type a distance. Tap Ctrl to move it instead.`;
+    return `Moving ${describeSubject(subject, this.host.mesh())}: move and click (or drag), or type a distance. ${subject.kind === "objects" ? "Ctrl copies." : "Alt toggles autofold."}`;
   }
 
   onValue(text: string): void {
@@ -285,7 +285,7 @@ export class MoveTool extends Tool {
     const h = this.host;
     const op = moveOp(subject, delta, copy, count, this.autofold);
     // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
-    const what = describeSubject(subject);
+    const what = describeSubject(subject, this.host.mesh());
     const how = `${h.fmt(len(delta))} ${h.unitLabel()} along ${dirName(delta)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;

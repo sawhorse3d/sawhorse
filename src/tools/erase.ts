@@ -125,12 +125,12 @@ export class EraseTool extends Tool {
           void this.flag(all, mode);
           return;
         }
-        const { ops, skipped } = eraseOps(all, h.state());
+        const { ops, skipped } = eraseOps(all, h.state(), h.mesh());
         if (!ops.length) {
           h.status(skipped[0] ?? "Nothing to erase there.", true);
           return;
         }
-        void this.run(ops, all.length);
+        void this.run(ops, ops.length);
         return;
       }
       default:

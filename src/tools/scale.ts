@@ -16,14 +16,14 @@
 // the cursor. A flat shape's box is flat, so its grips sit in its plane; part of a shape
 // stays in its plane (the scale is projected into it).
 import type { EditResult } from "../kernel/client";
-import type { Entity, KernelOp, V3 } from "../kernel/types";
+import type { Entity, KernelOp, MeshData, V3 } from "../kernel/types";
 import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
-import { curveOf } from "../lib/curves";
+import { curveOf, curveView, lengthWithUnit } from "../lib/curves";
 
 /** How close (px) the cursor must be to a grip to take it. */
 export const GRIP_PX = 12;
@@ -74,6 +74,41 @@ function factorWords(f: V3): string {
   const same = changed.every((k) => Math.abs(f[k] - f[changed[0]]) < 1e-12);
   if (same) return `×${r(f[changed[0]])} along ${changed.map((k) => names[k]).join(" and ")}`;
   return changed.map((k) => `×${r(f[k])} ${names[k]}`).join(", ");
+}
+
+/** The one sketch curve a subject is, with its face or not (a circle and the disc it
+ * bounds are one shape), or null. */
+function loneCurve(s: Subject): { sketch: number; curve: number } | null {
+  if (s.kind !== "objects" || s.objects.length || s.nodes?.length || s.sections?.length || s.sketches?.length !== 1) return null;
+  const p = s.sketches[0];
+  if (p.curves?.length !== 1 || p.edges.length || p.points.length) return null;
+  const faced = (p.faced ?? []).map(([, r]) => r);
+  if (p.regions.some((r) => !faced.includes(r))) return null;
+  return { sketch: p.sketch, curve: p.curves[0] };
+}
+
+/**
+ * What Scale says it did (lane 23b). A lone circle, arc or polygon says what it is now, as
+ * Select does ("Scaled a circle ×2: radius 600 mm"), or that it was scaled out of round;
+ * anything else says the factors and about which point.
+ */
+export function scaledWords(subject: Subject, what: string, f: V3, aboutCentre: boolean, before: MeshData | null, res: EditResult | null, fmt: (m: number) => string, unit: string): string {
+  const plain = `Scaled ${what} ${factorWords(f)} about ${aboutCentre ? "its centre" : "the opposite grip"}.`;
+  const one = loneCurve(subject);
+  if (!one) return plain;
+  const was = curveView(before, { kind: "sketch", id: one.sketch }, one.curve)?.view;
+  if (!was || was.radius === undefined) return plain;
+  const o = res?.outcome;
+  const moved = o?.kind === "sketch_moved" ? o.curves?.find(([sk]) => sk === one.sketch) : undefined;
+  const [sk, id] = moved ?? [one.sketch, one.curve];
+  const now = curveView(res?.scene?.mesh ?? null, { kind: "sketch", id: sk }, id)?.view;
+  const noun = curveNoun(before, one.sketch, one.curve);
+  if (now?.radius !== undefined) {
+    const k = Math.round((now.radius / was.radius) * 10000) / 10000;
+    return `Scaled ${noun} ×${k}: radius ${lengthWithUnit(now.radius, fmt, unit)}.`;
+  }
+  if (now) return `Scaled ${noun} ${factorWords(f)}: out of round, it is a curve of ${now.segments} segments now.`;
+  return plain;
 }
 
 /** A typed scale: factors (a bare number, or three), or an absolute size (a unit). */
@@ -190,7 +225,18 @@ export class ScaleTool extends Tool {
     const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : curveOf(scopeEntity(ent, h.state()), h.mesh()));
     const subject = subjectOf(sel, ent, outlines, h.state());
     if (typeof subject === "string") return;
-    if (curvePointRefusal(subject, sel, ent, h.mesh())) return;
+    // Lane 23b: a selected point of a curve is refused before any grip shows, with the words
+    // Move and Rotate use (ADR-0013); a hovered one just shows no grips.
+    const refused = curvePointRefusal(subject, sel, ent, h.mesh());
+    this.refused = sel.length ? refused : null;
+    if (refused) {
+      if (this.target) {
+        this.target = null;
+        h.changed();
+      }
+      if (sel.length) h.status(refused, true);
+      return;
+    }
     if (this.target && sel.length === 0 && JSON.stringify(this.target.subject) === JSON.stringify(subject)) return;
     const b = this.bounds(subject);
     if (!b) return;
@@ -232,6 +278,8 @@ export class ScaleTool extends Tool {
   }
 
   private cursorFactor = 1;
+  /** Lane 23b: why the selection has no grips (a lone point of a curve), or null. */
+  private refused: string | null = null;
 
   private recompute(): void {
     const g = this.g;
@@ -273,13 +321,13 @@ export class ScaleTool extends Tool {
         const t = this.target;
         if (!grip || !t) {
           this.fresh = false;
-          h.status("Press on a grip (the small squares on the box around the selection).", true);
+          h.status(this.refused ?? "Press on a grip (the small squares on the box around the selection).", true);
           return;
         }
         this.fresh = true;
         this.cursorFactor = 1;
         this.g = { ...t, grip, f: [1, 1, 1], dragging: false };
-        h.status(`Scaling ${describeSubject(t.subject)} from ${gripName(grip)}: move, then click (or let go), or type a factor or a size.`);
+        h.status(`Scaling ${describeSubject(t.subject, this.host.mesh())} from ${gripName(grip)}: move, then click (or let go), or type a factor or a size.`);
         h.changed();
         return;
       }
@@ -361,8 +409,9 @@ export class ScaleTool extends Tool {
     if (again && !(await h.apply({ op: "undo" }))) return;
     const c = fixedPoint(grip, t.lo, t.hi, aboutCentre);
     // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
-    const what = describeSubject(t.subject);
-    const r = await h.apply(scaleOp(t.subject, c, f), (_res: EditResult) => `Scaled ${what} ${factorWords(f)} about ${aboutCentre ? "its centre" : "the opposite grip"}.`);
+    const before = h.mesh();
+    const what = describeSubject(t.subject, before);
+    const r = await h.apply(scaleOp(t.subject, c, f), (res: EditResult) => scaledWords(t.subject, what, f, aboutCentre, before, res, (m) => h.fmt(m), h.unitLabel()));
     if (r) {
       this.last = { target: t, grip, f, aboutCentre };
       // The box shows what was applied (the largest change), not the cursor's last reading.

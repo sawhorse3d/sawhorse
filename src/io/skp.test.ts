@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SkpModel } from "openskp";
-import { FAMILIES, corpus, rng } from "./corpus/models";
+import { FAMILIES, corpus, curveModels, rng } from "./corpus/models";
 import { apply, checkSkpCounts, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, SkpTooLarge, unitsOf } from "./skp";
 import { MODEL_LIMITS } from "../kernel/limits";
 import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
@@ -241,6 +241,17 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     d.free();
   });
 
+  it("says nothing about curves on import, with curves in the file or not (lane 23b)", () => {
+    // openskp 1.3.0 gives no curve record, so it cannot tell a file with curves from one
+    // without: the note it used to add was on every file with an edge (docs/skp-compat.md).
+    const specs = [...corpus(20), ...curveModels()];
+    expect(specs.some((s) => s.name === "201-curve-circle")).toBe(true);
+    for (const spec of specs) {
+      const r = skpToOp(spec.build(), `${spec.name}.skp`);
+      expect(r.notes.join(" "), spec.name).not.toMatch(/curve/i);
+    }
+  });
+
   it("every corpus family imports; solids where SketchUp had solids, a noted mesh where not", async () => {
     const mod = await kernel();
     const seen: Record<string, { objects: number; meshes: number; notes: string[] }> = {};
@@ -269,6 +280,7 @@ describe.skipIf(!built)("skp files through the kernel", () => {
       }
       if (family === "reversed") expect(s.notes.join(" ")).toMatch(/turned 1 reversed face/);
     }
+
     expect(seen["002-table"].objects).toBe(5);
     expect(seen["004-house"].objects).toBe(5);
   });

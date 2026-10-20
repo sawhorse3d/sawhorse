@@ -345,19 +345,77 @@ export function eraseOp(e: Entity, state: DocState | null): KernelOp | string {
  * Ops that erase a selection as one transaction: whole objects first (their own faces and
  * edges in the selection are then moot), then faces, regions and edges.
  */
-export function eraseOps(sel: Entity[], state: DocState | null): { ops: KernelOp[]; skipped: string[] } {
+export function eraseOps(sel: Entity[], state: DocState | null, mesh: MeshData | null = null): { ops: KernelOp[]; skipped: string[] } {
   const deleted = new Set(sel.filter((e) => e.kind === "object").map((e) => (e as { object: number }).object));
+  const ringed = curvesRingingRegions(sel, mesh);
   const ops: KernelOp[] = [];
   const skipped: string[] = [];
   const order = (e: Entity) => ({ node: 0, object: 0, face: 1, region: 2, curve: 3, edge: 3, guide: 4, dimension: 4, section: 4, vertex: 5 })[e.kind];
   for (const e of [...sel].sort((a, b) => order(a) - order(b))) {
     const o = objectOf(e);
     if (e.kind !== "object" && o !== null && deleted.has(o)) continue;
+    // Lane 23b: a closed curve that is the whole boundary of a region erased with it goes
+    // with that region (the kernel erases a region's ring); listing it again would ask the
+    // kernel to erase a curve that the batch has already taken.
+    if (e.kind === "curve" && ringed.has(entityKey(e))) continue;
     const r = eraseOp(e, state);
     if (typeof r === "string") skipped.push(r);
     else ops.push(r);
   }
   return { ops, skipped };
+}
+
+/** A segment's key at 10 micrometres (the view mesh is single precision), undirected. */
+function segKey(a: ArrayLike<number>, ia: number, b: ArrayLike<number>, ib: number): string {
+  const k = (p: ArrayLike<number>, i: number) => `${Math.round(p[i] * 1e5)},${Math.round(p[i + 1] * 1e5)},${Math.round(p[i + 2] * 1e5)}`;
+  const [x, y] = [k(a, ia), k(b, ib)];
+  return x < y ? `${x}|${y}` : `${y}|${x}`;
+}
+
+/**
+ * Lane 23b: the keys of the selected sketch curves that are exactly the boundary of a
+ * selected region of their sketch (a circle or a polygon and its face): erasing the region
+ * erases them. A region with a hole, or a curve that is only part of a boundary, is not
+ * matched, so it keeps its own op (the kernel's batch then tolerates a curve already gone).
+ */
+export function curvesRingingRegions(sel: Entity[], mesh: MeshData | null): Set<string> {
+  const out = new Set<string>();
+  const curves = sel.filter((e): e is Extract<Entity, { kind: "curve" }> => e.kind === "curve" && e.owner.kind === "sketch");
+  const regions = sel.filter((e): e is Extract<Entity, { kind: "region" }> => e.kind === "region");
+  if (!mesh || !curves.length || !regions.length) return out;
+  // The boundary of each selected region's triangles: the segments used by one triangle.
+  const wanted = new Map<number, string>();
+  mesh.parts.forEach((p, i) => {
+    if (p.kind === "region" && regions.some((r) => r.sketch === p.owner && r.region === p.index)) wanted.set(i, `${p.owner}:${p.index}`);
+  });
+  const uses = new Map<string, Map<string, number>>();
+  const pos = mesh.positions;
+  const idx = mesh.indices;
+  for (let t = 0; t < mesh.faceIds.length; t++) {
+    const r = wanted.get(mesh.faceIds[t]);
+    if (r === undefined) continue;
+    let m = uses.get(r);
+    if (!m) uses.set(r, (m = new Map()));
+    for (let j = 0; j < 3; j++) {
+      const k = segKey(pos, 3 * idx[3 * t + j], pos, 3 * idx[3 * t + ((j + 1) % 3)]);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+  }
+  const boundary = new Map<string, Set<string>>();
+  for (const [r, m] of uses) boundary.set(r, new Set([...m].filter(([, n]) => n === 1).map(([k]) => k)));
+  for (const c of curves) {
+    const segs = curveSegments(mesh, c.owner, c.curve);
+    if (!segs.length) continue;
+    const keys = new Set(segs.map(([a, b]) => segKey(a, 0, b, 0)));
+    for (const [r, b] of boundary) {
+      if (!r.startsWith(`${c.owner.id}:`) || b.size !== keys.size) continue;
+      if ([...keys].every((k) => b.has(k))) {
+        out.add(entityKey(c));
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 // ---- window / crossing selection -----------------------------------------------------

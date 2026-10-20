@@ -1517,7 +1517,7 @@ export function App() {
   const eraseSelection = useCallback(() => {
     const sel = live.current.selection;
     if (!sel.length) return;
-    const { ops, skipped } = eraseOps(sel, live.current.scene?.state ?? null);
+    const { ops, skipped } = eraseOps(sel, live.current.scene?.state ?? null, live.current.scene?.mesh ?? null);
     if (!ops.length) {
       setMessage({ text: skipped[0] ?? "Nothing to erase.", error: true });
       return;

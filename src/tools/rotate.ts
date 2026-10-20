@@ -227,7 +227,7 @@ export class RotateTool extends Tool {
       const normal = unit(own ?? this.normalFor(e.snap));
       this.copy = this.copy || e.ctrl;
       this.g = { subject, centre: e.snap.point, normal, ref: null, angle: 0, cursor: null, edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), sel };
-      h.status(`Turning ${describeSubject(subject)} about ${axisWords(normal)}: click where the angle starts.`);
+      h.status(`Turning ${describeSubject(subject, this.host.mesh())} about ${axisWords(normal)}: click where the angle starts.`);
       h.changed();
       return;
     }
@@ -291,7 +291,7 @@ export class RotateTool extends Tool {
     const h = this.host;
     const op = rotateOp(subject, centre, normal, angle, copy, count);
     // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
-    const what = describeSubject(subject);
+    const what = describeSubject(subject, this.host.mesh());
     const how = `${fmtDeg(angle)} about ${axisWords(normal)}`;
     const r = await h.apply(op, (res: EditResult) => {
       const o = res.outcome;

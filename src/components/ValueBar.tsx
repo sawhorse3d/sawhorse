@@ -1,5 +1,5 @@
 import { forwardRef } from "react";
-import type { ToolDef } from "../lib/tools";
+import { valueUnitKind, type ToolDef } from "../lib/tools";
 import { unitInfo, type UnitSystem } from "../lib/units";
 
 export interface ValueBarProps {
@@ -27,6 +27,8 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
   ref,
 ) {
   const info = unitInfo(units);
+  // Lane 23b: a factor or a count has no unit, an angle is in degrees (lib/tools.ts).
+  const kind = valueUnitKind(tool.vcb);
   return (
     <footer className="vcb">
       <div className={message?.error ? "hint err" : "hint"} id="hint" role="status" aria-live="polite">
@@ -60,17 +62,25 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
             }
           }}
         />{" "}
-        <button
-          type="button"
-          className="units"
-          title={`Units: ${info.label}. Click to change.`}
-          onClick={(e) => {
-            e.preventDefault();
-            onCycleUnits();
-          }}
-        >
-          {info.short}
-        </button>
+        {kind === "length" ? (
+          <button
+            type="button"
+            className="units"
+            title={`Units: ${info.label}. Click to change.`}
+            onClick={(e) => {
+              e.preventDefault();
+              onCycleUnits();
+            }}
+          >
+            {info.short}
+          </button>
+        ) : kind === "angle" ? (
+          <span className="units unitless" data-testid="vcb-unit" title="Degrees">
+            °
+          </span>
+        ) : (
+          <span className="units unitless" data-testid="vcb-unit" title="A factor or a count: no unit" />
+        )}
       </label>
     </footer>
   );

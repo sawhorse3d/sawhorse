@@ -93,6 +93,19 @@ export function toolById(id: ToolId): ToolDef {
 }
 
 /**
+ * What the unit chip beside the Value Control Box shows for a value label (lane 23b): the
+ * document's length unit for a length, a degree sign for an angle, and nothing for a factor
+ * or a count (Scale's "2" is two times, not two millimetres; a circle's segments and a
+ * polygon's sides are counts). A read-only box (no tool value) keeps the length chip, which
+ * is where the units are changed.
+ */
+export function valueUnitKind(label: string | null): "length" | "angle" | "none" {
+  if (label === "Angle") return "angle";
+  if (label === "Scale" || label === "Segments" || label === "Sides") return "none";
+  return "length";
+}
+
+/**
  * Whether a keydown should start typing into the Value Control Box (SketchUp-style: just
  * type). Digits, a decimal point, a sign, a fraction slash, feet and inch marks, and the
  * array prefixes (x, *) reserved for Move.

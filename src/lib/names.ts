@@ -56,12 +56,26 @@ export function friendlyError(msg: string): string {
     .replace(/\bno group or component #\d+/g, "that group or component no longer exists")
     .replace(/\bno component definition #\d+/g, "that component no longer exists")
     .replace(/\bno imported mesh #\d+/g, "that imported mesh no longer exists")
-    .replace(/\bobject #(\d+)/g, (_m, id: string) => solidName(Number(id)))
+    // Lane 23b: a curve, a section plane, a sheet and its items read as sentences too (the
+    // Eraser once said "no curve that one there").
+    .replace(/\bno curve #\d+( there)?/g, "that curve no longer exists")
+    .replace(/\bno section plane #\d+/g, "that section plane no longer exists")
+    .replace(/\ba scene names section plane #\d+, which does not exist/g, "a scene names a section plane that no longer exists")
+    .replace(/\bno item #\d+ on sheet #\d+/g, "that item is no longer on that sheet")
+    .replace(/\bno item #\d+/g, "that item no longer exists")
+    .replace(/\bno sheet #\d+/g, "that sheet no longer exists")
+    .replace(/\bno region #\d+/g, "that region no longer exists")
+    .replace(/\b(object|solid) #(\d+)/g, (_m, _w: string, id: string) => solidName(Number(id)))
     .replace(/\bface #(\d+)/g, (_m, id: string) => faceName(Number(id)))
     .replace(/\bregion #(\d+)/g, "that region")
     .replace(/\bsketch #(\d+)/g, "that sketch")
     .replace(/\bgroup #(\d+)/g, "that group")
     .replace(/\bguide or dimension #(\d+)/g, "that guide or dimension")
+    .replace(/\bcurve #(\d+)/g, "that curve")
+    .replace(/\bsection plane #(\d+)/g, "that section plane")
+    .replace(/\bsheet #(\d+)/g, "that sheet")
+    // Anything else named by id: "no <thing> #N" is a thing that is gone.
+    .replace(/\bno ([a-z]+(?: [a-z]+)?) #\d+/g, "that $1 no longer exists")
     .replace(/#(\d+)/g, "that one")
     // A bare public id (slot-reuse bits make them ten digits or more) is never shown.
     .replace(/\b\d{10,}\b/g, "that one");

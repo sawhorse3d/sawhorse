@@ -3,14 +3,16 @@
 // whole, Move and Scale carry it as one (a lone point of it is refused), Offset offsets its
 // chain, the status line says what it is in the document's units, Explode Curve.
 import { describe, expect, it } from "vitest";
+import type { EditResult } from "../kernel/client";
 import type { CurveView, Entity, MeshData, Picked, V3 } from "../kernel/types";
 import { EraseTool } from "../tools/erase";
 import { ev, fakeHost } from "../tools/fakeHost";
 import { MoveTool } from "../tools/move";
 import { OffsetTool } from "../tools/offset";
-import { scaleOp } from "../tools/scale";
+import { RotateTool } from "../tools/rotate";
+import { ScaleTool, scaleOp, scaledWords } from "../tools/scale";
 import { SelectTool } from "../tools/select";
-import { CURVE_POINT_REFUSAL, sketchOps, sketchParts, subjectOf } from "../tools/xform";
+import { CURVE_POINT_REFUSAL, describeSubject, sketchOps, sketchParts, subjectOf } from "../tools/xform";
 import { curveOf, curvePhrase, curveSegments, describeCurve, explodeOps, onCurve, segmentPoints } from "./curves";
 import { boxSelect, entityKey, eraseOp, eraseOps, objectOf, selectionHighlight } from "./entities";
 import { formatLength } from "./units";
@@ -117,6 +119,24 @@ describe("curves in the view", () => {
     expect(eraseOp(circle, null)).toEqual({ op: "erase_curve", sketch: 1, curve: 1 });
     expect(eraseOp(rim, null)).toMatch(/rim of a solid/);
     expect(eraseOps([lineEdge, circle], null).ops[0]).toEqual({ op: "erase_curve", sketch: 1, curve: 1 });
+    // Lane 23b (verifier F1): a drag across the circle sweeps its face too. The face's
+    // erase takes the circle (its ring), so the circle is not listed again; a region the
+    // circle is only part of the boundary of keeps both ops (the kernel's batch tolerates
+    // the curve already gone).
+    const m = mesh();
+    const face = (ringPts: V3[], region: number): MeshData => {
+      const tris = ringPts.slice(1, -1).map((_, k) => [0, k + 1, k + 2]).flat();
+      return { ...m, positions: new Float32Array(ringPts.flat()), indices: new Uint32Array(tris), faceIds: new Uint32Array(tris.length / 3), parts: [{ kind: "region", owner: 1, index: region, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }] };
+    };
+    const disc: Entity = { kind: "region", sketch: 1, region: 4 };
+    expect(eraseOps([circle, disc], null, face(ring, 4)).ops).toEqual([{ op: "erase_region", sketch: 1, region: 4 }]);
+    expect(eraseOps([disc, circle], null, face(ring, 4)).ops).toEqual([{ op: "erase_region", sketch: 1, region: 4 }]);
+    // Without the mesh, or when the face is not the circle's own (a half disc), both go.
+    expect(eraseOps([circle, disc], null).ops).toHaveLength(2);
+    const half: V3[] = [...ring.slice(0, N / 2 + 1)];
+    expect(eraseOps([circle, disc], null, face(half, 4)).ops.map((o) => o.op)).toEqual(["erase_region", "erase_curve"]);
+    // Another sketch's region of the same shape is not this circle's face.
+    expect(eraseOps([circle, { kind: "region", sketch: 2, region: 4 }], null, { ...face(ring, 4), parts: [{ ...face(ring, 4).parts[0], owner: 2 }] }).ops).toHaveLength(2);
     expect(explodeOps([circle, rim, lineEdge])).toEqual([
       { op: "explode_curve", sketch: 1, curve: 1 },
       { op: "explode_curve", object: 7, curve: 2 },
@@ -208,6 +228,105 @@ describe("tools with curves", () => {
     expect(op.op).toBe("transform_sketch");
     expect(op.curves).toEqual([1]);
     expect(op.xform.linear[0][0]).toBe(2);
+  });
+
+  it("Rotate and Scale refuse a lone point of a curve before the gesture starts (lane 23b)", async () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const state = { sketches: [{ id: 1, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }] } as never;
+    const point: Entity = { kind: "vertex", owner: sketch1, at: ring[1] };
+    // Rotate: the first click (the protractor's centre) is refused; no gesture, no op.
+    const h = fakeHost({ _mesh: mesh(), _state: state, sel: [point] });
+    const r = new RotateTool(h);
+    r.onEvent(ev("click", [1, 1, 0]));
+    await tick();
+    expect(h.statuses.at(-1)).toEqual({ text: CURVE_POINT_REFUSAL, error: true });
+    expect(r.busy()).toBe(false);
+    r.onEvent(ev("click", [2, 1, 0]));
+    r.onEvent(ev("click", [2, 2, 0]));
+    await tick();
+    expect(h.ops).toEqual([]);
+    // Scale: no grips, and the status says why when the tool starts and on a press.
+    const k = fakeHost({ _mesh: mesh(), _state: state, sel: [point] });
+    const s = new ScaleTool(k);
+    s.activate();
+    await tick();
+    expect(k.statuses.at(-1)).toEqual({ text: CURVE_POINT_REFUSAL, error: true });
+    expect(s.view().labels.filter((l) => l.className?.startsWith("grip"))).toEqual([]);
+    s.onEvent(ev("down", ring[1]));
+    expect(k.statuses.at(-1)).toEqual({ text: CURVE_POINT_REFUSAL, error: true });
+    s.onValue("2");
+    await tick();
+    expect(k.ops).toEqual([]);
+    // The whole circle selected: grips, no refusal.
+    const w = fakeHost({ _mesh: mesh(), _state: state, sel: [circle], outline: async () => [ring] });
+    const s2 = new ScaleTool(w);
+    s2.activate();
+    await tick();
+    expect(s2.view().labels.filter((l) => l.className === "grip").length).toBeGreaterThan(0);
+    expect(w.statuses.some((x) => x.error)).toBe(false);
+  });
+
+  it("Scale says what the curve is now: its new radius, or out of round (lane 23b)", () => {
+    const outlines = new Map<string, V3[][]>([["c1:1", [ring]]]);
+    const state = { sketches: [{ id: 1, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }] } as never;
+    const s = subjectOf([circle], null, outlines, state);
+    if (typeof s === "string") throw new Error(s);
+    const before = mesh();
+    const mm = (x: number) => formatLength(x, "mm");
+    const after = (v: Partial<CurveView>): EditResult => ({ outcome: { kind: "sketch_moved", sketch: 1, regions: [], curves: [[1, 1]] }, scene: { mesh: { ...before, curves: [{ ...before.curves![0], ...v }, before.curves![1]] }, state } }) as unknown as EditResult;
+    expect(scaledWords(s, "a circle", [2, 2, 1], false, before, after({ radius: 0.6 }), mm, "mm")).toBe("Scaled a circle ×2: radius 600 mm.");
+    expect(scaledWords(s, "a circle", [0.5, 0.5, 1], true, before, after({ radius: 0.15 }), mm, "mm")).toBe("Scaled a circle ×0.5: radius 150 mm.");
+    expect(scaledWords(s, "a circle", [2, 1, 1], false, before, after({ kind: "polyline", radius: undefined, segments: 8 }), mm, "mm")).toBe("Scaled a circle ×2 along red: out of round, it is a curve of 8 segments now.");
+    // Anything else says the factors, as before.
+    expect(scaledWords({ kind: "objects", objects: [7] }, "solid 7", [2, 2, 2], true, before, null, mm, "mm")).toBe("Scaled solid 7 ×2 uniform about its centre.");
+  });
+
+  it("a curve and its face are one shape in the status line: 1, 2 and 200 circles (lane 23b)", () => {
+    // n circles in sketch 1, each with its disc: curves 1..n, regions 101..100+n.
+    const many = (n: number) => {
+      const disc = (k: number): V3[] => ring.map(([x, y, z]) => [x + 2 * k, y, z] as V3);
+      const curves: CurveView[] = Array.from({ length: n }, (_, k) => ({ owner: sketch1, curve: k + 1, kind: "circle" as const, closed: true, segments: N, centre: [2 * k, 0, 0] as V3, radius: R, normal: [0, 0, 1] as V3 }));
+      const m = { ...mesh(), edges: new Float32Array(0), edgeOwner: new Uint32Array(0), edgeCurve: new Uint32Array(0), curves } as MeshData;
+      const outlines = new Map<string, V3[][]>();
+      const sel: Entity[] = [];
+      for (let k = 0; k < n; k++) {
+        outlines.set(`c1:${k + 1}`, [disc(k)]);
+        // The region's ring starts elsewhere round the circle and runs the other way.
+        outlines.set(`r1:${101 + k}`, [[...disc(k)].reverse()]);
+        sel.push({ kind: "curve", owner: sketch1, curve: k + 1 }, { kind: "region", sketch: 1, region: 101 + k });
+      }
+      return { m, outlines, sel };
+    };
+    const state = { sketches: [{ id: 1, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }] } as never;
+    for (const [n, said] of [
+      [1, "a circle"],
+      [2, "2 circles"],
+      [200, "200 circles"],
+    ] as const) {
+      const { m, outlines, sel } = many(n);
+      const s = subjectOf(sel, null, outlines, state);
+      if (typeof s === "string") throw new Error(s);
+      expect(s.sketches![0].faced).toHaveLength(n);
+      expect(describeSubject(s, m)).toBe(said);
+    }
+    // 200 closed polylines with their faces: "200 curves", not "201 items".
+    const { m, outlines, sel } = many(200);
+    const poly = { ...m, curves: m.curves!.map((c) => ({ ...c, kind: "polyline" as const, radius: undefined })) };
+    const s = subjectOf(sel, null, outlines, state);
+    if (typeof s === "string") throw new Error(s);
+    expect(describeSubject(s, poly)).toBe("200 curves");
+    // A face that is not a selected curve's keeps its own name; more than three names count
+    // every shape: 2 circles, a rectangle's face, 3 lines, 1 point and a solid are 8 items.
+    const two = many(2);
+    const rect: V3[] = [[10, 0, 0], [11, 0, 0], [11, 1, 0], [10, 1, 0]];
+    two.outlines.set("r1:7", [rect]);
+    const lines: Entity[] = [0, 1, 2].map((k) => ({ kind: "edge", owner: sketch1, a: [20 + k, 0, 0], b: [20 + k, 1, 0], drawn: true }));
+    const s2 = subjectOf([...two.sel, { kind: "region", sketch: 1, region: 7 }], null, two.outlines, state);
+    if (typeof s2 === "string") throw new Error(s2);
+    expect(describeSubject(s2, two.m)).toBe("a region and 2 circles");
+    const s3 = subjectOf([...two.sel, { kind: "region", sketch: 1, region: 7 }, ...lines, { kind: "vertex", owner: sketch1, at: [30, 0, 0] }, { kind: "object", object: 7 }], null, two.outlines, state);
+    if (typeof s3 === "string") throw new Error(s3);
+    expect(describeSubject(s3, two.m)).toBe("8 items");
   });
 
   it("Offset offsets a selected curve's chain (the kernel makes it a curve of its kind)", async () => {
