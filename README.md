@@ -37,6 +37,7 @@ So nobody finds out the hard way:
 - **Copy and paste in place**.
 - **Back and Bottom views** (Top, Front, Right, Iso and perspective are there).
 - **Text, and radius or diameter dimensions in the model** (linear dimensions only; drawing sheets have radius and diameter).
+- **Weld Edges**: erasing the line that split a circle leaves two arcs.
 - **Signed installers**: Windows and macOS warn before the first launch ([how to get past it](docs/releases/v0.1.0-alpha.4.md#unsigned-installers)).
 - **Render credits**: an AI render service exists in the code but is not launched; the app shows nothing about it unless you point it at a service of your own (Edit > Settings).
 
@@ -63,7 +64,7 @@ A production build: `npm run build:all` (kernel + app into `dist/`, servable fro
 | Path | What |
 |---|---|
 | `src/` | React 18 + TypeScript + three.js front end (the same build runs in the browser and in Tauri) |
-| `crates/kernel` | Half-edge B-rep with hole loops, sketches, push/pull, booleans, groups and components, cut list, nesting, sections and sheets, soft edges; a validator, transactions and a fuzzer |
+| `crates/kernel` | Half-edge B-rep with hole loops, sketches and their curves, sketch moves, push/pull, booleans, groups and components, cut list, nesting, sections and sheets, soft edges; a validator, transactions and a fuzzer |
 | `crates/tessellate` | Triangulation with holes (earcut) and 2D polygon booleans (i_overlay) |
 | `crates/inference` | Picking and inference snapping: own BVH, pixel tolerance at depth, occlusion, ranked inference kinds, locks |
 | `crates/import`, `crates/export`, `crates/shz` | File readers and writers, the `.shz` format |
