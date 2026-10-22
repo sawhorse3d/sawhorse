@@ -1,3 +1,4 @@
+import { setUnits } from "./helpers";
 import { expect, test, type Page } from "@playwright/test";
 
 // Camera and navigation (lane 3; the orbit pivot is lane 21's, see orbit.spec.ts):
@@ -148,11 +149,12 @@ test("the ground grid follows the units, and sketch regions draw over it", async
   const grid = () => page.evaluate(() => (window as unknown as { __sawhorse: { grid(): { minor: boolean; major: boolean; spec: { label: string } } } }).__sawhorse.grid());
   expect((await grid()).spec.label).toBe("1 in / 1 ft");
   expect((await grid()).major).toBe(true);
-  // Cycle the units to mm from the value bar's unit button.
-  for (let i = 0; i < 6 && (await page.locator(".vcb .units").textContent()) !== "mm"; i++) await page.locator(".vcb .units").click();
+  // Pick mm from the value bar's unit chip (lane 24: a picker, not a cycle).
+  await setUnits(page, "mm");
   await expect(page.locator(".vcb .units")).toHaveText("mm");
   expect((await grid()).spec.label).toBe("10 mm / 100 mm");
-  for (let i = 0; i < 6 && (await page.locator(".vcb .units").textContent()) !== "in"; i++) await page.locator(".vcb .units").click();
+  await setUnits(page, "frac-in");
+  await expect(page.locator(".vcb .units")).toHaveText("in");
 
   // A rectangle on the ground: its interior shows the region colour, not grid lines.
   await page.getByRole("button", { name: "Top", exact: true }).click();

@@ -121,7 +121,7 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(screen.queryByRole("tab", { name: "Render" })).toBeNull());
   });
 
-  it("types straight into the value bar mid-gesture and cycles units", () => {
+  it("types straight into the value bar mid-gesture, and picks units from the chip (lane 24)", () => {
     render(<App />);
     act(() => {
       fireEvent.keyDown(window, { key: "p" });
@@ -136,12 +136,37 @@ describe("App shell", () => {
     expect(document.activeElement).toBe(input);
     const unitBtn = document.querySelector(".vcb button.units") as HTMLButtonElement;
     expect(unitBtn.textContent).toBe("in");
+    expect(unitBtn.getAttribute("aria-label")).toBe("Units: fractional inches. Click to change.");
     expect(screen.getByText("Units: fractional in")).toBeTruthy();
-    fireEvent.click(unitBtn); // decimal in
-    fireEvent.click(unitBtn); // ft-in
-    fireEvent.click(unitBtn); // mm
+    // The chip opens the picker (it used to cycle); one pick is one change.
+    fireEvent.click(unitBtn);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /millimetres/i }));
+    expect(screen.queryByRole("menu")).toBeNull();
     expect(unitBtn.textContent).toBe("mm");
     expect(screen.getByText("Units: mm")).toBeTruthy();
+    expect(localStorage.getItem("sawhorse.units")).toBe("mm");
+    // The box's default follows: 12 in is 304.8 mm.
+    expect(input.value).toBe("304.8");
+    // Edit > Units lists the same six, the current one checked.
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Units" }));
+    const sub = screen.getByRole("menu", { name: "Units" });
+    const boxes = [...sub.querySelectorAll('[role="menuitemcheckbox"]')];
+    expect(boxes.map((b) => b.textContent?.trim())).toEqual(["✓ Millimetres", "Centimetres", "Metres", "Decimal inches", "Feet and inches", "Fractional inches"]);
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Centimetres" }));
+    expect(unitBtn.textContent).toBe("cm");
+    expect(screen.getByText("Units: cm")).toBeTruthy();
+    // Edit > Units > Choose… opens the chip's picker.
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Units" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Choose…" }));
+    expect(screen.getByRole("menu", { name: "Units" }).getAttribute("data-testid")).toBe("unit-picker");
+    localStorage.removeItem("sawhorse.units");
+  });
+
+  it("no units hint outside the browser demo (lane 24)", () => {
+    render(<App />);
+    expect(screen.queryByRole("note", { name: "Where the units are" })).toBeNull();
   });
 
   it("reports unreadable values without touching the model", () => {

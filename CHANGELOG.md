@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed (lane 24, units where the eye lands, 2026-10-22)
+
+- **The units are findable in the first minute** ([#13](https://github.com/sawhorse3d/sawhorse/issues/13): a first look at the browser demo "only gives me inches"). The unit chip beside the Value Control Box now opens a **unit picker** (Millimetres, Centimetres, Metres, Decimal inches, Feet and inches, Fractional inches, each shown with a sample length, the current one checked) instead of cycling through the six on each click; **Edit > Units** lists the same six, with a Choose… that opens the picker; and on an empty document the status line ends with "Units: fractional inches. Click to change.", which is the click. The browser demo (never the desktop app) shows a one-sentence hint above the chip on the first visit, dismissed for good by Got it or by opening the picker. The guide's first page says where units are and spells out the menu path. No kernel change; no model hash changes.
+- Tests: vitest for the chip, the picker, the status line and the hint (`src/components/ValueBar.test.tsx`), the App's chip and Edit > Units, the picker's choices; `e2e/units.spec.ts` changes units from the chip on a cold open and sees a typed 300 become 300 mm (and the choice survive a reload); the other specs pick units through one helper.
+
 ## [0.1.0-alpha.4] - 2026-10-20
 
 A pre-release, [v0.1.0-alpha.4](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.4); every change since alpha.3: [v0.1.0-alpha.3...v0.1.0-alpha.4](https://github.com/sawhorse3d/sawhorse/compare/v0.1.0-alpha.3...v0.1.0-alpha.4). The release notes: [docs/releases/v0.1.0-alpha.4.md](docs/releases/v0.1.0-alpha.4.md).

@@ -16,6 +16,24 @@ export async function ready(page: Page) {
   return vp;
 }
 
+/**
+ * Lane 24: pick the document's units from the chip's picker (the chip used to cycle). The
+ * chip is hidden while a factor or a count is being typed (Scale, Segments), so the picker
+ * is opened from Edit > Units > Choose… when the chip is not there.
+ */
+export async function setUnits(page: Page, units: "frac-in" | "in" | "ft-in" | "mm" | "cm" | "m") {
+  const chip = page.locator(".vcb button.units");
+  if (await chip.count()) await chip.click();
+  else {
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Units" }).click();
+    await page.getByRole("menuitem", { name: "Choose…" }).click();
+  }
+  const picker = page.getByTestId("unit-picker");
+  await picker.locator(`button[data-unit="${units}"]`).click();
+  await expect(picker).toHaveCount(0);
+}
+
 export async function at(page: Page, p: V3, dx = 0, dy = 0): Promise<[number, number]> {
   const box = await page.locator("#cv").boundingBox();
   const m: V3 = [p[0] * IN, p[1] * IN, p[2] * IN];

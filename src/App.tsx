@@ -34,7 +34,7 @@ import { meshIndex } from "./lib/meshIndex";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
-import { formatLength, M_PER_IN, nextUnitSystem, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
+import { formatLength, M_PER_IN, UNIT_CHOICES, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
 import type { Projection, ViewId, ViewportEngine } from "./viewport/engine";
 import { gridSpec, projectionForView, VIEWS } from "./viewport/camera";
 import { EMPTY_VIEW, type Tool, type ToolHost, type ToolView } from "./tools/tool";
@@ -2357,13 +2357,15 @@ export function App() {
     };
   }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer, save, openDialog, importDialog, makeGroup, explode]);
 
-  const cycleUnits = () => {
-    const next = nextUnitSystem(units);
+  // Lane 24 (issue #13): the unit chip opens a picker (it used to cycle), the status line
+  // names the units on an empty document, and Edit > Units lists the same choices.
+  const chooseUnits = useCallback((next: UnitSystem) => {
     setUnits(next);
     saveUnits(next);
     live.current.units = next;
-    setVcb(defaultValue(toolId, next));
-  };
+    setVcb(defaultValue(toolIdRef.current, next));
+  }, []);
+  const [unitPickerOpen, setUnitPickerOpen] = useState(0);
 
   const st = scene?.state;
   const hud: { text: string; tone?: "ok" | "err" }[] = [];
@@ -2554,6 +2556,19 @@ export function App() {
         "-",
         { label: "Restore Unsaved Work", disabled: !pendingRestore || pendingRestore.state !== "ok", onSelect: () => pendingRestore && restore(pendingRestore) },
         "-",
+        {
+          label: "Units",
+          items: [
+            ...UNIT_CHOICES.map((id) => ({
+              label: unitInfo(id).name.replace(/^./, (c) => c.toUpperCase()),
+              checked: units === id,
+              title: `Lengths are typed and shown in ${unitInfo(id).name}`,
+              onSelect: () => chooseUnits(id),
+            })),
+            "-" as const,
+            { label: "Choose…", title: "The unit picker beside the Value Control Box", onSelect: () => setUnitPickerOpen((n) => n + 1) },
+          ],
+        },
         { label: "Settings…", title: "The render service (renders are off until one is set and answering)", onSelect: () => setSettingsOpen(true) },
       ],
       View: [
@@ -2601,7 +2616,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -2881,8 +2896,11 @@ export function App() {
           vcbRef.current?.blur();
         }}
         units={units}
-        onCycleUnits={cycleUnits}
+        onUnits={chooseUnits}
         message={message}
+        empty={kernelState === "ready" && !!st && st.stats.objects === 0 && st.stats.edges === 0 && !st.meshes?.length}
+        firstRunHint={isWebDemo()}
+        openPicker={unitPickerOpen}
       />
     </div>
   );

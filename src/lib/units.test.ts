@@ -3,6 +3,9 @@ import {
   formatFractionalInches,
   formatLength,
   nextUnitSystem,
+  UNIT_CHOICES,
+  UNIT_SYSTEMS,
+  unitInfo,
   parseDimensions,
   parseLength,
   parseNumber,
@@ -178,5 +181,16 @@ describe("formatting", () => {
   it("cycles unit systems", () => {
     expect(nextUnitSystem("frac-in")).toBe("in");
     expect(nextUnitSystem("m")).toBe("frac-in");
+  });
+});
+
+describe("the unit picker's choices (lane 24)", () => {
+  it("lists every unit system once, metric first, fractional inches last", () => {
+    expect(UNIT_CHOICES).toEqual(["mm", "cm", "m", "in", "ft-in", "frac-in"]);
+    expect([...UNIT_CHOICES].sort()).toEqual(UNIT_SYSTEMS.map((u) => u.id).sort());
+  });
+
+  it("names each in words", () => {
+    expect(UNIT_CHOICES.map((id) => unitInfo(id).name)).toEqual(["millimetres", "centimetres", "metres", "decimal inches", "feet and inches", "fractional inches"]);
   });
 });

@@ -12,16 +12,25 @@ export interface UnitInfo {
   label: string;
   /** Short label beside the VCB input. */
   short: string;
+  /** The name in words, for the unit picker and the status line ("fractional inches"). */
+  name: string;
 }
 
 export const UNIT_SYSTEMS: UnitInfo[] = [
-  { id: "frac-in", label: "fractional in", short: "in" },
-  { id: "in", label: "decimal in", short: "in" },
-  { id: "ft-in", label: "ft-in", short: "ft-in" },
-  { id: "mm", label: "mm", short: "mm" },
-  { id: "cm", label: "cm", short: "cm" },
-  { id: "m", label: "m", short: "m" },
+  { id: "frac-in", label: "fractional in", short: "in", name: "fractional inches" },
+  { id: "in", label: "decimal in", short: "in", name: "decimal inches" },
+  { id: "ft-in", label: "ft-in", short: "ft-in", name: "feet and inches" },
+  { id: "mm", label: "mm", short: "mm", name: "millimetres" },
+  { id: "cm", label: "cm", short: "cm", name: "centimetres" },
+  { id: "m", label: "m", short: "m", name: "metres" },
 ];
+
+/**
+ * The order the unit picker lists them (lane 24, issue #13: a first look found only inches).
+ * Metric first, smallest up; then the inch forms, the fraction form last because it is the
+ * default and the picker's check mark says so.
+ */
+export const UNIT_CHOICES: UnitSystem[] = ["mm", "cm", "m", "in", "ft-in", "frac-in"];
 
 export const M_PER_IN = 0.0254;
 export const M_PER_FT = 0.3048;

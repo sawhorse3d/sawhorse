@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 // distances, Make Component, Ctrl+Move copies and an array), then the Cut list pane read
 // row by row, grain and stock set from its right-click menu, a hidden shelf and Visible
 // only, a row clicked to select its pieces, and every export saved and read back.
-import { IN, type } from "./helpers";
+import { IN, type, setUnits } from "./helpers";
 import { buildBookshelf, component, escapeAll, hint, ready } from "./bookshelf-build";
 import { csvCellText, parseCsv } from "../src/cutlist/csv";
 import { buildShz, openShz } from "./shz";
@@ -221,11 +221,11 @@ test("the cut list fits the 300 px pane at every rounding, unit and grain, with 
   // Every display unit (Follow units): fractions, decimal inches, ft-in decimals, mm.
   await page.getByLabel("Round sizes to").selectOption("follow");
   const seen: string[] = [];
-  for (let k = 0; k < 6; k++) {
-    await page.locator("button.units").click();
+  for (const u of ["in", "ft-in", "mm", "cm", "m", "frac-in"] as const) {
+    await setUnits(page, u);
     await page.waitForTimeout(50);
     seen.push((await row.locator("td").nth(3).innerText()).trim());
-    expect(await fits(), `units ${k}`).toEqual([]);
+    expect(await fits(), `units ${u}`).toEqual([]);
   }
   // decimal in, ft-in (decimal inches), mm, cm, m (both mm), then fractional again.
   // W = 11 15/32 in: 11 1/2 at 1/16 in; 291.5 mm at 0.5 mm.

@@ -10,7 +10,7 @@ import { curveModels } from "../src/io/corpus/models";
 // .shz and opened again with its curves; a DXF of circles importing as curves; the corpus's
 // SketchUp circle importing as plain edges, with the reason. Positions are inches (the
 // helpers' unit); the model's display units are millimetres.
-import { IN, at, clickAt, point, selectAt, type, type V3 } from "./helpers";
+import { IN, at, clickAt, point, selectAt, type, type V3, setUnits } from "./helpers";
 
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 const MM = 0.001;
@@ -34,7 +34,7 @@ async function ready(page: Page) {
 
 /** Millimetres: the status line says lengths in the model's units. */
 async function millimetres(page: Page) {
-  for (let i = 0; i < 6 && (await page.locator(".vcb .units").textContent()) !== "mm"; i++) await page.locator(".vcb .units").click();
+  await setUnits(page, "mm");
   await expect(page.locator(".vcb .units")).toHaveText("mm");
 }
 

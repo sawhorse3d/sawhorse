@@ -8,6 +8,8 @@ You will make a board, cut a dado across it, and set a shelf in the dado. Everyt
 
 **Minute 0 to 1: look around.** The screen is the approved layout: menus and view buttons along the top, the tool rail on the left, the 3D view in the middle, a panel on the right, and the **Value Control Box** (VCB) at the bottom right. Middle-drag to orbit around the point under the cursor, right-drag (or Shift+middle-drag) to pan, and roll the wheel to zoom toward the cursor (see Navigating, below). The buttons Iso, Top, Front, Right and Persp jump to the standard views. Shift+Z fits everything in view. The red, green and blue lines are the X, Y and Z axes; their dashed halves are the negative sides. The grid follows your units: 1 in and 1 ft lines in inches, 10 mm and 100 mm lines in metric; View > Grid hides it.
 
+**Units.** A new document is in fractional inches, and the status line at the bottom says so ("Units: fractional inches. Click to change."). To work in millimetres, click that sentence or the unit chip beside the Value Control Box (it reads `in`) and pick **Millimetres**; the same list is under **Edit > Units** (Millimetres, Centimetres, Metres, Decimal inches, Feet and inches, Fractional inches). The choice is kept for your next document, and a `.shz` remembers its own. A typed unit always wins over the document's (`457mm` in an inch document is 457 mm), so you never have to switch just for one value.
+
 **Minute 1 to 3: a board.** Press `R` (Rectangle). Type `3/4, 11 1/4` and press Enter: a 3/4 in by 11 1/4 in rectangle appears on the ground at the origin. You don't need to click in the box first; typing goes straight into it. Press `P` (Push/Pull), type `30` and press Enter: the rectangle you just drew rises 30 in into a solid board. The badge at the top left of the view shows the solid count, face count, volume and whether the solid is watertight.
 
 **Minute 3 to 5: a guide and a dado.** Press `Right` (the view button) so you face the board's inner side, then Shift+Z.
@@ -84,7 +86,7 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 
 **Ctrl and Alt taps.** In Move and Rotate a tap of Ctrl switches copying on and off (holding it on the last click works too). In Scale, Ctrl switches between scaling about the opposite grip and about the centre. In Move, Alt switches autofold.
 
-**Value Control Box.** Type a value at any point in a gesture. The units are your display units unless you type one: `3/4`, `1 1/2`, `1-1/2`, `18"`, `1'6"`, `457mm`, `45.7cm`, `0.457m`. Click the unit label to cycle through fractional in, decimal in, ft-in, mm, cm and m. Esc clears what you typed, and Ctrl+Z still works while you type. Angles (`30°`, or a bare number in Rotate) and the array forms (`x3`, `3x`, `*3`, `/4`) belong to Rotate and Move; other tools say so. A value typed right after a move, turn, scale or offset changes it (one undo step).
+**Value Control Box.** Type a value at any point in a gesture. The units are your display units unless you type one: `3/4`, `1 1/2`, `1-1/2`, `18"`, `1'6"`, `457mm`, `45.7cm`, `0.457m`. Click the unit chip beside the box (or Edit > Units) to pick millimetres, centimetres, metres, decimal inches, feet and inches or fractional inches; the chip and the status line say which is in force. Esc clears what you typed, and Ctrl+Z still works while you type. Angles (`30°`, or a bare number in Rotate) and the array forms (`x3`, `3x`, `*3`, `/4`) belong to Rotate and Move; other tools say so. A value typed right after a move, turn, scale or offset changes it (one undo step).
 
 ## Inference colours
 
@@ -438,6 +440,8 @@ Writing plugins: `docs/PLUGINS.md`.
 A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piece that keeps the board's smallest face id keeps its name ("solid 3"); the other gets the next number. Both stay in the board's group. Inside a component used more than once, the cut makes that instance unique first, so the other instances are not cut.
 
 ## Settings
+
+**Edit > Units** sets the units lengths are typed and shown in (see [Units](#the-first-ten-minutes) under The first ten minutes); the unit chip beside the Value Control Box opens the same picker.
 
 **Edit > Settings…** holds one setting today: the **render service**. Renders (and the Credits chip and the Render pane) are not part of this alpha: they appear only when a render service address is saved here and that service answers when the app starts. Without one, the line under the field says "Renders are off" and nothing about credits is shown. Nothing else in Sawhorse needs a network or an account.
 

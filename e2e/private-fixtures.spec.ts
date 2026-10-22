@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseSkp, type Definition, type SkpModel } from "openskp";
-import { IN, solids, type Solid } from "./helpers";
+import { IN, solids, type Solid, setUnits } from "./helpers";
 import { checkCutListFits, dragPanelTo, panelWidth } from "./cutlist-fit";
 
 // Real SketchUp-authored files through Sawhorse's own .skp import (File > Import's input,
@@ -526,7 +526,7 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
 
     const vp = await open(page);
     // Start in millimetres, so the file's inches are seen to arrive.
-    for (let k = 0; k < 8 && (await page.locator(".units").first().textContent()) !== "mm"; k++) await page.locator(".units").first().click();
+    await setUnits(page, "mm");
     await expect(page.locator(".units").first()).toHaveText("mm");
     const { title, lines, refused, last } = await importFile(page, BLANK);
 
