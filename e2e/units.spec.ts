@@ -13,8 +13,9 @@ test("a cold open says the units, one click changes them, and 300 is then 300 mm
   await expect(line).toHaveText("Units: fractional inches. Click to change.");
   await expect(page.locator(".vcb button.units")).toHaveText("in");
   await expect(page.locator(".vp .hud")).toContainText("Units: fractional in");
-  // The chip is a click target for the picker.
-  const chip = page.getByRole("button", { name: "Units: fractional inches. Click to change." });
+  // The chip is a click target for the picker, and says the same sentence to a screen reader.
+  const chip = page.locator(".vcb button.units");
+  await expect(chip).toHaveAccessibleName("Units: fractional inches. Click to change.");
   await chip.click();
   const picker = page.getByRole("menu", { name: "Units" });
   await expect(picker).toBeVisible();
@@ -31,7 +32,8 @@ test("a cold open says the units, one click changes them, and 300 is then 300 mm
   await page.keyboard.press("Enter");
   await expect(page.locator("#hint")).toContainText("Rectangle 300 × 300 mm");
   await page.keyboard.press("p");
-  await expect(page.locator("#vcb")).toHaveValue("300");
+  // Push's default distance is 12 in, which the box now writes in mm.
+  await expect(page.locator("#vcb")).toHaveValue("304.8");
   await page.keyboard.type("300");
   await page.keyboard.press("Enter");
   await expect(page.locator("#hint")).toContainText("Extruded 300 mm");

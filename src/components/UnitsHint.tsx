@@ -2,7 +2,7 @@
 export const UNITS_HINT_KEY = "sawhorse.unitsHint.dismissed";
 
 /** The one sentence the browser demo shows a first-time visitor, above the unit chip. */
-export const UNITS_HINT_TEXT = "Units live here: click the unit chip (or Edit > Units) to switch between millimetres, centimetres, metres, inches and feet-inches.";
+export const UNITS_HINT_TEXT = "Units live in the box below: click the unit chip (or Edit > Units) to switch between millimetres, centimetres, metres, inches and feet-inches.";
 
 export function unitsHintDismissed(): boolean {
   try {
@@ -22,7 +22,7 @@ export function dismissUnitsHint(): void {
 
 /**
  * The browser demo's first-run hint about units (lane 24, issue #13: a YouTuber's first look
- * at the web app "only gives me inches"). One sentence pinned above the unit chip; "Got it"
+ * at the web app "only gives me inches"). One sentence above the unit chip, clear of the demo banner; "Got it"
  * dismisses it for good on this browser, and so does opening the picker. The desktop app
  * never shows it (App renders it only when the build is the web demo).
  */

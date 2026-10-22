@@ -114,10 +114,10 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 .unit-picker button:hover,.unit-picker button:focus-visible{background:var(--rail);outline:none}
 .unit-picker button[aria-checked="true"]{color:var(--accent)}
 .unit-picker kbd{font:11px var(--mono);color:var(--muted)}
-.units-hint{position:absolute;right:0;bottom:calc(100% + 10px);z-index:25;width:min(340px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--panel);color:var(--fg);font:12.5px/1.4 var(--body);text-transform:none;letter-spacing:0;box-shadow:0 2px 10px color-mix(in srgb,var(--fg) 14%,transparent)}
-.units-hint::after{content:"";position:absolute;right:14px;bottom:-6px;width:10px;height:10px;transform:rotate(45deg);background:var(--panel);border-right:1px solid var(--accent);border-bottom:1px solid var(--accent)}
+.units-hint{position:absolute;right:0;bottom:calc(100% + 56px);z-index:25;width:min(340px,calc(100vw - 32px));display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--panel);color:var(--fg);font:12.5px/1.4 var(--body);text-transform:none;letter-spacing:0;box-shadow:0 2px 10px color-mix(in srgb,var(--fg) 14%,transparent)}
 .units-hint button{align-self:flex-end;padding:3px 10px;border:1px solid var(--accent);border-radius:4px;color:var(--accent);background:var(--bg);font:12px var(--body)}
 .units-hint button:hover{background:var(--accent);color:var(--accent-ink)}
+/* The hint sits clear of the demo banner's band (centred, bottom 52px, which the chip's column crosses at every width). */
 .vcb .hint.err b{color:var(--warn)}
 .vp .hud span.err{color:var(--warn)}
 .vp .tip[hidden]{display:none}
