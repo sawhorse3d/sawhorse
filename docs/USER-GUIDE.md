@@ -45,7 +45,7 @@ The left button belongs to the tool you are using; the middle button, the right 
 
 The view keeps a look-at point on the line of sight at the depth of whatever you last orbited, panned or zoomed toward. It is what the projection switch keeps the same size, what a scene saves with the camera, and what a sheet's viewport uses when it shows the 3D view's camera.
 
-**The grid:** **View > Grid** (or **Ground grid** in the Styles pane) shows or hides the ground grid. It is part of the model's style, so it is one undo step, it is saved with the model, and a scene brings it back only when the scene was saved with a style of its own (see the known limits). Hiding the grid hides its lines only: points on the ground still snap to whole grid steps.
+**The grid:** **View > Grid** (or **Ground grid** in the Styles pane) shows or hides the ground grid. It is part of the model's style, so it is one undo step, it is saved with the model, and each scene remembers it: going to a scene shows or hides the grid as it was when the scene was saved or last updated. Hiding the grid hides its lines only: points on the ground still snap to whole grid steps.
 
 ## Keys
 
@@ -232,7 +232,7 @@ Tags control what you see, nothing else: geometry stays where it is and in its g
 
 ## Scenes
 
-A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane), and which section planes are active and hidden. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags it switches (the camera is not).
+A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane), whether the ground grid shows, and which section planes are active and hidden. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags, the style and the grid it switches (the camera is not); the status line says when it hid or showed the grid ("Scene 'Front': grid hidden."). A scene from a SketchUp file, or one saved before Sawhorse remembered the grid, leaves the grid as it is.
 
 ## Materials and paint
 
