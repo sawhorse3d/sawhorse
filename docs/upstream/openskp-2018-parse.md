@@ -1,6 +1,6 @@
 # Draft upstream issue: openskp 1.3.0 refuses a SketchUp 2018 save
 
-Status: a draft for the maintainer to file on openskp's issue tracker (not filed by the build). Written 2026-10-12 (lane 15). Nothing here comes from openskp's source code: it is what a user of the published npm package sees.
+Status: **resolved upstream, kept as history.** openskp 1.4.0 (2026-10-27) parses the file: it holds two guide lines and a `Guide` layer and nothing else, so Sawhorse opens it as an empty model ("not imported: 2 guide lines"; lane 25, `docs/skp-compat.md`). The draft below was never filed. Written 2026-10-12 (lane 15). Nothing here comes from openskp's source code: it is what a user of the published npm package sees.
 
 ---
 

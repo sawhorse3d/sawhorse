@@ -23,7 +23,7 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 - **Nesting**: parts laid out on real sheets and boards from a stock library that knows nominal and actual thickness (3/4 ply is 23/32, 4/4 S4S is 3/4), with kerf, trim and grain; cutting diagrams and the cut order as SVG, DXF (for CNC and laser) and a PDF booklet.
 
 **Files**
-- Opens `.skp` (SketchUp 2013 and later, read on your machine by the MIT-licensed openskp library; [what comes across](docs/skp-compat.md)), STL, 3MF, glTF/GLB, OBJ, DXF and SVG.
+- Opens `.skp` (SketchUp 2013 and later, read on your machine by the MIT-licensed openskp library, its circles and arcs arriving as curves; [what comes across](docs/skp-compat.md)), STL, 3MF, glTF/GLB, OBJ, DXF and SVG.
 - Saves `.shz` (an open, documented format: [docs/format.md](docs/format.md)); exports STL and 3MF (watertight only: an open mesh is refused by name), GLB, OBJ, DXF and SVG.
 
 **Plugins**: tools, panels and commands in sandboxed JavaScript with declared permissions; three samples come with the app. Writing one: [`docs/PLUGINS.md`](docs/PLUGINS.md).
