@@ -3165,6 +3165,8 @@ impl Model {
             self.materials.insert(clip_name(&m.name, "Material"), mat);
         }
         let (mut objects, mut meshes) = (Vec::new(), Vec::new());
+        // Lane 25: what became of the curves the items and strokes carry, said once.
+        let mut curve_tally = crate::meshbuild::CurveTally::default();
         let mut groups: Vec<(String, Vec<Thing>)> = Vec::new();
         // Group name -> index in `groups` (lane 16: a search per item was quadratic).
         let mut group_index: BTreeMap<String, usize> = BTreeMap::new();
@@ -3173,6 +3175,7 @@ impl Model {
             let built = build_item(item)?;
             let sources = built.face_sources.clone();
             notes.extend(built.notes);
+            curve_tally.add(&built.curves);
             let tag = self.import_tag(item.tag.as_deref());
             let material = match item.material.as_deref().map(|m| clip_name(m, "Material")) {
                 Some(m) if self.materials.contains_key(&m) => Some(m),
@@ -3257,8 +3260,15 @@ impl Model {
                 next_slot: 1,
                 part: Default::default(),
             };
-            self.template_items(&mut def, None, &d.items, &mut notes)?;
-            self.template_nodes(&mut def, None, &d.children, &def_ids, &mut notes)?;
+            self.template_items(&mut def, None, &d.items, &mut notes, &mut curve_tally)?;
+            self.template_nodes(
+                &mut def,
+                None,
+                &d.children,
+                &def_ids,
+                &mut notes,
+                &mut curve_tally,
+            )?;
             def_ids.push(self.defs.insert(def));
         }
         let mut made_nodes = Vec::new();
@@ -3272,6 +3282,7 @@ impl Model {
                 &def_sections,
                 &mut notes,
                 &mut meshes,
+                &mut curve_tally,
             )?);
         }
         if !made_nodes.is_empty() {
@@ -3337,8 +3348,11 @@ impl Model {
             }
             let local: Vec<DVec2> = pts.iter().map(|&p| sp.to_local(p)).collect();
             let closed = st.closed && pts.len() > 2;
-            if let Some(Ok(c)) = st.curve.as_ref().map(|c| stroke_curve(c, &pts, closed)) {
-                curved.push((sid, pts.clone(), closed, c));
+            match st.curve.as_ref().map(|c| stroke_curve(c, &pts, closed)) {
+                Some(Ok(c)) => curved.push((sid, pts.clone(), closed, c)),
+                // Lane 25: said to be a curve but not one (counted, drawn as plain edges).
+                Some(Err(_)) => curve_tally.not_landed += 1,
+                None => {}
             }
             let stroke = (local, closed);
             match by_sketch.iter_mut().find(|(k, _, _)| *k == sid) {
@@ -3369,27 +3383,17 @@ impl Model {
             }
         }
         // Lane 23: the file's curves, as curves (those whose points landed as drawn).
-        if !curved.is_empty() {
-            let mut made = 0usize;
-            for (sid, pts, closed, c) in &curved {
-                if self.sketches.contains_key(*sid)
-                    && let Ok(Some(_)) = self.stroke_to_curve(*sid, pts, *closed, c)
-                {
-                    made += 1;
-                }
+        for (sid, pts, closed, c) in &curved {
+            if self.sketches.contains_key(*sid)
+                && let Ok(Some(_)) = self.stroke_to_curve(*sid, pts, *closed, c)
+            {
+                curve_tally.made_one(c.kind);
+            } else {
+                curve_tally.not_landed += 1;
             }
-            let plain = curved.len() - made;
-            notes.push(format!(
-                "{made} curve{} came in as curve{}{}",
-                if made == 1 { "" } else { "s" },
-                if made == 1 { "" } else { "s" },
-                if plain > 0 {
-                    format!(" ({plain} as plain edges: their points did not land as drawn)")
-                } else {
-                    String::new()
-                }
-            ));
         }
+        // Lane 25: one count for the strokes' curves and the items' rims together.
+        notes.extend(curve_tally.notes());
         if skipped > 0 {
             notes.push(format!(
                 "skipped {skipped} stroke{} that were not flat or would not go into a sketch",
@@ -3453,12 +3457,14 @@ impl Model {
         parent: Option<u32>,
         items: &[ImportItem],
         notes: &mut Vec<String>,
+        curves: &mut crate::meshbuild::CurveTally,
     ) -> Result<(), KernelError> {
         use crate::nodes::{Member, MemberKind};
         for item in items {
             let built = build_item(item)?;
             let sources = built.face_sources.clone();
             notes.extend(built.notes);
+            curves.add(&built.curves);
             let tag = self.import_tag(item.tag.as_deref());
             let material = item
                 .material
@@ -3522,6 +3528,7 @@ impl Model {
         nodes: &[ImportNode],
         def_ids: &[DefId],
         notes: &mut Vec<String>,
+        curves: &mut crate::meshbuild::CurveTally,
     ) -> Result<(), KernelError> {
         use crate::nodes::{Member, MemberKind};
         for n in nodes {
@@ -3544,8 +3551,8 @@ impl Model {
                             material: None,
                         },
                     );
-                    self.template_items(def, Some(slot), items, notes)?;
-                    self.template_nodes(def, Some(slot), children, def_ids, notes)?;
+                    self.template_items(def, Some(slot), items, notes, curves)?;
+                    self.template_nodes(def, Some(slot), children, def_ids, notes, curves)?;
                 }
                 ImportNodeKind::Instance { definition, xform } => {
                     let d = *def_ids.get(*definition).ok_or_else(|| {
@@ -3574,6 +3581,7 @@ impl Model {
     }
 
     /// Import a group or instance into the world under `parent`.
+    #[allow(clippy::too_many_arguments)]
     fn import_node(
         &mut self,
         n: &ImportNode,
@@ -3582,8 +3590,10 @@ impl Model {
         def_sections: &[&[ImportSection]],
         notes: &mut Vec<String>,
         meshes: &mut Vec<u64>,
+        curves: &mut crate::meshbuild::CurveTally,
     ) -> Result<NodeId, KernelError> {
-        let node = self.import_node_inner(n, parent, def_ids, def_sections, notes, meshes)?;
+        let node =
+            self.import_node_inner(n, parent, def_ids, def_sections, notes, meshes, curves)?;
         // Section planes (lane 12): the group's own, in the enclosing frame; an instance's
         // come from its definition, placed with it. All inactive.
         let mut planes: Vec<(ImportSection, Option<Xform>)> =
@@ -3621,6 +3631,7 @@ impl Model {
         Ok(node)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn import_node_inner(
         &mut self,
         n: &ImportNode,
@@ -3629,6 +3640,7 @@ impl Model {
         def_sections: &[&[ImportSection]],
         notes: &mut Vec<String>,
         meshes: &mut Vec<u64>,
+        curves: &mut crate::meshbuild::CurveTally,
     ) -> Result<NodeId, KernelError> {
         let tag = self.import_tag(n.tag.as_deref());
         let member = crate::nodes::Membership {
@@ -3652,6 +3664,7 @@ impl Model {
                     let built = build_item(item)?;
                     let sources = built.face_sources.clone();
                     notes.extend(built.notes);
+                    curves.add(&built.curves);
                     let tag = self.import_tag(item.tag.as_deref());
                     let material = item
                         .material
@@ -3683,7 +3696,7 @@ impl Model {
                     }
                 }
                 for c in children {
-                    self.import_node(c, Some(g), def_ids, def_sections, notes, meshes)?;
+                    self.import_node(c, Some(g), def_ids, def_sections, notes, meshes, curves)?;
                 }
                 Ok(g)
             }

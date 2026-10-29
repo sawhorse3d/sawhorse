@@ -50,6 +50,7 @@ pub fn soup(name: &str, positions: Vec<[f64; 3]>, faces: Vec<Vec<Vec<u32>>>) -> 
         face_materials: vec![],
         face_uvs: vec![],
         edge_flags: vec![],
+        curves: vec![],
     }
 }
 

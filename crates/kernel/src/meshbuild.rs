@@ -74,6 +74,143 @@ pub struct ImportItem {
     /// They land on the solids and meshes the item becomes, matched by end points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_flags: Vec<[u32; 3]>,
+    /// Lane 25: curves along the item's edges, for files that store them (`.skp` circles,
+    /// arcs and welded curves). Each becomes a rim of the solid it runs along
+    /// ([`crate::curve::RimCurve`], ADR-0013) when every segment is an edge of that one solid
+    /// lying between two different faces, no pair of faces twice, and a round curve's points
+    /// there lie on one circle; otherwise its edges stay plain edges ([`CurveTally`] says
+    /// why). A mesh keeps no curves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<ImportCurve>,
+}
+
+/// Lane 25: one curve of an imported item: what it is and its points in order, as indices
+/// into the item's `positions` (a closed curve does not repeat its first point).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct ImportCurve {
+    pub kind: crate::curve::CurveKind,
+    pub points: Vec<u32>,
+    #[serde(default)]
+    pub closed: bool,
+}
+
+/// Lane 25: what an import made of the curves it was given, items' and strokes' alike.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CurveTally {
+    /// Curves made, by kind: circles, arcs, polygons, polylines.
+    pub made: [usize; 4],
+    /// Item curves not along edges of one solid (on a mesh, on loose lines, or across
+    /// pieces): a mesh keeps no curves.
+    pub not_solid: usize,
+    /// Item curves along a solid whose edges do not each lie between two different faces,
+    /// each pair once (a circle drawn on a face rings it with one pair of faces).
+    pub on_a_face: usize,
+    /// Item curves said to be round whose points on the solid are not on one circle.
+    pub not_round: usize,
+    /// Sketch strokes said to be curves that did not land as drawn.
+    pub not_landed: usize,
+}
+
+impl CurveTally {
+    fn index(kind: crate::curve::CurveKind) -> usize {
+        use crate::curve::CurveKind::*;
+        match kind {
+            Circle => 0,
+            Arc => 1,
+            Polygon => 2,
+            Polyline => 3,
+        }
+    }
+
+    /// Count one curve made.
+    pub fn made_one(&mut self, kind: crate::curve::CurveKind) {
+        self.made[Self::index(kind)] += 1;
+    }
+
+    /// Curves made, all kinds.
+    pub fn made_total(&self) -> usize {
+        self.made.iter().sum()
+    }
+
+    pub fn add(&mut self, o: &CurveTally) {
+        for k in 0..4 {
+            self.made[k] += o.made[k];
+        }
+        self.not_solid += o.not_solid;
+        self.on_a_face += o.on_a_face;
+        self.not_round += o.not_round;
+        self.not_landed += o.not_landed;
+    }
+
+    /// Nothing was asked for.
+    pub fn is_empty(&self) -> bool {
+        *self == CurveTally::default()
+    }
+
+    /// The import report's lines: how many came in as curves (by kind when there are
+    /// several kinds), and how many stayed plain edges and why.
+    pub fn notes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let made = self.made_total();
+        let words = [
+            ("circle", "circles"),
+            ("arc", "arcs"),
+            ("polygon", "polygons"),
+            ("polyline", "polylines"),
+        ];
+        let kinds: Vec<String> = (0..4)
+            .filter(|&k| self.made[k] > 0)
+            .map(|k| {
+                let n = self.made[k];
+                format!("{n} {}", if n == 1 { words[k].0 } else { words[k].1 })
+            })
+            .collect();
+        let mut extra: Vec<String> = Vec::new();
+        if kinds.len() > 1 {
+            extra.push(kinds.join(", "));
+        }
+        if self.not_landed > 0 {
+            extra.push(format!(
+                "{} as plain edges: their points did not land as drawn",
+                self.not_landed
+            ));
+        }
+        if made > 0 || self.not_landed > 0 {
+            out.push(format!(
+                "{made} curve{} came in as curve{}{}",
+                plural(made),
+                plural(made),
+                if extra.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", extra.join("; "))
+                }
+            ));
+        }
+        if self.not_solid > 0 {
+            out.push(format!(
+                "{} curve{} on faces that are not a solid (or on no face) came in as plain edges: a mesh keeps no curves",
+                self.not_solid,
+                plural(self.not_solid)
+            ));
+        }
+        if self.on_a_face > 0 {
+            out.push(format!(
+                "{} curve{} drawn on a face of a solid came in as plain edges",
+                self.on_a_face,
+                plural(self.on_a_face)
+            ));
+        }
+        if self.not_round > 0 {
+            out.push(format!(
+                "{} round curve{} whose points on the solid are not on one circle came in as plain edges",
+                self.not_round,
+                plural(self.not_round)
+            ));
+        }
+        out
+    }
 }
 
 /// Imported geometry that is not a valid solid: drawn, listed, exported to mesh formats,
@@ -206,6 +343,8 @@ pub struct Built {
     pub loose: Option<LooseMesh>,
     /// Plain-language notes: what was healed, what stayed a mesh and why.
     pub notes: Vec<String>,
+    /// Lane 25: what became of the item's curves (the import says it once, for all items).
+    pub curves: CurveTally,
 }
 
 fn bad(msg: impl Into<String>) -> DocumentError {
@@ -759,7 +898,151 @@ pub fn build_item(item: &ImportItem) -> Result<Built, DocumentError> {
     if !item.edge_flags.is_empty() {
         apply_edge_flags(item, &mut built)?;
     }
+    if !item.curves.is_empty() {
+        apply_curves(item, &mut built)?;
+    }
     Ok(built)
+}
+
+/// Lane 25: the item's curves as rims of the solids it became (ADR-0013's keying: each rim
+/// edge by the pair of persistent face ids it lies between). A curve is matched segment by
+/// segment to edges of one solid by their end points (welding moves a point by at most
+/// 0.01 mm, so they are compared within twice that, as edge flags are); it becomes a rim
+/// only when every segment is exactly one edge of that solid, each lies between two
+/// different faces, no pair of faces comes twice (in this curve or in a rim already made),
+/// the rim passes the solid's curve rules, and a circle's, an arc's or a polygon's points
+/// read round on the solid ([`crate::curve::rim_info`], within `CURVE_FIT`). Anything else
+/// keeps its edges plain, counted in the tally: nothing is guessed, no tolerance widened.
+fn apply_curves(item: &ImportItem, built: &mut Built) -> Result<(), DocumentError> {
+    use crate::curve::{RimCurve, rim_info};
+    use crate::ids::EdgeId;
+    let n = item.positions.len() as u32;
+    for c in &item.curves {
+        if c.points.iter().any(|&i| i >= n) {
+            return Err(bad("a curve names a point that is not there"));
+        }
+        if let Some(want) = c.kind.closes()
+            && want != c.closed
+        {
+            return Err(bad(
+                "a circle or a polygon is a closed curve and an arc an open one",
+            ));
+        }
+        if c.points.len() < if c.closed { 3 } else { 2 } {
+            return Err(bad("a curve has too few points"));
+        }
+        let distinct: BTreeSet<u32> = c.points.iter().copied().collect();
+        if distinct.len() != c.points.len() {
+            return Err(bad("a curve passes through one point twice"));
+        }
+    }
+    const CELL: f64 = 1e-4;
+    let cell = |q: DVec3| {
+        [
+            (q.x / CELL).floor() as i64,
+            (q.y / CELL).floor() as i64,
+            (q.z / CELL).floor() as i64,
+        ]
+    };
+    let tol = 2.0 * POINT_MERGE;
+    let near = |a: DVec3, b: DVec3| a.distance(b) <= tol;
+    // Per solid: its edges by the cells of their end points.
+    let grids: Vec<BTreeMap<[i64; 3], Vec<EdgeId>>> = built
+        .solids
+        .iter()
+        .map(|o| {
+            let mut g: BTreeMap<[i64; 3], Vec<EdgeId>> = BTreeMap::new();
+            for (e, _) in o.brep.edges() {
+                let (a, b) = o.brep.edge_points(e);
+                g.entry(cell(a)).or_default().push(e);
+                if cell(b) != cell(a) {
+                    g.entry(cell(b)).or_default().push(e);
+                }
+            }
+            g
+        })
+        .collect();
+    let p = |i: u32| DVec3::from_array(item.positions[i as usize]);
+    let mut tally = CurveTally::default();
+    for c in &item.curves {
+        let pts: Vec<DVec3> = c.points.iter().map(|&i| p(i)).collect();
+        let m = if c.closed { pts.len() } else { pts.len() - 1 };
+        let segs: Vec<(DVec3, DVec3)> =
+            (0..m).map(|i| (pts[i], pts[(i + 1) % pts.len()])).collect();
+        // The one solid holding every segment as exactly one of its edges.
+        let mut home: Option<(usize, Vec<EdgeId>)> = None;
+        for (k, o) in built.solids.iter().enumerate() {
+            let g = &grids[k];
+            let find = |(a, b): (DVec3, DVec3)| -> Option<EdgeId> {
+                let ca = cell(a);
+                let mut hit: Option<EdgeId> = None;
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            let Some(es) = g.get(&[ca[0] + dx, ca[1] + dy, ca[2] + dz]) else {
+                                continue;
+                            };
+                            for &e in es {
+                                let (x, y) = o.brep.edge_points(e);
+                                let fits = (near(x, a) && near(y, b)) || (near(x, b) && near(y, a));
+                                if fits && hit != Some(e) {
+                                    if hit.is_some() {
+                                        return None;
+                                    }
+                                    hit = Some(e);
+                                }
+                            }
+                        }
+                    }
+                }
+                hit
+            };
+            if let Some(edges) = segs.iter().map(|&s| find(s)).collect::<Option<Vec<_>>>() {
+                home = Some((k, edges));
+                break;
+            }
+        }
+        let Some((k, edges)) = home else {
+            tally.not_solid += 1;
+            continue;
+        };
+        let o = &mut built.solids[k];
+        let taken: BTreeSet<(u64, u64)> = o
+            .curves
+            .values()
+            .flat_map(|r| r.keys.iter().copied())
+            .collect();
+        let keys: Option<Vec<(u64, u64)>> = edges.iter().map(|&e| o.edge_key(e)).collect();
+        let Some(keys) = keys.filter(|ks| {
+            let set: BTreeSet<(u64, u64)> = ks.iter().copied().collect();
+            set.len() == ks.len() && set.is_disjoint(&taken)
+        }) else {
+            tally.on_a_face += 1;
+            continue;
+        };
+        let rim = RimCurve {
+            kind: c.kind,
+            closed: c.closed,
+            segments: keys.len() as u32,
+            keys,
+        };
+        let id = o.curves.keys().next_back().map_or(1, |k| k + 1);
+        o.curves.insert(id, rim.clone());
+        if o.check_curves().is_err() {
+            o.curves.remove(&id);
+            tally.on_a_face += 1;
+            continue;
+        }
+        let reads = o.curve_points(id).map(|pts| rim_info(&rim, &pts).kind);
+        if reads != Some(c.kind) {
+            o.curves.remove(&id);
+            tally.not_round += 1;
+            continue;
+        }
+        tally.made_one(c.kind);
+    }
+    built.curves.add(&tally);
+    Ok(())
 }
 
 /// Lane 15: put the item's soft, smooth and hidden edges onto what it became, matching each
@@ -1281,6 +1564,7 @@ fn build_item_geometry(item: &ImportItem) -> Result<Built, DocumentError> {
         face_sources,
         loose,
         notes,
+        curves: CurveTally::default(),
     })
 }
 
@@ -1331,6 +1615,7 @@ mod tests {
             face_materials: vec![],
             face_uvs: vec![],
             edge_flags: vec![],
+            curves: vec![],
         }
     }
 
@@ -1454,6 +1739,7 @@ mod tests {
             face_materials: vec![],
             face_uvs: vec![],
             edge_flags: vec![],
+            curves: vec![],
         };
         let b = build_item(&item).unwrap();
         assert_eq!(b.solids.len(), 1, "{:?}", b.notes);

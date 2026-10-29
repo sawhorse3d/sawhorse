@@ -55,6 +55,7 @@ fn box_item(name: &str, at: [f64; 3], size: [f64; 3], skip: &[usize]) -> ImportI
         face_materials: vec![],
         face_uvs: vec![],
         edge_flags: vec![],
+        curves: vec![],
     }
 }
 

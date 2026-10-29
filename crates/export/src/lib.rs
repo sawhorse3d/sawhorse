@@ -335,6 +335,7 @@ pub(crate) mod fixtures {
                     face_materials: vec![],
                     face_uvs: vec![],
                     edge_flags: vec![],
+                    curves: vec![],
                 }],
                 strokes: vec![],
                 materials: vec![],

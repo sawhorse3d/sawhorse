@@ -265,6 +265,7 @@ fn twenty_thousand_disjoint_triangles_are_classified_in_linear_time() {
         face_materials: vec![],
         face_uvs: vec![],
         edge_flags: vec![],
+        curves: vec![],
     };
     let t = Instant::now();
     let built = build_item(&item).unwrap();

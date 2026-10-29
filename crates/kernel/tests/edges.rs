@@ -50,6 +50,7 @@ fn prism(name: &str, open: bool, flags: Vec<[u32; 3]>) -> ImportItem {
         face_materials: vec![],
         face_uvs: vec![],
         edge_flags: flags,
+        curves: vec![],
     }
 }
 

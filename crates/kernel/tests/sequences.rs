@@ -1967,6 +1967,7 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 face_materials: vec![],
                 face_uvs: vec![],
                 edge_flags: vec![],
+                curves: vec![],
             };
             let (items, nodes) = if *grouped {
                 (
