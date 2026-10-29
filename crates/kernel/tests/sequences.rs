@@ -1720,6 +1720,13 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 },
                 // Some carry the section planes' state (lane 12).
                 sections: (n % 4 == 2).then(|| Box::new(m.scene_sections_now())),
+                // Some carry a grid switch (lane 26), on or off, with or without a style;
+                // read off `n` so the sequences draw what they drew before.
+                grid: match n % 5 {
+                    0 => Some(false),
+                    1 => Some(true),
+                    _ => None,
+                },
             };
             match kind {
                 0 => Op::AddScene { scene },

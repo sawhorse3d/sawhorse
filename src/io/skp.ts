@@ -1006,6 +1006,8 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
  * is kept by placing the eye where Sawhorse's parallel camera shows that height (it frames a
  * parallel view as a perspective camera at the eye's distance would, src/viewport/engine.ts
  * `lookAt`): the eye moves along its line of sight, the view direction stays.
+ * Lane 26: no `grid`. SketchUp has no ground grid, so a scene from a `.skp` leaves the grid
+ * as it is when gone to (the kernel applies a scene's grid only when it carries one).
  */
 export function sceneOf(p: SkpModel["pages"][number]): SceneDef {
   const fov = p.fov || 35;

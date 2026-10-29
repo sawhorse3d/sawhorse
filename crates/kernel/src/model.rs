@@ -827,6 +827,13 @@ pub struct SceneDef {
     /// the scene brings them back. Absent: the scene leaves the sections alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sections: Option<Box<crate::section::SceneSections>>,
+    /// The ground grid shown when the scene is activated (lane 26, issue #6): activating
+    /// the scene sets the style's `grid` to it, so a scene saved with the default style
+    /// (stored as no style) still brings the grid back. The grid itself lives only in the
+    /// style; the scene remembers what to set it to. Absent (older files, imported scenes):
+    /// the scene leaves the grid as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid: Option<bool>,
 }
 
 fn default_fov() -> f64 {

@@ -489,6 +489,7 @@ fn scene(name: &str, sections: Option<SceneSections>) -> SceneDef {
         style: None,
         shadows: None,
         sections,
+        grid: None,
     }
 }
 

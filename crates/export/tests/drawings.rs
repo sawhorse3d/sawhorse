@@ -150,6 +150,42 @@ fn the_section_golden_seen_from_the_cut_side() {
     );
 }
 
+/// Lane 26 (issue #6): a scene's grid switch goes into the style its copy of the model
+/// shows, and a drawing never draws the ground grid, so a scene drawn with the grid hidden
+/// or shown is the same drawing as the scene without the switch (the sheet goldens keep
+/// their hashes).
+#[test]
+fn a_scene_s_grid_switch_does_not_change_its_drawing() {
+    let mut m = golden("section");
+    let base = m
+        .scenes()
+        .iter()
+        .find(|s| s.name == "Section A")
+        .unwrap()
+        .clone();
+    assert_eq!(base.grid, None, "the golden's scene predates the switch");
+    for (name, grid) in [("Grid off", false), ("Grid on", true)] {
+        let mut sc = base.clone();
+        sc.name = name.into();
+        sc.grid = Some(grid);
+        m.apply(&Op::AddScene { scene: sc }).unwrap();
+    }
+    let before = m.hash();
+    let draw_of = |name: &str, view: StdView| {
+        draw_scene(&m, Some(name), &std(view), &DrawOptions { hidden: true }).unwrap()
+    };
+    for view in [StdView::Left, StdView::Front, StdView::Top] {
+        let want = draw_of("Section A", view);
+        for name in ["Grid off", "Grid on"] {
+            let got = draw_of(name, view);
+            assert_eq!(got.hash, want.hash, "{name} {view:?}");
+            assert_eq!(got.lines, want.lines, "{name} {view:?}");
+        }
+    }
+    assert_eq!(m.hash(), before, "drawing a scene changes nothing");
+    assert!(m.style().is_none_or(|s| s.grid));
+}
+
 #[test]
 fn the_cut_list_as_a_table() {
     let m = golden("cutlist");

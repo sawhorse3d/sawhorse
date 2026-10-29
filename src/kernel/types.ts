@@ -322,6 +322,9 @@ export interface SceneDef {
   shadows?: Shadows | null;
   /** The section planes active and hidden when it was saved (lane 12). */
   sections?: { active?: number[]; hidden?: number[] } | null;
+  /** Lane 26 (issue #6): the ground grid shown when the scene is activated (the kernel sets
+   * the style's `grid` to it). Absent (older files, imported scenes): the grid is left as it is. */
+  grid?: boolean;
 }
 
 /** What an op did (crates/kernel/src/model.rs `OpOutcome`). */

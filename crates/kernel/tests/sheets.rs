@@ -359,6 +359,7 @@ fn scene(name: &str, parallel: bool) -> SceneDef {
         style: None,
         shadows: None,
         sections: None,
+        grid: None,
     }
 }
 
@@ -535,6 +536,7 @@ fn the_sheet_golden_is_this_drawing() {
                 }),
                 shadows: None,
                 sections: Some(Box::new(now)),
+                grid: None,
             },
         },
     );
@@ -569,6 +571,7 @@ fn the_sheet_golden_is_this_drawing() {
                     style: None,
                     shadows: None,
                     sections: Some(Box::new(uncut.clone())),
+                    grid: None,
                 },
             },
         );

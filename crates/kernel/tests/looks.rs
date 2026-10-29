@@ -768,6 +768,7 @@ fn styles_and_shadows_live_in_the_document_and_in_scenes() {
                 style: Some(workshop()),
                 shadows: Some(sun),
                 sections: None,
+                grid: None,
             },
         },
     );
@@ -961,6 +962,7 @@ fn painted_ops() -> Vec<Op> {
                 style,
                 shadows,
                 sections: None,
+                grid: None,
             },
         },
     );

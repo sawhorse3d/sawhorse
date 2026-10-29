@@ -1,7 +1,7 @@
 // Styles, shadows and materials on the UI side (lane 10, ADR-0008): the six style presets,
 // the defaults, the sun's direction (the same formula as crates/kernel/src/looks.rs
 // `Shadows::sun_direction`), and small helpers the panes and the Paint tool share.
-import type { FaceStyle, LibraryEntry, MaterialInfo, Shadows, Style, UvXform } from "../kernel/types";
+import type { FaceStyle, LibraryEntry, MaterialInfo, SceneDef, Shadows, Style, UvXform } from "../kernel/types";
 
 export const DEFAULT_SHADOWS: Shadows = { on: false, month: 6, day: 21, minutes: 13 * 60 + 30, latitude: 45, light: 80, dark: 45, ground: true, faces: true };
 
@@ -77,6 +77,20 @@ export function compactStyle(s: FullStyle): Style | null {
   if (s.section_line_width !== DEFAULT_SECTION_LINE_WIDTH) out.section_line_width = Math.max(1, Math.min(12, Math.round(s.section_line_width)));
   if (!s.grid) out.grid = false;
   return Object.keys(out).length ? out : null;
+}
+
+/** Lane 21: whether the ground grid shows under a document's style (no style, or a style
+ * without the switch: shown). What View > Grid's checkmark and the Styles pane read. */
+export function gridShown(s: Style | null | undefined): boolean {
+  return fullStyle(s).grid;
+}
+
+/** Lane 26 (issue #6): the grid that shows after going to scene `sc` from style `style`, as
+ * the kernel's `activate_scene` sets it: the scene's own switch, else (a lane-10 scene) the
+ * style it saved, else (older files, imported scenes) the grid as it is. */
+export function gridAfterScene(sc: Pick<SceneDef, "style" | "grid">, style: Style | null | undefined): boolean {
+  if (typeof sc.grid === "boolean") return sc.grid;
+  return sc.style ? gridShown(sc.style) : gridShown(style);
 }
 
 export interface StylePreset {

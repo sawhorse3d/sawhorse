@@ -1560,8 +1560,9 @@ impl Model {
         Ok(OpOutcome::SceneSet)
     }
 
-    /// Switch to a scene: its tag visibility (tags it does not list as hidden are shown)
-    /// and its editing context. The camera is the UI's.
+    /// Switch to a scene: its tag visibility (tags it does not list as hidden are shown),
+    /// the style, shadows, grid switch and section planes it saved, and its editing
+    /// context. The camera is the UI's.
     pub(crate) fn activate_scene(&mut self, name: &str) -> Result<OpOutcome, KernelError> {
         let sc = self
             .scenes
@@ -1572,9 +1573,21 @@ impl Model {
         for (t, v) in self.tags.iter_mut() {
             *v = !sc.hidden_tags.contains(t);
         }
-        // A scene saved with a style (and shadows) brings them back (lane 10).
-        if let Some(s) = &sc.style {
-            self.style = Some(s.clone()).filter(|s| *s != crate::looks::Style::default());
+        // A scene saved with a style (and shadows) brings them back (lane 10), and one saved
+        // with a grid switch sets the style's grid to it (lane 26, issue #6), the default
+        // style included: that is stored as no style, so the switch is the scene's own.
+        // When a scene carries both, its grid wins (the app writes them to agree). A
+        // default style is stored as none, as `set_style` stores it.
+        if sc.style.is_some() || sc.grid.is_some() {
+            let mut s = sc
+                .style
+                .clone()
+                .or_else(|| self.style.clone())
+                .unwrap_or_default();
+            if let Some(g) = sc.grid {
+                s.grid = g;
+            }
+            self.style = Some(s).filter(|s| *s != crate::looks::Style::default());
         }
         if let Some(s) = sc.shadows {
             self.shadows = Some(s);
@@ -1599,8 +1612,8 @@ impl Model {
     }
 
     /// The model as scene `name` shows it (lane 12): its tag visibility, its style and
-    /// shadows, its section planes. Read-only: drawing sheets show scenes without changing
-    /// the document.
+    /// shadows, its section planes (and its grid switch, lane 26, which no sheet draws).
+    /// Read-only: drawing sheets show scenes without changing the document.
     pub fn as_scene(&self, name: &str) -> Result<Model, KernelError> {
         let mut m = self.clone();
         m.activate_scene(name)?;

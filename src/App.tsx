@@ -76,7 +76,7 @@ import { NothingToRenderError, renderPasses } from "./render/passes";
 import { PaintTool, type PaintContext } from "./tools/paint";
 import type { ActiveRef } from "./components/MaterialsPane";
 import type { LibraryEntry, MaterialInfo, Shadows } from "./kernel/types";
-import { compactStyle, fullStyle, materialNameFor, sniffImage, texturePathFor, toBase64, type FullStyle } from "./lib/looks";
+import { compactStyle, fullStyle, gridAfterScene, gridShown, materialNameFor, sniffImage, texturePathFor, toBase64, type FullStyle } from "./lib/looks";
 import { usePlugins } from "./plugins/usePlugins";
 import { pickFile as pickAnyFile } from "./io/files";
 import type { AppBridge } from "./plugins/manager";
@@ -207,6 +207,24 @@ export function softenTargetOf(selection: Entity[]): { objects: number[]; label:
   }
   if (!ids.size) return null;
   return { objects: [...ids], label: `${ids.size} solid${ids.size === 1 ? "" : "s"} selected` };
+}
+
+/** What a scene saves of the document's looks: the style and the sun as the document holds
+ * them (lane 10; null: the defaults) and, always, whether the ground grid shows (lane 26,
+ * issue #6), so a scene saved with the default style, which is stored as no style, still
+ * brings the grid back. */
+export function sceneLooksOf(st: Pick<import("./kernel/types").DocState, "style" | "shadows">): Pick<SceneDef, "style" | "shadows" | "grid"> {
+  return { style: st.style ?? null, shadows: st.shadows ?? null, grid: gridShown(st.style) };
+}
+
+/** The status line after going to scene `name` from style `before` (lane 10's wording): the
+ * tags it hides, and the grid when going to it hid or showed it (lane 26). */
+export function sceneNote(name: string, sc: Pick<SceneDef, "hidden_tags" | "style" | "grid">, before: import("./kernel/types").Style | null | undefined): string {
+  const parts: string[] = [];
+  if (sc.hidden_tags?.length) parts.push(`hides ${sc.hidden_tags.map(quoted).join(", ")}`);
+  const grid = gridAfterScene(sc, before);
+  if (grid !== gridShown(before)) parts.push(grid ? "grid shown" : "grid hidden");
+  return `Scene ${quoted(name)}${parts.length ? `: ${parts.join("; ")}` : ""}.`;
 }
 
 export function describeImport(name: string, o: OpOutcome, graph?: import("./kernel/types").SceneGraph | null): string {
@@ -1821,9 +1839,9 @@ export function App() {
         .filter(([, vis]) => !vis)
         .map(([t]) => t),
       context: st.graph?.context ?? null,
-      // The style and the sun go with the scene (lane 10).
-      style: st.style ?? null,
-      shadows: st.shadows ?? null,
+      // The style and the sun go with the scene (lane 10), and whether the grid shows, even
+      // under the default style (lane 26, issue #6).
+      ...sceneLooksOf(st),
       // And which section planes are active and hidden (lane 12).
       ...(st.graph?.sections?.length ? { sections: sceneSectionsOf(st.graph) } : {}),
     };
@@ -1838,7 +1856,8 @@ export function App() {
       setProjection(p);
       setCamView(null);
       setActiveScene(name);
-      void apply({ op: "activate_scene", name }, () => `Scene ${quoted(name)}${sc.hidden_tags?.length ? `: hides ${sc.hidden_tags.map(quoted).join(", ")}` : ""}.`);
+      const before = live.current.scene?.state.style;
+      void apply({ op: "activate_scene", name }, () => sceneNote(name, sc, before));
     },
     [apply],
   );
@@ -2579,7 +2598,7 @@ export function App() {
         { label: "Zoom Extents", keys: "Shift+Z", onSelect: zoomExtents },
         "-",
         { label: "Perspective", checked: projection === "perspective", onSelect: () => setProjection((p) => (p === "perspective" ? "parallel" : "perspective")) },
-        { label: "Grid", checked: fullStyle(st?.style).grid, title: "Show or hide the ground grid (saved with the document)", onSelect: () => setGrid(!fullStyle(st?.style).grid) },
+        { label: "Grid", checked: gridShown(st?.style), title: "Show or hide the ground grid (saved with the document and with each scene)", onSelect: () => setGrid(!gridShown(st?.style)) },
         "-",
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
         "-",

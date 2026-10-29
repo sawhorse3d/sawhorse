@@ -1396,6 +1396,74 @@ mod tests {
         );
     }
 
+    /// Lane 26 (issue #6): two scenes with opposite grids, the second saved with the default
+    /// style (stored as no style), save and open as the same document with the same grid
+    /// switches, and going to each flips the grid both ways after opening.
+    #[test]
+    fn scenes_with_opposite_grids_round_trip() {
+        let mut d = Document::with_ground_sketch();
+        for op in [
+            r#"{"op":"set_style","style":{"grid":false}}"#,
+            r#"{"op":"add_scene","scene":{"name":"Scene 1","eye":[3,-3,2],"target":[0,0,0],"up":[0,0,1],"fov":35,"parallel":false,"style":{"grid":false},"grid":false}}"#,
+            r#"{"op":"set_style","style":null}"#,
+            r#"{"op":"add_scene","scene":{"name":"Scene 2","eye":[0,-3,1],"target":[0,0,0],"up":[0,0,1],"fov":35,"parallel":true,"style":null,"grid":true}}"#,
+        ] {
+            d.apply(&serde_json::from_str::<Op>(op).unwrap())
+                .unwrap_or_else(|e| panic!("{op}: {e}"));
+        }
+        let grids = |m: &sawhorse_kernel::Model| -> Vec<Option<bool>> {
+            m.scenes().iter().map(|s| s.grid).collect()
+        };
+        let o = read(&write(d.model(), &SaveOptions::default()).unwrap()).unwrap();
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        assert_eq!(o.document.hash(), d.hash(), "same model, same hash");
+        assert_eq!(grids(o.document.model()), [Some(false), Some(true)]);
+        assert_eq!(o.document.model().scenes(), d.model().scenes());
+        let scenes = &o.scene.model.scenes;
+        assert_eq!((scenes[0].grid, scenes[1].grid), (Some(false), Some(true)));
+        assert!(
+            scenes[1].style.is_none(),
+            "the default style is stored as none"
+        );
+        let mut m = o.document;
+        let go = |m: &mut Document, name: &str| {
+            m.apply(&Op::ActivateScene { name: name.into() }).unwrap();
+            m.model().style().is_none_or(|s| s.grid)
+        };
+        assert!(!go(&mut m, "Scene 1"), "Scene 1 hides the grid");
+        assert!(go(&mut m, "Scene 2"), "Scene 2 shows it again");
+        assert_eq!(m.model().style(), None);
+        assert_eq!(m.hash(), d.hash());
+        assert!(!go(&mut m, "Scene 1"));
+        // Saved again after going to the scenes: the same switches.
+        let again = read(&write(m.model(), &SaveOptions::default()).unwrap()).unwrap();
+        assert_eq!(grids(again.document.model()), [Some(false), Some(true)]);
+    }
+
+    /// Lane 26: a file whose scenes have no grid switch (every file before lane 26; here
+    /// the bookshelf's two scenes) opens, and going to its scenes leaves the grid alone.
+    #[test]
+    fn scenes_without_a_grid_switch_leave_the_grid_alone() {
+        let d = structured();
+        let bytes = write(d.model(), &SaveOptions::default()).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&bytes[..])).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&entry(&mut zip, "scene.json").unwrap().unwrap()).unwrap();
+        let scenes = json["scenes"].as_array().unwrap();
+        assert_eq!(scenes.len(), 2);
+        assert!(scenes.iter().all(|s| s.get("grid").is_none()), "{scenes:?}");
+        let mut m = read(&bytes).unwrap().document;
+        assert_eq!(m.hash(), d.hash());
+        m.apply(
+            &serde_json::from_str::<Op>(r#"{"op":"set_style","style":{"grid":false}}"#).unwrap(),
+        )
+        .unwrap();
+        for name in ["Front", "Iso"] {
+            m.apply(&Op::ActivateScene { name: name.into() }).unwrap();
+            assert!(m.model().style().is_some_and(|s| !s.grid), "{name}");
+        }
+    }
+
     /// Lane 22: sketch geometry moved, turned, lifted onto a new plane and copied saves and
     /// opens as the same document (hash, the same sketches, the same regions), and the moved
     /// region still pushes into the same solid after opening.
