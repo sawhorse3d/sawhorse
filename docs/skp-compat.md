@@ -16,7 +16,7 @@ Status of this page: lane 6, 2026-10-11; groups and components brought across as
 
 ### openskp 1.3.0 and 1.4.0 on real files
 
-Every `.skp` the maintainer holds (35 files: the five Corynth files in the repository and fifteen more of theirs, openskp's own fixtures, the maintainer's SketchUp 26.2 saves and the SketchUp 5 armchair; never committed), run through the import path in Node (`src/io/skp-sweep.test.ts`: openskp's parse, `src/io/skp.ts`, the kernel) on 2026-10-28, before the bump and after it. Numbers are solids / non-solid meshes / curves in the model (each copy of a component counts its own) / scenes. Nothing that opened before opens worse: every solid and mesh count is the same, and every note but the curve notes and a guide-point count is the same.
+Every `.skp` the maintainer holds (35 files: the five Corynth files in the repository and twelve more of theirs, openskp's fourteen fixtures, three of the maintainer's SketchUp 26.2 saves and the SketchUp 5 armchair; never committed), run through the import path in Node (`src/io/skp-sweep.test.ts`: openskp's parse, `src/io/skp.ts`, the kernel) on 2026-10-28, before the bump and after it. Numbers are solids / non-solid meshes / curves in the model (each copy of a component counts its own) / scenes. Nothing that opened before opens worse: every solid and mesh count is the same, and every note but the curve notes and a guide-point count is the same.
 
 | File | SketchUp | openskp 1.3.0 | openskp 1.4.0 (lane 25) |
 |---|---|---|---|

@@ -158,9 +158,9 @@ function placement(inst: Instance): Placement {
   const m = inst.matrix;
   if (m && m.length >= 12) {
     // Lane 25 (openskp 1.4.0, its #444): SketchUp can keep a uniform scale in the
-    // homogeneous term instead of the 3x3: the 3x3 as it is, the translation in the scaled
-    // units, and index 12 holding 1/w. Folded in here, so such an instance is not 100 times
-    // too big and 100 times too far out (openskp's own scene builder had the same fault).
+    // homogeneous term (index 12 = 1/w) instead of in the 3x3. All twelve values, the 3x3
+    // and the translation, are multiplied by it here, as openskp's own foldScale does, so
+    // such an instance is not 100 times too big and 100 times too far out.
     const s = m.length >= 13 ? m[12] : 1;
     const base = m.slice(0, 12);
     return Number.isFinite(s) && s !== 0 && s !== 1 ? base.map((x) => x * s) : base;
