@@ -1,6 +1,6 @@
 {
   "generator": "scripts/corpus-skp.mjs",
-  "openskp": "1.3.0",
+  "openskp": "1.4.0",
   "count": 203,
   "bytes": 2270277,
   "files": [
@@ -8,7 +8,7 @@
       "name": "001-boxes.skp",
       "family": "boxes",
       "bytes": 10913,
-      "sha256": "7c9e1caf27ae3ec839d7c390cc2ffaddb43b89a2cf135698f0cb862b7f9467a6",
+      "sha256": "864976f34d3e8fc1ecaf01dab8d84ad9e6f574a84d1aeae3dd99b840024e2dc8",
       "definitions": 3,
       "faces": 18
     },
@@ -16,7 +16,7 @@
       "name": "002-table.skp",
       "family": "table",
       "bytes": 9881,
-      "sha256": "9ce11868d5a89833fc0721ad155c9c0f91d54776e0be6172dbb12c898868a8ee",
+      "sha256": "078a5c5aec69f595fe4dfbe30d606cfd1ad438056a72a479bd93e029a0d8214a",
       "definitions": 2,
       "faces": 12
     },
@@ -24,7 +24,7 @@
       "name": "003-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11782,
-      "sha256": "987bd69c76d3c431f157f74bfdbd08416fea9a85c0ecc7f142bb0cfbe462dea1",
+      "sha256": "ad412c33d09bdd84b36be774619419a1bbc683dfc5459ec2055ecbc594948492",
       "definitions": 3,
       "faces": 18
     },
@@ -32,7 +32,7 @@
       "name": "004-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "212358174cd1deb2e52cd3a4050967c0da759f34732f7b8e78d4602efa406d55",
+      "sha256": "2f41e94502e5a00feecd6f4edb97adc969ac86ceeadc387dd8ece4b0247cb539",
       "definitions": 5,
       "faces": 29
     },
@@ -40,7 +40,7 @@
       "name": "005-stairs.skp",
       "family": "stairs",
       "bytes": 9581,
-      "sha256": "c16587a635daa287e78f5b9d94420782ef29c0e15d602613b15dafd49b94b334",
+      "sha256": "4a5c227538a45160e5b3441c7e191473132e27c218413391a3b14c98ef1f5dca",
       "definitions": 1,
       "faces": 14
     },
@@ -48,7 +48,7 @@
       "name": "006-curved.skp",
       "family": "curved",
       "bytes": 22448,
-      "sha256": "bd9db8e58bfbf573c2a1a4d7bafa99be9240fbbc621213e0c2a78fdea289aaa0",
+      "sha256": "472decc67e2fa1df23cdb254d040966521fc9c14d0e6f18faf096b8cfd51ff8e",
       "definitions": 1,
       "faces": 66
     },
@@ -64,7 +64,7 @@
       "name": "008-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "73eecf34acdffbce1881d288ff7ff8a0ddc38f71f979bbc0e9babc571d3f196b",
+      "sha256": "f631f09a73ae74fe7dc3eef3f4d6470fdcf05e48be82ac1fd5c740f915f2054a",
       "definitions": 1,
       "faces": 7
     },
@@ -72,7 +72,7 @@
       "name": "009-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "86222e387b0062a5dbde205967201a13739f6093e9ee7219648113e05858b50b",
+      "sha256": "ee478c8801e9c528740e011a93b183cea0cecfabcb8159839d0520928739e925",
       "definitions": 1,
       "faces": 5
     },
@@ -80,7 +80,7 @@
       "name": "010-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "2fd62ce48ee3bdd0c25fcd8ee32841aa543af775a8dd2e3da8433c1f4b6f1cc0",
+      "sha256": "6d2c959c47059556761fda90f0fb470a63d54d11ca8112d8d58847c89ab4a156",
       "definitions": 1,
       "faces": 6
     },
@@ -88,7 +88,7 @@
       "name": "011-boxes.skp",
       "family": "boxes",
       "bytes": 9300,
-      "sha256": "a79f6f2e07d6b2608d20e91a7249458cde824bd4c26ae232743eea1c7873a9b3",
+      "sha256": "b65d46b7ab952047db6ab0eb52645476f40ee6abf90600283230973a95131cf8",
       "definitions": 2,
       "faces": 12
     },
@@ -96,7 +96,7 @@
       "name": "012-table.skp",
       "family": "table",
       "bytes": 9895,
-      "sha256": "42d4cd5ed5cafbc97235b4597321885d26943be5d3148df93428877b8cec43e4",
+      "sha256": "da6290dea3e0a58f16dabde131e7b8db2249e32b83abee21304cf60a997c2fbc",
       "definitions": 2,
       "faces": 12
     },
@@ -104,7 +104,7 @@
       "name": "013-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11780,
-      "sha256": "89cc4988f28c7179ef258fcf6a99c41b12fbd147322ffeb71f4ca051ef5a96f9",
+      "sha256": "b0eaa017d11b61a3f7433f0ef687cf246579b7ddf805e1fd5a13a5d058267f05",
       "definitions": 3,
       "faces": 18
     },
@@ -112,7 +112,7 @@
       "name": "014-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "528320c1146655a5b2dd0b40ca5aa2be74d3baad83fb7f61243795319b7db67f",
+      "sha256": "3c4ca9472f09d1201c6f77a69f13bf2041a411d09c1227852666438c3c09812a",
       "definitions": 5,
       "faces": 29
     },
@@ -144,7 +144,7 @@
       "name": "018-loose.skp",
       "family": "loose",
       "bytes": 9433,
-      "sha256": "d4df52cf5c9345001046793d130123e9b0b9e2e18bdc85ad61c77ef915da3107",
+      "sha256": "b606d1583d547a3ac7b08f251e53a20f8f0c7ced38b8c979582f55c8379fd7c9",
       "definitions": 1,
       "faces": 7
     },
@@ -152,7 +152,7 @@
       "name": "019-open.skp",
       "family": "open",
       "bytes": 7528,
-      "sha256": "41374bb727bb7097c505e580969a7560ad597648f21a5bafdb14793661f1021f",
+      "sha256": "0d6d40d8b970e6cb0dbffe55b8932f5cbd4939542d3ac4ce64633a6a8d1e03ec",
       "definitions": 1,
       "faces": 5
     },
@@ -160,7 +160,7 @@
       "name": "020-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "3256f215bb2ef9d6dd9b14740c52210df77462965c7c8f71cb9c18bc08056a1f",
+      "sha256": "342262d547d78fa9165932a08f2ecf3852136d441ec1771866225c7d518add24",
       "definitions": 1,
       "faces": 6
     },
@@ -168,7 +168,7 @@
       "name": "021-boxes.skp",
       "family": "boxes",
       "bytes": 7627,
-      "sha256": "b24a5c7d5db4284c6fa485657186e30ee1f33f1d16f3b52ab398b9f8fd8cc1eb",
+      "sha256": "cc5073ec9a285e87c48e0d529b1abd14b58921f26ea442d3a59cb0456045ddc7",
       "definitions": 1,
       "faces": 6
     },
@@ -176,7 +176,7 @@
       "name": "022-table.skp",
       "family": "table",
       "bytes": 9832,
-      "sha256": "551188ac18571fceb9d85c4d3dbf3814dfe66461c938c6c175fe46be42fc194f",
+      "sha256": "9e1ae1e8fbec596603799217a5b4039716fc2d5bc02a3325e8f6903bd79834ba",
       "definitions": 2,
       "faces": 12
     },
@@ -184,7 +184,7 @@
       "name": "023-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11623,
-      "sha256": "c619c7f46175cc8bc7c6bf5c27c3a34043c6917ef85a690458c14099e15923df",
+      "sha256": "f0c6b0ad351effa5e2b270a47aca16a6cbbbde660b650c6b953ec8ff605790a4",
       "definitions": 3,
       "faces": 18
     },
@@ -192,7 +192,7 @@
       "name": "024-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "cc65998678b309ff93452a8b81b00baf6991edc7e5daff5f5c38e607490f791f",
+      "sha256": "4686adf7eb3028f096a3ff235b55ed48321cfa4679a4559beb55fe30d036c454",
       "definitions": 5,
       "faces": 33
     },
@@ -200,7 +200,7 @@
       "name": "025-stairs.skp",
       "family": "stairs",
       "bytes": 9579,
-      "sha256": "b096266f06141793fa4a03e5e5bb2fe165522bf79967f7ce32267dbb10d56230",
+      "sha256": "a0d5e2939c175d469d15a0bb4485cdf081b2ba84e6685963262256e5dcc560e3",
       "definitions": 1,
       "faces": 14
     },
@@ -208,7 +208,7 @@
       "name": "026-curved.skp",
       "family": "curved",
       "bytes": 19434,
-      "sha256": "9b34aa33084de21bb847a0d867664b4340bd4e9b8697754823b544ccebb18e9d",
+      "sha256": "5a5cdb98633a1b3868a1952a633d53509f324ce7d5336632e1e907502f2c4ec8",
       "definitions": 1,
       "faces": 54
     },
@@ -224,7 +224,7 @@
       "name": "028-loose.skp",
       "family": "loose",
       "bytes": 9433,
-      "sha256": "165e6c4498505d848cf65cd6d13d841e473547139b8151389dc65af8d93fef9f",
+      "sha256": "ecd078919bb16fd25135a0d85d1e42352c13182d350fbac71032ce6e7c0643bf",
       "definitions": 1,
       "faces": 7
     },
@@ -232,7 +232,7 @@
       "name": "029-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "9912d6299984fafb427f86b3ea7cdffd239d79065f3be3d015d85c2344a67287",
+      "sha256": "595204ec4122c0ab390326721b8fa975ed33106a0faf7b4d59fd4212f8ea7ebc",
       "definitions": 1,
       "faces": 5
     },
@@ -240,7 +240,7 @@
       "name": "030-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "300af15ff4295c3f96d2ed458a110396ce15b626c4b450976eeb2b4ee1f2332a",
+      "sha256": "d75d35addeadf15461b05ca8539e043c85790c798753338a87d04af7d2d22779",
       "definitions": 1,
       "faces": 6
     },
@@ -248,7 +248,7 @@
       "name": "031-boxes.skp",
       "family": "boxes",
       "bytes": 12668,
-      "sha256": "49de5d0265025862c238a50d8b1a43b09d1b22972109fb474d1d5d133875ad23",
+      "sha256": "40f2c13181e653e9b6d4a5e9a24bafdefe544927701dd9a000466320e8f99480",
       "definitions": 4,
       "faces": 24
     },
@@ -256,7 +256,7 @@
       "name": "032-table.skp",
       "family": "table",
       "bytes": 9879,
-      "sha256": "ce0d302dae5f14a4e822d83e624414bf222398df2ee5872986d99d9f2ac2f8cf",
+      "sha256": "809eacedb6305241df20779584deb9643bad4c2074a461b34f9889d20e50c192",
       "definitions": 2,
       "faces": 12
     },
@@ -264,7 +264,7 @@
       "name": "033-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11780,
-      "sha256": "7097cf80ab0c94a47add731f63d8a5113a23fd9b0ea46135cf791065e3134664",
+      "sha256": "5e49f6ccb42d2b19ae6a06a64ec8bdc41af5c36fba8c036fa0ad40c91ebd632b",
       "definitions": 3,
       "faces": 18
     },
@@ -272,7 +272,7 @@
       "name": "034-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "fbd5b00c19a602581252b6e46787d669ef4606257ff4c7b250ee1d56dcf25763",
+      "sha256": "1fadc6332df2c8a178c3f75281f4cf9414f75ebec65624feed8360bcf6a946c2",
       "definitions": 5,
       "faces": 33
     },
@@ -304,7 +304,7 @@
       "name": "038-loose.skp",
       "family": "loose",
       "bytes": 9429,
-      "sha256": "0e6e9ddbbf467304b94b5c061db08b15112017202c2681989c8be431f86561af",
+      "sha256": "b0c4c7a6b006e30f3b7556b0924a957fa211e825dabc7b75a22fcf846387d654",
       "definitions": 1,
       "faces": 7
     },
@@ -312,7 +312,7 @@
       "name": "039-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "45db42280adc1feea2649ba8d3adfc05f75497e255268f8c95b1a7662c42d491",
+      "sha256": "c69bf56c02b67a8d3fa768a2ae37b85a6ab927daf3e469fc07792137f0072fac",
       "definitions": 1,
       "faces": 5
     },
@@ -320,7 +320,7 @@
       "name": "040-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "effc39a7ba750f103160c2c51b0057ec92d1b5830fc1263aac513c9a7e0e0ef7",
+      "sha256": "93860608b3b2e3ce4d4b7ea0fb1dc2e78329922d874f1f4c05b7cf8aa26cde1f",
       "definitions": 1,
       "faces": 6
     },
@@ -328,7 +328,7 @@
       "name": "041-boxes.skp",
       "family": "boxes",
       "bytes": 7725,
-      "sha256": "72e2af0822c751bbfd30563bbb8b0b99afb9e70cdc213225ef9bbfdb4221c93c",
+      "sha256": "b78953e05ed87edb7a315239e62ebcda926afea5f23889fd8c9c13cfb9218d13",
       "definitions": 1,
       "faces": 6
     },
@@ -336,7 +336,7 @@
       "name": "042-table.skp",
       "family": "table",
       "bytes": 9834,
-      "sha256": "19a9589b7ba246dc8e6f6f87f7a0f98f80aa7687157f2e865b75bf8befc778a7",
+      "sha256": "125c1942d974132950692f3cc8c62bda124bb6d22a8e6bd64e64cdcfd8bcd93f",
       "definitions": 2,
       "faces": 12
     },
@@ -344,7 +344,7 @@
       "name": "043-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11623,
-      "sha256": "9782f833f9f2f8d6aae23b163c780dd7225f64716790e674e5164f6e326f90fa",
+      "sha256": "ef7f89a93e27dbcddbfc47587ab6e2f810b4d2e7fe592bbcc3e723fd4a948273",
       "definitions": 3,
       "faces": 18
     },
@@ -352,7 +352,7 @@
       "name": "044-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "f1454f7123021afeb1520934f99a174a076c18f867f0d281026ca7e3454baf27",
+      "sha256": "1b4a93eb46965a66ad4796d06029dbde29fcec8dae3f33811d0148c960f08d82",
       "definitions": 5,
       "faces": 33
     },
@@ -360,7 +360,7 @@
       "name": "045-stairs.skp",
       "family": "stairs",
       "bytes": 9089,
-      "sha256": "bb5a25ba8bd342ed32aa9f8053efbcaf5ac6c9ed73357ba97bfad2279a54e8c1",
+      "sha256": "94668b10308a3fe9809b0fce1eb1b027dcd361565139ef888cb8b94cede319ad",
       "definitions": 1,
       "faces": 12
     },
@@ -368,7 +368,7 @@
       "name": "046-curved.skp",
       "family": "curved",
       "bytes": 9581,
-      "sha256": "b17efb2ef665d937aada07b371066906573b8145f927f4196b461c448f6a2dc2",
+      "sha256": "253b781c5ec98613660f785b92ee16446029a2793a89b537c4c5d8cbacd21ada",
       "definitions": 1,
       "faces": 14
     },
@@ -384,7 +384,7 @@
       "name": "048-loose.skp",
       "family": "loose",
       "bytes": 9429,
-      "sha256": "579dcf3b9f1f9c4c9c60098b9ee770cf0f837e0b67d892feffd2420cfc735a9b",
+      "sha256": "bfcf321064859c22be317a44fc645013b283d41d25f0c42a3f51c447174aa42b",
       "definitions": 1,
       "faces": 7
     },
@@ -392,7 +392,7 @@
       "name": "049-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "557e906adb743b97b443855228c4139f2c9797348c09f571dfe7f5155165fabf",
+      "sha256": "a5c3cd8c244464a1301a8d93380495d1043e93833e9f0fcf3322396f5b6dc92c",
       "definitions": 1,
       "faces": 5
     },
@@ -400,7 +400,7 @@
       "name": "050-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "f9c1d75043d986a9f6b1fed1936f19eff25ba467572ff1d3c2c4963b7d477cfe",
+      "sha256": "cfd9a5d11e25328427b4bd9ecbf6fc2df6e6c88ac3968313cd1d65a9f40e242a",
       "definitions": 1,
       "faces": 6
     },
@@ -408,7 +408,7 @@
       "name": "051-boxes.skp",
       "family": "boxes",
       "bytes": 9240,
-      "sha256": "6554575a25c6d20970635f0d6a3b48f5ae1c251a11e2b33afcc414b19c07a6d7",
+      "sha256": "e59ce6bbb2951d3772838b411bbe6733ab4854a924c0602e868b60177c1b28a5",
       "definitions": 2,
       "faces": 12
     },
@@ -416,7 +416,7 @@
       "name": "052-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "2859159b266e60b29dd3e2a76483ceca8ec07eeafcac0b31064da2b339421f08",
+      "sha256": "1d8177cb24870a2af09f509e1eafc6779fd616ce7b128fba22e71b472275f343",
       "definitions": 2,
       "faces": 12
     },
@@ -424,7 +424,7 @@
       "name": "053-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11796,
-      "sha256": "26a4c9c76c2896d8dca96f723e293f6242c3a3fbe3d4c0080025a31759cb5b65",
+      "sha256": "f97e9551a6ee99e4e1739dc96927ef133b49126ed105dbc778acae1199786cc8",
       "definitions": 3,
       "faces": 18
     },
@@ -432,7 +432,7 @@
       "name": "054-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "85a8392f47d15db5119a0251785e4a7ba9f77c7ef03daa35cc290c1aba3c875f",
+      "sha256": "9a4049e034aa7dd024b5372e396978a0b7867371ba6ac319a26bf11cacfc63f9",
       "definitions": 5,
       "faces": 33
     },
@@ -448,7 +448,7 @@
       "name": "056-curved.skp",
       "family": "curved",
       "bytes": 12766,
-      "sha256": "c7d908c329f94001178c1d5838b475853376903bb6bf124da84e858a920ecdfe",
+      "sha256": "fbd0bd8d8fe5e62a9e0a3daa81d1d356cb648117562ddada1c42e44cb2460c3f",
       "definitions": 1,
       "faces": 27
     },
@@ -464,7 +464,7 @@
       "name": "058-loose.skp",
       "family": "loose",
       "bytes": 9429,
-      "sha256": "6515c4b88f24040755f144bcff25ced80ce82507301d7e5450c3cfc88cc79b64",
+      "sha256": "f5f10097c60a749ccc3de09d10b24aa79425dab9ff2250358d7a26e2c6000e63",
       "definitions": 1,
       "faces": 7
     },
@@ -472,7 +472,7 @@
       "name": "059-open.skp",
       "family": "open",
       "bytes": 7510,
-      "sha256": "53b08086c065ea02f94ce5c092db560697093e4df274d5c5bce11ea48a20a8ac",
+      "sha256": "3023e6ad6b3ecea9646637ec4741be62e397466ca93fb603cd55f47c3b551eee",
       "definitions": 1,
       "faces": 5
     },
@@ -480,7 +480,7 @@
       "name": "060-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "a14f5fcf6863f96f1263d2dd2ee325ac2f648be4292b41ce7cf92be4dfb2eea0",
+      "sha256": "c0b92dfaebe2b3944ef4fe04dff023f2e572f43d1244ddd3dd566fe1a8023274",
       "definitions": 1,
       "faces": 6
     },
@@ -488,7 +488,7 @@
       "name": "061-boxes.skp",
       "family": "boxes",
       "bytes": 12586,
-      "sha256": "efe2674fae9c9bfbec82a97132f3735b2e4feb6578027ebf82d57db0827e44fe",
+      "sha256": "1c753a9ddc679d512df8d307928ad70d076f552ed9d2c0c070ebd8d95f88893a",
       "definitions": 4,
       "faces": 24
     },
@@ -496,7 +496,7 @@
       "name": "062-table.skp",
       "family": "table",
       "bytes": 9895,
-      "sha256": "b3a20f9e9f14a2b1cd948163a53c3ffda9914e1d4a64b4f34cda1d676d19f24e",
+      "sha256": "62c2c2a101fdd7a08e54edd4c932936317c3b194a0eb0e01da96f94ab4d4627f",
       "definitions": 2,
       "faces": 12
     },
@@ -504,7 +504,7 @@
       "name": "063-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11623,
-      "sha256": "3128bbbc37de96e865ad8d265c7d781ec91e772698811249137ddc4344754c04",
+      "sha256": "dcea3405b6624780b619a6334e05cc3033e7a37e583216fa99896e33ccad72d4",
       "definitions": 3,
       "faces": 18
     },
@@ -512,7 +512,7 @@
       "name": "064-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "c0c999e55bb14268080a54e9a808b9c936fbe37312f4f66c33bbcaa7fe910010",
+      "sha256": "df3fc8f7930a22f292d420b8b5739e719d5d1a96dd47dd36eb384a6a3f5d64e1",
       "definitions": 5,
       "faces": 29
     },
@@ -520,7 +520,7 @@
       "name": "065-stairs.skp",
       "family": "stairs",
       "bytes": 9089,
-      "sha256": "992d6bc009c5e6fef63a6561289f06d0149ee78ec8d9ae630a76c3b55d6fa8df",
+      "sha256": "d3043ffd332752b41d1dcab4d656e237b2eacc2b25c922d57f6d3e0c1eb6febe",
       "definitions": 1,
       "faces": 12
     },
@@ -528,7 +528,7 @@
       "name": "066-curved.skp",
       "family": "curved",
       "bytes": 28001,
-      "sha256": "ce4e41512864e0a9a68a46e2c2eea1d1c6f1773ba3c983ea589ccd36c3813ddf",
+      "sha256": "3016b2cce6d0ced7831c0a7f7cee985ac3645b84b7cf424c75ed501a8ae86c73",
       "definitions": 1,
       "faces": 88
     },
@@ -544,7 +544,7 @@
       "name": "068-loose.skp",
       "family": "loose",
       "bytes": 9427,
-      "sha256": "f732d05ff800ee69c2752cdc083c4c1a4dbdc1f7bfc51cb4e174c7b634a92ceb",
+      "sha256": "6eeaec141c8857f6cb4ea0e95db02c61c4027c5f0bbdc2ecfce222f190a001b9",
       "definitions": 1,
       "faces": 7
     },
@@ -552,7 +552,7 @@
       "name": "069-open.skp",
       "family": "open",
       "bytes": 7514,
-      "sha256": "a248e81106a8c2c8e8e5c4e05e4cf598ff86dfe0743e497fbbfa26dc8c09bcab",
+      "sha256": "fd9536b68dbd4323af7b77292c1db8020e51309256042e601f0f15b3630d67d7",
       "definitions": 1,
       "faces": 5
     },
@@ -560,7 +560,7 @@
       "name": "070-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "6021797edf57cf216dc7de239b6b45e0a300de7f343602355e58ef2c67ed2b75",
+      "sha256": "2921d4e24b0d934303ff56e9bac30e107197b9d6de8274b5c1272f10d83ad797",
       "definitions": 1,
       "faces": 6
     },
@@ -568,7 +568,7 @@
       "name": "071-boxes.skp",
       "family": "boxes",
       "bytes": 9322,
-      "sha256": "d9f8637709de1eaf2b2b532a9ec220f2ca1e8569188abc200d081e234a300dc6",
+      "sha256": "c8b5185c9715719fe53810caa315ba670700b0ffac31bdb5c877519da90e6933",
       "definitions": 2,
       "faces": 12
     },
@@ -576,7 +576,7 @@
       "name": "072-table.skp",
       "family": "table",
       "bytes": 9897,
-      "sha256": "1970d8bc4383544773b171321ccba570c56d52f256ab27b32338f1b5d22fe367",
+      "sha256": "7431d68d23e731dc5518c6fb418520e1e42515c525fa09cd5aad1fc78551f0f0",
       "definitions": 2,
       "faces": 12
     },
@@ -584,7 +584,7 @@
       "name": "073-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11462,
-      "sha256": "9c139e34f27c47447e3d8499d0d0f956319d81431dd9dcc58890107eca84ca41",
+      "sha256": "204d79db2b83e2015b7d242ae4936a92017b2f3a909668484e3e9c0f935b4d80",
       "definitions": 3,
       "faces": 18
     },
@@ -592,7 +592,7 @@
       "name": "074-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "c58750cc019eeef916fafff81d4b882b5b39f7c5acbe83f72863e99df6b0d644",
+      "sha256": "0c2d7158cb7f21b352ff2481a880fb0d332030a0c6a2cd1e933a4b86c6460f2d",
       "definitions": 5,
       "faces": 33
     },
@@ -608,7 +608,7 @@
       "name": "076-curved.skp",
       "family": "curved",
       "bytes": 14740,
-      "sha256": "0731230ba80c2c638a75170995a7d18911cf7b038e5621ee27b99ee420d8346c",
+      "sha256": "dd4be2dd90945b62bbd1902b8d2645378dd9ecedc5238169db6bef77bd254fba",
       "definitions": 1,
       "faces": 35
     },
@@ -624,7 +624,7 @@
       "name": "078-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "6c5f03f5f295ba23462bee012ab15a80a198b128df1dc47e0e7a2e028cda63e5",
+      "sha256": "6842c1e3f36b3d649c8995d85a5ab3d108832045d85f619e23cda2f4bb9733ca",
       "definitions": 1,
       "faces": 7
     },
@@ -632,7 +632,7 @@
       "name": "079-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "5231c94a15633a386b3255cbb816cb26f4f7038ba102a6159fc1ecd4d44b19bc",
+      "sha256": "7ccbd2bc51cfe70f4fa27b44ff3fe785104b45c2f7bdde28b85a721a711990e1",
       "definitions": 1,
       "faces": 5
     },
@@ -640,7 +640,7 @@
       "name": "080-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "e2e1f5bbe27eab36cf2b4cbb408680e6464935cbd7a50ac5030ae4a6a47a8046",
+      "sha256": "d8b870c597f2d49325eb18d00d2b4045baac05b98b227faeb65af67d10e75e6e",
       "definitions": 1,
       "faces": 6
     },
@@ -648,7 +648,7 @@
       "name": "081-boxes.skp",
       "family": "boxes",
       "bytes": 10913,
-      "sha256": "46249bb9ea8c46f9f6a5c209d6ee9e223929f6dead0c32e4a7b3d162f6b83fc7",
+      "sha256": "c1cd17c97543962042b2ef4234d77e707d47b804f8aab9423a3645e8d36296d7",
       "definitions": 3,
       "faces": 18
     },
@@ -656,7 +656,7 @@
       "name": "082-table.skp",
       "family": "table",
       "bytes": 9873,
-      "sha256": "1a3a9400bd3eef3ece091dc9d7377101e4404bd1396a98ab3306b62855c1d785",
+      "sha256": "05d34a01e6fee04f7b127b24155eda02dad1eabeceeb52f8abe82620a6f553ec",
       "definitions": 2,
       "faces": 12
     },
@@ -664,7 +664,7 @@
       "name": "083-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11464,
-      "sha256": "5c2541df20b332313b3bc5849c3ba0bcb4ca59193a0e284b3a834df6ccb351de",
+      "sha256": "e5901e140651c3aa678bb676d56eae8bc33fb7d79cf229ad3544dce82d58cb42",
       "definitions": 3,
       "faces": 18
     },
@@ -672,7 +672,7 @@
       "name": "084-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "d732ba926e946fb12feb4234a75f93d718aa2e47b3b80e96c0e2c186b20fd450",
+      "sha256": "2c39503fe87045cbed037a3f5a8db335522deeb72b495347c4a93dd22a92d9f7",
       "definitions": 5,
       "faces": 33
     },
@@ -688,7 +688,7 @@
       "name": "086-curved.skp",
       "family": "curved",
       "bytes": 24454,
-      "sha256": "0ede69348323f0db9f9929c3fe905a902643eb5dae917fffab12e7fe5d7398e0",
+      "sha256": "72fe361caa93a9d68459994d3be71fb95927d0d59870bd11834323a369cd1caa",
       "definitions": 1,
       "faces": 74
     },
@@ -704,7 +704,7 @@
       "name": "088-loose.skp",
       "family": "loose",
       "bytes": 9429,
-      "sha256": "d76a83a82f00dd1a20a1753998c4d5d5e0280625b692b0f5aded6ba340325c32",
+      "sha256": "d21264bd1aa439ad9748a2d27e29dd85ba35abb049a6e13dd4a27631242639b8",
       "definitions": 1,
       "faces": 7
     },
@@ -712,7 +712,7 @@
       "name": "089-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "d0d1f5fa3274e4a45f9d3b9c1072ae3caa6764f6ca6ba0eeec834f4c678d87db",
+      "sha256": "46b3bb2a70f09935e113b5ec512af89357fb3c8273809ed8c960dbf55324be92",
       "definitions": 1,
       "faces": 5
     },
@@ -720,7 +720,7 @@
       "name": "090-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "731a6850336191303e573dfa5ad9e856073facbd18227222cc7f5f5cce1253b1",
+      "sha256": "d5272693f7fbcd9b4b5cfad34228b8cb6336a79cadc43e62c4e5cfa7e934b867",
       "definitions": 1,
       "faces": 6
     },
@@ -728,7 +728,7 @@
       "name": "091-boxes.skp",
       "family": "boxes",
       "bytes": 12642,
-      "sha256": "31498b8dba745c42ead1a6d09be5d40dca98d71562544ae09b2f24122522d6a2",
+      "sha256": "10db4ef22074363188000ff1f65dc87d4f5137a27a2d153b7b4ade186bc9dd20",
       "definitions": 4,
       "faces": 24
     },
@@ -736,7 +736,7 @@
       "name": "092-table.skp",
       "family": "table",
       "bytes": 9879,
-      "sha256": "25399b5581ff224db622508876558236ae7a7f64f9dddb7452243e806f8f03ec",
+      "sha256": "36ab7cb3e8060be278ab82ee1dfbc69b71387f53cc71a0f6f2d838131539b605",
       "definitions": 2,
       "faces": 12
     },
@@ -744,7 +744,7 @@
       "name": "093-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11778,
-      "sha256": "7734d03295e2fe36b59bfe07361c86df8eb7559e28cd606b9f0acef7131d0621",
+      "sha256": "9d9e1209b7d9a07580f58ff34025d1a17d9359a7e537f3283a82dc19d7708fce",
       "definitions": 3,
       "faces": 18
     },
@@ -752,7 +752,7 @@
       "name": "094-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "60a5109b264faac02a1cc4e34976e233c8a1b4615d6ad7cabc3e4d4045779e07",
+      "sha256": "ffbae6f194aae15a7c867545f2c07b658b8edde8486c2949098721b6add0c5dd",
       "definitions": 5,
       "faces": 33
     },
@@ -760,7 +760,7 @@
       "name": "095-stairs.skp",
       "family": "stairs",
       "bytes": 11541,
-      "sha256": "d2e2a6a9b0c3c7383ae4706a1d9149b5d08cf145fe0fdbe8a367e483ab396191",
+      "sha256": "0e946e40f66902f4069c809f4e994e8c3c18e87a0e5714671ed6451cb50fb55a",
       "definitions": 1,
       "faces": 22
     },
@@ -784,7 +784,7 @@
       "name": "098-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "eb1d4a85f4b45774fc091780a5d8a349bb1b54f3d7bbf99ebc5ea07096cec0d2",
+      "sha256": "5ee11472e69cbd12eac52255b22521ba887bf4a7991ab1ae3cbe94f536d23fc1",
       "definitions": 1,
       "faces": 7
     },
@@ -792,7 +792,7 @@
       "name": "099-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "ae160f73574c54cef491fcdd04b347950ab5592cf94f135cf59c9a29552e119f",
+      "sha256": "9ac1121c2c238c796689d8e92be7adf38300965924565f5fd33ad5c9867797e2",
       "definitions": 1,
       "faces": 5
     },
@@ -800,7 +800,7 @@
       "name": "100-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "7b2b3a433aeeea25b1a42f6c3826bbf386a5b20c811950ff1670b21cc68a5475",
+      "sha256": "7214fdd603fa6a071cf708caae8ab9a3fddf58b103089b8cba722ce5dc0172cd",
       "definitions": 1,
       "faces": 6
     },
@@ -808,7 +808,7 @@
       "name": "101-boxes.skp",
       "family": "boxes",
       "bytes": 10913,
-      "sha256": "fdb61891440f5175b3b18e3bca22c921ad4482473f7c05b10127ae81af3a1f17",
+      "sha256": "09981a5d8a946407afdb740591217e40ea0a884569961f91e0b55a33a8334fea",
       "definitions": 3,
       "faces": 18
     },
@@ -816,7 +816,7 @@
       "name": "102-table.skp",
       "family": "table",
       "bytes": 9879,
-      "sha256": "6ce2fafb55f43a43e22861b6e4ed2e19958bc73e6daad8fa99a44d0af260fa8b",
+      "sha256": "1e449362404092e142fbd2f271668ea30755dab84391b67bbd31d451b12ce401",
       "definitions": 2,
       "faces": 12
     },
@@ -824,7 +824,7 @@
       "name": "103-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11937,
-      "sha256": "b72dbcd14aef0c05476a864a64a11a04a9b936480eaea0bd1a78720ac14fa13d",
+      "sha256": "418e5156fe20db63a22cb5c2fad04d0ea333d1a4d2413fa2de81ac69cc51d2a4",
       "definitions": 3,
       "faces": 18
     },
@@ -832,7 +832,7 @@
       "name": "104-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "027f656e96d8d63ecbfab097d5e9ce2e1303f3d62e3e8fd7d75d2fa5d4f0023b",
+      "sha256": "acb1642c3a2f173160386171810fd46c1ce67ef7bca109b50abddb06377f83f5",
       "definitions": 5,
       "faces": 33
     },
@@ -840,7 +840,7 @@
       "name": "105-stairs.skp",
       "family": "stairs",
       "bytes": 8595,
-      "sha256": "cfab8012bb797d36337bacc097990373b0f62c41a4a440e7491498a0ab30702d",
+      "sha256": "04121639ddc9281876e4c67655e2253988f63d2269f2f74aa494bdd041648868",
       "definitions": 1,
       "faces": 10
     },
@@ -848,7 +848,7 @@
       "name": "106-curved.skp",
       "family": "curved",
       "bytes": 25980,
-      "sha256": "fcd53363fd1705678e8e4d468302715a6fc27299ac5e1f96ce1192de8c373c82",
+      "sha256": "1f39adf617f3294313b9c497ae54568a5f689fd5a388cac295b9c5c0c0eec4bf",
       "definitions": 1,
       "faces": 80
     },
@@ -864,7 +864,7 @@
       "name": "108-loose.skp",
       "family": "loose",
       "bytes": 9427,
-      "sha256": "1710fd6316c9332d82d35460ffd5f04d2a42293013ca97e3db3c594e38c7d41e",
+      "sha256": "f7c87a020ce86ea31471397ef549a9c32ff44a77b994b4c4bb6ae68b31bdf1e5",
       "definitions": 1,
       "faces": 7
     },
@@ -872,7 +872,7 @@
       "name": "109-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "f700f8d595d7cb17f5deac494af1305c0f883675596484a6e7d0294b2f532553",
+      "sha256": "bf434f735c5c103f094199ea31e2015519f8b9b27b6740f7744946b047b8f26b",
       "definitions": 1,
       "faces": 5
     },
@@ -880,7 +880,7 @@
       "name": "110-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "7746ed5a68d2466b1602c6c1515b45de5260c589e459c0b3f2bf31efc7096ba8",
+      "sha256": "484e3f20d77c93185ebbf2ff97c76d43d89a4db5e3241034282f24529c1a1dbd",
       "definitions": 1,
       "faces": 6
     },
@@ -888,7 +888,7 @@
       "name": "111-boxes.skp",
       "family": "boxes",
       "bytes": 9240,
-      "sha256": "2bad7b59c665a65f25d006de858be2b33a3e88e243dd74340d6e81bcffdd0768",
+      "sha256": "ec449267e5b7aebf8975067457bfa206523d9521c462bd989accf7a8a3fbb042",
       "definitions": 2,
       "faces": 12
     },
@@ -896,7 +896,7 @@
       "name": "112-table.skp",
       "family": "table",
       "bytes": 9879,
-      "sha256": "af5d57d0c97600b82bc73939c9d8a3cf01d75d14b45361c81fb4ebd973c339f9",
+      "sha256": "2dcd30ab4aeffce6f5b50e86219dacb88e74d2eed49cb932b50120fa74dd2c00",
       "definitions": 2,
       "faces": 12
     },
@@ -904,7 +904,7 @@
       "name": "113-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11933,
-      "sha256": "1176fabd33d1ec70ef7ac725d23ec2d73f3067544b90392c7b357b44f2ac87be",
+      "sha256": "c4c22c696108f0cdead5512d91de3939f08fafbd6090350cf99b6b9d43c03e83",
       "definitions": 3,
       "faces": 18
     },
@@ -912,7 +912,7 @@
       "name": "114-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "45157bf1117cdf168736a1760ece65082f1fccf23e0e6375dccdffbba25e000e",
+      "sha256": "7f77bbba24b4316e86cd8f8dd498cf82fac56ab550f56fb8b1f9dab841e4b479",
       "definitions": 5,
       "faces": 33
     },
@@ -920,7 +920,7 @@
       "name": "115-stairs.skp",
       "family": "stairs",
       "bytes": 11051,
-      "sha256": "2cb7be4f558d9c644e5cc0a979e4dd347170dda2386f7b8f4bcb3b133ea76308",
+      "sha256": "748d8fc1fc55c2b535ec2f4d2d9dff5e3c44936b4a354b391d04589330e3ffa2",
       "definitions": 1,
       "faces": 20
     },
@@ -928,7 +928,7 @@
       "name": "116-curved.skp",
       "family": "curved",
       "bytes": 14477,
-      "sha256": "d9e2183c366f64d3d561f6db4dd747645b69db00d47ac1debc60bd084bdd082c",
+      "sha256": "ec246544f23511f2d23539fbb0afc32850028c382d7cf85f406e68385ff04faf",
       "definitions": 1,
       "faces": 34
     },
@@ -944,7 +944,7 @@
       "name": "118-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "84dd0a56a2f43a36514f5ae31c1f0dcc37f90efec0b2c2b559335860c8528a69",
+      "sha256": "a5ee0a80844019e403dd10477b0f73803ccf6f0b137bc841776deee041ab12a1",
       "definitions": 1,
       "faces": 7
     },
@@ -952,7 +952,7 @@
       "name": "119-open.skp",
       "family": "open",
       "bytes": 7514,
-      "sha256": "8519b52d8478f33f2379afaf5e5dee02b0faf1fe0b281933a8efb6a920a1b5d5",
+      "sha256": "5f6047a08a02c1e3cc8a709ebbb8c6baa1b88d06be5ad8f4732f9be0ba0a9ac1",
       "definitions": 1,
       "faces": 5
     },
@@ -960,7 +960,7 @@
       "name": "120-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "1bad6026fb550877fbf135e4c39849c708c0f8e3c8391178493b8f78e1a69bae",
+      "sha256": "8a869f9c4ad7df321c7acea976eda4b4e191cdcd1debf97dfc84e78310e609f7",
       "definitions": 1,
       "faces": 6
     },
@@ -968,7 +968,7 @@
       "name": "121-boxes.skp",
       "family": "boxes",
       "bytes": 7567,
-      "sha256": "fc1d03dc26cf02f28c7262c293801db996272539e9a86e0972477f2859f79323",
+      "sha256": "2519fbf4edfce969d2ed178af0a7b725cca349f531d9899a3d387a7ee5695570",
       "definitions": 1,
       "faces": 6
     },
@@ -976,7 +976,7 @@
       "name": "122-table.skp",
       "family": "table",
       "bytes": 9832,
-      "sha256": "0dd8db1ddb80bfc34e188cf958238f5df2e3f263ab6a72c689f085addd43b79d",
+      "sha256": "2362014bbec30e966f06b909d90db4e9826a30047e5650f2ebaa04632d91b6e7",
       "definitions": 2,
       "faces": 12
     },
@@ -984,7 +984,7 @@
       "name": "123-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11782,
-      "sha256": "f0bdd02cd5397aef2a1196350c21cac709c0543adb8703216f2677f270ce8f3a",
+      "sha256": "da653d13a04fcc71221718ba77c1c09839820b55de2b9def83d870e214d12cec",
       "definitions": 3,
       "faces": 18
     },
@@ -992,7 +992,7 @@
       "name": "124-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "435e51e5cc4bc573b36d3652d1b06058ac57bd4437a6a68d875f3bbd07b8d7c3",
+      "sha256": "38cd126a45e0e1b9d14a4c6d1a6f99d6c0abf9be226111217beb0bcf7df3fb7c",
       "definitions": 5,
       "faces": 33
     },
@@ -1008,7 +1008,7 @@
       "name": "126-curved.skp",
       "family": "curved",
       "bytes": 17179,
-      "sha256": "eff0c2df749306ebe6fec3cf6495bdc0210715ec0edc3fb8f1c213d6ffef38a3",
+      "sha256": "3d0796d540e7e10fd121dc9bec3eb24d0a9a86b67e28a96e578b754330a8f41d",
       "definitions": 1,
       "faces": 45
     },
@@ -1024,7 +1024,7 @@
       "name": "128-loose.skp",
       "family": "loose",
       "bytes": 9447,
-      "sha256": "64c02703fb0205746623a7b0465dcd95ef2758f928ebe559177a4cc3db79e08d",
+      "sha256": "f93e58dab612958d83ffb8768d1bf0cdb5689188ee03e25daad5506b60dd3677",
       "definitions": 1,
       "faces": 7
     },
@@ -1032,7 +1032,7 @@
       "name": "129-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "59aac58020b887c97e69b6f50081d7e2d07df088776bc2347f21ab88daca69f8",
+      "sha256": "3d67ada44a1cf9dd37c6a9f5a8e6c14ad137b4400173c3f78d5f7293b064c217",
       "definitions": 1,
       "faces": 5
     },
@@ -1040,7 +1040,7 @@
       "name": "130-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "889f3574fe7c01723f3e1a9c61cb60bd6f1c11d7a42d5b85d9fb885e94b5f4ab",
+      "sha256": "8660912ffe45535011641bc21821bb2b13981652707e40650b25fd3ac518eeed",
       "definitions": 1,
       "faces": 6
     },
@@ -1048,7 +1048,7 @@
       "name": "131-boxes.skp",
       "family": "boxes",
       "bytes": 7629,
-      "sha256": "17fa71745f3487b4e62d9998fb7788801c6acd2304e0764848d50f948c46dd03",
+      "sha256": "4d67c7a4ae88fcc10d8740c976ee4d74624498421f8f210f01bdaa37b2e63d03",
       "definitions": 1,
       "faces": 6
     },
@@ -1056,7 +1056,7 @@
       "name": "132-table.skp",
       "family": "table",
       "bytes": 9881,
-      "sha256": "332534f15247d52cb205ba1536bb413debc745b6ad25513ed88d3d6007a03f94",
+      "sha256": "d1f27f8b684ed8ace1d52a89d850f0d2e8dd3ba3f536ce36c561fd65e4e7b288",
       "definitions": 2,
       "faces": 12
     },
@@ -1064,7 +1064,7 @@
       "name": "133-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11796,
-      "sha256": "e7125ce09d6817d71463f7990a5eee4648dfeab63f7b157545a21a998b08da95",
+      "sha256": "f8b22ae2184c1919644b5138788c8cab4d2ead7c4d75f8055a18241f9dafe666",
       "definitions": 3,
       "faces": 18
     },
@@ -1072,7 +1072,7 @@
       "name": "134-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "c33d47c14993468bc821e6e5f2176aac997a6e63a93bfa36a9999e6183296f3b",
+      "sha256": "0deb3460e8de583beda7b67d4a7aeb2dadc265641af5282d225810385e021659",
       "definitions": 5,
       "faces": 29
     },
@@ -1088,7 +1088,7 @@
       "name": "136-curved.skp",
       "family": "curved",
       "bytes": 29991,
-      "sha256": "e519fbf576494ca746f65fc5587b4472d85caeb6cb012273666059bc4033af61",
+      "sha256": "ad355b74ec84f0e8c487ac5ae8162ff6ba52413ead2b7ed17d020f09c6205032",
       "definitions": 1,
       "faces": 96
     },
@@ -1104,7 +1104,7 @@
       "name": "138-loose.skp",
       "family": "loose",
       "bytes": 9429,
-      "sha256": "0d113a7cbfdc8c70c96051b19e0ed534d713489fe9d2dd2f5ab4c9f22b920932",
+      "sha256": "88d7cf82a40b4475dcc6b6c617d9589ddb714d2a43d2342f7e7860a2e4310795",
       "definitions": 1,
       "faces": 7
     },
@@ -1112,7 +1112,7 @@
       "name": "139-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "9eb4d4962f480561b876d471c518a72073330937cf43f7d4fe4a2c8d5e9d5b26",
+      "sha256": "a24c1ba9812b410f6e10d4efc4eee620eed78032068ceaa56dc05557bdb97e42",
       "definitions": 1,
       "faces": 5
     },
@@ -1120,7 +1120,7 @@
       "name": "140-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "365ee569a1cb0071e7edd94f65964311407589ff33e2625ea5be7b2c52da0129",
+      "sha256": "e5ec923e18e9469194bee5da4645391bd13523aadb32ec44097f8b23ffb7b383",
       "definitions": 1,
       "faces": 6
     },
@@ -1128,7 +1128,7 @@
       "name": "141-boxes.skp",
       "family": "boxes",
       "bytes": 9302,
-      "sha256": "3b076355b460c24153eb4c9479fc4d8569ebb6bb2d88756ed3f9ee8ba49e61ab",
+      "sha256": "df5101c32c51690f747463a8b7ff6f180afae26fd27b866307de5866c42adce4",
       "definitions": 2,
       "faces": 12
     },
@@ -1136,7 +1136,7 @@
       "name": "142-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "386ab082e19522b2049b6f56072b3e9c491af6a22d9a934515a8d3492c55eb8c",
+      "sha256": "9c4b75b480884120928a5db8590346b631892f1b6a3edfa080d78cf0442deeae",
       "definitions": 2,
       "faces": 12
     },
@@ -1144,7 +1144,7 @@
       "name": "143-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11776,
-      "sha256": "a69f362e16537bb4ac4896dbc1d5cac7389f1aaa198af7d106c99678a3667003",
+      "sha256": "521d8a23a62fd9623a52bb1225a88cffe200aea4e00de1e38a15d36582ea6e57",
       "definitions": 3,
       "faces": 18
     },
@@ -1152,7 +1152,7 @@
       "name": "144-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "599709caa861fda80a30d1b2dac111ad486caabbd42cc8d670f1a88f74af99f9",
+      "sha256": "26289de7f2feb1ed59d027cb0a1aeb5db08b8bb519247e98708e96e917986404",
       "definitions": 5,
       "faces": 33
     },
@@ -1160,7 +1160,7 @@
       "name": "145-stairs.skp",
       "family": "stairs",
       "bytes": 8597,
-      "sha256": "31b9a5c0f27361955878abb2b5eb568b8601e8e47f94192f7d62b7cd18dc384c",
+      "sha256": "f47e11fc636a4c3c01ad8e43e1072a569807f544755f568915cb7c795deb8dae",
       "definitions": 1,
       "faces": 10
     },
@@ -1168,7 +1168,7 @@
       "name": "146-curved.skp",
       "family": "curved",
       "bytes": 11800,
-      "sha256": "c56134331a646dd5db045edf4bc49a0c2f3550fbe2c0a1bfa1e4ce0c4b80c485",
+      "sha256": "ebca63c6e25752d23255aca8b436ee31676d3fb977884e5b2266360352bb4b3c",
       "definitions": 1,
       "faces": 23
     },
@@ -1184,7 +1184,7 @@
       "name": "148-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "0d24072b1d46ae9892a00c78054614dd22fc53a675a6c78e900cb7cc44597d11",
+      "sha256": "be5682b7c4b71bff25ae7d504fbe31b4ce50117e99b7dfad6d147c7b1fc6b375",
       "definitions": 1,
       "faces": 7
     },
@@ -1192,7 +1192,7 @@
       "name": "149-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "ee3541ace866b405963cd27d3b996ec9fadea56bf481b9ba2da7320d3338e4c0",
+      "sha256": "eec99b5d0781540d92b4fc92b6758ea34879f6357258741a9701ace3bc2b4116",
       "definitions": 1,
       "faces": 5
     },
@@ -1200,7 +1200,7 @@
       "name": "150-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "8959d08de81da86c9877b43d4e0a8ff2497058dd3e9798bb2c8cc1f8c37429f8",
+      "sha256": "72b2c52250b7f44c5bfac86f46bf189cc66825f2f6738af22928a93851f7c642",
       "definitions": 1,
       "faces": 6
     },
@@ -1208,7 +1208,7 @@
       "name": "151-boxes.skp",
       "family": "boxes",
       "bytes": 9384,
-      "sha256": "fb7bad6b76a66656f4aa13b0cf272b7f9230794170c8670bce7a849ab7e27a19",
+      "sha256": "8cac3a5fc547cffe2415df3475c3ac01a082f660283933d12e31d1c2bb87036f",
       "definitions": 2,
       "faces": 12
     },
@@ -1216,7 +1216,7 @@
       "name": "152-table.skp",
       "family": "table",
       "bytes": 9895,
-      "sha256": "25076867f7cea0a8ebe1d03fd9ca1aaad4dacd095eb82287d3a9268cdcaf872a",
+      "sha256": "8222be7824c34d4419906e025757036785b9e1156798b7ea8886e600565ee557",
       "definitions": 2,
       "faces": 12
     },
@@ -1224,7 +1224,7 @@
       "name": "153-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11468,
-      "sha256": "e4c0ae0d93bcea149c6ef0528f9dc12b34378cd3abfeee5f76c08e38b8bd8c7c",
+      "sha256": "e5914d71086c484e370d81aed9d0b10fffbcd6a5766f774458268be2d531753a",
       "definitions": 3,
       "faces": 18
     },
@@ -1232,7 +1232,7 @@
       "name": "154-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "e3b8ccdecdf5c39bd75c3784b5a3729e18dfa11b004a8b04190e2d8fd8aef47a",
+      "sha256": "3bca4177bd1ed318ce811e1c97f651ba1ef8bcaa71f549e22aefc337fdd5bd4f",
       "definitions": 5,
       "faces": 33
     },
@@ -1248,7 +1248,7 @@
       "name": "156-curved.skp",
       "family": "curved",
       "bytes": 13021,
-      "sha256": "53021c91cca5b72dfa03189718abb314e116012bd4942ddaaa47a96e0c8f8d20",
+      "sha256": "a7f30602de14f507768e84af9febd1ac88057ef03d1c81b2eb45398c30421a70",
       "definitions": 1,
       "faces": 28
     },
@@ -1264,7 +1264,7 @@
       "name": "158-loose.skp",
       "family": "loose",
       "bytes": 9433,
-      "sha256": "28fa66a9e27cf928ee80b92a90d1e02eed33cb552a884ad1b632ffecbe635f81",
+      "sha256": "13114ed82eb5c8d77726b48415293e69125e5a2bd56403c2b32b371582cbb326",
       "definitions": 1,
       "faces": 7
     },
@@ -1272,7 +1272,7 @@
       "name": "159-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "810ff44aabd9dd25180cb2a8ec2bdf21e0cddb4dac8370b8660ae2313888d2f4",
+      "sha256": "4e698a029e4a07874b769ad6d781e56a86131ad43e729641fd890d1820389bfd",
       "definitions": 1,
       "faces": 5
     },
@@ -1280,7 +1280,7 @@
       "name": "160-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "8ad8521917df38e22117edfb8da0ab1a76fe34064d52ee7286fd7093002a9054",
+      "sha256": "b1e0b7474a60ee81d54c120db547ea3ae7258275a820287e9b70781517aaba22",
       "definitions": 1,
       "faces": 6
     },
@@ -1288,7 +1288,7 @@
       "name": "161-boxes.skp",
       "family": "boxes",
       "bytes": 9300,
-      "sha256": "b286ca8d61d4ab3c279cca627b522698c32711104211f428a2165b043127bf53",
+      "sha256": "3a018e7dca138e1918c170d6d09b1310824dd61f0cadaa3619b3a3f7356cf246",
       "definitions": 2,
       "faces": 12
     },
@@ -1296,7 +1296,7 @@
       "name": "162-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "4191fcb83ddea88ba1468b0bdd7381c174b258488082374ff63bdd7fda1c9d67",
+      "sha256": "828dd272d80de5d30b8f0d8464eb92459d7dfc68cf2b63979fdaeb4e0e77cfa4",
       "definitions": 2,
       "faces": 12
     },
@@ -1304,7 +1304,7 @@
       "name": "163-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11778,
-      "sha256": "882b1cc87ed7eaf5a9411f8c8d6fbd0604235f85931ce386047ff25f20141d94",
+      "sha256": "ec958c039005cd1f3e7bd78f65f49fa794898bae71676cf05dc3483e563c9561",
       "definitions": 3,
       "faces": 18
     },
@@ -1312,7 +1312,7 @@
       "name": "164-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "403e408b990b5f3957613fe4d5c1dc38f3a4ecee93b9bac1428db49398e355f7",
+      "sha256": "0bd0e7c0901ed5fdab6c81ecf05e89ebb47a0bd4f6d2d35b0a3acf5bfec294b6",
       "definitions": 5,
       "faces": 29
     },
@@ -1320,7 +1320,7 @@
       "name": "165-stairs.skp",
       "family": "stairs",
       "bytes": 9577,
-      "sha256": "351d433004d3f79086c27f3bd3ba3e8ae4094ee170b75dffdc3d972898fec090",
+      "sha256": "9b44907f4a1d34427232c4059917713bbd4e94b4c123a3cf63f9aeed8077d6e1",
       "definitions": 1,
       "faces": 14
     },
@@ -1328,7 +1328,7 @@
       "name": "166-curved.skp",
       "family": "curved",
       "bytes": 27981,
-      "sha256": "25dea2ad66ab1b3b3fb6a28a2bf9d11f41126465dc9d997ebc1648c7c73e95ba",
+      "sha256": "837d9ba15018e5dd24f6ca26c2fd58cb6e9f7219c8e7cb3f24743f42a032db7b",
       "definitions": 1,
       "faces": 88
     },
@@ -1344,7 +1344,7 @@
       "name": "168-loose.skp",
       "family": "loose",
       "bytes": 9431,
-      "sha256": "fe6f661e9ba899b3c9e2872942149b76fc4340a061d1be8a8b1f848140415650",
+      "sha256": "535353da7f25b3771ce9a985c8c994f2a728ebbfacedd27398332d49d87f807e",
       "definitions": 1,
       "faces": 7
     },
@@ -1352,7 +1352,7 @@
       "name": "169-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "a93d3aaaa4cc2ae709ac19c2a6168020c09c447377db7ee74a03f05c87764805",
+      "sha256": "62fd8b6e24cdcb94c48ee1c51738408a179df8d93d944c163d8d312ff8ace4d2",
       "definitions": 1,
       "faces": 5
     },
@@ -1360,7 +1360,7 @@
       "name": "170-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "1faf819180b209337c26df823b1a967e8bd270e6f03b9f0b420205fb716db063",
+      "sha256": "c15b6f023b313b4e3d0f438c243fe7ab436a8bae604540572b9baa0771ad6662",
       "definitions": 1,
       "faces": 6
     },
@@ -1368,7 +1368,7 @@
       "name": "171-boxes.skp",
       "family": "boxes",
       "bytes": 9380,
-      "sha256": "5644b1045d0a48f22d0e9c78e54787dc1c25c99833a45a949e0286320d4270ca",
+      "sha256": "93cbee0f17f18d67169672fe3427c2a939fab6c8a55aecc7f532f858bfa74c04",
       "definitions": 2,
       "faces": 12
     },
@@ -1376,7 +1376,7 @@
       "name": "172-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "bcb91b8429d4aaac4a3ab71a333bda6e4e5e191be391664184bd87f79bb9879a",
+      "sha256": "769cda0db90c35103d1202bd594db6734b96a08a92f7038d86a71afc613eb26d",
       "definitions": 2,
       "faces": 12
     },
@@ -1384,7 +1384,7 @@
       "name": "173-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11462,
-      "sha256": "2e5ba16b20cb5a3ff52df097b3d973f4eda76f7f437dbd340834948c53ca93d7",
+      "sha256": "8bbbd4b05b122edd0a659e192d4b8e9d797ed231fb3c8dd3743c1bb697336ccc",
       "definitions": 3,
       "faces": 18
     },
@@ -1392,7 +1392,7 @@
       "name": "174-house.skp",
       "family": "house",
       "bytes": 14315,
-      "sha256": "d3dea8e85996ef1092ad5d79bb4bd4d5b33cd734079c6a37e522d1ecb8c9c6db",
+      "sha256": "80f43430af9db9ae23c614a8dcd7b5b01bab7566a2a40f93028f4030401e943f",
       "definitions": 5,
       "faces": 29
     },
@@ -1408,7 +1408,7 @@
       "name": "176-curved.skp",
       "family": "curved",
       "bytes": 10312,
-      "sha256": "b6f920f5dda3341559e0f2f0d6aed620fe9dcb5365905aaccbf941e86939da11",
+      "sha256": "6e6e35ad60869ea6df623bb4ff7bc61c72d49fffa744bf495ce9e92792fcb252",
       "definitions": 1,
       "faces": 17
     },
@@ -1424,7 +1424,7 @@
       "name": "178-loose.skp",
       "family": "loose",
       "bytes": 9427,
-      "sha256": "87a949414d22c979da4960cfcb60250f1300cb626bf06404beb155c63b174003",
+      "sha256": "55598795a6e799d80ee70c3793d73c9ff6c8e2b864438aa7bf90d9f2f365a9d4",
       "definitions": 1,
       "faces": 7
     },
@@ -1432,7 +1432,7 @@
       "name": "179-open.skp",
       "family": "open",
       "bytes": 7508,
-      "sha256": "1c07d7059746bb9131e96c7eb2e79f84944e2303ff5a2168edb66b4f76e11e95",
+      "sha256": "bf274cd7be514e43c57b5f0a610b9acd1def7387a92873e33c44ae64133ab391",
       "definitions": 1,
       "faces": 5
     },
@@ -1440,7 +1440,7 @@
       "name": "180-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "8ca37feb5feed929a78baaf33922f99bcb7729e93cb9e905bd5e4fcfdbbfcf87",
+      "sha256": "e54f903265935fe3d711984ae4c7e0a2bc77788eee320a5a0ad5890136e67bf2",
       "definitions": 1,
       "faces": 6
     },
@@ -1448,7 +1448,7 @@
       "name": "181-boxes.skp",
       "family": "boxes",
       "bytes": 12668,
-      "sha256": "b826be28c2e420dc63fa7e61f5dae000a810e766db2bc26862c6b623a68f2bfe",
+      "sha256": "4549f78f3c712a4c549b9bac9cade9ee10192a1a6524d6b233422ee9fec59452",
       "definitions": 4,
       "faces": 24
     },
@@ -1456,7 +1456,7 @@
       "name": "182-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "6146e824896e6dab995d498cf03267694474af2460e60efcd6b4e921b4bd1a8d",
+      "sha256": "549c52b12b770838dc4cff08a429524ef455677b800a980df4bc8014ada66f79",
       "definitions": 2,
       "faces": 12
     },
@@ -1464,7 +1464,7 @@
       "name": "183-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11464,
-      "sha256": "591c2f4ef3b523d4027d53bc78cdcb944a7b70be779556de6fa596a52b1fd301",
+      "sha256": "607903fec00bf1cb4fbcecc300d1b5c1ffce1bba19fb342872fb924cfee54a98",
       "definitions": 3,
       "faces": 18
     },
@@ -1472,7 +1472,7 @@
       "name": "184-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "17da673e8c555efb6fbb7c30ead373ec13c1b92e6a0b425ec92dfc3303113b75",
+      "sha256": "a24c9f73bd11a58427bc5ff3b37e70d821690dc6486dd90208608c171a50eb26",
       "definitions": 5,
       "faces": 33
     },
@@ -1488,7 +1488,7 @@
       "name": "186-curved.skp",
       "family": "curved",
       "bytes": 25978,
-      "sha256": "a791d48b0e9ab1c19aabb30bfbd2df897526a1bacc8e18a96bc238297173235f",
+      "sha256": "a230aba9a25ae951a88795303154e32f305f2ee30cc22907dc0843b1c801f596",
       "definitions": 1,
       "faces": 80
     },
@@ -1504,7 +1504,7 @@
       "name": "188-loose.skp",
       "family": "loose",
       "bytes": 9427,
-      "sha256": "49776270e4c6fdcc73207c0dbb0dc5d32f1f2f36394784340f042ac90bc66c40",
+      "sha256": "cadd2aed901ddfbffca694a4496917106dac89c88c9176d2641e1a8fcafc906b",
       "definitions": 1,
       "faces": 7
     },
@@ -1512,7 +1512,7 @@
       "name": "189-open.skp",
       "family": "open",
       "bytes": 7512,
-      "sha256": "6518d54901336deee3fe6a7dd44df589a1f7643f1185975bac2249f5adec7278",
+      "sha256": "96f0b07d690972b7ff9a5c737986d7bd12885a73ab5587ed426237505ffeeb63",
       "definitions": 1,
       "faces": 5
     },
@@ -1520,7 +1520,7 @@
       "name": "190-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "298840c6694c5b660e706eeb115fb74e8b4a3e38e20ab724aa72ece6b18420ff",
+      "sha256": "96918a88a87e25b1c7a63857394c197cb8526d80822a412bca9509a5c76fb4e3",
       "definitions": 1,
       "faces": 6
     },
@@ -1528,7 +1528,7 @@
       "name": "191-boxes.skp",
       "family": "boxes",
       "bytes": 9300,
-      "sha256": "6ee9a190f070f59e2e72e55a5cf66a8f6079d2c71f8cba5f9f31e25ebe961fdf",
+      "sha256": "eb5e28c34cc05af3d9c71cb026c06fa43886e9af002761ae594be26e3973946f",
       "definitions": 2,
       "faces": 12
     },
@@ -1536,7 +1536,7 @@
       "name": "192-table.skp",
       "family": "table",
       "bytes": 9877,
-      "sha256": "46659df0ec27a61404c3d410a203712cecea11d67312f1113ac9f0796fee5048",
+      "sha256": "e434d530b43103354b13d000ef2d12e43acac102a382d0debaf50bb5eb92887e",
       "definitions": 2,
       "faces": 12
     },
@@ -1544,7 +1544,7 @@
       "name": "193-bookshelf.skp",
       "family": "bookshelf",
       "bytes": 11619,
-      "sha256": "624b813111a465a45030b9a4a8cab73268f3051d0f05adf59ccb5fedbaf179c6",
+      "sha256": "c5606d6561bf3db3be7eeb1b6c168a6b3395897eb49721117d22ae9c1304a97f",
       "definitions": 3,
       "faces": 18
     },
@@ -1552,7 +1552,7 @@
       "name": "194-house.skp",
       "family": "house",
       "bytes": 15313,
-      "sha256": "b39b54fd73d898d429a796e9b6919d7f4441150acec48338e19e0e5de600a6b3",
+      "sha256": "7d44f4a9452a98a6e696bf7e024756bf0f8f99094a41903434eeac45fe8ce74c",
       "definitions": 5,
       "faces": 33
     },
@@ -1560,7 +1560,7 @@
       "name": "195-stairs.skp",
       "family": "stairs",
       "bytes": 13009,
-      "sha256": "1434363bfec1ce27cf136c69c21951beb4b7cde7d0a4a7388e764f64edd1d224",
+      "sha256": "70ac8c377c597bfa90c8a812397d90a8decb4718a6d8819fa6bc5d50c8923a0c",
       "definitions": 1,
       "faces": 28
     },
@@ -1584,7 +1584,7 @@
       "name": "198-loose.skp",
       "family": "loose",
       "bytes": 9433,
-      "sha256": "45776b140b261dbf817ea263d0db6251b4a17955be0120551ca958be264b4440",
+      "sha256": "48667a3872fec428341a435a8a8f7e537d6a761f18eba1dc212b9ad559d2dfae",
       "definitions": 1,
       "faces": 7
     },
@@ -1592,7 +1592,7 @@
       "name": "199-open.skp",
       "family": "open",
       "bytes": 7510,
-      "sha256": "62f9a6d4b2c48ad9926495086bbd58d83927b7b773386200bc2535df5bb8bd5d",
+      "sha256": "f26fc26e1dbfbacfc36e297516493e703e569ff2d593e1b2724d7f7724f52a85",
       "definitions": 1,
       "faces": 5
     },
@@ -1600,7 +1600,7 @@
       "name": "200-reversed.skp",
       "family": "reversed",
       "bytes": 7559,
-      "sha256": "fd1204a14936cf75f9de7db52e8d6d0bc034013f16a132fa17b616863056fc38",
+      "sha256": "404ba7113e1bb7ba52b95ac9024cfa2608494285dca9358f81f4b3c4c58c00b0",
       "definitions": 1,
       "faces": 6
     },

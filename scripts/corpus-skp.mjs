@@ -8,7 +8,11 @@
 //   npm run corpus:skp -- --count 20    only the first N (the golden sample)
 //
 // Every file is reproducible byte for byte: the manifest records each file's size and
-// SHA-256, and CI regenerates the corpus and fails on any difference. The .skp files are not
+// SHA-256 and the openskp version whose writer made them, and CI regenerates the corpus and
+// fails on any difference. Lane 25 regenerated all 203 with openskp 1.4.0's writer (it flags a
+// group's definition as a group; the 166 files with a group changed, and every file still
+// imports to the same groups, components, faces and op: tests/corpus/README.md). Each run
+// says which writer wrote the files and which one the manifest records. The .skp files are not
 // committed because openskp's writer starts every file from a SketchUp-saved blank scaffold
 // that we do not redistribute (docs/CLEANROOM.md, ADR-0002).
 //
@@ -28,6 +32,7 @@ const { corpus, curveModels } = await import(new URL("../src/io/corpus/models.ts
 const all = [...corpus(200), ...curveModels()];
 const count = countArg >= 0 ? Number(args[countArg + 1]) : all.length;
 const { parseSkp } = await import("openskp");
+const writer = JSON.parse(readFileSync(path.join(root, "node_modules", "openskp", "package.json"), "utf8")).version;
 
 mkdirSync(outDir, { recursive: true });
 for (const f of readdirSync(outDir)) if (f.endsWith(".skp")) rmSync(path.join(outDir, f));
@@ -48,7 +53,7 @@ for (const spec of all.slice(0, count)) {
 const ms = performance.now() - t0;
 const families = {};
 for (const f of files) families[f.family] = (families[f.family] ?? 0) + 1;
-console.log(`[corpus] ${files.length} files, ${(total / 1024 / 1024).toFixed(2)} MB, ${Math.round(ms)} ms -> ${path.relative(root, outDir)}`);
+console.log(`[corpus] ${files.length} files written by openskp ${writer}'s writer, ${(total / 1024 / 1024).toFixed(2)} MB, ${Math.round(ms)} ms -> ${path.relative(root, outDir)}`);
 console.log(`[corpus] families: ${Object.entries(families).map(([k, n]) => `${k} ${n}`).join(", ")}`);
 console.log(`[corpus] faces: ${files.reduce((n, f) => n + f.faces, 0)}, largest file ${(Math.max(...files.map((f) => f.bytes)) / 1024).toFixed(1)} KB`);
 if (total > 20 * 1024 * 1024) {
@@ -57,10 +62,12 @@ if (total > 20 * 1024 * 1024) {
 }
 
 if (update) {
-  writeFileSync(manifestPath, JSON.stringify({ generator: "scripts/corpus-skp.mjs", openskp: JSON.parse(readFileSync(path.join(root, "node_modules", "openskp", "package.json"), "utf8")).version, count: files.length, bytes: total, files }, null, 2) + "\n");
+  writeFileSync(manifestPath, JSON.stringify({ generator: "scripts/corpus-skp.mjs", openskp: writer, count: files.length, bytes: total, files }, null, 2) + "\n");
   console.log(`[corpus] wrote ${path.relative(root, manifestPath)}`);
 } else if (existsSync(manifestPath)) {
   const want = JSON.parse(readFileSync(manifestPath, "utf8"));
+  console.log(`[corpus] the manifest records files written by openskp ${want.openskp}'s writer`);
+  if (want.openskp !== writer) console.error(`[corpus] openskp ${writer} is installed but the manifest was written with ${want.openskp}: expect differences`);
   const byName = new Map(want.files.map((f) => [f.name, f]));
   let bad = 0;
   for (const f of files) {

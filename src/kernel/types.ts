@@ -171,6 +171,18 @@ export interface ImportItem {
   face_uvs?: ([number[], number[]] | null)[];
   /** Lane 15: soft (1), smooth (2) and hidden (4) edges as [index, index, flags]. */
   edge_flags?: [number, number, number][];
+  /** Lane 25: curves along the item's edges (a `.skp` circle, arc or welded curve): each a
+   * rim of the solid it runs along when the kernel can key it, else plain edges (noted). */
+  curves?: ImportCurve[];
+}
+
+/** Lane 25: one curve of an import item: its kind and its points in order, as indices into
+ * the item's positions (a closed one does not repeat its first point;
+ * crates/kernel/src/meshbuild.rs `ImportCurve`). */
+export interface ImportCurve {
+  kind: CurveKind;
+  points: number[];
+  closed: boolean;
 }
 
 /** A component definition in an import: geometry in its own coordinates, plus nested groups
@@ -203,6 +215,10 @@ export type ImportNode = { name?: string | null; tag?: string | null; hidden?: b
 export interface ImportStroke {
   points: [number, number, number][];
   closed?: boolean;
+  /** Lane 23: the stroke is one curve in the file (a DXF circle or arc; lane 25: a `.skp`
+   * circle, arc or welded curve lying loose or bounding a flat face): it comes in as a curve
+   * when its points land as drawn. */
+  curve?: CurveSpec;
 }
 
 export interface MaterialDef {

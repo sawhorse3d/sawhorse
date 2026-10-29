@@ -17,6 +17,17 @@
 // Edges (lane 15): SketchUp's soft, smooth and hidden flags come across per edge (the
 // item's `edge_flags`), so a circle pulled into a cylinder is round, not 24 lines.
 //
+// Curves (lane 25, openskp 1.4.0): edges the file groups into one curve (`Edge.curveId`, with
+// `Definition.arcs` for an arc or a circle) come in as one kernel curve through the existing
+// curve entity (ADR-0013), checked first against the record (src/io/skpCurves.ts). At the
+// top of the model a curve lying loose, or bounding a flat unpainted face nothing else
+// touches, goes into a sketch as a stroke that is a curve (lane 23's path, as a DXF circle
+// does), with that face, so a SketchUp disc arrives as a sketch circle and its face, ready to
+// pull. Every other curve rides on its item (`ImportItem.curves`) and becomes a rim of the
+// solid it runs along when the kernel can key it; on a non-solid mesh it stays plain edges,
+// and the kernel's note says so. A record that disagrees with its edges is not trusted: the
+// edges come in plain, named in a note.
+//
 // An empty file (nothing drawn, nothing placed: a blank template) is not an import: the
 // result says `empty`, with the file's units and style, and the app opens it as an empty
 // model in those units.
@@ -41,7 +52,8 @@ import { unzipSync } from "fflate";
 import { parseSkp, type Definition, type Edge, type Face, type Instance, type SkpModel } from "openskp";
 import { MODEL_LIMITS } from "../kernel/limits";
 import { imageSize } from "../lib/imageSize";
-import type { FaceStyle, ImportDefinition, ImportItem, ImportNode, ImportSection, KernelOp, MaterialDef, OpOutcome, SceneDef, V3, Xform } from "../kernel/types";
+import type { CurveSpec, FaceStyle, ImportCurve, ImportDefinition, ImportItem, ImportNode, ImportSection, ImportStroke, KernelOp, MaterialDef, OpOutcome, SceneDef, V3, Xform } from "../kernel/types";
+import { curvesOf, faceComponents, flat, type SkpCurve } from "./skpCurves";
 import type { UnitSystem } from "../lib/units";
 
 export const M_PER_IN = 0.0254;
@@ -144,7 +156,15 @@ function det3(m: Placement): number {
 
 function placement(inst: Instance): Placement {
   const m = inst.matrix;
-  if (m && m.length >= 12) return m.slice(0, 12);
+  if (m && m.length >= 12) {
+    // Lane 25 (openskp 1.4.0, its #444): SketchUp can keep a uniform scale in the
+    // homogeneous term instead of the 3x3: the 3x3 as it is, the translation in the scaled
+    // units, and index 12 holding 1/w. Folded in here, so such an instance is not 100 times
+    // too big and 100 times too far out (openskp's own scene builder had the same fault).
+    const s = m.length >= 13 ? m[12] : 1;
+    const base = m.slice(0, 12);
+    return Number.isFinite(s) && s !== 0 && s !== 1 ? base.map((x) => x * s) : base;
+  }
   if (m && m.length === 16)
     // Column-major 4x4: rows of the 3x3 and the translation column.
     return [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10], m[12], m[13], m[14]];
@@ -182,6 +202,9 @@ export interface SkpSummary {
   scenes: number;
   /** Section planes imported (lane 12). */
   sections: number;
+  /** Lane 25: SketchUp curves handed to the kernel as curves (sketch strokes and solids'
+   * curves; the kernel's import note says how many came in as curves). */
+  curves: number;
 }
 
 export interface SkpImport {
@@ -247,6 +270,153 @@ interface Ctx {
   defIndex: Map<string, number>;
   /** Lane 16: what mapping has produced so far, held to SKP_LIMITS. */
   spent: { nodes: number; points: number; faces: number };
+  /** Lane 25: strokes for sketches (top-level curves lying loose or bounding a flat face). */
+  strokes: ImportStroke[];
+  /** Lane 25: each definition's curves, worked out once. */
+  curves: Map<number, SkpCurve[]>;
+  /** Lane 25: what stayed plain edges before the kernel saw it, for the notes. */
+  curveNotes: { records: [string, number][]; chain: number; ellipse: number; cut: number; uneven: number };
+}
+
+/** Lane 25: how far off one plane a face set or a loose curve may be to go into a sketch,
+ * metres: a tenth of the kernel's stroke planarity (crates/kernel/src/tolerance.rs
+ * PLANARITY), so every stroke of it lands on the one sketch. */
+const SHEET_FLAT_M = 1e-7;
+
+/** A placement's 3x3 maps circles to circles (equal column lengths, square to each other). */
+function similarity(m: Placement): boolean {
+  const c = [0, 1, 2].map((j) => [m[j], m[3 + j], m[6 + j]]);
+  const l = c.map((v) => Math.hypot(v[0], v[1], v[2]));
+  const s = Math.max(...l);
+  if (!(s > 0) || !Number.isFinite(s)) return false;
+  const d = (a: number[], b: number[]) => Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
+  return Math.abs(l[0] - l[1]) <= 1e-9 * s && Math.abs(l[0] - l[2]) <= 1e-9 * s && d(c[0], c[1]) <= 1e-9 * s * s && d(c[0], c[2]) <= 1e-9 * s * s && d(c[1], c[2]) <= 1e-9 * s * s;
+}
+
+/** A definition's curves (src/io/skpCurves.ts), worked out once; what stays plain edges is
+ * counted for the notes then, once per definition. */
+function curvesFor(ctx: Ctx, def: Definition, name: string): SkpCurve[] {
+  const known = ctx.curves.get(def.id);
+  if (known) return known;
+  const list = curvesOf(def);
+  ctx.curves.set(def.id, list);
+  let records = 0;
+  // A one-edge curve with no circle to keep is just an edge (a polyline needs two): not said.
+  for (const c of list) {
+    if (c.ok) {
+      if (c.ellipse) ctx.curveNotes.ellipse++;
+      else if (c.cut) ctx.curveNotes.cut++;
+    } else if (c.why === "record") records++;
+    else if (c.why === "chain") ctx.curveNotes.chain++;
+  }
+  if (records) ctx.curveNotes.records.push([name, records]);
+  return list;
+}
+
+/** An edge SketchUp drew soft, smooth or hidden. */
+const flagged = (e: Edge | undefined) => !!e && (e.soft || e.smooth || e.hidden);
+
+/** The kernel's curve spec for a curve placed by `m` (round kinds: the centre in world metres). */
+function specOf(c: Extract<SkpCurve, { ok: true }>, m: Placement): CurveSpec {
+  if (c.kind === "polyline" || !c.centre) return { kind: "polyline" };
+  const w = apply(m, c.centre);
+  return { kind: c.kind, centre: [w[0] * M_PER_IN, w[1] * M_PER_IN, w[2] * M_PER_IN] };
+}
+
+/**
+ * Lane 25: at the top of the model, curves that can go into a sketch as strokes (lane 23's
+ * path): a set of faces joined by their edges that lies flat, is unpainted (a sketch face has
+ * no paint) and holds a curve whole (each of its loops a closed stroke, one that is exactly a
+ * closed curve carrying it, the curves along it strokes of their own), and a curve lying
+ * loose, flat, with three points or more. Neither may have a soft, smooth or hidden edge (a
+ * sketch edge has no flags). What goes is left out of the item.
+ */
+function routeTop(ctx: Ctx, def: Definition, m: Placement, curves: SkpCurve[], skipFaces: Set<Face>, skipEdges: Set<number>, done: Set<number>): void {
+  const ok = curves.filter((c): c is Extract<SkpCurve, { ok: true }> => c.ok);
+  if (!ok.length) return;
+  const verts = new Map<number, V3>(def.vertices.map((v) => [v.id, [v.x, v.y, v.z]]));
+  const edges = new Map<number, Edge>(def.edges.map((e) => [e.id, e]));
+  const world = (v: number): V3 | null => {
+    const p = verts.get(v);
+    if (!p) return null;
+    const w = apply(m, p);
+    return [w[0] * M_PER_IN, w[1] * M_PER_IN, w[2] * M_PER_IN];
+  };
+  const ringOf = (loop: Face["loops"][number]): number[] => {
+    const out: number[] = [];
+    for (const ce of loop) {
+      const e = edges.get(ce.edgeId);
+      if (!e) return [];
+      const v = ce.orientation === 1 ? e.v1Id : e.v2Id;
+      if (out[out.length - 1] !== v) out.push(v);
+    }
+    if (out.length > 1 && out[0] === out[out.length - 1]) out.pop();
+    return out;
+  };
+  const stroke = (vs: number[], closed: boolean, c?: Extract<SkpCurve, { ok: true }>): ImportStroke | null => {
+    const points: V3[] = [];
+    for (const v of vs) {
+      const p = world(v);
+      if (!p) return null;
+      points.push(p);
+    }
+    return { points, closed, ...(c ? { curve: specOf(c, m) } : {}) };
+  };
+  const onFaces = new Set<number>();
+  for (const f of def.faces) for (const loop of f.loops) for (const ce of loop) onFaces.add(ce.edgeId);
+  for (const comp of faceComponents(def)) {
+    const faces = comp.map((i) => def.faces[i]);
+    const own = new Set<number>();
+    for (const f of faces) for (const loop of f.loops) for (const ce of loop) own.add(ce.edgeId);
+    const touching = ok.filter((c) => c.edges.some((e) => own.has(e)));
+    if (!touching.length || touching.some((c) => !c.edges.every((e) => own.has(e)))) continue;
+    if (faces.some((f) => (f.materialId ?? null) !== null || (f.backMaterialId ?? null) !== null)) continue;
+    // A sketch edge has no soft, smooth or hidden flag: a face set with flagged edges (a flat
+    // face divided by hidden diagonals) stays on the mesh, where they keep their flags.
+    if ([...own].some((e) => flagged(edges.get(e)))) continue;
+    const rings = faces.flatMap((f) => f.loops.map(ringOf));
+    if (rings.some((r) => r.length < 3)) continue;
+    const pts = rings.map((r) => r.map(world));
+    if (pts.some((r) => r.some((p) => !p)) || !flat(pts as V3[][], SHEET_FLAT_M)) continue;
+    const out: ImportStroke[] = [];
+    const taken = new Set<number>();
+    let failed = false;
+    for (const r of rings) {
+      const set = new Set(r);
+      const whole = touching.find((c) => c.closed && !taken.has(c.id) && c.verts.length === r.length && c.verts.every((v) => set.has(v)));
+      if (whole) taken.add(whole.id);
+      const s = stroke(r, true, whole);
+      if (s) out.push(s);
+      else failed = true;
+    }
+    for (const c of touching) {
+      if (taken.has(c.id)) continue;
+      // A one-segment arc would give a stroke of two points, which the kernel lays on a
+      // level plane: it stays a plain edge of the face's outline.
+      if (c.verts.length < 3) continue;
+      const s = stroke(c.verts, c.closed, c);
+      if (s) {
+        out.push(s);
+        taken.add(c.id);
+      } else failed = true;
+    }
+    if (failed) continue;
+    ctx.strokes.push(...out);
+    for (const id of taken) done.add(id);
+    // The one-segment ones are done too: they are plain edges of the outline now.
+    for (const c of touching) done.add(c.id);
+    for (const f of faces) skipFaces.add(f);
+    for (const e of own) skipEdges.add(e);
+  }
+  for (const c of ok) {
+    if (done.has(c.id) || c.verts.length < 3) continue;
+    if (c.edges.some((e) => onFaces.has(e) || flagged(edges.get(e)))) continue;
+    const s = stroke(c.verts, c.closed, c);
+    if (!s || !flat([s.points], SHEET_FLAT_M)) continue;
+    ctx.strokes.push(s);
+    done.add(c.id);
+    for (const e of c.edges) skipEdges.add(e);
+  }
 }
 
 /** Count what mapping produced; refuse past the limits. */
@@ -270,10 +440,18 @@ function bump(map: Map<string, number>, key: string, n = 1) {
   map.set(key, (map.get(key) ?? 0) + n);
 }
 
-/** One definition's own faces and loose edges, placed by `m`, as an import item. */
-function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { group?: string; tag?: string | null; inherited?: number | null }): ImportItem | null {
+/** One definition's own faces and loose edges, placed by `m`, as an import item. `top`: the
+ * model's own loose geometry (lane 25: its loose and flat-face curves may go to sketches). */
+function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { group?: string; tag?: string | null; inherited?: number | null; top?: boolean }): ImportItem | null {
   const verts = new Map<number, V3>(def.vertices.map((v) => [v.id, [v.x, v.y, v.z]]));
   const edges = new Map<number, Edge>(def.edges.map((e) => [e.id, e]));
+  // Lane 25: the definition's curves; at the top of the model, those that can go into a
+  // sketch go there now, with the faces they bound.
+  const curves = curvesFor(ctx, def, name);
+  const skipFaces = new Set<Face>();
+  const skipEdges = new Set<number>();
+  const routed = new Set<number>();
+  if (opts.top) routeTop(ctx, def, m, curves, skipFaces, skipEdges, routed);
   const positions: V3[] = [];
   const index = new Map<number, number>();
   const at = (vid: number): number | null => {
@@ -307,6 +485,7 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
     return out;
   };
   for (const f of def.faces) {
+    if (skipFaces.has(f)) continue;
     const rings = f.loops.map(loopVerts).filter((r) => r.length >= 3);
     if (!rings.length || f.loops.length === 0 || loopVerts(f.loops[0]).length < 3) {
       bump(ctx.skipped, "faces without a usable outer loop");
@@ -335,12 +514,14 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   }
   const lines: [number, number][] = [];
   for (const e of def.edges) {
-    if (used.has(e.id) || e.hidden) continue;
+    if (used.has(e.id) || e.hidden || skipEdges.has(e.id)) continue;
     const a = at(e.v1Id);
     const b = at(e.v2Id);
     if (a !== null && b !== null && a !== b) lines.push([a, b]);
   }
   ctx.summary.looseEdges += lines.length;
+  // Curves sent to a sketch as curves (a one-segment one routed with its face is not one).
+  for (const c of curves) if (c.ok && routed.has(c.id) && c.verts.length >= 3) ctx.summary.curves++;
   if (!faces.length && !lines.length) return null;
   // Lane 15: soft (1), smooth (2) and hidden (4) edges, on points already in the item.
   const edgeFlags: [number, number, number][] = [];
@@ -359,6 +540,24 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   }
   const perFace = faceMaterials.some((x) => x !== material) || faceUvs.some((x) => x !== null);
   if (opts.tag) ctx.usedTags.add(opts.tag);
+  // Lane 25: the rest of the curves ride on the item, by point index; the kernel makes each
+  // the rim of the solid it runs along, or says why it stayed plain edges. A placement that
+  // stretches circles into ellipses (a group scaled unevenly) makes its round curves
+  // polylines. A curve with a point the item does not hold (hidden loose edges) stays out.
+  const itemCurves: ImportCurve[] = [];
+  const even = similarity(m);
+  for (const c of curves) {
+    if (!c.ok || routed.has(c.id)) continue;
+    const points = c.verts.map((v) => index.get(v));
+    if (points.some((p) => p === undefined)) continue;
+    let kind = c.kind;
+    if (kind !== "polyline" && !even) {
+      kind = "polyline";
+      ctx.curveNotes.uneven++;
+    }
+    itemCurves.push({ kind, points: points as number[], closed: c.closed });
+  }
+  ctx.summary.curves += itemCurves.length;
   spend(ctx, 0, positions.length, faces.length + lines.length);
   return {
     name,
@@ -371,6 +570,7 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
     merge_coplanar: false,
     ...(perFace ? { face_materials: faceMaterials, face_uvs: faceUvs } : {}),
     ...(edgeFlags.length ? { edge_flags: edgeFlags } : {}),
+    ...(itemCurves.length ? { curves: itemCurves } : {}),
   };
 }
 
@@ -673,6 +873,9 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     defs: [],
     defIndex: new Map(),
     spent: { nodes: 0, points: 0, faces: 0 },
+    strokes: [],
+    curves: new Map(),
+    curveNotes: { records: [], chain: 0, ellipse: 0, cut: 0, uneven: 0 },
     summary: {
       version: model.version,
       definitions: Math.max(0, model.definitions.size),
@@ -687,6 +890,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       layers: model.layers.length,
       scenes: model.pages.length,
       sections: 0,
+      curves: 0,
     },
   };
   // Texture images: PNG and JPEG come in, one per material, under a path the kernel takes.
@@ -731,7 +935,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
       `${tooBig} texture image${tooBig === 1 ? "" : "s"} left out (over ${SKP_LIMITS.textureBytes / 1024 / 1024} MB, over 4096 x 4096 pixels, past ${SKP_LIMITS.textures}, or past 256 MB or 128 million pixels in all): their materials show their colours`,
     );
   // Loose geometry drawn at the top level of the model.
-  const root = itemOf(ctx, model.root, IDENTITY, stem, {});
+  const root = itemOf(ctx, model.root, IDENTITY, stem, { top: true });
   if (root) ctx.items.push(root);
   countSkipped(ctx, model.root);
   const nodes = model.root.instances.map((i) => nodeFor(ctx, i, IDENTITY, 0, null)).filter((n): n is ImportNode => n !== null);
@@ -753,17 +957,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     });
   const images = [...ctx.textures.entries()].filter(([name]) => ctx.usedMaterials.has(name));
   for (const l of model.layers) if (l.hidden && layerTag(l.name)) ctx.hiddenTags.add(l.name.trim());
-  const scenes: SceneDef[] = model.pages
-    .filter((p) => p.eye && p.target)
-    .map((p) => ({
-      name: p.name || "Scene",
-      eye: p.eye!.map((x) => x * M_PER_IN) as V3,
-      target: p.target!.map((x) => x * M_PER_IN) as V3,
-      up: (p.up ?? [0, 0, 1]) as V3,
-      fov: p.fov || 35,
-      parallel: !!p.parallel,
-      hidden_tags: p.hiddenLayers.filter((l) => layerTag(l)),
-    }));
+  const scenes: SceneDef[] = model.pages.filter((p) => p.eye && p.target).map((p) => sceneOf(p));
   if (model.pages.length > scenes.length) ctx.notes.add(`${model.pages.length - scenes.length} scene(s) without a camera were left out`);
   if (images.length) ctx.notes.add(`${images.length} texture image${images.length === 1 ? "" : "s"} imported with ${images.length === 1 ? "its" : "their"} sizes and positions`);
   const kept = ctx.summary.textures - images.length;
@@ -771,19 +965,21 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   if (ctx.summary.components)
     ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} came in as components (placed more than once, or named in SketchUp): editing one copy changes them all`);
   if (ctx.summary.softEdges) ctx.notes.add(`${ctx.summary.softEdges} soft, smooth or hidden edge${ctx.summary.softEdges === 1 ? "" : "s"} came in as they were`);
-  // Lane 23: openskp's parse output does not say which edges make up a SketchUp curve (a
-  // circle, an arc, a polygon, a welded curve), in either file family; Sawhorse never guesses
-  // curves from the edges' shape, so they come in as plain edges (docs/skp-compat.md). Lane
-  // 23b: no note says so on import any more. openskp 1.3.0 gives no curve record at all, so
-  // it cannot tell a file with curves from one without, and a note on every file with an edge
-  // was noise; the fact lives in docs/skp-compat.md and the guide's import section.
+  // Lane 25: curves that stayed plain edges before the kernel saw them (the kernel's own
+  // note counts what came in as curves, and what it could not key).
+  const cn = ctx.curveNotes;
+  for (const [who, n] of cn.records) ctx.notes.add(n === 1 ? `${who}: 1 curve's record did not match its edges; it came in as edges` : `${who}: ${n} curves' records did not match their edges; they came in as edges`);
+  if (cn.chain) ctx.notes.add(`${cn.chain} curve${cn.chain === 1 ? "" : "s"} whose edges do not make one chain came in as plain edges`);
+  if (cn.cut) ctx.notes.add(`${cn.cut} arc${cn.cut === 1 ? "" : "s"} cut short in SketchUp (an end on a chord) came in as ${cn.cut === 1 ? "a polyline" : "polylines"}`);
+  if (cn.ellipse) ctx.notes.add(`${cn.ellipse} elliptical curve${cn.ellipse === 1 ? "" : "s"} (an arc scaled unevenly in SketchUp) came in as ${cn.ellipse === 1 ? "a polyline" : "polylines"}: Sawhorse has no ellipse`);
+  if (cn.uneven) ctx.notes.add(`${cn.uneven} circle${cn.uneven === 1 ? "" : "s"} or arc${cn.uneven === 1 ? "" : "s"} in groups scaled unevenly came in as ${cn.uneven === 1 ? "a polyline" : "polylines"}`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   if (ctx.summary.sections)
     ctx.notes.add(`${ctx.summary.sections} section plane${ctx.summary.sections === 1 ? "" : "s"} came in switched off (the file does not say which one was active): activate one from the Outliner`);
   const hidden_tags = [...ctx.hiddenTags];
   // Lane 15: a file with nothing in it opens as an empty model in its own units and style.
-  if (!ctx.items.length && !nodes.length && !scenes.length && !rootSections.length) {
+  if (!ctx.items.length && !nodes.length && !scenes.length && !rootSections.length && !ctx.strokes.length) {
     const styleName = model.styles[0]?.name.trim().replace(/^\[(.*)\]$/, "$1") ?? "";
     const style = styleName ? { name: styleName, face: faceOfStyle(styleName) } : null;
     const empty: SkpEmpty = { units: unitsOf(model.units), unitsWord: model.units ?? null, style };
@@ -792,7 +988,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     if (style) notes.push(`style: ${style.name}${style.face ? "" : " (Sawhorse's own look kept)"}`);
     return { op: null, notes: [...notes, ...[...ctx.notes].filter((n) => !n.startsWith("model units"))], summary: ctx.summary, empty };
   }
-  const importOp: KernelOp = { op: "import", items: ctx.items, materials, scenes, hidden_tags, definitions: ctx.defs, nodes };
+  const importOp: KernelOp = { op: "import", items: ctx.items, ...(ctx.strokes.length ? { strokes: ctx.strokes } : {}), materials, scenes, hidden_tags, definitions: ctx.defs, nodes };
   const planes: KernelOp[] = rootSections.map((s) => ({ op: "add_section", origin: s.origin, normal: s.normal, name: s.name ?? null, active: false, ...(s.hidden ? { hidden: true } : {}) }));
   // The images go in first, the top-level section planes after, all in the same undo step.
   const op: KernelOp =
@@ -801,6 +997,34 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     op,
     notes: [...ctx.notes],
     summary: ctx.summary,
+  };
+}
+
+/**
+ * A SketchUp scene (page) as a Sawhorse scene: camera in metres, field of view, projection
+ * and the tags it hides. Lane 25: a parallel scene's visible height (`orthoHeight`, inches)
+ * is kept by placing the eye where Sawhorse's parallel camera shows that height (it frames a
+ * parallel view as a perspective camera at the eye's distance would, src/viewport/engine.ts
+ * `lookAt`): the eye moves along its line of sight, the view direction stays.
+ */
+export function sceneOf(p: SkpModel["pages"][number]): SceneDef {
+  const fov = p.fov || 35;
+  let eye = p.eye!;
+  const target = p.target!;
+  if (p.parallel && Number.isFinite(p.orthoHeight) && p.orthoHeight > 0 && fov > 0 && fov < 180) {
+    const d = [eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]];
+    const l = Math.hypot(d[0], d[1], d[2]);
+    const want = p.orthoHeight / 2 / Math.tan((fov * Math.PI) / 360);
+    if (l > 0 && Number.isFinite(want)) eye = [target[0] + (d[0] / l) * want, target[1] + (d[1] / l) * want, target[2] + (d[2] / l) * want];
+  }
+  return {
+    name: p.name || "Scene",
+    eye: eye.map((x) => x * M_PER_IN) as V3,
+    target: target.map((x) => x * M_PER_IN) as V3,
+    up: (p.up ?? [0, 0, 1]) as V3,
+    fov,
+    parallel: !!p.parallel,
+    hidden_tags: p.hiddenLayers.filter((l) => layerTag(l)),
   };
 }
 

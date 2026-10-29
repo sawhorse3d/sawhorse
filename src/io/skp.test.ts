@@ -1,15 +1,16 @@
 // @vitest-environment node
 // .skp import: files written by openskp's MIT writer from our procedural corpus models (no
-// SketchUp- or OpenSKP-authored fixtures), parsed by openskp, mapped onto one kernel import
-// op, and applied to the real WASM kernel. Skips the kernel half when it is not built.
+// SketchUp- or OpenSKP-authored fixtures, except Corynth's CC BY cupboard for a 2021+ file's
+// arcs), parsed by openskp, mapped onto one kernel import op, and applied to the real WASM
+// kernel. Skips the kernel half when it is not built.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { SkpModel } from "openskp";
+import type { Definition, SkpModel } from "openskp";
 import { FAMILIES, corpus, curveModels, rng } from "./corpus/models";
-import { apply, checkSkpCounts, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, skpToOp, SkpTooLarge, unitsOf } from "./skp";
+import { apply, checkSkpCounts, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, sceneOf, skpToOp, SkpTooLarge, unitsOf } from "./skp";
 import { MODEL_LIMITS } from "../kernel/limits";
-import type { ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
+import type { CurveView, ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
 const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
@@ -24,6 +25,27 @@ async function kernel() {
 }
 
 const bytesOf = (family: string, seed = 1) => FAMILIES[family](rng(seed)).toBytes();
+
+/** Lane 25: the maintainer's SketchUp 26.2 save of a circle pulled 1 in (never committed; see
+ * docs/DEVELOPMENT.md, "Private fixtures"), when SAWHORSE_PRIVATE_FIXTURES names its directory. */
+const privateDir = process.env.SAWHORSE_PRIVATE_FIXTURES;
+const privateSlab = privateDir && existsSync(path.join(privateDir, "round-slab-leg-current.skp")) ? path.join(privateDir, "round-slab-leg-current.skp") : null;
+
+/** Lane 25: the curves in a kernel document's view (sketch curves and solids' rims). */
+function curvesIn(d: WasmDoc): CurveView[] {
+  const m = d.get_scene_mesh();
+  const out = JSON.parse(m.curves_json()) as CurveView[];
+  m.free();
+  return out;
+}
+
+/** Lane 25: give a parsed definition's ring of edges at height `z` (inches) curve id `id` and
+ * the full-circle arc record SketchUp stores for it (centre `c`, radius `r`). */
+function ringCurve(def: Definition, id: number, z: number, r: number, c: [number, number]): void {
+  const at = new Map(def.vertices.map((v) => [v.id, v]));
+  for (const e of def.edges) if (Math.abs(at.get(e.v1Id)!.z - z) < 1e-9 && Math.abs(at.get(e.v2Id)!.z - z) < 1e-9) e.curveId = id;
+  def.arcs.set(id, { center: [c[0], c[1], z], normal: [0, 0, 1], xAxis: [r, 0, 0], yAxis: [0, r, 0], startAngle: 0, endAngle: 2 * Math.PI, radius: r, isFullCircle: true });
+}
 
 describe("skp mapping", () => {
   it("placements compose like SketchUp's (row-major 3x3, then translation)", () => {
@@ -101,7 +123,15 @@ describe("skp mapping", () => {
     if (l.op?.op !== "import") throw new Error();
     const root = (l.op.items ?? []).find((i) => i.name === "Yard")!;
     expect(root.faces.length).toBe(1);
-    expect(root.lines!.length).toBeGreaterThan(2);
+    // Lane 25: the loose polyline and the loose arc are SketchUp curves (openskp 1.4.0 says
+    // so), so they go to a sketch as curves instead of the mesh's lines; the painted loose
+    // face stays on the mesh (a sketch face has no paint).
+    expect(root.lines ?? []).toEqual([]);
+    expect((l.op.strokes ?? []).map((s) => [s.curve?.kind, s.closed, s.points.length])).toEqual([
+      ["polyline", false, 3],
+      ["arc", false, 25],
+    ]);
+    expect(l.op.strokes![1].curve!.centre).toEqual([0, -30 * 0.0254, 0]);
   });
 
   it("scenes and hidden layers from the parsed model", () => {
@@ -128,6 +158,69 @@ describe("skp mapping", () => {
     expect(r.op.scenes).toEqual([{ name: "Front", eye: [0, -2.54, 1.27], target: [0, 0, 0.508], up: [0, 0, 1], fov: 35, parallel: false, hidden_tags: ["Furniture"] }]);
     expect(r.op.hidden_tags).toEqual(["Furniture"]);
     expect(r.notes).toEqual(expect.arrayContaining([expect.stringContaining("1 scene(s) without a camera"), "not imported: 1 texts", expect.stringContaining("Millimeter")]));
+  });
+
+  it("a parallel scene keeps the height SketchUp shows; a perspective one comes as it is (lane 25: classic files' scenes too)", () => {
+    // openskp 1.4.0 reads scenes from classic (pre-2021) files as well; they map the same way.
+    const page = { name: "Cena1", eye: [100, 0, 0] as [number, number, number], target: [0, 0, 0] as [number, number, number], up: [0, 0, 1] as [number, number, number], fov: 35, parallel: true, orthoHeight: 180, hiddenLayers: ["Layer0", "Walls"] };
+    const s = sceneOf(page);
+    // Sawhorse frames a parallel view as a perspective camera at the eye's distance would.
+    const half = Math.hypot(...s.eye.map((x, i) => x - s.target[i])) * Math.tan((35 * Math.PI) / 360);
+    expect(half).toBeCloseTo(90 * 0.0254, 12);
+    expect(s.eye[1]).toBe(0);
+    expect(s.eye[2]).toBe(0);
+    expect(s.eye[0]).toBeGreaterThan(0);
+    expect(s).toMatchObject({ name: "Cena1", target: [0, 0, 0], up: [0, 0, 1], fov: 35, parallel: true, hidden_tags: ["Walls"] });
+    expect(sceneOf({ ...page, parallel: false }).eye).toEqual([2.54, 0, 0]);
+    expect(sceneOf({ ...page, orthoHeight: 0 }).eye).toEqual([2.54, 0, 0]);
+  });
+
+  it("an instance scaled through the matrix's scale term is placed and sized as SketchUp does (openskp 1.4.0, its #444)", () => {
+    // SketchUp's own library reports a 100 in cube placed with w = 100 and a translation of
+    // 2000 in as a 1 in cube at x = 20 in; openskp's 13-value matrix holds 1/w at index 12.
+    const empty = { guid: "", vertices: [], edges: [], faces: [], instances: [], sectionPlanes: [], texts: [], dimensions: [], constructionLines: [], constructionPoints: [], isImage: false, isGroup: false, arcs: new Map(), alwaysFacesCamera: false, shadowsFaceSun: false };
+    const model = {
+      version: "{6.0.1}",
+      definitions: new Map([[1, { ...empty, id: 1, name: "Cube" }]]),
+      root: { ...empty, id: 0, name: "", instances: [1, 2].map(() => ({ refIdx: 1, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1, 2000, 0, 0, 0.01], name: "", layer: "Layer0", hidden: false, materialId: null }) ) },
+      layers: [],
+      pages: [],
+      dimensions: [],
+      materials: [],
+      materialsById: new Map(),
+      styles: [],
+      units: null,
+    } as unknown as SkpModel;
+    // The cube needs geometry to come in at all.
+    const cube = model.definitions.get(1)!;
+    const P: [number, number, number][] = [[0, 0, 0], [100, 0, 0], [100, 100, 0], [0, 100, 0]];
+    cube.vertices = P.map((p, i) => ({ id: i + 1, x: p[0], y: p[1], z: p[2] }));
+    cube.edges = P.map((_, i) => ({ id: 10 + i, v1Id: i + 1, v2Id: ((i + 1) % 4) + 1, soft: false, smooth: false, hidden: false }));
+    cube.faces = [{ id: 1, loops: [P.map((_, i) => ({ edgeId: 10 + i, orientation: 1 }))], normal: [0, 0, 1], materialId: null, backMaterialId: null } as never];
+    const r = modelToOp(model, "Scaled.skp");
+    if (r.op?.op !== "import") throw new Error();
+    const n = (r.op.nodes ?? [])[0];
+    if (n.kind !== "instance") throw new Error(n.kind);
+    expect(n.xform.linear).toEqual([
+      [0.01, 0, 0],
+      [0, 0.01, 0],
+      [0, 0, 0.01],
+    ]);
+    expect(n.xform.translation[0]).toBeCloseTo(20 * 0.0254, 12);
+  });
+
+  it("whether a definition says it is a group (openskp 1.4.0's isGroup) does not change the mapping (lane 25)", async () => {
+    // The 1.4.0 writer flags a group's definition as a group, which the 1.3.0 writer did not;
+    // groups and components still come in by name and placement count (docs/skp-compat.md).
+    const { parseSkp } = await import("openskp");
+    for (const family of ["nested", "table", "house", "loose"]) {
+      const bytes = bytesOf(family);
+      const a = parseSkp(bytes.slice().buffer);
+      const b = parseSkp(bytes.slice().buffer);
+      for (const d of a.definitions.values()) d.isGroup = true;
+      for (const d of b.definitions.values()) d.isGroup = false;
+      expect(JSON.stringify(modelToOp(a, "x.skp")), family).toBe(JSON.stringify(modelToOp(b, "x.skp")));
+    }
   });
 
   it("section planes come in switched off: the model's after the import, a group's in the group (lane 12)", () => {
@@ -241,15 +334,149 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     d.free();
   });
 
-  it("says nothing about curves on import, with curves in the file or not (lane 23b)", () => {
-    // openskp 1.3.0 gives no curve record, so it cannot tell a file with curves from one
-    // without: the note it used to add was on every file with an edge (docs/skp-compat.md).
-    const specs = [...corpus(20), ...curveModels()];
-    expect(specs.some((s) => s.name === "201-curve-circle")).toBe(true);
+  it("the corpus's SketchUp circle, arc and welded curve come in as a circle, an arc and a polyline (lane 25)", async () => {
+    // openskp 1.4.0 says which edges make up a curve and gives an arc's exact circle; lying
+    // loose or bounding a flat face at the top of the model, each goes into a sketch as one
+    // curve (lane 23's path), the disc's face with it.
+    const mod = await kernel();
+    const want: Record<string, [string, boolean, number]> = {
+      "201-curve-circle": ["circle", true, 24],
+      "202-curve-arc": ["arc", false, 12],
+      "203-curve-polygon": ["polyline", true, 6],
+    };
+    const specs = curveModels();
+    expect(specs.map((s) => s.name)).toEqual(Object.keys(want));
     for (const spec of specs) {
       const r = skpToOp(spec.build(), `${spec.name}.skp`);
-      expect(r.notes.join(" "), spec.name).not.toMatch(/curve/i);
+      if (r.op?.op !== "import") throw new Error(spec.name);
+      expect(r.op.strokes, spec.name).toHaveLength(1);
+      expect(r.summary.curves, spec.name).toBe(1);
+      // Nothing in the mapping's own notes: no record disagreed.
+      expect(r.notes.join(" "), spec.name).not.toMatch(/curve|arc|polyline/i);
+      const d = mod.document_new();
+      const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+      expect(out.kind, spec.name).toBe("imported");
+      expect(out.notes, spec.name).toContain("1 curve came in as curve");
+      const st = JSON.parse(d.state_json());
+      expect([st.stats.objects, st.meshes.length], `${spec.name}: the box a solid, no amber mesh`).toEqual([1, 0]);
+      const cs = curvesIn(d);
+      expect(cs.map((c) => [c.kind, c.closed, c.segments]), spec.name).toEqual([want[spec.name]]);
+      expect(cs[0].owner.kind).toBe("sketch");
+      if (spec.name !== "203-curve-polygon") {
+        expect(cs[0].radius!).toBeCloseTo(6 * 0.0254, 9);
+        expect(cs[0].centre!.map((x) => Math.abs(x))).toEqual([0, 0, 0]);
+      }
+      if (spec.name === "202-curve-arc") expect(Math.abs(cs[0].sweep!)).toBeCloseTo(Math.PI / 2, 9);
+      d.free();
     }
+  });
+
+  it("an imported SketchUp disc pulled is a cylinder with two circle rims (ADR-0013)", async () => {
+    const mod = await kernel();
+    const r = skpToOp(curveModels()[0].build(), "201-curve-circle.skp");
+    const d = mod.document_new();
+    d.apply_op(JSON.stringify(r.op));
+    const m = d.get_scene_mesh();
+    const parts = JSON.parse(m.parts_json()) as { kind: string; owner: number; index: number }[];
+    m.free();
+    const disc = parts.filter((p) => p.kind.toLowerCase() === "region");
+    expect(disc).toHaveLength(1);
+    const out = JSON.parse(d.apply_op(JSON.stringify({ op: "extrude", sketch: disc[0].owner, region: disc[0].index, distance: 0.05 })));
+    expect(out.kind).toBe("object_created");
+    const st = JSON.parse(d.state_json());
+    expect(st.stats.objects).toBe(2);
+    expect(st.stats.watertight).toBe(true);
+    const rims = curvesIn(d).filter((c) => c.owner.kind === "object");
+    expect(rims.map((c) => [c.kind, c.closed, c.segments])).toEqual([
+      ["circle", true, 24],
+      ["circle", true, 24],
+    ]);
+    for (const c of rims) expect(c.radius!).toBeCloseTo(6 * 0.0254, 9);
+    d.free();
+  });
+
+  it("a SketchUp cylinder's circles come in as its rims; a record that disagrees with its edges comes in as edges, named", async () => {
+    const { create, parseSkp } = await import("openskp");
+    const { circle, prism } = await import("./corpus/models");
+    const b = create();
+    b.addGroup((g) => prism(g, circle(0, 0, 4, 24), 0, 2, {}), { name: "Dowel" });
+    const bytes = b.toBytes();
+    const parsed = parseSkp(bytes.slice().buffer);
+    const def = [...parsed.definitions.values()][0];
+    // Give the two cap rings the curve ids and arc records SketchUp stores for a pulled circle;
+    // the bottom one's record says a centre 0.1 in off.
+    ringCurve(def, 1, 2, 4, [0, 0]);
+    ringCurve(def, 2, 0, 4, [0.1, 0]);
+    const r = modelToOp(parsed, "dowel.skp");
+    if (r.op?.op !== "import") throw new Error();
+    // The writer names the definition "Dowel": placed once and named, it is a component.
+    const item = (r.op.definitions ?? [])[0].items[0];
+    expect(item.curves).toEqual([{ kind: "circle", points: expect.any(Array), closed: true }]);
+    expect(item.curves![0].points).toHaveLength(24);
+    expect(r.notes).toContain("Dowel: 1 curve's record did not match its edges; it came in as edges");
+    const mod = await kernel();
+    const d = mod.document_new();
+    const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+    expect(out.notes).toContain("1 curve came in as curve");
+    const rims = curvesIn(d);
+    expect(rims.map((c) => [c.owner.kind, c.kind, c.segments])).toEqual([["object", "circle", 24]]);
+    expect(rims[0].centre![2]).toBeCloseTo(2 * 0.0254, 9);
+    expect(rims[0].radius!).toBeCloseTo(4 * 0.0254, 5);
+    d.free();
+  });
+
+  it("curves in a group scaled unevenly come in as polylines; curves on a mesh as plain edges, said so", async () => {
+    const { create, parseSkp } = await import("openskp");
+    const { circle, prism } = await import("./corpus/models");
+    const b = create();
+    b.addGroup((g) => prism(g, circle(0, 0, 4, 24), 0, 2, {}), { name: "Oval", matrix3x3: [2, 0, 0, 0, 1, 0, 0, 0, 1] });
+    // A disc inside a group: not at the top of the model (no sketch), and not a solid.
+    b.addGroup((g) => g.addCircle([0, 30, 0], [0, 0, 1], 3, { numSegments: 12 }), { name: "Coaster" });
+    const parsed = parseSkp(b.toBytes().slice().buffer);
+    const oval = [...parsed.definitions.values()].find((d) => d.faces.length > 2)!;
+    ringCurve(oval, 1, 2, 4, [0, 0]);
+    // As SketchUp names a group's definition, so both come in as groups (the writer names it as the group).
+    for (const d of parsed.definitions.values()) d.name = `Group#${d.id}`;
+    const r = modelToOp(parsed, "oval.skp");
+    if (r.op?.op !== "import") throw new Error();
+    const items = (r.op.nodes ?? []).flatMap((n) => (n.kind === "group" ? n.items : []));
+    expect(items.map((i) => (i.curves ?? []).map((c) => c.kind))).toEqual([["polyline"], ["circle"]]);
+    expect(r.notes).toContain("1 circle or arc in groups scaled unevenly came in as a polyline");
+    const mod = await kernel();
+    const d = mod.document_new();
+    const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+    expect(out.notes).toEqual(expect.arrayContaining(["1 curve came in as curve", "1 curve on faces that are not a solid (or on no face) came in as plain edges: a mesh keeps no curves"]));
+    expect(curvesIn(d).map((c) => [c.owner.kind, c.kind, c.closed, c.segments])).toEqual([["object", "polyline", true, 24]]);
+    d.free();
+  });
+
+  it("a SketchUp 2023 file's arcs and circles come in as rims (Corynth's cupboard, CC BY 4.0)", async () => {
+    // A 2021+ (VFF) file: openskp 1.4.0 reads the arcs those files store (and 1.3.0 never did).
+    const bytes = new Uint8Array(readFileSync(path.resolve(__dirname, "../../tests/fixtures/skp-ccby/cupboard.skp")));
+    const r = skpToOp(bytes, "cupboard.skp");
+    expect(r.summary.version).toMatch(/^\{23\./);
+    expect(r.summary.curves).toBeGreaterThan(0);
+    const mod = await kernel();
+    const d = mod.document_new();
+    const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+    expect(out.notes).toContain("30 curves came in as curves (6 circles, 24 arcs)");
+    const kinds = new Set(curvesIn(d).map((c) => `${c.owner.kind}:${c.kind}`));
+    expect([...kinds].sort()).toEqual(["object:arc", "object:circle"]);
+    expect(JSON.parse(d.state_json()).stats.watertight).toBe(true);
+    d.free();
+  });
+
+  it.skipIf(!privateSlab)("a private 2021+ file with arcs: a circle pulled in SketchUp comes in with both rims (skips without SAWHORSE_PRIVATE_FIXTURES)", async () => {
+    const r = skpToOp(new Uint8Array(readFileSync(privateSlab!)), "round-slab-leg-current.skp");
+    const mod = await kernel();
+    const d = mod.document_new();
+    const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+    expect(out.notes).toContain("2 curves came in as curves");
+    expect(curvesIn(d).map((c) => [c.owner.kind, c.kind, c.closed, c.segments])).toEqual([
+      ["object", "circle", true, 24],
+      ["object", "circle", true, 24],
+    ]);
+    d.free();
   });
 
   it("every corpus family imports; solids where SketchUp had solids, a noted mesh where not", async () => {

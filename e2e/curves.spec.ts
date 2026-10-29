@@ -8,8 +8,9 @@ import { curveModels } from "../src/io/corpus/models";
 // again); a polygon pushed into a solid and its top rim clicked (the whole rim); the rim's
 // Centre offered while hovering it and snapped to; undone step by step and redone; saved as
 // .shz and opened again with its curves; a DXF of circles importing as curves; the corpus's
-// SketchUp circle importing as plain edges, with the reason. Positions are inches (the
-// helpers' unit); the model's display units are millimetres.
+// SketchUp circle, arc and welded curve importing as a circle, an arc and a polyline (lane 25,
+// openskp 1.4.0), the circle selecting whole. Positions are inches (the helpers' unit); the
+// model's display units are millimetres.
 import { IN, at, clickAt, point, selectAt, type, type V3, setUnits } from "./helpers";
 
 const requireKernel = !!process.env.REQUIRE_KERNEL;
@@ -263,29 +264,50 @@ test("a circle is one curve: select, move, scale, copy, split, erase, explode; a
   await expect(hint).toContainText("Selected a polygon (6 sides, radius 200 mm)");
 });
 
-test("a DXF's circles and arc come in as curves; a SketchUp circle as plain edges, without a note", async ({ page }) => {
+test("a DXF's circles and arc, and a SketchUp file's circle, arc and welded curve, come in as curves", async ({ page }) => {
   const vp = await ready(page);
   const circle = (x: number, y: number, r: number) => `0\nCIRCLE\n8\n0\n10\n${x}\n20\n${y}\n30\n0\n40\n${r}\n`;
   const dxf = `0\nSECTION\n2\nENTITIES\n${circle(0, 0, 50)}${circle(200, 0, 30)}0\nARC\n8\n0\n10\n400\n20\n0\n30\n0\n40\n40\n50\n0\n51\n135\n0\nENDSEC\n0\nEOF\n`;
   await page.getByTestId("file-input").setInputFiles({ name: "rounds.dxf", mimeType: "application/dxf", buffer: Buffer.from(dxf) });
   const report = page.getByTestId("import-report");
-  await expect(report).toContainText("3 curves came in as curves");
+  await expect(report).toContainText("3 curves came in as curves (2 circles, 1 arc)");
   const cs = await curves(page);
   expect(byKind(cs)).toBe("sketch:arc sketch:circle sketch:circle");
   expect(cs.find((c) => c.kind === "arc")!.radius).toBeCloseTo(40 * MM, 9);
 
-  // The corpus's SketchUp circle (a disc whose 24 edges share one CArcCurve): openskp does
-  // not say which edges make up a curve, so they come in as plain edges. Lane 23b: the report
-  // no longer says so on every import (openskp cannot tell a file with curves from one
-  // without); docs/skp-compat.md and the guide do.
+  // Lane 25: the corpus's three SketchUp curves (openskp 1.4.0 says which edges make up each,
+  // and an arc's exact circle): a disc whose 24 edges share one CArcCurve, a quarter arc of
+  // 12, a closed welded curve of 6 with no arc record. Each lies at the top of its model, so
+  // it goes into a sketch as one curve (the disc's face with it, not an amber mesh), and the
+  // report counts it.
+  const want: [string, string, number][] = [
+    ["201-curve-circle", "circle", 24],
+    ["202-curve-arc", "arc", 12],
+    ["203-curve-polygon", "polyline", 6],
+  ];
+  const skps = curveModels();
+  expect(skps.map((s) => s.name)).toEqual(want.map((w) => w[0]));
+  for (const [k, skp] of skps.entries()) {
+    await menu(page, "File", "New");
+    await expect(vp).toHaveAttribute("data-objects", "0");
+    await page.getByTestId("file-input").setInputFiles({ name: `${skp.name}.skp`, mimeType: "application/octet-stream", buffer: Buffer.from(skp.build()) });
+    await expect(report).toContainText(`Imported ${skp.name}.skp`);
+    await expect(report).toContainText("1 curve came in as curve");
+    await expect(report).not.toContainText("plain edges");
+    await expect(report).not.toContainText("did not match");
+    await expect(report).not.toContainText("not solid");
+    const got = await curves(page);
+    expect(got.map((c) => [c.owner.kind, c.kind, c.segments]), skp.name).toEqual([["sketch", want[k][1], want[k][2]]]);
+    if (want[k][1] !== "polyline") expect(got[0].radius!, skp.name).toBeCloseTo(6 * IN, 9);
+    await expect(vp).toHaveAttribute("data-objects", "1");
+  }
+  // The circle selects whole, as one drawn with the Circle tool does.
   await menu(page, "File", "New");
-  const skp = curveModels()[0];
-  expect(skp.name).toBe("201-curve-circle");
-  await page.getByTestId("file-input").setInputFiles({ name: `${skp.name}.skp`, mimeType: "application/octet-stream", buffer: Buffer.from(skp.build()) });
-  await expect(report).toContainText(`Imported ${skp.name}.skp`);
-  await expect(report).not.toContainText("came in as plain edges");
-  await expect(report).not.toContainText("curves (circles");
-  expect(await curves(page)).toEqual([]);
+  await page.getByTestId("file-input").setInputFiles({ name: "201-curve-circle.skp", mimeType: "application/octet-stream", buffer: Buffer.from(skps[0].build()) });
+  await expect(report).toContainText("1 curve came in as curve");
+  await page.keyboard.press("Space");
+  await selectAt(page, midSeg([0, 0], 6 * IN, 0, 15), "curve");
+  await expect(page.locator("#hint")).toContainText("Selected a circle (24 segments, radius 152.4 mm)");
   await expect(vp).toHaveAttribute("data-kernel", "ready");
 });
 
