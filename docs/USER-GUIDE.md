@@ -234,7 +234,7 @@ Tags control what you see, nothing else: geometry stays where it is and in its g
 
 ## Scenes
 
-A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane), whether the ground grid shows, and which section planes are active and hidden. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it, double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags, the style and the grid it switches (the camera is not); the status line says when it hid or showed the grid ("Scene 'Front': grid hidden."). A scene from a SketchUp file, or one saved before Sawhorse remembered the grid, leaves the grid as it is.
+A scene remembers the camera, which tags are hidden, which group or component is open, and the style and shadows (Styles pane), whether the ground grid shows, and which section planes are active and hidden. The tabs above the view are your scenes: **+** saves the current view as a new one, a click goes to it (on the active tab too: it brings the scene back after you changed the view, the tags or the grid by hand), double-click renames it, and right-click updates it to the current view, renames or deletes it. View > Add Scene does the same as +. Going to a scene is an undo step for the tags, the style and the grid it switches (the camera is not); the status line says when it hid or showed the grid ("Scene 'Front': grid hidden."). A scene from a SketchUp file, or one saved before Sawhorse remembered the grid, leaves the grid as it is.
 
 ## Materials and paint
 

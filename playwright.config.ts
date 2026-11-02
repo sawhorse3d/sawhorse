@@ -14,10 +14,19 @@ const port = Number(process.env.PW_PORT || 4173);
 // not know. See docs/DEVELOPMENT.md, "Responsiveness bounds in the end-to-end tests".
 const TIMED = /model-(cap|counts)\.spec\.ts$/;
 
+// Lane 27: six workers locally. Playwright's default is half the CPUs (twelve on the 24-thread
+// development machine), which passes on an idle machine but not beside other work: with 16
+// threads of other load, three full runs at twelve workers failed 2, 1 and 3 specs (each a
+// different interactive timing: a drag, a reload's kernel load, a refit), and three at six
+// passed. CI keeps Playwright's default for its runner. Override with PW_WORKERS=<n> or
+// --workers=<n> (docs/DEVELOPMENT.md).
+const workers = process.env.PW_WORKERS ? Number(process.env.PW_WORKERS) : process.env.CI ? undefined : 6;
+
 export default defineConfig({
   testDir: "e2e",
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
+  workers,
   use: {
     baseURL: `http://localhost:${port}`,
     trace: "retain-on-failure",

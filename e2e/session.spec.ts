@@ -60,6 +60,9 @@ test("unsaved work comes back after a reload", async ({ page }) => {
   await expect(vp).toHaveAttribute("data-objects", "1");
   await expect.poll(() => autosaved(page)).toBe(3);
   await page.reload();
+  // After a reload the kernel loads again: wait for that as on the first load (lane 27: under
+  // load it took more than the default 5 s), then for what the page says.
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
   await expect(vp).toHaveAttribute("data-kernel", "ready");
   await expect(vp).toHaveAttribute("data-objects", "0");
   const hint = page.locator("#hint");
@@ -80,6 +83,7 @@ test("discarding forgets the unsaved work; ?autosave=0 never offers it", async (
   await box(page);
   await expect.poll(() => autosaved(page)).toBe(3);
   await page.reload();
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
   const hint = page.locator("#hint");
   await hint.getByRole("button", { name: "Discard" }).click();
   await expect(hint).toContainText("Unsaved work discarded");
@@ -103,6 +107,7 @@ test("New clears the autosave: a model as it was started, saved or opened leaves
   await page.waitForTimeout(600);
   expect(await autosaved(page)).toBe(0);
   await page.reload();
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
   await expect(vp).toHaveAttribute("data-kernel", "ready");
   await page.waitForTimeout(300);
   await expect(page.locator("#hint").getByRole("button", { name: "Restore" })).toHaveCount(0);

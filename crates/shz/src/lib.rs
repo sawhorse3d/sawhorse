@@ -1462,6 +1462,26 @@ mod tests {
             m.apply(&Op::ActivateScene { name: name.into() }).unwrap();
             assert!(m.model().style().is_some_and(|s| !s.grid), "{name}");
         }
+        // Lane 27: a hand-written `"grid": null` opens as absent (format.md) and leaves the
+        // grid alone too.
+        let mut json = json.clone();
+        for sc in json["scenes"].as_array_mut().unwrap() {
+            sc["grid"] = serde_json::Value::Null;
+        }
+        let o = read(&rezip(&json)).unwrap();
+        assert!(o.notes.is_empty(), "{:?}", o.notes);
+        assert!(o.document.model().scenes().iter().all(|s| s.grid.is_none()));
+        assert_eq!(o.document.hash(), d.hash());
+        let mut m = o.document;
+        m.apply(
+            &serde_json::from_str::<Op>(r#"{"op":"set_style","style":{"grid":false}}"#).unwrap(),
+        )
+        .unwrap();
+        m.apply(&Op::ActivateScene {
+            name: "Front".into(),
+        })
+        .unwrap();
+        assert!(m.model().style().is_some_and(|s| !s.grid));
     }
 
     /// Lane 22: sketch geometry moved, turned, lifted onto a new plane and copied saves and

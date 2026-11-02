@@ -228,3 +228,36 @@ test("scenes and the grid: updating a scene rewrites its grid; View > Grid works
   await go("Scene 2");
   await expect.poll(enabled).toBe(true);
 });
+
+// Lane 27 (the lane-26 friction list): clicking the scene tab that is already active brings
+// the scene back like any other tab: one activate_scene step, the lane-26 note, undone by
+// Ctrl+Z to the grid set by hand.
+test("clicking the active scene tab brings its grid back; Ctrl+Z restores the grid set by hand", async ({ page }) => {
+  await ready(page);
+  const { hint, enabled, hide, addScene } = sceneSteps(page);
+  const tab = page.getByRole("tab", { name: "Scene 1", exact: true });
+  await addScene("Scene 1");
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const undoDepth = async () => Number(/undo (\d+)/.exec(await page.locator(".hud").innerText())?.[1]);
+  // Hidden by hand: the tab stays the active one.
+  await hide();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const before = await undoDepth();
+  await tab.click();
+  await expect(hint).toContainText("Scene 'Scene 1': grid shown.");
+  await expect.poll(enabled).toBe(true);
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  await expect(gridItem(page)).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  // One undo step, and it brings back the grid hidden by hand.
+  expect(await undoDepth()).toBe(before + 1);
+  await page.keyboard.press("Control+z");
+  await expect.poll(enabled).toBe(false);
+  expect(await undoDepth()).toBe(before);
+  // Nothing to change: the click still goes to the scene and says so.
+  await tab.click();
+  await expect.poll(enabled).toBe(true);
+  await tab.click();
+  await expect(hint).toHaveText(/Scene 'Scene 1'\.$/);
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+});

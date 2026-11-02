@@ -274,6 +274,32 @@ fn the_grid_switch_survives_the_snapshot() {
         d.model().hash(),
         "the scene's switch is not hashed"
     );
+    // ... and so is null, which reads as absent (lane 27; format.md says so) ...
+    let mut null = snap.clone();
+    for sc in null["scenes"].as_array_mut().unwrap() {
+        sc["grid"] = serde_json::Value::Null;
+    }
+    let mut null = Model::from_snapshot(&serde_json::from_value(null).unwrap()).unwrap();
+    assert!(null.scenes().iter().all(|s| s.grid.is_none()));
+    assert_eq!(null.hash(), d.model().hash());
+    null.apply(&Op::ActivateScene {
+        name: "Scene 1".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        null.style(),
+        Some(&grid_off()),
+        "Scene 1's stored style still brings the grid off"
+    );
+    null.apply(&Op::ActivateScene {
+        name: "Scene 2".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        null.style(),
+        Some(&grid_off()),
+        "a null switch leaves the grid as it is; true would have shown it"
+    );
     // ... and anything but true or false is not a snapshot.
     let mut bad = snap;
     bad["scenes"][0]["grid"] = serde_json::json!("off");
