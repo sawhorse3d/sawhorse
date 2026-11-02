@@ -93,13 +93,30 @@ pub struct ImportCurve {
     pub points: Vec<u32>,
     #[serde(default)]
     pub closed: bool,
+    /// Lane 27 (issue #17): a polyline that is a circle or an arc in the file, stretched out
+    /// of round by the uneven scale of the group it is in (`.skp`: the group's placement is
+    /// already in the item's points). It comes in as the polyline it is; the flag only lets
+    /// the import note count it with the rims a component's uneven placement stretches.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stretched: bool,
 }
 
 /// Lane 25: what an import made of the curves it was given, items' and strokes' alike.
+///
+/// Lane 27 (issue #17): an import counts what the model holds, each placed copy of a
+/// component on its own: `made` is read from the rims of every solid the import placed
+/// (each as the view shows it, after every placement in the chain), and the other counts of
+/// a component's items are multiplied by its copies (`Model::import`). A tally of one item
+/// ([`Built::curves`]) counts that item once.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CurveTally {
     /// Curves made, by kind: circles, arcs, polygons, polylines.
     pub made: [usize; 4],
+    /// Lane 27: circles and arcs that came in as polylines because an uneven scale stretched
+    /// them: a group's (flagged by the file's reader, [`ImportCurve::stretched`]) or a
+    /// component copy's placement (a rim that reads as a polyline where it lands). Counted
+    /// among `made` as polylines too.
+    pub stretched: usize,
     /// Item curves not along edges of one solid (on a mesh, on loose lines, or across
     /// pieces): a mesh keeps no curves.
     pub not_solid: usize,
@@ -134,13 +151,28 @@ impl CurveTally {
     }
 
     pub fn add(&mut self, o: &CurveTally) {
+        self.add_times(o, 1);
+    }
+
+    /// Lane 27: add `o` counted `n` times (a component's items, once per placed copy).
+    pub fn add_times(&mut self, o: &CurveTally, n: usize) {
         for k in 0..4 {
-            self.made[k] += o.made[k];
+            self.made[k] += o.made[k] * n;
         }
-        self.not_solid += o.not_solid;
-        self.on_a_face += o.on_a_face;
-        self.not_round += o.not_round;
-        self.not_landed += o.not_landed;
+        self.stretched += o.stretched * n;
+        self.not_solid += o.not_solid * n;
+        self.on_a_face += o.on_a_face * n;
+        self.not_round += o.not_round * n;
+        self.not_landed += o.not_landed * n;
+    }
+
+    /// Lane 27: everything but the curves made by kind, which an import reads from the
+    /// solids it placed instead (each copy as it lands).
+    pub fn unmade(&self) -> CurveTally {
+        CurveTally {
+            made: [0; 4],
+            ..*self
+        }
     }
 
     /// Nothing was asked for.
@@ -186,6 +218,15 @@ impl CurveTally {
                 } else {
                     format!(" ({})", extra.join("; "))
                 }
+            ));
+        }
+        if self.stretched > 0 {
+            let n = self.stretched;
+            out.push(format!(
+                "{n} circle{} or arc{} in groups or components scaled unevenly came in as {}",
+                plural(n),
+                plural(n),
+                if n == 1 { "a polyline" } else { "polylines" }
             ));
         }
         if self.not_solid > 0 {
@@ -1040,6 +1081,9 @@ fn apply_curves(item: &ImportItem, built: &mut Built) -> Result<(), DocumentErro
             continue;
         }
         tally.made_one(c.kind);
+        if c.stretched {
+            tally.stretched += 1;
+        }
     }
     built.curves.add(&tally);
     Ok(())

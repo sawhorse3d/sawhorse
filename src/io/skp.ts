@@ -274,8 +274,10 @@ interface Ctx {
   strokes: ImportStroke[];
   /** Lane 25: each definition's curves, worked out once. */
   curves: Map<number, SkpCurve[]>;
-  /** Lane 25: what stayed plain edges before the kernel saw it, for the notes. */
-  curveNotes: { records: [string, number][]; chain: number; ellipse: number; cut: number; uneven: number };
+  /** Lane 25: what stayed plain edges before the kernel saw it, for the notes (once per
+   * definition). Lane 27: a curve stretched by a group's uneven scale is flagged on the item
+   * instead (`ImportCurve.stretched`), so the kernel counts it per copy with the rest. */
+  curveNotes: { records: [string, number][]; chain: number; ellipse: number; cut: number };
 }
 
 /** Lane 25: how far off one plane a face set or a loose curve may be to go into a sketch,
@@ -543,19 +545,17 @@ function itemOf(ctx: Ctx, def: Definition, m: Placement, name: string, opts: { g
   // Lane 25: the rest of the curves ride on the item, by point index; the kernel makes each
   // the rim of the solid it runs along, or says why it stayed plain edges. A placement that
   // stretches circles into ellipses (a group scaled unevenly) makes its round curves
-  // polylines. A curve with a point the item does not hold (hidden loose edges) stays out.
+  // polylines, flagged `stretched` so the kernel's note counts them per placed copy (lane 27,
+  // issue #17: with a component's copies that an uneven placement stretches, which only the
+  // kernel sees). A curve with a point the item does not hold (hidden loose edges) stays out.
   const itemCurves: ImportCurve[] = [];
   const even = similarity(m);
   for (const c of curves) {
     if (!c.ok || routed.has(c.id)) continue;
     const points = c.verts.map((v) => index.get(v));
     if (points.some((p) => p === undefined)) continue;
-    let kind = c.kind;
-    if (kind !== "polyline" && !even) {
-      kind = "polyline";
-      ctx.curveNotes.uneven++;
-    }
-    itemCurves.push({ kind, points: points as number[], closed: c.closed });
+    if (c.kind !== "polyline" && !even) itemCurves.push({ kind: "polyline", points: points as number[], closed: c.closed, stretched: true });
+    else itemCurves.push({ kind: c.kind, points: points as number[], closed: c.closed });
   }
   ctx.summary.curves += itemCurves.length;
   spend(ctx, 0, positions.length, faces.length + lines.length);
@@ -875,7 +875,7 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
     spent: { nodes: 0, points: 0, faces: 0 },
     strokes: [],
     curves: new Map(),
-    curveNotes: { records: [], chain: 0, ellipse: 0, cut: 0, uneven: 0 },
+    curveNotes: { records: [], chain: 0, ellipse: 0, cut: 0 },
     summary: {
       version: model.version,
       definitions: Math.max(0, model.definitions.size),
@@ -965,14 +965,14 @@ export function modelToOp(model: SkpModel, fileName: string): SkpImport {
   if (ctx.summary.components)
     ctx.notes.add(`${ctx.summary.components} component${ctx.summary.components === 1 ? "" : "s"} came in as components (placed more than once, or named in SketchUp): editing one copy changes them all`);
   if (ctx.summary.softEdges) ctx.notes.add(`${ctx.summary.softEdges} soft, smooth or hidden edge${ctx.summary.softEdges === 1 ? "" : "s"} came in as they were`);
-  // Lane 25: curves that stayed plain edges before the kernel saw them (the kernel's own
-  // note counts what came in as curves, and what it could not key).
+  // Lane 25: curves that stayed plain edges or polylines before the kernel saw them, once
+  // per definition (the kernel's own notes count what came in as curves, by kind, what an
+  // uneven scale stretched and what it could not key, each placed copy on its own: lane 27).
   const cn = ctx.curveNotes;
   for (const [who, n] of cn.records) ctx.notes.add(n === 1 ? `${who}: 1 curve's record did not match its edges; it came in as edges` : `${who}: ${n} curves' records did not match their edges; they came in as edges`);
   if (cn.chain) ctx.notes.add(`${cn.chain} curve${cn.chain === 1 ? "" : "s"} whose edges do not make one chain came in as plain edges`);
   if (cn.cut) ctx.notes.add(`${cn.cut} arc${cn.cut === 1 ? "" : "s"} cut short in SketchUp (an end on a chord) came in as ${cn.cut === 1 ? "a polyline" : "polylines"}`);
   if (cn.ellipse) ctx.notes.add(`${cn.ellipse} elliptical curve${cn.ellipse === 1 ? "" : "s"} (an arc scaled unevenly in SketchUp) came in as ${cn.ellipse === 1 ? "a polyline" : "polylines"}: Sawhorse has no ellipse`);
-  if (cn.uneven) ctx.notes.add(`${cn.uneven} circle${cn.uneven === 1 ? "" : "s"} or arc${cn.uneven === 1 ? "" : "s"} in groups scaled unevenly came in as ${cn.uneven === 1 ? "a polyline" : "polylines"}`);
   for (const [k, n] of ctx.skipped) ctx.notes.add(`not imported: ${n} ${SKIPPED_LABEL[k] ?? k}`);
   if (model.units) ctx.notes.add(`model units: ${model.units} (geometry is converted from inches)`);
   if (ctx.summary.sections)

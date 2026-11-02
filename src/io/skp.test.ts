@@ -10,6 +10,7 @@ import type { Definition, SkpModel } from "openskp";
 import { FAMILIES, corpus, curveModels, rng } from "./corpus/models";
 import { apply, checkSkpCounts, compose, faceOfStyle, importOutcomeOf, isComponent, modelToOp, placementXform, sceneOf, skpToOp, SkpTooLarge, unitsOf } from "./skp";
 import { MODEL_LIMITS } from "../kernel/limits";
+import { noteMatchesView } from "./curveNoteCheck";
 import type { CurveView, ImportDefinition, ImportNode, WasmDoc } from "../kernel/types";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
@@ -441,12 +442,55 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     if (r.op?.op !== "import") throw new Error();
     const items = (r.op.nodes ?? []).flatMap((n) => (n.kind === "group" ? n.items : []));
     expect(items.map((i) => (i.curves ?? []).map((c) => c.kind))).toEqual([["polyline"], ["circle"]]);
-    expect(r.notes).toContain("1 circle or arc in groups scaled unevenly came in as a polyline");
+    // Lane 27: flagged for the kernel, which says it once per copy with the components.
+    expect(items[0].curves![0].stretched).toBe(true);
+    expect(items[1].curves![0].stretched).toBeUndefined();
+    expect(r.notes.join(" ")).not.toMatch(/unevenly/);
     const mod = await kernel();
     const d = mod.document_new();
     const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
-    expect(out.notes).toEqual(expect.arrayContaining(["1 curve came in as curve", "1 curve on faces that are not a solid (or on no face) came in as plain edges: a mesh keeps no curves"]));
+    expect(out.notes).toEqual(
+      expect.arrayContaining([
+        "1 curve came in as curve",
+        "1 circle or arc in groups or components scaled unevenly came in as a polyline",
+        "1 curve on faces that are not a solid (or on no face) came in as plain edges: a mesh keeps no curves",
+      ]),
+    );
     expect(curvesIn(d).map((c) => [c.owner.kind, c.kind, c.closed, c.segments])).toEqual([["object", "polyline", true, 24]]);
+    d.free();
+  });
+
+  it("a component's arc placed once evenly and once unevenly: the note says 1 arc and 1 polyline, as the view does (lane 27, #17)", async () => {
+    const { create, parseSkp } = await import("openskp");
+    const { prism } = await import("./corpus/models");
+    // A half disc 4 in across, 2 in tall: its top's curved side is one SketchUp arc of 12
+    // segments (the diameter closes it).
+    const half = Array.from({ length: 13 }, (_, k) => [4 * Math.cos((Math.PI * k) / 12), 4 * Math.sin((Math.PI * k) / 12)] as [number, number]);
+    const b = create();
+    const arch = b.addComponentDefinition("Arch", (def) => prism(def, half, 0, 2, {}));
+    b.addInstance(arch, { translation: [0, 0, 0] });
+    b.addInstance(arch, { translation: [20, 0, 0], matrix3x3: [2, 0, 0, 0, 1, 0, 0, 0, 1] });
+    const parsed = parseSkp(b.toBytes().slice().buffer);
+    const def = [...parsed.definitions.values()].find((d) => d.faces.length > 2)!;
+    const at = new Map(def.vertices.map((v) => [v.id, v]));
+    for (const e of def.edges) {
+      const [p, q] = [at.get(e.v1Id)!, at.get(e.v2Id)!];
+      // The top's edges along the circle (not the diameter, whose middle is its centre).
+      if (Math.abs(p.z - 2) < 1e-9 && Math.abs(q.z - 2) < 1e-9 && Math.hypot((p.x + q.x) / 2, (p.y + q.y) / 2) > 2) e.curveId = 1;
+    }
+    def.arcs.set(1, { center: [0, 0, 2], normal: [0, 0, 1], xAxis: [4, 0, 0], yAxis: [0, 4, 0], startAngle: 0, endAngle: Math.PI, radius: 4, isFullCircle: false });
+    const r = modelToOp(parsed, "arch.skp");
+    if (r.op?.op !== "import") throw new Error();
+    // The definition's arc goes to the kernel once, as an arc, for both copies.
+    expect((r.op.definitions ?? [])[0].items[0].curves).toEqual([{ kind: "arc", points: expect.any(Array), closed: false }]);
+    const mod = await kernel();
+    const d = mod.document_new();
+    const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
+    const view = curvesIn(d);
+    expect(view.map((c) => c.kind).sort()).toEqual(["arc", "polyline"]);
+    expect(out.notes).toContain("2 curves came in as curves (1 arc, 1 polyline)");
+    expect(out.notes).toContain("1 circle or arc in groups or components scaled unevenly came in as a polyline");
+    expect(noteMatchesView(out.notes, view)).toBe(true);
     d.free();
   });
 
@@ -459,7 +503,10 @@ describe.skipIf(!built)("skp files through the kernel", () => {
     const mod = await kernel();
     const d = mod.document_new();
     const out = JSON.parse(d.apply_op(JSON.stringify(r.op)));
-    expect(out.notes).toContain("30 curves came in as curves (6 circles, 24 arcs)");
+    // Lane 27 (issue #17): each copy counted, as the view lists them (lane 25 said 30: each
+    // component's curves once).
+    expect(out.notes).toContain("60 curves came in as curves (12 circles, 48 arcs)");
+    expect(noteMatchesView(out.notes, curvesIn(d))).toBe(true);
     const kinds = new Set(curvesIn(d).map((c) => `${c.owner.kind}:${c.kind}`));
     expect([...kinds].sort()).toEqual(["object:arc", "object:circle"]);
     expect(JSON.parse(d.state_json()).stats.watertight).toBe(true);

@@ -76,6 +76,7 @@ fn curve(kind: CurveKind, points: Vec<u32>, closed: bool) -> ImportCurve {
         kind,
         points,
         closed,
+        stretched: false,
     }
 }
 
@@ -351,8 +352,12 @@ fn a_components_rims_reach_every_copy_and_settle_after_an_edit() {
             nodes: vec![at(0.0), at(0.5)],
         },
     );
-    // Counted once, for the definition.
-    assert_eq!(notes_of(&out), vec!["1 curve came in as curve".to_string()]);
+    // Lane 27 (issue #17): counted once per copy, as the view shows them (lane 25 counted
+    // the definition once).
+    assert_eq!(
+        notes_of(&out),
+        vec!["2 curves came in as curves".to_string()]
+    );
     check_model(d.model()).unwrap();
     let r = rims(d.model());
     assert_eq!(r.len(), 2, "one rim on each copy");
@@ -524,4 +529,208 @@ fn strokes_and_rims_are_counted_in_one_note_by_kind() {
         vec!["3 curves came in as curves (2 circles, 1 arc; 1 as plain edges: their points did not land as drawn)".to_string()]
     );
     check_model(d.model()).unwrap();
+}
+
+/// Lane 27: a placement as a transform (a 3x3, row-major as `Xform` holds it, then a move).
+fn placed(linear: [[f64; 3]; 3], x: f64) -> ImportNode {
+    ImportNode {
+        name: None,
+        tag: None,
+        hidden: false,
+        sections: vec![],
+        kind: ImportNodeKind::Instance {
+            definition: 0,
+            xform: Xform {
+                linear,
+                translation: [x, 0.0, 0.0],
+            },
+        },
+    }
+}
+
+const EVEN: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+const UNEVEN: [[f64; 3]; 3] = [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// The kinds of every curve in the view, counted (what `curves_json` lists).
+fn kinds_in_view(m: &Model) -> [usize; 4] {
+    let mut k = [0; 4];
+    for r in rims(m) {
+        k[match r.0 {
+            CurveKind::Circle => 0,
+            CurveKind::Arc => 1,
+            CurveKind::Polygon => 2,
+            CurveKind::Polyline => 3,
+        }] += 1;
+    }
+    k
+}
+
+/// An open arc of `n` segments over half a turn, as the top rim of a half-disc prism: the
+/// arc's points are 0..=n on the top ring, the diameter closes it.
+fn half_disc(n: u32) -> (Vec<[f64; 3]>, Vec<Vec<Vec<u32>>>) {
+    let ring: Vec<[f64; 2]> = (0..=n)
+        .map(|k| {
+            let a = std::f64::consts::PI * f64::from(k) / f64::from(n);
+            [R * a.cos(), R * a.sin()]
+        })
+        .collect();
+    let m = n + 1;
+    let mut positions = Vec::new();
+    for z in [H, 0.0] {
+        for p in &ring {
+            positions.push([p[0], p[1], z]);
+        }
+    }
+    // Top ring 0..m counter-clockwise from above; bottom ring m..2m.
+    let mut faces: Vec<Vec<Vec<u32>>> =
+        vec![vec![(0..m).collect()], vec![(m..2 * m).rev().collect()]];
+    for k in 0..m {
+        let j = (k + 1) % m;
+        faces.push(vec![vec![m + k, m + j, j, k]]);
+    }
+    (positions, faces)
+}
+
+#[test]
+fn a_components_arc_is_counted_per_copy_as_each_copy_reads() {
+    // Issue #17: a definition holding one arc, placed once evenly and once with an uneven
+    // scale. The view shows an arc on the first copy and a polyline on the second; the note
+    // says the same, and that one came in as a polyline because of the uneven scale.
+    let mut d = Document::new();
+    let (positions, faces) = half_disc(12);
+    let def = ImportDefinition {
+        name: "Arch".into(),
+        items: vec![item(
+            "Arch",
+            positions,
+            faces,
+            vec![curve(CurveKind::Arc, (0..=12).collect(), false)],
+        )],
+        children: vec![],
+        sections: vec![],
+    };
+    let out = ok(
+        &mut d,
+        Op::Import {
+            items: vec![],
+            strokes: vec![],
+            materials: vec![],
+            scenes: vec![],
+            hidden_tags: vec![],
+            definitions: vec![def],
+            nodes: vec![placed(EVEN, 0.0), placed(UNEVEN, 1.0)],
+        },
+    );
+    check_model(d.model()).unwrap();
+    assert_eq!(
+        kinds_in_view(d.model()),
+        [0, 1, 0, 1],
+        "{:?}",
+        rims(d.model())
+    );
+    assert_eq!(
+        notes_of(&out),
+        vec![
+            "2 curves came in as curves (1 arc, 1 polyline)".to_string(),
+            "1 circle or arc in groups or components scaled unevenly came in as a polyline"
+                .to_string(),
+        ]
+    );
+}
+
+#[test]
+fn nested_copies_multiply_and_a_flagged_polyline_counts_as_stretched() {
+    // A definition (index 0, "Knob": a cylinder whose top circle is a rim, a disc on a mesh
+    // whose circle stays plain edges, and a polyline the reader flagged as a stretched
+    // circle) placed twice inside a second definition ("Drawer"), which is placed three
+    // times, once with an uneven scale: six copies of the knob, two of them stretched.
+    let mut d = Document::new();
+    let (positions, faces) = prism(0.0, N, false);
+    let (open_p, open_f) = prism(0.3, N, true);
+    let (flag_p, flag_f) = prism(0.6, N, false);
+    let mut stretched = curve(CurveKind::Polyline, (N..2 * N).collect(), true);
+    stretched.stretched = true;
+    let knob = ImportDefinition {
+        name: "Knob".into(),
+        items: vec![
+            item(
+                "Knob",
+                positions,
+                faces,
+                vec![curve(CurveKind::Circle, (N..2 * N).collect(), true)],
+            ),
+            item(
+                "Rosette",
+                open_p,
+                open_f,
+                vec![curve(CurveKind::Circle, (0..N).collect(), true)],
+            ),
+            item("Peg", flag_p, flag_f, vec![stretched]),
+        ],
+        children: vec![],
+        sections: vec![],
+    };
+    let drawer = ImportDefinition {
+        name: "Drawer".into(),
+        items: vec![],
+        children: vec![placed(EVEN, 0.0), placed(EVEN, 1.0)],
+        sections: vec![],
+    };
+    let at = |linear, x| ImportNode {
+        kind: ImportNodeKind::Instance {
+            definition: 1,
+            xform: Xform {
+                linear,
+                translation: [x, 0.0, 0.0],
+            },
+        },
+        ..placed(EVEN, 0.0)
+    };
+    let out = ok(
+        &mut d,
+        Op::Import {
+            items: vec![],
+            strokes: vec![],
+            materials: vec![],
+            scenes: vec![],
+            hidden_tags: vec![],
+            definitions: vec![knob, drawer],
+            nodes: vec![at(EVEN, 0.0), at(EVEN, 3.0), at(UNEVEN, 6.0)],
+        },
+    );
+    check_model(d.model()).unwrap();
+    // Six knobs: four round tops, two stretched; six flagged pegs, all polylines.
+    assert_eq!(
+        kinds_in_view(d.model()),
+        [4, 0, 0, 8],
+        "{:?}",
+        rims(d.model())
+    );
+    // The open rosette's own note (it is not a solid) is said once per item as before.
+    let curve_notes: Vec<String> = notes_of(&out)
+        .into_iter()
+        .filter(|n| n.contains("curve") || n.contains("circle"))
+        .collect();
+    assert_eq!(
+        curve_notes,
+        vec![
+            "12 curves came in as curves (4 circles, 8 polylines)".to_string(),
+            "8 circles or arcs in groups or components scaled unevenly came in as polylines"
+                .to_string(),
+            "6 curves on faces that are not a solid (or on no face) came in as plain edges: a mesh keeps no curves"
+                .to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_flagged_polyline_round_trips_through_json_and_is_left_out_when_false() {
+    let mut c = curve(CurveKind::Polyline, vec![0, 1, 2], false);
+    assert!(!serde_json::to_string(&c).unwrap().contains("stretched"));
+    c.stretched = true;
+    let json = serde_json::to_string(&c).unwrap();
+    assert!(json.contains(r#""stretched":true"#), "{json}");
+    assert_eq!(serde_json::from_str::<ImportCurve>(&json).unwrap(), c);
+    let old: ImportCurve = serde_json::from_str(r#"{"kind":"polyline","points":[0,1,2]}"#).unwrap();
+    assert!(!old.stretched);
 }

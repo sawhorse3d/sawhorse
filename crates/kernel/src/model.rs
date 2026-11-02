@@ -3173,7 +3173,11 @@ impl Model {
         }
         let (mut objects, mut meshes) = (Vec::new(), Vec::new());
         // Lane 25: what became of the curves the items and strokes carry, said once.
+        // Lane 27 (issue #17): counted per placed copy. The curves made, by kind, are read
+        // from the rims of every solid the import placed (`placed`), each as the view reads
+        // it where it lands; the rest of a component's tally counts once per copy.
         let mut curve_tally = crate::meshbuild::CurveTally::default();
+        let mut placed: Vec<ObjectId> = Vec::new();
         let mut groups: Vec<(String, Vec<Thing>)> = Vec::new();
         // Group name -> index in `groups` (lane 16: a search per item was quadratic).
         let mut group_index: BTreeMap<String, usize> = BTreeMap::new();
@@ -3182,7 +3186,7 @@ impl Model {
             let built = build_item(item)?;
             let sources = built.face_sources.clone();
             notes.extend(built.notes);
-            curve_tally.add(&built.curves);
+            curve_tally.add(&built.curves.unmade());
             let tag = self.import_tag(item.tag.as_deref());
             let material = match item.material.as_deref().map(|m| clip_name(m, "Material")) {
                 Some(m) if self.materials.contains_key(&m) => Some(m),
@@ -3211,6 +3215,7 @@ impl Model {
                 let id = self.insert_object(o);
                 made.push(Thing::Object(id));
                 objects.push(to_public(id));
+                placed.push(id);
             }
             if let Some(mut m) = built.loose {
                 m.name = base.clone();
@@ -3258,25 +3263,30 @@ impl Model {
             }
             group_ids.push(to_public(g));
         }
-        // Groups and components (a `.skp`'s structure).
+        // Groups and components (a `.skp`'s structure). Each definition's own tally (its
+        // template items' curves, once) is counted per world copy below.
         let mut def_ids: Vec<DefId> = Vec::with_capacity(definitions.len());
+        let mut def_tallies: Vec<crate::meshbuild::CurveTally> =
+            Vec::with_capacity(definitions.len());
         for d in definitions {
+            let mut tally = crate::meshbuild::CurveTally::default();
             let mut def = Definition {
                 name: clip_name(&d.name, crate::nodes::DEFAULT_COMPONENT_NAME),
                 members: BTreeMap::new(),
                 next_slot: 1,
                 part: Default::default(),
             };
-            self.template_items(&mut def, None, &d.items, &mut notes, &mut curve_tally)?;
+            self.template_items(&mut def, None, &d.items, &mut notes, &mut tally)?;
             self.template_nodes(
                 &mut def,
                 None,
                 &d.children,
                 &def_ids,
                 &mut notes,
-                &mut curve_tally,
+                &mut tally,
             )?;
             def_ids.push(self.defs.insert(def));
+            def_tallies.push(tally);
         }
         let mut made_nodes = Vec::new();
         let def_sections: Vec<&[ImportSection]> =
@@ -3298,10 +3308,39 @@ impl Model {
                 for t in self.subtree_things(&kids, n) {
                     if let Thing::Object(k) = t {
                         objects.push(to_public(k));
+                        placed.push(k);
                     }
                 }
             }
             group_ids.extend(made_nodes.iter().map(|&n| to_public(n)));
+        }
+        // Lane 27: each definition's tally once per world copy of it (the definitions are
+        // new, so every instance of one is a copy this import placed, nested ones included).
+        if def_tallies.iter().any(|t| !t.is_empty()) {
+            let mut copies: BTreeMap<DefId, usize> = BTreeMap::new();
+            for (_, node) in self.nodes.iter() {
+                if let NodeKind::Instance(d) = node.kind {
+                    *copies.entry(d).or_default() += 1;
+                }
+            }
+            for (d, t) in def_ids.iter().zip(&def_tallies) {
+                curve_tally.add_times(t, copies.get(d).copied().unwrap_or(0));
+            }
+        }
+        // Lane 27: the rims every placed solid holds, each read where it landed (what the
+        // view shows): a component copy placed with an uneven scale reads its circles and
+        // arcs as polylines, counted as such and as stretched.
+        for &k in &placed {
+            let o = &self.objects[k];
+            for (&cid, rim) in o.curves() {
+                let Some(info) = o.curve_info(cid) else {
+                    continue;
+                };
+                curve_tally.made_one(info.kind);
+                if rim.kind.is_round() && info.kind == crate::curve::CurveKind::Polyline {
+                    curve_tally.stretched += 1;
+                }
+            }
         }
         self.mark(ctx);
         let mut sketches = Vec::new();
@@ -3471,7 +3510,7 @@ impl Model {
             let built = build_item(item)?;
             let sources = built.face_sources.clone();
             notes.extend(built.notes);
-            curves.add(&built.curves);
+            curves.add(&built.curves.unmade());
             let tag = self.import_tag(item.tag.as_deref());
             let material = item
                 .material
@@ -3671,7 +3710,7 @@ impl Model {
                     let built = build_item(item)?;
                     let sources = built.face_sources.clone();
                     notes.extend(built.notes);
-                    curves.add(&built.curves);
+                    curves.add(&built.curves.unmade());
                     let tag = self.import_tag(item.tag.as_deref());
                     let material = item
                         .material

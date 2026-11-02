@@ -4,6 +4,8 @@
 // or is refused (with the exact message), what came in (solids, non-solid meshes, curves,
 // scenes) and the import notes. It is the quick half of e2e/private-fixtures.spec.ts's sweep
 // (that one drives the app): fast enough to run before and after an openskp bump and diff.
+// Lane 27 (issue #17): every file's curve note must count what the view lists, kind by kind
+// (`noteAgrees`; each copy of a component counts its own).
 //
 //   SAWHORSE_PRIVATE_FIXTURES=<dir> [SKP_SWEEP_OUT=<file.json>] npx vitest run src/io/skp-sweep.test.ts
 //
@@ -13,6 +15,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { skpToOp } from "./skp";
+import { noteMatchesView } from "./curveNoteCheck";
 import type { WasmDoc } from "../kernel/types";
 
 const dir = process.env.SAWHORSE_PRIVATE_FIXTURES;
@@ -44,6 +47,8 @@ export interface SweepRow {
   scenes?: number;
   empty?: boolean;
   notes?: string[];
+  /** Lane 27: the curve note counts what the view lists, kind by kind. */
+  noteAgrees?: boolean;
 }
 
 describe.skipIf(!ready)("private .skp sweep (Node)", () => {
@@ -81,6 +86,7 @@ describe.skipIf(!ready)("private .skp sweep (Node)", () => {
       const kinds: Record<string, number> = {};
       for (const c of curves) kinds[c.kind] = (kinds[c.kind] ?? 0) + 1;
       const imported = out.kind === "batch" ? out.outcomes.find((o: { kind: string }) => o.kind === "imported") : out;
+      const kernelNotes = (imported?.notes as string[] | undefined) ?? [];
       rows.push({
         file,
         opens: true,
@@ -90,7 +96,8 @@ describe.skipIf(!ready)("private .skp sweep (Node)", () => {
         curves: curves.length,
         curveKinds: kinds,
         scenes: st.scenes.length,
-        notes: [...r.notes, ...((imported?.notes as string[] | undefined) ?? [])],
+        notes: [...r.notes, ...kernelNotes],
+        noteAgrees: noteMatchesView(kernelNotes, curves),
       });
       d.free();
     }
@@ -98,5 +105,6 @@ describe.skipIf(!ready)("private .skp sweep (Node)", () => {
     if (process.env.SKP_SWEEP_OUT) writeFileSync(process.env.SKP_SWEEP_OUT, JSON.stringify(rows, null, 2) + "\n");
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) if (!row.opens) expect(row.refusal, row.file).toMatch(/\S/);
+    for (const row of rows) if (row.opens && !row.empty) expect(row.noteAgrees, `${row.file}: ${JSON.stringify(row.curveKinds)} vs ${row.notes?.join(" | ")}`).toBe(true);
   }, 600_000);
 });

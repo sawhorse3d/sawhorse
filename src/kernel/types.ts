@@ -183,6 +183,10 @@ export interface ImportCurve {
   kind: CurveKind;
   points: number[];
   closed: boolean;
+  /** Lane 27 (issue #17): a polyline that is a circle or an arc in the file, stretched out of
+   * round by its group's uneven scale; the import note counts it with the copies an uneven
+   * placement stretches ("... in groups or components scaled unevenly came in as polylines"). */
+  stretched?: boolean;
 }
 
 /** A component definition in an import: geometry in its own coordinates, plus nested groups
