@@ -36,6 +36,15 @@ const AXIS_KEYS: Record<string, { n: V3; name: string; kind: "axis-x" | "axis-y"
   ArrowUp: { n: [0, 0, 1], name: "level", kind: "axis-z" },
 };
 
+/** Lane 27 (issue #10): what a typed angle that turns nothing (0, 360, -720: any whole
+ * turn) says. The tool stays armed for another angle. */
+export const NO_TURN = "An angle of 0 turns nothing; type another angle or press Esc.";
+
+/** A typed angle (degrees, exactly as typed) that is a whole number of turns. */
+export function turnsNothing(deg: number): boolean {
+  return deg % 360 === 0;
+}
+
 /** Snap a cursor angle (radians) to the nearest tick when it is within SNAP_DEG of it. */
 export function snapAngle(a: number): number {
   const deg = a / DEG;
@@ -249,6 +258,9 @@ export class RotateTool extends Tool {
     const deg = parseAngle(text);
     if (deg !== null) {
       const g = this.g;
+      // Lane 27 (issue #10): a whole number of turns turns nothing. Said in words, and the
+      // gesture (or the last turn, to retype) stays as it was for another angle.
+      if (turnsNothing(deg) && (g || this.last)) return void h.status(NO_TURN, true);
       if (g) {
         if (!g.ref) g.ref = alignedFrame(g.centre, g.normal).u;
         const sign = g.angle < 0 ? -1 : 1;

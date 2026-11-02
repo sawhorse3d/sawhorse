@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DocState, KernelOp, Picked, SurfaceHit, V3, Xform } from "../kernel/types";
 import { ev, fakeHost } from "./fakeHost";
-import { RotateTool, fmtDeg, parseAngle, rotateOp, snapAngle } from "./rotate";
+import { NO_TURN, RotateTool, fmtDeg, parseAngle, rotateOp, snapAngle, turnsNothing } from "./rotate";
 import { applyX } from "./xform";
 
 const DEG = Math.PI / 180;
@@ -150,5 +150,85 @@ describe("Rotate tool", () => {
     const ring = t.view().overlay.find((o) => o.kind === "loop");
     expect(ring?.points.length).toBe(48);
     ring!.points.forEach((p) => expect(p[2]).toBeCloseTo(1, 12));
+  });
+});
+
+describe("typed angles that turn nothing (lane 27, issue #10)", () => {
+  it("0, 360 and -360 mid-gesture say so in words and leave the tool waiting for another angle", async () => {
+    expect([0, 360, -360, 720, -0].every(turnsNothing)).toBe(true);
+    expect([90, 359.999, 0.001, -45].some(turnsNothing)).toBe(false);
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new RotateTool(h);
+    t.onEvent(down("click", 0, 0, 0, { picked: onBox, snapKind: "endpoint" }));
+    await tick();
+    t.onEvent(down("move", 1, 0));
+    t.onEvent(down("click", 1, 0));
+    const before = h.ops.length;
+    for (const typed of ["0", "360", "-360", "0°"]) {
+      t.onValue(typed);
+      await tick();
+      expect(h.statuses.at(-1)).toEqual({ text: NO_TURN, error: true });
+      expect(h.ops.length, typed).toBe(before);
+      expect(t.busy(), typed).toBe(true);
+    }
+    // A real angle afterwards turns as usual.
+    t.onValue("90");
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform", objects: [1] });
+    expect(h.statuses.at(-1)?.text).toMatch(/^Turned .* 90° about the blue axis\.$/);
+    expect(t.busy()).toBe(false);
+  });
+
+  it("before the centre is clicked too: the gesture is not started by a typed 0", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new RotateTool(h);
+    t.onEvent(down("click", 0, 0, 0, { picked: onBox, snapKind: "endpoint" }));
+    await tick();
+    // Centre clicked, no start yet: a typed 0 keeps the gesture as it was.
+    t.onValue("0");
+    await tick();
+    expect(h.statuses.at(-1)?.text).toBe(NO_TURN);
+    expect(h.ops).toHaveLength(0);
+    t.onValue("45");
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform" });
+  });
+
+  it("after a turn: 0 and 360 say so and keep the turn; another angle retypes it", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new RotateTool(h);
+    await turn(t, 30);
+    const before = h.ops.length;
+    for (const typed of ["0", "360", "-360"]) {
+      t.onValue(typed);
+      await tick();
+      expect(h.statuses.at(-1)?.text).toBe(NO_TURN);
+      // Nothing undone, nothing applied.
+      expect(h.ops.length, typed).toBe(before);
+    }
+    t.onValue("45");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform" }]);
+    close(applyX(ops(h).at(-1)!.xform as Xform, [1, 0, 0]), [Math.cos(45 * DEG), Math.sin(45 * DEG), 0]);
+  });
+
+  it("the same for sketch geometry", async () => {
+    const state = { sketches: [{ id: 2, origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] }] } as unknown as DocState;
+    const h = fakeHost({ outcome: { kind: "sketch_moved", sketch: 2, regions: [[2, 1]] }, _state: state });
+    h.sel = [{ kind: "region", sketch: 2, region: 1 }];
+    const t = new RotateTool(h);
+    t.onEvent(down("click", 0, 0, 0, { picked: onBox, snapKind: "endpoint" }));
+    await tick();
+    t.onEvent(down("move", 1, 0));
+    t.onEvent(down("click", 1, 0));
+    for (const typed of ["0", "360", "-360"]) {
+      t.onValue(typed);
+      await tick();
+      expect(h.statuses.at(-1)?.text).toBe(NO_TURN);
+    }
+    expect(h.ops).toHaveLength(0);
+    t.onValue("90");
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform_sketch", sketch: 2, regions: [1] });
   });
 });

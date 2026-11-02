@@ -171,9 +171,10 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 - Right, Left and Up lock it upright facing red, upright facing green, or level. Hold Shift to keep the plane it is on.
 - Click the centre, click where the angle starts, then click where it ends.
 - Or type the angle. The cursor snaps to the protractor's 15 degree ticks; a typed angle is exact.
+- A typed `0`, `360` or any other whole number of turns turns nothing: the status line says "An angle of 0 turns nothing; type another angle or press Esc.", nothing changes, and Rotate waits for another angle (solids and sketch shapes alike).
 - With nothing selected, the solid (or the sketch shape) under the centre click turns.
 - Ctrl copies; `x3` and `/4` work as in Move. A ring of four chair legs is one copy at 90 degrees, then `x3`.
-- **Sketch shapes** turn on their own plane: the protractor lies on the shape's sketch whatever the cursor is over, so a shape drawn on the ground turns about the blue axis and stays flat on the ground. An arrow key (or Shift) puts the protractor on another plane: a whole shape then turns off its plane onto a new one (stand a rectangle up with Right and `90`); part of a shape turns and is flattened back into its plane. A shape turned by 0 or 360 degrees does not move: the status line says there is nothing to move, and there is no step to undo.
+- **Sketch shapes** turn on their own plane: the protractor lies on the shape's sketch whatever the cursor is over, so a shape drawn on the ground turns about the blue axis and stays flat on the ground. An arrow key (or Shift) puts the protractor on another plane: a whole shape then turns off its plane onto a new one (stand a rectangle up with Right and `90`); part of a shape turns and is flattened back into its plane.
 
 **Scale (S).** Grips appear on the box around the selection (or the solid under the cursor):
 - a face-centre grip stretches one way, an edge grip two ways, and a corner grip three;
