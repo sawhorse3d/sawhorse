@@ -15,7 +15,7 @@
 import type { DocState, Entity, KernelOp, MeshData, OpOutcome, V3, Xform } from "../kernel/types";
 import { curveSegments, curveView, onCurve } from "../lib/curves";
 import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
-import { faceOf, regionName, solidName } from "../lib/names";
+import { faceOf, regionName, regionOf, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { sectionById, sectionCorners } from "../lib/sections";
 import type { OutlineTarget } from "../lib/edit";
@@ -150,12 +150,14 @@ export function curveNoun(mesh: MeshData | null | undefined, sketch: number, cur
 }
 
 /** "region 2", "a circle", "3 sketch edges": what of one sketch moves. A curve and the face
- * it bounds are one shape (lane 23b: 200 circles with their faces were "201 items"). */
-function sketchPartNames(p: SketchPart, mesh?: MeshData | null): Named[] {
+ * it bounds are one shape (lane 23b: 200 circles with their faces were "201 items").
+ * `qualify` names the sketch with each region ("region 1 of sketch 2"), for a message
+ * naming regions of more than one sketch (lane 27, issue #10: "Moved region 1 and region 1"). */
+function sketchPartNames(p: SketchPart, mesh?: MeshData | null, qualify = false): Named[] {
   const facedRegions = new Set((p.faced ?? []).map(([, r]) => r));
   const curves = p.curves ?? [];
   // Regions bounded by a selected curve are named by that curve.
-  const out: Named[] = p.regions.filter((r) => !facedRegions.has(r)).map((r) => ({ text: regionName(p.sketch, r), n: 1 }));
+  const out: Named[] = p.regions.filter((r) => !facedRegions.has(r)).map((r) => ({ text: qualify ? regionOf(p.sketch, r) : regionName(p.sketch, r), n: 1 }));
   const byKind = new Map<string, number>();
   for (const c of curves) {
     const kind = curveView(mesh ?? null, { kind: "sketch", id: p.sketch }, c)?.view.kind ?? "polyline";
@@ -168,9 +170,13 @@ function sketchPartNames(p: SketchPart, mesh?: MeshData | null): Named[] {
 }
 
 /** "solid 3", "solids 2 and 5", "component Shelf (2 of 4)", "face 6 of solid 3", "region 1",
- * "a circle", "200 circles". `mesh` names curves by kind ("a curve" without it). */
+ * "a circle", "200 circles". `mesh` names curves by kind ("a curve" without it). Regions of
+ * two or more sketches each name their sketch: "region 1 of sketch 1 and region 1 of
+ * sketch 2" (lane 27, issue #10). */
 export function describeSubject(s: Subject, mesh?: MeshData | null): string {
-  const sk = (s.sketches ?? []).flatMap((p) => sketchPartNames(p, mesh));
+  const parts = s.sketches ?? [];
+  const regionSketches = new Set(parts.filter((p) => p.regions.some((r) => !(p.faced ?? []).some(([, f]) => f === r))).map((p) => p.sketch));
+  const sk = parts.flatMap((p) => sketchPartNames(p, mesh, regionSketches.size > 1));
   const one = (text: string): Named => ({ text, n: 1 });
   const names: Named[] = s.kind === "geometry" ? [one(s.what), ...sk] : [...s.objects.map((o) => one(solidName(o))), ...(s.names ?? []).map(one), ...sk];
   const total = names.reduce((a, x) => a + x.n, 0);

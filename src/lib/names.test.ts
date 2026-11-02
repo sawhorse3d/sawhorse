@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { DocState, MeshData } from "../kernel/types";
-import { faceOf, friendlyError, hasRawId, regionName, setNameSource, solidName } from "./names";
+import { faceOf, friendlyError, hasRawId, regionName, regionOf, setNameSource, sketchName, solidName } from "./names";
 
 const REUSED = 2 ** 32 + 1; // the second object in slot 1
 
@@ -32,6 +32,23 @@ describe("friendly names", () => {
     expect(regionName(1, 7)).toBe("region 2");
     expect(regionName(1, REUSED + 4)).toBe("region 3");
     expect(regionName(2, 3)).toBe("a region");
+  });
+
+  it("names sketches by their place in the document, and a region with its sketch (lane 27, #10)", () => {
+    const { mesh } = scene();
+    const frame = { origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] };
+    // Public ids carry slot-reuse bits; the names never show them.
+    const state = { solids: [], sketches: [{ id: REUSED, ...frame }, { id: 1, ...frame }, { id: 5, ...frame }] } as unknown as DocState;
+    setNameSource(state, mesh);
+    expect(sketchName(REUSED)).toBe("sketch 1");
+    expect(sketchName(1)).toBe("sketch 2");
+    expect(sketchName(5)).toBe("sketch 3");
+    expect(sketchName(99)).toBe("a sketch");
+    expect(regionOf(1, 3)).toBe("region 1 of sketch 2");
+    expect(regionOf(5, 1)).toBe("region 1 of sketch 3");
+    expect(hasRawId(regionOf(REUSED, 7))).toBe(false);
+    setNameSource(null, null);
+    expect(sketchName(1)).toBe("a sketch");
   });
 
   it("rewrites kernel refusals", () => {

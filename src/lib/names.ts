@@ -7,7 +7,10 @@
 //   faces    "face 6"    the persistent face id (per solid, from 1, never reused);
 //   regions  "region 2"  a display index: the region's position among its sketch's
 //                         regions, in id order (stable while that sketch is unchanged);
-//   sketches "the ground" or "a sketch 30 in up".
+//                         "region 1 of sketch 2" when one message names regions of more
+//                         than one sketch (lane 27, issue #10);
+//   sketches "sketch 2"  a display index: the sketch's position among the document's
+//                         sketches, in the order they were made (the state's list).
 //
 // The app keeps the naming source current (setNameSource after every scene); tools and
 // the status line call the functions below. `friendlyError` rewrites kernel refusals.
@@ -43,6 +46,18 @@ export function regionName(sketch: number, region: number): string {
   const ids = [...new Set((mesh?.parts ?? []).filter((p) => p.kind === "region" && p.owner === sketch).map((p) => p.index))].sort((a, b) => a - b);
   const k = ids.indexOf(region);
   return k >= 0 ? `region ${k + 1}` : "a region";
+}
+
+/** "sketch 2": the sketch's 1-based position among the document's sketches (the order
+ * they were made, as the state lists them), or "a sketch" when it is not in the scene. */
+export function sketchName(sketch: number): string {
+  const k = (state?.sketches ?? []).findIndex((s) => s.id === sketch);
+  return k >= 0 ? `sketch ${k + 1}` : "a sketch";
+}
+
+/** "region 1 of sketch 2": for a message naming regions of more than one sketch. */
+export function regionOf(sketch: number, region: number): string {
+  return `${regionName(sketch, region)} of ${sketchName(sketch)}`;
 }
 
 /** Kernel messages name things by public id ("no object #4294967297"): say it in words. */

@@ -283,6 +283,38 @@ describe("Move tool", () => {
     close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [12 * IN, 0, 0]);
   });
 
+  it("names regions of two sketches with their sketches, and of one sketch without (lane 27, #10)", async () => {
+    const frame = { origin: [0, 0, 0], normal: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] };
+    const state = { solids: [], sketches: [{ id: 1, ...frame }, { id: 4, ...frame, origin: [0, 0, 1] }] } as unknown as DocState;
+    const part = (owner: number, index: number) => ({ kind: "region", owner, index }) as unknown as MeshData["parts"][number];
+    const mesh = { ...boxMesh(), edgeOwners: [], edgeOwner: new Uint32Array(), edges: new Float32Array(), parts: [part(1, 1), part(1, 2), part(4, 1)] } as MeshData;
+    setNameSource(state, mesh);
+    try {
+      const h = fakeHost({ outcome: { kind: "batch", outcomes: [{ kind: "sketch_moved", sketch: 1, regions: [[1, 1]] }, { kind: "sketch_moved", sketch: 4, regions: [[4, 1]] }] }, _state: state });
+      h.sel = [
+        { kind: "region", sketch: 1, region: 1 },
+        { kind: "region", sketch: 4, region: 1 },
+      ];
+      const t = new MoveTool(h);
+      t.onEvent(ev("down", [0, 0, 0], { snapKind: "endpoint" }));
+      await tick();
+      expect(h.statuses.at(-1)?.text).toMatch(/^Moving region 1 of sketch 1 and region 1 of sketch 2:/);
+      t.onEvent(ev("click", [0, 0, 0], { snapKind: "endpoint" }));
+      t.onEvent(ev("move", [0.3, 0, 0], { snapKind: "axis-x" }));
+      t.onValue("36");
+      await tick();
+      expect(h.statuses.at(-1)?.text).toBe("Moved region 1 of sketch 1 and region 1 of sketch 2 36 in along +red.");
+      // Both regions in one sketch: the short form.
+      const one = subjectOf([{ kind: "region", sketch: 1, region: 1 }, { kind: "region", sketch: 1, region: 2 }], null, new Map(), state) as Subject;
+      expect(describeSubject(one)).toBe("region 1 and region 2");
+      // A region of one sketch and an edge of another: only one sketch has regions named.
+      const mixed = subjectOf([{ kind: "region", sketch: 1, region: 1 }, { kind: "edge", owner: { kind: "sketch", id: 4 }, a: [0, 0, 1], b: [1, 0, 1], drawn: true }], null, new Map(), state) as Subject;
+      expect(describeSubject(mixed)).toBe("region 1 and a sketch edge");
+    } finally {
+      setNameSource(null, null);
+    }
+  });
+
   it("picks up the sketch shape under the cursor when nothing is selected", async () => {
     const h = fakeHost({ outcome: { kind: "sketch_moved", sketch: 1, regions: [[1, 3]] } });
     const t = new MoveTool(h);
