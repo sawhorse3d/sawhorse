@@ -1,8 +1,10 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DocState, KernelOp, Picked, SurfaceHit, V3, Xform } from "../kernel/types";
+import type { DocState, KernelOp, MeshPart, Picked, SurfaceHit, V3, WasmDoc, Xform } from "../kernel/types";
 import { ev, fakeHost } from "./fakeHost";
-import { NO_TURN, RotateTool, fmtDeg, parseAngle, rotateOp, snapAngle, turnsNothing } from "./rotate";
-import { applyX } from "./xform";
+import { NO_TURN, RotateTool, fmtDeg, parseAngle, rotateOp, snapAngle, snapTurn, turnsNothing } from "./rotate";
+import { applyX, rotation, turnCosSin } from "./xform";
 
 const DEG = Math.PI / 180;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -231,4 +233,145 @@ describe("typed angles that turn nothing (lane 27, issue #10)", () => {
     await tick();
     expect(ops(h).at(-1)).toMatchObject({ op: "transform_sketch", sketch: 2, regions: [1] });
   });
+});
+
+/** Every component exactly 0 or plus or minus 1, and equal to `want` (=== treats -0 as 0). */
+function exactly(got: number[], want: number[]) {
+  expect(got.length).toBe(want.length);
+  got.forEach((x, k) => expect(x === want[k], `${got} is not exactly ${want}`).toBe(true));
+}
+
+describe("quarter turns are exact (lane 27, issue #10)", () => {
+  it("cos and sin of a whole number of quarter turns are exactly 0 and plus or minus 1, from the degrees", () => {
+    exactly(turnCosSin(Math.PI / 2, 90), [0, 1]);
+    exactly(turnCosSin(-Math.PI / 2, -90), [0, -1]);
+    exactly(turnCosSin(Math.PI, 180), [-1, 0]);
+    exactly(turnCosSin((3 * Math.PI) / 2, 270), [0, -1]);
+    exactly(turnCosSin(-Math.PI, -180), [-1, 0]);
+    exactly(turnCosSin(5 * Math.PI, 900), [-1, 0]);
+    // Without the degrees, or off a quarter turn, the radians as before.
+    expect(turnCosSin(Math.PI / 2)[0]).toBe(Math.cos(Math.PI / 2));
+    expect(turnCosSin(Math.PI / 2, null)[0]).not.toBe(0);
+    expect(turnCosSin(45 * DEG, 45)).toEqual([Math.cos(45 * DEG), Math.sin(45 * DEG)]);
+    // The protractor's snap reports the tick it snapped to; a free angle has none.
+    expect(snapTurn(88.5 * DEG)).toEqual({ angle: 90 * DEG, deg: 90 });
+    expect(snapTurn(-89 * DEG).deg).toBe(-90);
+    expect(snapTurn(41 * DEG).deg).toBeNull();
+  });
+
+  it("a ground normal turned Right+90, -90, 180 and 270 is axis-aligned to the bit", () => {
+    const up: V3 = [0, 0, 1];
+    const turned = (deg: number) => {
+      const x = rotation([0, 0, 0], [1, 0, 0], deg * DEG, deg);
+      return x.linear.map((row) => row[0] * up[0] + row[1] * up[1] + row[2] * up[2]);
+    };
+    exactly(turned(90), [0, -1, 0]);
+    exactly(turned(-90), [0, 1, 0]);
+    exactly(turned(180), [0, 0, -1]);
+    exactly(turned(270), [0, 1, 0]);
+    // What issue #10 saw without the degrees: 6e-17 off.
+    const loose = rotation([0, 0, 0], [1, 0, 0], 90 * DEG).linear[2][2];
+    expect(loose).not.toBe(0);
+    expect(Math.abs(loose)).toBeLessThan(1e-16);
+  });
+
+  it("typed and snapped quarter turns reach the op exactly; a free drag does not change", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new RotateTool(h);
+    t.onKey(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox, snapKind: "endpoint", ray: { origin: [10, 0, 0], dir: [-1, 0, 0] } }));
+    await tick();
+    t.onEvent(ev("move", [0, 1, 0], { ray: { origin: [10, 1, 0], dir: [-1, 0, 0] } }));
+    t.onEvent(ev("click", [0, 1, 0], { ray: { origin: [10, 1, 0], dir: [-1, 0, 0] } }));
+    t.onEvent(ev("move", [0, 0.5, 0.5], { ray: { origin: [10, 0.5, 0.5], dir: [-1, 0, 0] } }));
+    t.onValue("90");
+    await tick();
+    const typed = ops(h).at(-1)!.xform as Xform;
+    exactly(typed.linear.flat(), [1, 0, 0, 0, 0, -1, 0, 1, 0]);
+    // Snapped by the protractor (88 degrees is within the snap of the 90 tick), level.
+    const level = new RotateTool(h);
+    await turn(level, 88);
+    const snapped = ops(h).at(-1)!.xform as Xform;
+    exactly(snapped.linear.flat(), [0, -1, 0, 1, 0, 0, 0, 0, 1]);
+    // A drag that lands on a free angle is the radians as before.
+    await turn(level, 41);
+    const free = ops(h).at(-1)!.xform as Xform;
+    const a = Math.atan2(free.linear[1][0], free.linear[0][0]);
+    expect(a / DEG).toBeCloseTo(41, 9);
+    expect(free).toEqual(rotation([0, 0, 0], [0, 0, 1], a));
+    // A copy turned 180 and divided in two: 90 a step, exactly.
+    const c = fakeHost({ outcome: { kind: "copied", objects: [2] } });
+    const ct = new RotateTool(c);
+    ct.onModifier("ctrl");
+    await turn(ct, 180);
+    ct.onValue("/2");
+    await tick();
+    exactly((ops(c).at(-1)!.xform as Xform).linear.flat(), [0, -1, 0, 1, 0, 0, 0, 0, 1]);
+  });
+});
+
+const pkg = path.resolve(__dirname, "../wasm/pkg");
+const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
+const runKernel = built || process.env.REQUIRE_KERNEL ? describe : describe.skip;
+
+runKernel("quarter turns through the kernel (lane 27, issue #10)", () => {
+  async function doc(): Promise<WasmDoc> {
+    const mod = (await import(/* @vite-ignore */ path.join(pkg, "sawhorse_wasm.js"))) as { initSync(o: { module: Buffer }): void; document_new(): WasmDoc };
+    mod.initSync({ module: readFileSync(path.join(pkg, "sawhorse_wasm_bg.wasm")) });
+    return mod.document_new();
+  }
+  const parts = (d: WasmDoc): MeshPart[] => {
+    const m = d.get_scene_mesh();
+    const out = JSON.parse(m.parts_json()) as MeshPart[];
+    m.free();
+    return out;
+  };
+  const apply = (d: WasmDoc, op: unknown) => {
+    const out = JSON.parse(d.apply_op(JSON.stringify(op)));
+    expect(out.error, JSON.stringify(out)).toBeUndefined();
+    return out;
+  };
+  const square = { op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [0.5, 0, 0], [0.5, 0.5, 0], [0, 0.5, 0]], closed: true };
+  const ground = (d: WasmDoc) => parts(d).find((p) => p.kind === "region")!;
+
+  for (const [deg, normal] of [
+    [90, [0, -1, 0]],
+    [-90, [0, 1, 0]],
+    [180, [0, 0, -1]],
+    [270, [0, 1, 0]],
+  ] as [number, V3][]) {
+    it(`a ground sketch stood up Right+${deg}: its normal is exactly (${normal}) up to which way it faces`, async () => {
+      const d = await doc();
+      apply(d, square);
+      const r = ground(d);
+      const sk = { kind: "objects" as const, objects: [], sketches: [{ sketch: r.owner, points: [], edges: [], regions: [r.index], rings: [], origin: [0, 0, 0] as V3, normal: [0, 0, 1] as V3, moving: [] }] };
+      apply(d, rotateOp(sk, [0, 0, 0], [1, 0, 0], deg * DEG, false, 1, deg));
+      const region = parts(d).find((p) => p.kind === "region")!;
+      // A sketch faces either way along its plane's normal; the plane itself is exact.
+      const n = region.normal;
+      const flip = n.some((x, k) => x !== 0 && x === -normal[k]);
+      exactly(flip ? n.map((x) => -x) : n, normal);
+      const st = JSON.parse(d.state_json()) as DocState;
+      const sketch = st.sketches.find((s) => s.id === region.owner)!;
+      exactly(sketch.normal.map(Math.abs), normal.map(Math.abs));
+      d.free();
+    });
+
+    it(`a solid turned Right+${deg}: every face normal is exactly a world axis`, async () => {
+      const d = await doc();
+      apply(d, square);
+      const r = ground(d);
+      const made = apply(d, { op: "extrude", sketch: r.owner, region: r.index, distance: 0.25 });
+      const object = made.object ?? made.objects?.[0];
+      apply(d, rotateOp({ kind: "objects", objects: [object] }, [0, 0, 0], [1, 0, 0], deg * DEG, false, 1, deg));
+      const faces = parts(d).filter((p) => p.kind === "face");
+      expect(faces).toHaveLength(6);
+      for (const f of faces) {
+        expect(f.normal.every((x) => x === 0 || x === 1 || x === -1), `${f.normal}`).toBe(true);
+      }
+      // The top (it faced +z) now faces the way the ground normal went.
+      expect(faces.some((f) => f.normal.every((x, k) => x === normal[k]))).toBe(true);
+      d.free();
+    });
+  }
 });

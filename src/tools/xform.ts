@@ -37,12 +37,26 @@ export function translation(d: V3): Xform {
   return { ...IDENTITY, translation: [d[0], d[1], d[2]] };
 }
 
-/** Turn `angle` radians about the line through `c` along unit `axis` (right-handed). */
-export function rotation(c: V3, axis: V3, angle: number): Xform {
+/** Lane 27 (issue #10): the cosine and sine of a turn. When the turn is known in degrees
+ * (typed, or snapped to a protractor tick) and is a whole number of quarter turns, they are
+ * exactly 0 and plus or minus 1, tested on the degrees, never on the radians: a sketch stood
+ * up by Right+90 then faces (0, -1, 0), not (0, -1, 6e-17). Otherwise `Math.cos` and
+ * `Math.sin` of the radians. */
+export function turnCosSin(angle: number, deg?: number | null): [number, number] {
+  if (deg !== undefined && deg !== null && deg % 90 === 0) {
+    const q = (((deg / 90) % 4) + 4) % 4;
+    return [[1, 0, -1, 0][q], [0, 1, 0, -1][q]];
+  }
+  return [Math.cos(angle), Math.sin(angle)];
+}
+
+/** Turn `angle` radians about the line through `c` along unit `axis` (right-handed). `deg`:
+ * the same turn in degrees when it is known exactly (typed or snapped), so a quarter turn is
+ * exact ({@link turnCosSin}). */
+export function rotation(c: V3, axis: V3, angle: number, deg?: number | null): Xform {
   const n = len(axis);
   const [x, y, z] = n > 0 ? mul(axis, 1 / n) : [0, 0, 1];
-  const s = Math.sin(angle);
-  const k = Math.cos(angle);
+  const [k, s] = turnCosSin(angle, deg);
   const t = 1 - k;
   const linear: [V3, V3, V3] = [
     [t * x * x + k, t * x * y - s * z, t * x * z + s * y],

@@ -170,7 +170,7 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 **Rotate (Q).** The protractor appears on the face under the cursor, or level on the ground.
 - Right, Left and Up lock it upright facing red, upright facing green, or level. Hold Shift to keep the plane it is on.
 - Click the centre, click where the angle starts, then click where it ends.
-- Or type the angle. The cursor snaps to the protractor's 15 degree ticks; a typed angle is exact.
+- Or type the angle. The cursor snaps to the protractor's 15 degree ticks; a typed angle is exact, and a quarter turn (typed, or snapped to 90, 180 or 270) leaves faces square to the axes to the last digit.
 - A typed `0`, `360` or any other whole number of turns turns nothing: the status line says "An angle of 0 turns nothing; type another angle or press Esc.", nothing changes, and Rotate waits for another angle (solids and sketch shapes alike).
 - With nothing selected, the solid (or the sketch shape) under the centre click turns.
 - Ctrl copies; `x3` and `/4` work as in Move. A ring of four chair legs is one copy at 90 degrees, then `x3`.

@@ -47,9 +47,15 @@ export function turnsNothing(deg: number): boolean {
 
 /** Snap a cursor angle (radians) to the nearest tick when it is within SNAP_DEG of it. */
 export function snapAngle(a: number): number {
+  return snapTurn(a).angle;
+}
+
+/** {@link snapAngle}, with the tick in degrees when it snapped (lane 27: a quarter turn the
+ * protractor snapped to is then exact, `rotation`'s `deg`); `deg` null when it did not. */
+export function snapTurn(a: number): { angle: number; deg: number | null } {
   const deg = a / DEG;
   const tick = Math.round(deg / TICK_DEG) * TICK_DEG;
-  return Math.abs(deg - tick) <= SNAP_DEG ? tick * DEG : a;
+  return Math.abs(deg - tick) <= SNAP_DEG ? { angle: tick * DEG, deg: tick + 0 } : { angle: a, deg: null };
 }
 
 /** A typed angle: "90", "22.5", "-45°", "30deg". Null when the text is not an angle. */
@@ -67,9 +73,10 @@ function axisWords(n: V3): string {
   return "an axis square to the face";
 }
 
-/** The op for turning `subject` by `angle` about the axis through `c` along `n`. */
-export function rotateOp(subject: Subject, c: V3, n: V3, angle: number, copy: boolean, count = 1): KernelOp {
-  const xform = rotation(c, n, angle);
+/** The op for turning `subject` by `angle` about the axis through `c` along `n` (`deg`: the
+ * turn in degrees when typed or snapped, so quarter turns are exact; lane 27). */
+export function rotateOp(subject: Subject, c: V3, n: V3, angle: number, copy: boolean, count = 1, deg: number | null = null): KernelOp {
+  const xform = rotation(c, n, angle, deg);
   if (subject.kind === "geometry") return geometryOp(subject, xform, false);
   return objectsOp(subject, xform, copy, count);
 }
@@ -87,6 +94,8 @@ interface Gesture {
   ref: V3 | null;
   /** Current angle (radians, signed about `normal`). */
   angle: number;
+  /** The same in degrees when the protractor snapped it to a tick (lane 27). */
+  deg: number | null;
   /** Where the cursor is on the protractor plane. */
   cursor: V3 | null;
   edges: [V3, V3][];
@@ -101,6 +110,8 @@ interface LastTurn {
   centre: V3;
   normal: V3;
   angle: number;
+  /** The angle in degrees when typed or snapped (lane 27). */
+  deg: number | null;
   copy: boolean;
   count: number;
   sel: Entity[];
@@ -203,7 +214,9 @@ export class RotateTool extends Tool {
         } else {
           g.cursor = this.onPlane(e, g);
           if (g.ref && g.cursor && dist(g.cursor, g.centre) > 1e-9) {
-            g.angle = snapAngle(signedAngle(g.ref, unit(sub(g.cursor, g.centre)), g.normal));
+            const t = snapTurn(signedAngle(g.ref, unit(sub(g.cursor, g.centre)), g.normal));
+            g.angle = t.angle;
+            g.deg = t.deg;
             h.showValue(`${fmtDeg(g.angle)}`);
           }
         }
@@ -235,7 +248,7 @@ export class RotateTool extends Tool {
       const own = sketchOnly(subject) && !this.axisLock && !this.heldNormal ? subject.sketches?.[0]?.normal : undefined;
       const normal = unit(own ?? this.normalFor(e.snap));
       this.copy = this.copy || e.ctrl;
-      this.g = { subject, centre: e.snap.point, normal, ref: null, angle: 0, cursor: null, edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), sel };
+      this.g = { subject, centre: e.snap.point, normal, ref: null, angle: 0, deg: null, cursor: null, edges: subjectEdges(subject, h.mesh()), sk: sketchPreviews(subject, h.mesh()), sel };
       h.status(`Turning ${describeSubject(subject, this.host.mesh())} about ${axisWords(normal)}: click where the angle starts.`);
       h.changed();
       return;
@@ -250,7 +263,7 @@ export class RotateTool extends Tool {
       return;
     }
     if (Math.abs(g.angle) < 1e-9) return;
-    this.commit(g.angle, e.ctrl);
+    this.commit(g.angle, e.ctrl, g.deg);
   }
 
   onValue(text: string): void {
@@ -264,12 +277,13 @@ export class RotateTool extends Tool {
       if (g) {
         if (!g.ref) g.ref = alignedFrame(g.centre, g.normal).u;
         const sign = g.angle < 0 ? -1 : 1;
-        this.commit(sign * deg * DEG, false);
+        this.commit(sign * deg * DEG, false, sign * deg);
         return;
       }
       const last = this.last;
       if (!last) return void h.status("Turn something first (or click its centre), then type the angle.", true);
-      void this.redo(last, deg * DEG * Math.sign(last.angle || 1), last.count);
+      const sign = Math.sign(last.angle || 1);
+      void this.redo(last, deg * DEG * sign, last.count, deg * sign);
       return;
     }
     const r = parseVcb(text, h.units());
@@ -279,29 +293,31 @@ export class RotateTool extends Tool {
       const total = last.angle * last.count;
       const n = r.value.kind === "array" ? r.value.copies : r.value.parts;
       const step = r.value.kind === "array" ? last.angle : total / n;
-      void this.redo(last, step, n);
+      // In degrees too when the turn was typed or snapped (a quarter of 360 is exactly 90).
+      const stepDeg = last.deg === null ? null : r.value.kind === "array" ? last.deg : (last.deg * last.count) / n;
+      void this.redo(last, step, n, stepDeg);
       return;
     }
     h.status("Rotate takes an angle in degrees (90, -22.5), or x3 / /4 after a copy.", true);
   }
 
-  private async redo(last: LastTurn, angle: number, count: number): Promise<void> {
+  private async redo(last: LastTurn, angle: number, count: number, deg: number | null): Promise<void> {
     if (!(await this.host.apply({ op: "undo" }))) return;
-    await this.apply(last.subject, last.centre, last.normal, angle, last.copy, count, last.sel, last.sk);
+    await this.apply(last.subject, last.centre, last.normal, angle, last.copy, count, last.sel, last.sk, deg);
   }
 
-  private commit(angle: number, ctrl: boolean): void {
+  private commit(angle: number, ctrl: boolean, deg: number | null): void {
     const g = this.g;
     const copy = (this.copy || ctrl) && g?.subject.kind === "objects";
     this.reset();
     this.host.changed();
     if (!g || Math.abs(angle) < 1e-9) return;
-    void this.apply(g.subject, g.centre, g.normal, angle, copy, 1, g.sel, g.sk);
+    void this.apply(g.subject, g.centre, g.normal, angle, copy, 1, g.sel, g.sk, deg);
   }
 
-  private async apply(subject: Subject, centre: V3, normal: V3, angle: number, copy: boolean, count: number, sel: Entity[] = [], sk: SketchPreview[] = []): Promise<void> {
+  private async apply(subject: Subject, centre: V3, normal: V3, angle: number, copy: boolean, count: number, sel: Entity[] = [], sk: SketchPreview[] = [], deg: number | null = null): Promise<void> {
     const h = this.host;
-    const op = rotateOp(subject, centre, normal, angle, copy, count);
+    const op = rotateOp(subject, centre, normal, angle, copy, count, deg);
     // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
     const what = describeSubject(subject, this.host.mesh());
     const how = `${fmtDeg(angle)} about ${axisWords(normal)}`;
@@ -312,10 +328,10 @@ export class RotateTool extends Tool {
       return `Turned ${what} ${how}.`;
     });
     if (r) {
-      this.last = { subject, centre, normal, angle, copy, count, sel, sk };
+      this.last = { subject, centre, normal, angle, deg, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
       // Selected sketch geometry stays selected where it went (lane 22).
-      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle), r.outcome));
+      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome));
     }
   }
 
@@ -350,7 +366,7 @@ export class RotateTool extends Tool {
         overlay.push({ kind: "strip" as const, points: arc, color: "--sel", width: 2 });
         const end = add(centre, mul(rotate(g.ref, g.normal, g.angle), r));
         overlay.push({ kind: "segments" as const, points: [centre, end], color: "--sel", width: 1.75, dashed: true });
-        overlay.push({ kind: "segments" as const, points: [...previewSegments(g.subject, g.edges, rotation(centre, g.normal, g.angle)), ...sketchSegments(g.sk, rotation(centre, g.normal, g.angle), this.copy)], color: this.copy ? "--ok" : "--sel", width: 1.5 });
+        overlay.push({ kind: "segments" as const, points: [...previewSegments(g.subject, g.edges, rotation(centre, g.normal, g.angle, g.deg)), ...sketchSegments(g.sk, rotation(centre, g.normal, g.angle, g.deg), this.copy)], color: this.copy ? "--ok" : "--sel", width: 1.5 });
         labels.push({ at: end, text: `${fmtDeg(g.angle)}${this.copy ? " +" : ""}`, className: "live" });
       }
     } else if (g?.cursor) {
