@@ -4,6 +4,12 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+
+- **Push/Pull no longer drops to 0 partway up a drag.** In the iso view, pushing a 12 x 12 in rectangle up from near its top right, the distance went 1, 2, then 0 with the preview gone for a stretch, then 4, 5 ...; from lower on the rectangle it happened at 8 or 9. The cursor going up the screen also runs diagonally over the ground, past the rectangle's far corner, its edges' midpoints and the alignment lines through the corners just drawn, which run along its far edges and on past them. Those points are level with the face, so projected onto the locked push line they meant "no distance at all".
+- How: a point that a lock would project back onto the gesture's start is no longer a snap; the cursor keeps following the line. A point at any other level still projects (push until level with a neighbour's corner). It is in the inference engine, so every locked line gets it.
+- Tests: an inference test sweeps the cursor up the iso view from six grabs on the rectangle, with the drawn corners remembered, and holds that the distance never falls to 0, and that a neighbour's top corner still projects.
+
 ### Fixed (lane 27, 2026-11-01)
 
 - **A SketchUp import's curve note says what the model holds** ([#17](https://github.com/sawhorse3d/sawhorse/issues/17)). openskp's `gondola_v20.skp` said "16 curves came in as curves (8 arcs, 8 polylines)" while the model held 24 polylines and no arc: the note counted a component's curves once, for its definition, in the frame its items are built in, and its arcs sit in components placed with an uneven scale, which turns each copy's arcs into polylines only where it lands. The note now counts every placed copy as it lands, as the curves view does (the gondola: "24 curves came in as curves" and "16 circles or arcs in groups or components scaled unevenly came in as polylines"), and an uneven scale on a component's placement is said with a group's: "N circles or arcs in groups or components scaled unevenly came in as polylines". Five of the 35 real files tried said a different number than their curves view (Corynth's cupboard said 30 curves, 6 circles and 24 arcs, for a model holding 12 circles and 48 arcs); none does now.
