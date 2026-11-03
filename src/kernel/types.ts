@@ -705,6 +705,8 @@ export interface InferQuery {
   dir: V3;
   px: PixelModel;
   start?: V3 | null;
+  /** Directions not to offer as lines through `start` (a lock keeps them). */
+  start_skip?: V3[];
   plane?: { origin: V3; normal: V3   /** Lane 15: the pick may be a soft or hidden edge (the Eraser with Ctrl+Shift). */
   soft?: boolean;
 } | null;

@@ -4,6 +4,12 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rectangle drawn square on the ground stays a square** ([#9](https://github.com/sawhorse3d/sawhorse/issues/9)). In a 3D view, with the first corner on the ground or the grid, a rectangle dragged out to 12 x 12 in collapsed to a vertical line reading "0 x 12" the moment it became square (11 7/8 x 12 was fine). From an iso-style eye a square's diagonal lies over the blue axis through the first corner on screen, and while the rectangle's plane is still open its far corner snaps in 3D, so the blue axis won over the grid and stood the rectangle up with no width.
+- How: the far corner of a Rectangle no longer offers lines along the rectangle's own sides through the first corner, or "from point" alignments along them: a point on either has no width. With the plane still open that means all three axes; on a set plane, its two side directions. The inference query takes `start_skip`, a list of directions, and the Rectangle sends them. Parallel and perpendicular lines off a diagonal edge stay (they give a real rectangle), so do alignments with points elsewhere, arrow-key locks keep every line, and the Rotated Rectangle is unchanged. An upright rectangle still comes from starting on an upright face or an arrow key before the first click.
+- Tests: inference tests with the iso-style eye (the blue axis takes the square's corner, and with the axes skipped the grid gives exactly 12 x 12 in), for a "from point" along a skipped line, for a diagonal reference that stays, and for a lock that keeps its line; a Rect tool test that the far corner names the lines to skip while the Rotated Rectangle does not.
+
 ### Fixed (lane 30's small corrections, 2026-11-09)
 
 - **A cut list with no lumber totals 0 board feet, not -0.** `sawhorse-cli cutlist` printed `"board_feet":-0.0` for a model with nothing to cut or only sheet goods, and `sawhorse-cli nest` printed `-0.0` areas for a nesting with nothing placed: an f64 sum over nothing is -0.0 in Rust. The kernel adds those totals up from 0.0 now (`cutlist.rs`, `nesting.rs`), so the app's panes get the same 0 the command line prints. Nothing else changes: every other total adds up in the same order to the same value, and no hash reads them.

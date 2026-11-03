@@ -129,6 +129,7 @@ fn the_cut_corners_snap_and_the_removed_edges_do_not() {
         dir,
         px,
         start: None,
+        start_skip: vec![],
         plane: None,
         lock: None,
         refs: vec![],

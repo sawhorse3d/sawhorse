@@ -67,6 +67,9 @@ export const EMPTY_VIEW: ToolView = { overlay: [], marker: null, labels: [], box
 export interface InferContext {
   /** The gesture's start point: axis, parallel and perpendicular inferences run from it. */
   start?: V3;
+  /** Directions not to offer as lines through `start` (a lock keeps them): a rectangle's far
+   * corner on its own sides would have no width. */
+  skipStartLines?: V3[];
   /** Points to project: snaps are made on this plane (a face being drawn on). */
   plane?: { origin: V3; normal: V3 } | null;
   /** A locked direction from `start` (arrow keys, Shift-held inference). */

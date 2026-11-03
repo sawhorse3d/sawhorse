@@ -96,6 +96,7 @@ export function kernelResolver(
       dir: ray.dir,
       px: { ortho: px.ortho, scale: px.scale, eye: px.eye, forward: px.forward },
       start: ctx.start ?? null,
+      ...(ctx.skipStartLines ? { start_skip: ctx.skipStartLines } : {}),
       plane: ctx.plane ?? null,
       lock: ctx.lock ?? null,
       refs: [...(ctx.refs ?? []), ...memory.refs],
