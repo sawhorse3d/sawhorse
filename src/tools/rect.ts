@@ -48,6 +48,13 @@ export class RectTool extends StrokeTool {
     const ctx = super.inferContext();
     // While the plane is open, snap in 3D (the cursor may be choosing an upright plane).
     if (this.undecided && !this.edgeEnd) ctx.plane = null;
+    // A far corner along the rectangle's own sides has no width, and in a 3D view the blue
+    // axis lies over a square's diagonal and took it (issue #9). With the plane open any axis
+    // could be a side. Other directions stay: a diagonal gives a real rectangle.
+    if (this.variant === "rect" && this.anchor) {
+      const f = this.plane?.frame;
+      ctx.skipStartLines = this.undecided || !f ? [[1, 0, 0], [0, 1, 0], [0, 0, 1]] : [f.u, f.v];
+    }
     return ctx;
   }
 

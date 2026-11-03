@@ -158,6 +158,7 @@ fn time(name: &str, m: &Model) {
                     dir: [0.0, 0.0, -1.0],
                     px,
                     start: None,
+                    start_skip: vec![],
                     plane: None,
                     lock: None,
                     refs: vec![],
