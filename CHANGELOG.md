@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added (Back, Left and Bottom views, 2026-11-05)
+
+- **Back, Left and Bottom standard views**, on the View menu ("Back view", "Left view", "Bottom view"). Each is a square, parallel view framed like the others: Back looks along -Y, Left along +X, and Bottom looks up from below with +Y up the screen (the plan seen through the floor, so +X runs left). The top bar keeps its five buttons; a menu view lights none of them. `ViewId`, `VIEWS` and `VIEW_DIRS` in `src/viewport/camera.ts` carry the three, and `BAR_VIEWS` is the bar's five. The README's "not yet" list loses its Back and Bottom line.
+- Tests: `src/viewport/camera.test.ts` (the eight views, the bar's five, every direction, opposite pairs, up square to direction); `e2e/navigation.spec.ts` (each menu view sets the view and a parallel projection with no bar button pressed).
+
 ### Fixed (lane 27, 2026-11-01)
 
 - **A SketchUp import's curve note says what the model holds** ([#17](https://github.com/sawhorse3d/sawhorse/issues/17)). openskp's `gondola_v20.skp` said "16 curves came in as curves (8 arcs, 8 polylines)" while the model held 24 polylines and no arc: the note counted a component's curves once, for its definition, in the frame its items are built in, and its arcs sit in components placed with an uneven scale, which turns each copy's arcs into polylines only where it lands. The note now counts every placed copy as it lands, as the curves view does (the gondola: "24 curves came in as curves" and "16 circles or arcs in groups or components scaled unevenly came in as polylines"), and an uneven scale on a component's placement is said with a group's: "N circles or arcs in groups or components scaled unevenly came in as polylines". Five of the 35 real files tried said a different number than their curves view (Corynth's cupboard said 30 curves, 6 circles and 24 arcs, for a model holding 12 circles and 48 arcs); none does now.

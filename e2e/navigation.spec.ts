@@ -129,6 +129,17 @@ test("Shift+Z zooms to the model's extents; views and the projection toggle", as
     await expect(vp).toHaveAttribute("data-projection", id === "persp" ? "perspective" : "parallel");
     await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute("aria-pressed", "true");
   }
+  // Back, Left and Bottom are on the View menu only: square, parallel views, no bar button lit.
+  for (const [label, id] of [["Back view", "back"], ["Left view", "left"], ["Bottom view", "bottom"]] as const) {
+    await page.getByRole("button", { name: "View", exact: true }).click();
+    await page.getByRole("menuitem", { name: label, exact: true }).click();
+    await expect(vp).toHaveAttribute("data-view", id);
+    await expect(vp).toHaveAttribute("data-projection", "parallel");
+    await expect(page.getByRole("group", { name: "Views" }).locator("button[aria-pressed='true']")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "iso");
+
   // View > Perspective toggles the projection and keeps the view direction.
   const iso = await cam(page);
   await page.getByRole("button", { name: "View", exact: true }).click();
