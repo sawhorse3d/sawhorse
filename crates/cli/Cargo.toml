@@ -1,0 +1,23 @@
+[package]
+name = "sawhorse-cli"
+description = "A headless Sawhorse: the cut list and the nesting of a saved .shz as JSON, with no app (issue #14)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sawhorse-cli"
+path = "src/main.rs"
+
+[dependencies]
+sawhorse-kernel.workspace = true
+sawhorse-shz.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
