@@ -146,6 +146,51 @@ test("save as .shz, start a new model, open the file again", async ({ page }) =>
   await expect(page.locator(".hud")).toContainText("undo 0");
 });
 
+test("over unsaved changes, Open and New wait for the answer, even the desktop's asynchronous one", async ({ page }) => {
+  // The desktop app's dialog plugin replaces window.confirm with one that returns a Promise
+  // (truthy whatever the answer, to code that does not wait). The same stand-in here: it
+  // answers after a moment, No at first.
+  await page.addInitScript(() => {
+    const w = window as unknown as { confirm: (m: string) => unknown; __asked: string[]; __answer: boolean };
+    w.__asked = [];
+    w.__answer = false;
+    w.confirm = (m: string) => {
+      w.__asked.push(m);
+      return new Promise((r) => setTimeout(() => r(w.__answer), 150));
+    };
+  });
+  const asked = () => page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
+  const vp = await ready(page);
+  await pick(page, "parts.stl", stlBoxes([{ at: [0, 0, 0], size: [40, 40, 40] }]));
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  const saved = await download(page, () => page.keyboard.press("Control+s"));
+  await expect(page).toHaveTitle("Untitled - Sawhorse");
+  // An import adds to the model: unsaved changes.
+  await pick(page, "more.stl", stlBoxes([{ at: [100, 0, 0], size: [20, 30, 10] }]));
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await expect(page).toHaveTitle("• Untitled - Sawhorse");
+
+  // Open over them: asked, and No keeps the model.
+  await pick(page, "parts.shz", saved.bytes);
+  await expect.poll(asked).toEqual(["Discard the unsaved changes to this model?"]);
+  await page.waitForTimeout(500);
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await expect(page).toHaveTitle("• Untitled - Sawhorse");
+
+  // New over them: asked, and No keeps the model.
+  await menu(page, "File", "New");
+  await expect.poll(async () => (await asked()).length).toBe(2);
+  await page.waitForTimeout(500);
+  await expect(vp).toHaveAttribute("data-objects", "2");
+
+  // Yes opens the file.
+  await page.evaluate(() => ((window as unknown as { __answer: boolean }).__answer = true));
+  await pick(page, "parts.shz", saved.bytes);
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(page).toHaveTitle("parts - Sawhorse");
+  expect((await asked()).length).toBe(3);
+});
+
 test("drag and drop: an SVG becomes sketch regions on the ground", async ({ page }) => {
   const vp = await ready(page);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><rect x="10" y="10" width="50" height="30"/><circle cx="80" cy="70" r="10"/></svg>`;
