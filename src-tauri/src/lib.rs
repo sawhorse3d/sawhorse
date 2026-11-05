@@ -98,13 +98,21 @@ fn save_file_atomic(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
         .and_then(sawhorse_safe_save::percent_decode)
         .ok_or("save_file_atomic needs the path in its x-path header")?;
     let path = std::path::PathBuf::from(path);
-    if !app.fs_scope().is_allowed(&path) {
+    let scope = app.fs_scope();
+    // The page puts the file type's extension on a name the dialog returned without one
+    // (GTK's chooser hands the name back as typed; Windows and macOS add the filter's), so
+    // the path the person chose may be this one less its last extension.
+    let chosen = sawhorse_safe_save::without_added_extension(&path);
+    if !scope.is_allowed(&path) && !chosen.as_deref().is_some_and(|c| scope.is_allowed(c)) {
         return Err(format!(
             "{} was not chosen in a Save dialog",
             path.display()
         ));
     }
-    sawhorse_safe_save::write_atomic(&path, bytes).map_err(|e| e.to_string())
+    sawhorse_safe_save::write_atomic(&path, bytes).map_err(|e| e.to_string())?;
+    // The file is now the one chosen: later saves and reads go by its full name.
+    let _ = scope.allow_file(&path);
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

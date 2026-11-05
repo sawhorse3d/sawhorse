@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (Linux: a Save As name without its extension gets it, 2026-11-05)
+
+- **A file saved without typing `.shz` is saved as `.shz`.** On Linux the desktop app's Save dialog (GTK's file chooser) hands the name back exactly as typed: `cabinet` stayed `cabinet`, a valid document the Open dialog's "Supported files" filter then hid. Windows and macOS add the filter's extension in the dialog itself, so only Linux saw it. A name without one of the type's extensions now gets the type's first (`cabinet` to `cabinet.shz`, `cabinet.v2` to `cabinet.v2.shz`, for exports too: `part` to `part.stl`; `Cabinet.SHZ` stays), and the shell accepts the path as the chosen one less its added extension, then allows it by its full name for the saves and reads that follow (`withExtension` in `src/io/files.ts`; `save_file_atomic` in `src-tauri/src/lib.rs`; `without_added_extension` in `sawhorse-safe-save`). Found on Linux (the 0.1.0-alpha.4 .deb) by scripting the app under Xvfb.
+- Tests: vitest (`src/io/save.test.ts`: the dialog's name with and without the extension, in either case, a cancelled dialog, a second save to the handle's path); `src-tauri/safe-save` (the chosen path less its added extension; none to take off).
+### Fixed (the desktop app waits for the discard question, 2026-11-05)
 ### Fixed (lane 30's small corrections, 2026-11-09)
 
 - **A cut list with no lumber totals 0 board feet, not -0.** `sawhorse-cli cutlist` printed `"board_feet":-0.0` for a model with nothing to cut or only sheet goods, and `sawhorse-cli nest` printed `-0.0` areas for a nesting with nothing placed: an f64 sum over nothing is -0.0 in Rust. The kernel adds those totals up from 0.0 now (`cutlist.rs`, `nesting.rs`), so the app's panes get the same 0 the command line prints. Nothing else changes: every other total adds up in the same order to the same value, and no hash reads them.
