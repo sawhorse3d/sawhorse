@@ -85,6 +85,15 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SaveError> {
     result
 }
 
+/// The path a Save dialog returned when the page put the file type's extension on it
+/// (GTK's chooser hands the name back as typed, without one; Windows and macOS add the
+/// filter's): `path` less its last extension, `cabinet.shz` to `cabinet` and
+/// `cabinet.v2.shz` to `cabinet.v2`. None when there is no extension to take off.
+pub fn without_added_extension(path: &Path) -> Option<PathBuf> {
+    path.extension()?;
+    Some(path.with_extension(""))
+}
+
 /// Percent-decode a path sent from the webview in a header (`encodeURIComponent`).
 pub fn percent_decode(s: &str) -> Option<String> {
     let b = s.as_bytes();
@@ -152,5 +161,33 @@ mod tests {
         );
         assert_eq!(percent_decode("bad%zz"), None);
         assert!(siblings(Path::new("/")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod added_extension {
+    use super::without_added_extension;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_chosen_path_is_the_saved_one_less_its_added_extension() {
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/cabinet.shz")),
+            Some(PathBuf::from("/home/me/cabinet"))
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/cabinet.v2.shz")),
+            Some(PathBuf::from("/home/me/cabinet.v2"))
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/Cabinet.SHZ")),
+            Some(PathBuf::from("/home/me/Cabinet"))
+        );
+    }
+
+    #[test]
+    fn a_name_without_an_extension_has_none_to_take_off() {
+        assert_eq!(without_added_extension(Path::new("/home/me/cabinet")), None);
+        assert_eq!(without_added_extension(Path::new("/home/me/.shz")), None);
     }
 }

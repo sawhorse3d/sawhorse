@@ -81,6 +81,16 @@ export function baseName(path: string): string {
   return path.replace(/^.*[\\/]/, "");
 }
 
+/**
+ * `path` with one of `type`'s extensions: as it is when it already ends in one (any case),
+ * else with the first appended. The desktop's Save dialog hands the name back as typed on
+ * Linux (GTK's chooser adds no extension; Windows and macOS add the filter's), and a file
+ * saved without one is then hidden by the Open dialog's filter.
+ */
+export function withExtension(path: string, type: FileType): string {
+  return type.extensions.includes(extensionOf(path)) ? path : `${path}${type.extensions[0]}`;
+}
+
 /** The name without its extension. */
 export function stem(name: string): string {
   return baseName(name).replace(/\.[^.]*$/, "") || "Untitled";
@@ -243,6 +253,9 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
       const { save } = await import("@tauri-apps/plugin-dialog");
       path = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
       if (!path || signal?.aborted) return null;
+      // A name typed without the extension gets it (the shell then allows the path, as the
+      // one chosen less its added extension: src-tauri/src/lib.rs, save_file_atomic).
+      path = withExtension(path, type);
     }
     // Lane 16: written beside, synced, read back, then renamed over the file (the previous
     // one kept as .bak), never truncated in place (src-tauri/safe-save).
