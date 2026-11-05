@@ -1,29 +1,34 @@
 import { describe, expect, it } from "vitest";
-import {
-  AXIS_COLORS,
-  equivalentOrthoHalfHeight,
-  equivalentPerspectiveDistance,
-  gridHalfExtent,
-  gridLines,
-  gridSpec,
-  gridVisibility,
-  metresPerPixel,
-  projectionForView,
-  VIEW_DIRS,
-  VIEWS,
-} from "./camera";
+import { AXIS_COLORS, BAR_VIEWS, equivalentOrthoHalfHeight, equivalentPerspectiveDistance, gridHalfExtent, gridLines, gridSpec, gridVisibility, metresPerPixel, projectionForView, VIEW_DIRS, VIEWS } from "./camera";
 import { M_PER_IN } from "../lib/units";
 
 describe("standard views", () => {
-  it("offers Iso, Top, Front, Right and Persp; only Persp is in perspective", () => {
-    expect(VIEWS.map((v) => v.label)).toEqual(["Iso", "Top", "Front", "Right", "Persp"]);
-    expect(VIEWS.map((v) => projectionForView(v.id))).toEqual(["parallel", "parallel", "parallel", "parallel", "perspective"]);
+  it("offers the six square views, Iso and Persp; only Persp is in perspective", () => {
+    expect(VIEWS.map((v) => v.label)).toEqual(["Iso", "Top", "Bottom", "Front", "Back", "Left", "Right", "Persp"]);
+    expect(VIEWS.map((v) => projectionForView(v.id))).toEqual(["parallel", "parallel", "parallel", "parallel", "parallel", "parallel", "parallel", "perspective"]);
+  });
+
+  it("keeps the mock's five on the top bar; Bottom, Back and Left are on the View menu", () => {
+    expect(BAR_VIEWS.map((v) => v.label)).toEqual(["Iso", "Top", "Front", "Right", "Persp"]);
+    expect(VIEWS.filter((v) => v.menuOnly).map((v) => v.id)).toEqual(["bottom", "back", "left"]);
   });
 
   it("looks from where each name says (Z up)", () => {
     expect(VIEW_DIRS.top.dir).toEqual([0, 0, 1]);
+    expect(VIEW_DIRS.bottom.dir).toEqual([0, 0, -1]);
     expect(VIEW_DIRS.front.dir).toEqual([0, -1, 0]);
+    expect(VIEW_DIRS.back.dir).toEqual([0, 1, 0]);
+    expect(VIEW_DIRS.left.dir).toEqual([-1, 0, 0]);
     expect(VIEW_DIRS.right.dir).toEqual([1, 0, 0]);
+    // Opposite views look from opposite sides, and every up is square to its direction.
+    for (const [a, b] of [["top", "bottom"], ["front", "back"], ["left", "right"]] as const) {
+      for (let k = 0; k < 3; k++) expect(VIEW_DIRS[a].dir[k] + VIEW_DIRS[b].dir[k]).toBe(0);
+    }
+    // The square views' up is square to their direction (Iso and Persp only need an up that is not parallel).
+    for (const id of ["top", "bottom", "front", "back", "left", "right"] as const) {
+      const { dir, up } = VIEW_DIRS[id];
+      expect(dir[0] * up[0] + dir[1] * up[1] + dir[2] * up[2]).toBe(0);
+    }
     const iso = VIEW_DIRS.iso.dir;
     expect(iso[0]).toBeLessThan(0);
     expect(iso[1]).toBeLessThan(0);

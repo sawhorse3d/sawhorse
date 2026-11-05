@@ -4,23 +4,34 @@ import type { UnitSystem } from "../lib/units";
 import { M_PER_IN } from "../lib/units";
 
 export type Vec3 = [number, number, number];
-export type ViewId = "iso" | "top" | "front" | "right" | "persp";
+export type ViewId = "iso" | "top" | "bottom" | "front" | "back" | "left" | "right" | "persp";
 export type Projection = "parallel" | "perspective";
 
-export const VIEWS: { id: ViewId; label: string; title: string }[] = [
+/** The standard views, in the View menu's order. `menuOnly` ones have no button on the top bar. */
+export const VIEWS: { id: ViewId; label: string; title: string; menuOnly?: boolean }[] = [
   { id: "iso", label: "Iso", title: "Isometric view (parallel projection)" },
   { id: "top", label: "Top", title: "Top view, looking down -Z" },
+  { id: "bottom", label: "Bottom", title: "Bottom view, looking up +Z (+Y up the screen, so +X runs left)", menuOnly: true },
   { id: "front", label: "Front", title: "Front view, looking along +Y" },
+  { id: "back", label: "Back", title: "Back view, looking along -Y", menuOnly: true },
+  { id: "left", label: "Left", title: "Left view, looking along +X", menuOnly: true },
   { id: "right", label: "Right", title: "Right view, looking along -X" },
   { id: "persp", label: "Persp", title: "Three-quarter perspective view" },
 ];
+
+/** The views with a button on the top bar (the mock's five); the rest are on the View menu. */
+export const BAR_VIEWS = VIEWS.filter((v) => !v.menuOnly);
 
 /** Camera direction (from the target toward the eye) and up vector per standard view. */
 export const VIEW_DIRS: Record<ViewId, { dir: Vec3; up: Vec3 }> = {
   // Isometric feel: eye in the -X/-Y/+Z octant so +X runs right and +Y recedes left, Z up.
   iso: { dir: norm([-1, -1, 1]), up: [0, 0, 1] },
   top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  // From below, with +Y still up the screen: the plan seen through the floor, +X to the left.
+  bottom: { dir: [0, 0, -1], up: [0, 1, 0] },
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { dir: [0, 1, 0], up: [0, 0, 1] },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
   right: { dir: [1, 0, 0], up: [0, 0, 1] },
   persp: { dir: norm([-0.9, -1.6, 1]), up: [0, 0, 1] },
 };
