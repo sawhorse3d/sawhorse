@@ -56,7 +56,7 @@ import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
-import { ALL_EXTENSIONS, IMPORT_TYPES, SHZ, extensionOf, onTauriDrop, pickFile, readBrowserFile, saveFile, stem, type FileHandle, type PickedFile } from "./io/files";
+import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, type FileHandle, type PickedFile } from "./io/files";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
@@ -595,7 +595,8 @@ export function App() {
     document.title = `${dirty ? "• " : ""}${docName ? stem(docName) : "Untitled"} - Sawhorse`;
   }, [dirty, docName]);
 
-  const confirmDiscard = useCallback(() => !dirtyRef.current || window.confirm("Discard the unsaved changes to this model?"), []);
+  /** True when the model may be replaced: it has no unsaved changes, or the person says so. Awaited: the desktop's question is asynchronous. */
+  const confirmDiscard = useCallback(async () => (dirtyRef.current ? askYesNo("Discard the unsaved changes to this model?") : true), []);
 
   /** Bring a file into the model as one undo step (`.skp` through openskp, the rest through the kernel's readers). */
   const importBytes = useCallback(
@@ -613,7 +614,7 @@ export function App() {
           // Lane 15: an empty SketchUp file (a blank template) opens as an empty model in its
           // own units and style, in place of the current one.
           empty = res.empty;
-          if (!confirmDiscard()) throw new Error(`${f.name} is an empty model; the current model was kept.`);
+          if (!(await confirmDiscard())) throw new Error(`${f.name} is an empty model; the current model was kept.`);
           let n = await k.newDocument();
           const face = res.empty.style?.face;
           if (face) n = await k.apply({ op: "set_style", style: { face } } as KernelOp);
@@ -653,7 +654,7 @@ export function App() {
   /** Open a .shz in place of the current model. */
   const openBytes = useCallback(
     async (f: PickedFile) => {
-      if (!confirmDiscard()) return;
+      if (!(await confirmDiscard())) return;
       setMessage({ text: `Opening ${f.name}…`, error: false, actions: [{ label: "Cancel", run: () => void kernelRef.current?.cancel("cancelled by you") }] });
       let info: { notes: string[]; opened: { display_units: string | null } } | null = null;
       const r = await run(
@@ -723,7 +724,7 @@ export function App() {
   );
 
   const newDocument = useCallback(async () => {
-    if (!confirmDiscard()) return;
+    if (!(await confirmDiscard())) return;
     const r = await run((k) => k.newDocument(), null, () => "New model.");
     if (r) {
       pluginsRef.current?.documentOpened(null);
