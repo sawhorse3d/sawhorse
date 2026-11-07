@@ -19,5 +19,9 @@ sawhorse-shz.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# The notes test rewrites a saved file with an entry the reader has to leave out.
+zip.workspace = true
+
 [lints]
 workspace = true

@@ -28,7 +28,7 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 
 **Plugins**: tools, panels and commands in sandboxed JavaScript with declared permissions; three samples come with the app. Writing one: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
-**Headless**: `sawhorse-cli cutlist Bookshelf.shz` prints the cut list of a saved file as JSON, and `sawhorse-cli nest Bookshelf.shz` its nesting, exactly what the app's panes read (`--visible-only`, `--rounding`, `--pretty`; `crates/cli`). For scripts and agents that want the numbers without the app.
+**Headless**: `sawhorse-cli cutlist Bookshelf.shz` prints the cut list of a saved file as JSON, and `sawhorse-cli nest Bookshelf.shz` its nesting, exactly what the app's panes read (`--visible-only`, `--rounding`, `--algorithm guillotine|maxrects`, `--pretty`; what the reader had to do to open the file goes to stderr as `note:` lines; `crates/cli`). For scripts and agents that want the numbers without the app.
 
 ## Not yet
 

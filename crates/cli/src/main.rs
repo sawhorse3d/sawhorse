@@ -4,8 +4,12 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match sawhorse_cli::parse(&args).and_then(|c| sawhorse_cli::run(&c)) {
-        Ok(text) => {
-            println!("{text}");
+        Ok(printed) => {
+            // The reader's notes first, on stderr: stdout stays JSON only.
+            for note in &printed.notes {
+                eprintln!("sawhorse-cli: note: {note}");
+            }
+            println!("{}", printed.text);
             ExitCode::SUCCESS
         }
         Err(e) => {

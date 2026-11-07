@@ -1,9 +1,10 @@
 //! The command prints exactly what the kernel computes for the file, and says why not.
-use sawhorse_cli::{Command, cut_list_json, nest_json, parse, run};
+use sawhorse_cli::{Command, cut_list_json, nest_json, open, parse, run};
 use sawhorse_kernel::cutlist::{CutOptions, Rounding};
 use sawhorse_kernel::document::Document;
 use sawhorse_kernel::model::Op;
 use sawhorse_kernel::nesting::NestOptions;
+use sawhorse_kernel::stock::NestAlgorithm;
 use sawhorse_shz::SaveOptions;
 
 /// A 3/4 x 12 x 36 in board, as a component "Shelf" placed twice, saved as a .shz.
@@ -121,8 +122,9 @@ fn the_command_line_is_parsed_and_run_end_to_end() {
         }
     );
     let printed = run(&c).unwrap();
+    assert!(printed.notes.is_empty());
     assert_eq!(
-        printed,
+        printed.text,
         serde_json::to_string(&d.model().cut_list(&CutOptions {
             rounding: Rounding::ThirtySecond,
             visible_only: true
@@ -139,10 +141,10 @@ fn the_command_line_is_parsed_and_run_end_to_end() {
             pretty: true
         }
     );
-    assert!(run(&c).unwrap().starts_with("{\n"));
+    assert!(run(&c).unwrap().text.starts_with("{\n"));
 
     assert_eq!(parse(&args(&[])).unwrap(), Command::Help);
-    assert!(run(&Command::Help).unwrap().starts_with("Usage:"));
+    assert!(run(&Command::Help).unwrap().text.starts_with("Usage:"));
     assert!(
         parse(&args(&["cutlist"]))
             .unwrap_err()
@@ -177,6 +179,115 @@ fn the_command_line_is_parsed_and_run_end_to_end() {
     assert!(
         missing.starts_with("could not read /nowhere/none.shz"),
         "{missing}"
+    );
+    let c = parse(&args(&[
+        "nest",
+        &p,
+        "--algorithm",
+        "maxrects",
+        "--visible-only",
+    ]))
+    .unwrap();
+    assert_eq!(
+        c,
+        Command::Nest {
+            path: p.clone(),
+            options: NestOptions {
+                visible_only: true,
+                algorithm: Some(NestAlgorithm::Maxrects)
+            },
+            pretty: false
+        }
+    );
+    let c = parse(&args(&["nest", &p, "--algorithm", "table-saw"])).unwrap();
+    assert_eq!(
+        c,
+        Command::Nest {
+            path: p.clone(),
+            options: NestOptions {
+                visible_only: false,
+                algorithm: Some(NestAlgorithm::Guillotine)
+            },
+            pretty: false
+        }
+    );
+    assert!(
+        parse(&args(&["cutlist", &p, "--algorithm", "maxrects"]))
+            .unwrap_err()
+            .contains("nest only")
+    );
+    assert!(
+        parse(&args(&["nest", &p, "--algorithm", "tetris"]))
+            .unwrap_err()
+            .contains("unknown algorithm")
+    );
+    assert!(
+        parse(&args(&["nest", &p, "--algorithm"]))
+            .unwrap_err()
+            .contains("needs a value")
+    );
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_algorithm_reaches_the_nesting() {
+    let (d, bytes) = shelves();
+    for algorithm in [NestAlgorithm::Guillotine, NestAlgorithm::Maxrects] {
+        let opts = NestOptions {
+            visible_only: false,
+            algorithm: Some(algorithm),
+        };
+        let printed = nest_json(&bytes, &opts, false).unwrap();
+        assert_eq!(
+            printed,
+            serde_json::to_string(&d.model().nest(&opts)).unwrap()
+        );
+        let v: serde_json::Value = serde_json::from_str(&printed).unwrap();
+        assert_eq!(v["algorithm"], serde_json::to_value(algorithm).unwrap());
+    }
+}
+
+/// `bytes` with one more entry, `plugin-data.json`, that is not text: the reader has to
+/// leave it out and says so.
+fn with_binary_plugin_data(bytes: &[u8]) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut from = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut to = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..from.len() {
+        to.raw_copy_file(from.by_index_raw(i).unwrap()).unwrap();
+    }
+    to.start_file("plugin-data.json", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    to.write_all(&[0xff, 0xfe, 0xfd]).unwrap();
+    to.finish().unwrap().into_inner()
+}
+
+#[test]
+fn what_the_reader_had_to_do_comes_back_as_notes() {
+    let (d, clean) = shelves();
+    assert!(
+        open(&clean).unwrap().notes.is_empty(),
+        "a clean file has no notes"
+    );
+    let bytes = with_binary_plugin_data(&clean);
+    let opened = open(&bytes).unwrap();
+    assert_eq!(
+        opened.notes,
+        ["plugin-data.json is not text; the plugins' data in it was left out"]
+    );
+    // The model itself is untouched, and the notes ride along with what the command prints.
+    let path = std::env::temp_dir().join(format!("sawhorse-cli-notes-{}.shz", std::process::id()));
+    std::fs::write(&path, &bytes).unwrap();
+    let printed = run(&Command::CutList {
+        path: path.to_string_lossy().to_string(),
+        options: CutOptions::default(),
+        pretty: false,
+    })
+    .unwrap();
+    assert_eq!(printed.notes, opened.notes);
+    assert_eq!(
+        printed.text,
+        serde_json::to_string(&d.model().cut_list(&CutOptions::default())).unwrap()
     );
     std::fs::remove_file(&path).ok();
 }
