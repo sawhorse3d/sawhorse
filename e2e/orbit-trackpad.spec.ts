@@ -217,3 +217,59 @@ test("in Section Plane, Alt+click places the plane reversed and does not orbit; 
   const tapped = await place("tapped");
   expect(tapped[2]).toBeCloseTo(-plain[2], 9);
 });
+
+test("macOS: Control+drag is the right button and pans in every tool, through Control let go; Select sees nothing, Move's copying is untouched, Cmd+click toggles", async ({ page }) => {
+  // The browser here may not be on a Mac: say it is (the platform is all the app reads).
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
+  const vp = await ready(page);
+  await box(page); // 12 x 12 x 6 in at the origin
+  await page.keyboard.press("Space");
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "iso");
+  const hash = await vp.getAttribute("data-hash");
+  const corner: V3 = [12 * IN, 0, 6 * IN];
+
+  // Select: Control held, the left button down on the corner; Control let go halfway.
+  const half = await leftDrag(page, corner, [-8, 5], 8, { keys: ["Control"], hold: true });
+  await expect(vp).toHaveAttribute("data-nav", "pan");
+  await page.keyboard.up("Control");
+  const cv = (await page.locator("#cv").boundingBox())!;
+  const end: [number, number] = [half.end[0] - 64, half.end[1] + 40];
+  await page.mouse.move(cv.x + end[0], cv.y + end[1], { steps: 8 });
+  await expect(vp).toHaveAttribute("data-nav", "pan");
+  const s = await screen(page, corner);
+  expect(Math.hypot(s[0] - end[0], s[1] - end[1])).toBeLessThan(1.5);
+  await page.mouse.up();
+  await expect(vp).toHaveAttribute("data-nav", "");
+  // A pan keeps the standard view; Select never saw the press.
+  await expect(vp).toHaveAttribute("data-view", "iso");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".selbox")).toHaveCount(0);
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+
+  // Cmd+click is the tools' Ctrl there: it toggles the top face into the selection.
+  await hover(page, [6, 6, 6], "face", 1, -1, "data-hover");
+  const top = await at(page, [6, 6, 6], 1, -1);
+  await page.keyboard.down("Meta");
+  await page.mouse.click(top[0], top[1]);
+  await page.keyboard.up("Meta");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await page.keyboard.press("Escape");
+
+  // Under the Orbit tool Control+drag still pans (a right-drag pans in every tool).
+  await page.keyboard.press("o");
+  await expect(tool(page, "orbit")).toHaveAttribute("aria-pressed", "true");
+  await leftDrag(page, corner, [-6, 4], 6, { keys: ["Control"], hold: true });
+  await expect(vp).toHaveAttribute("data-nav", "pan");
+  await page.mouse.up();
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Escape");
+
+  // In Move, holding Control for the pan does not switch copying (a Control tap still does).
+  await page.keyboard.press("m");
+  await expect(tool(page, "move")).toHaveAttribute("aria-pressed", "true");
+  await leftDrag(page, corner, [6, 0], 10, { keys: ["Control"] });
+  await expect(page.locator("#hint")).not.toContainText("Copying");
+  await page.keyboard.press("Control");
+  await expect(page.locator("#hint")).toContainText("Copying");
+});

@@ -58,9 +58,10 @@ test("hover, click, Shift adds, Ctrl toggles, Esc clears", async ({ page }) => {
   await page.mouse.click(imprint[0], imprint[1]);
   await page.keyboard.up("Shift");
   await expect(vp).toHaveAttribute("data-selection", "2");
-  await page.keyboard.down("Control");
+  // Ctrl+click toggles (Cmd+click on macOS, where Control+click is the right click).
+  await page.keyboard.down("ControlOrMeta");
   await page.mouse.click(top[0], top[1]);
-  await page.keyboard.up("Control");
+  await page.keyboard.up("ControlOrMeta");
   await expect(vp).toHaveAttribute("data-selection", "1");
   await expect(page.locator("#hint")).toContainText("Selected face 2"); // last message was the toggle
   await page.keyboard.press("Escape");

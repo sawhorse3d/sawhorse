@@ -60,13 +60,14 @@ test("the Eraser softens, hides and unsoftens edges, as its hint says, one undo 
     for (const m of mods.reverse()) await page.keyboard.up(m);
   };
   await hover(page, upright, "edge", 0, 0, "data-hover");
-  await click(["Control"]);
+  // Ctrl (Cmd on macOS, where Control+click is the right click) softens and smooths.
+  await click(["ControlOrMeta"]);
   await expect(hint(page)).toContainText("Softened and smoothed 1 edge.");
   await expect.poll(() => counts(page)).toEqual({ hard: 11, soft: 1, hidden: 0, smoothNormals: true });
   // A soft edge is out of reach of a plain click: the face behind it is under the cursor.
   await page.mouse.move(10, 10);
   // Ctrl+Shift reaches it and unsoftens it.
-  await click(["Control", "Shift"]);
+  await click(["ControlOrMeta", "Shift"]);
   await expect(hint(page)).toContainText("Unsoftened 1 edge.");
   await expect.poll(() => counts(page)).toEqual({ hard: 12, soft: 0, hidden: 0, smoothNormals: false });
   // Shift hides it; Ctrl+Z brings it back in one step.

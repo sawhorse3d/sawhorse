@@ -232,7 +232,7 @@ export class ViewportEngine {
   private camera: THREE.OrthographicCamera | THREE.PerspectiveCamera = this.ortho;
   private controls: CameraController;
   /** Lane 30: what a left press does to the view (set by the app), null: the tool's. */
-  private leftButton: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | null = null;
+  private leftButton: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | null = null;
   private gridMinor: THREE.LineSegments | null = null;
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
@@ -1886,7 +1886,7 @@ varying float vOwnerState;`,
 
   /** Lane 30: who decides whether a left press orbits or pans instead of reaching the tool
    * (the app: the Orbit and Pan tools, and Alt+drag where the tool gives Alt no meaning). */
-  setLeftButton(fn: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | null): void {
+  setLeftButton(fn: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | null): void {
     this.leftButton = fn;
   }
 

@@ -65,6 +65,22 @@ describe("leftButtonNav", () => {
     expect(leftButtonNav(null, alt)).toBe("orbit");
   });
 
+  it("on macOS a Control+click is the right click: it pans in every tool, Shift or Alt or not", () => {
+    const h = fakeHost();
+    const tools: (Tool | null)[] = [
+      new SelectTool(h),
+      new MoveTool(h),
+      new TapeTool(h),
+      new OrbitTool(h),
+      new PanTool(h),
+      Object.create(PaintTool.prototype) as Tool,
+      Object.create(SectionTool.prototype) as Tool,
+      Object.create(PluginTool.prototype) as Tool,
+      null,
+    ];
+    for (const t of tools) for (const m of [none, shift, alt, altShift]) expect(leftButtonNav(t, { ...m, macControl: true })).toBe("pan");
+  });
+
   it("the Orbit and Pan tools ask for the grab cursor and are the navigation tools", () => {
     expect(new OrbitTool(fakeHost()).view().cursor).toBe("grab");
     expect(new PanTool(fakeHost()).view().cursor).toBe("grab");
