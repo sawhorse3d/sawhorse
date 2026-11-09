@@ -6,7 +6,8 @@ export type BuiltinToolId =
   | "line" | "rect" | "circle" | "arc"
   | "pushpull" | "move" | "rotate" | "scale" | "offset" | "follow"
   | "tape" | "dim" | "paint"
-  | "section";
+  | "section"
+  | "orbit" | "pan";
 
 /** A plugin's tool (lane 11): `plugin:<plugin id>/<tool id>`. */
 export type PluginToolId = `plugin:${string}`;
@@ -32,7 +33,7 @@ export interface ToolDef {
 
 export const TOOL_GROUPS: ToolDef[][] = [
   [
-    { id: "select", label: "Select", key: " ", keyCap: "␣", hint: "Click an entity. Drag for a window. Double-click a group to edit it.", vcb: null },
+    { id: "select", label: "Select", key: " ", keyCap: "␣", hint: "Click an entity. Drag for a window. Double-click a group to edit it. Alt+drag orbits.", vcb: null },
     { id: "erase", label: "Erase", key: "e", keyCap: "E", hint: "Click or drag over edges to erase. Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens.", vcb: null },
   ],
   [
@@ -52,11 +53,17 @@ export const TOOL_GROUPS: ToolDef[][] = [
   [
     { id: "tape", label: "Tape", key: "t", keyCap: "T", hint: "Click two points to measure. Click an edge and move for a guide.", vcb: "Length" },
     { id: "dim", label: "Dim", key: "d", keyCap: "D", hint: "Click two points, then place the dimension line.", vcb: null },
-    { id: "paint", label: "Paint", key: "b", keyCap: "B", hint: "Click a face to paint the active material.", vcb: null },
+    { id: "paint", label: "Paint", key: "b", keyCap: "B", hint: "Click a face to paint the active material. Alt+click picks one up; press O to orbit.", vcb: null },
   ],
   [
     // Lane 12: no default key (SketchUp 2017 had none either).
-    { id: "section", label: "Section", key: "", keyCap: "", hint: "Click a face to cut the model there. Alt reverses it, the arrow keys lock it to an axis, Enter places it.", vcb: null },
+    { id: "section", label: "Section", key: "", keyCap: "", hint: "Click a face to cut the model there. Alt reverses it, the arrow keys lock it to an axis, Enter places it. Press O to orbit.", vcb: null },
+  ],
+  [
+    // Lane 30 (issue #36): the left button orbits or pans, for a trackpad without a middle
+    // button. SketchUp 2017's keys; Esc goes back to the tool before (src/tools/navigate.ts).
+    { id: "orbit", label: "Orbit", key: "o", keyCap: "O", hint: "Drag to orbit around the point under the cursor. Shift+drag pans. Esc goes back to the tool before.", vcb: null },
+    { id: "pan", label: "Pan", key: "h", keyCap: "H", hint: "Drag to pan: the point you grab stays under the cursor. Esc goes back to the tool before.", vcb: null },
   ],
 ];
 

@@ -27,8 +27,8 @@ function screenOf(cam: THREE.Camera, p: Vec3): [number, number] {
   return [((v.x + 1) / 2) * W, ((1 - v.y) / 2) * H];
 }
 
-function pointer(el: EventTarget, type: string, init: { x: number; y: number; button?: number; buttons?: number; shift?: boolean; id?: number; kind?: string }) {
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: init.x, clientY: init.y, button: init.button ?? 0, buttons: init.buttons ?? 0, shiftKey: !!init.shift });
+function pointer(el: EventTarget, type: string, init: { x: number; y: number; button?: number; buttons?: number; shift?: boolean; alt?: boolean; id?: number; kind?: string }) {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: init.x, clientY: init.y, button: init.button ?? 0, buttons: init.buttons ?? 0, shiftKey: !!init.shift, altKey: !!init.alt });
   Object.defineProperty(e, "pointerId", { value: init.id ?? 1 });
   Object.defineProperty(e, "pointerType", { value: init.kind ?? "mouse" });
   el.dispatchEvent(e);
@@ -40,6 +40,8 @@ let cam: THREE.PerspectiveCamera;
 let ctl: CameraController;
 let navigating: ReturnType<typeof vi.fn<() => void>>;
 let changes = 0;
+/** Lane 30: what the app says a left press does (unset: the tool's, as before lane 30). */
+let leftButton: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | undefined;
 
 function setup(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new THREE.PerspectiveCamera(35, W / H, 0.01, 100)) {
   canvas = document.createElement("canvas");
@@ -55,13 +57,16 @@ function setup(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new 
   camera.updateMatrixWorld();
   cam = camera as THREE.PerspectiveCamera;
   navigating = vi.fn<() => void>();
-  ctl = new CameraController(camera, canvas, { pick: (x, y) => hitAt(camera, x, y), size: () => ({ w: W, h: H }), navigating });
+  ctl = new CameraController(camera, canvas, { pick: (x, y) => hitAt(camera, x, y), size: () => ({ w: W, h: H }), navigating, leftButton: (mods) => leftButton?.(mods) ?? null });
   ctl.target.set(0.2, 0.2, 0.1);
   changes = 0;
   ctl.onChange(() => changes++);
 }
 
-beforeEach(() => setup());
+beforeEach(() => {
+  leftButton = undefined;
+  setup();
+});
 afterEach(() => {
   ctl.dispose();
   canvas.remove();
@@ -166,6 +171,140 @@ describe("middle-drag orbit (issue #5)", () => {
     s = screenOf(cam, under);
     expect(Math.hypot(s[0] - 380, s[1] - 360)).toBeLessThan(1e-6);
     pointer(canvas, "pointerup", { x: 380, y: 360, button: 1 });
+  });
+});
+
+describe("left-button orbit and pan (lane 30, issue #36: a trackpad has no middle button)", () => {
+  /** The app's rule in a tool without an Alt meaning (src/tools/navigate.ts). */
+  const altTool = (m: { alt: boolean; shift: boolean }) => (m.alt ? (m.shift ? "pan" : "orbit") : null);
+  /** Under the Orbit tool. */
+  const orbitTool = (m: { alt: boolean; shift: boolean }) => (m.shift ? "pan" : "orbit");
+
+  /** Orbit 120 px across and 80 px down from `at`, then let go; the worst slip of the pivot
+   * on screen and the pose reached. */
+  function orbitFrom(at: [number, number], press: { button: number; buttons: number; alt?: boolean }) {
+    const pivot = ctl.state().pivot!;
+    let worst = 0;
+    for (let i = 1; i <= 20; i++) {
+      pointer(canvas, "pointermove", { x: at[0] + 6 * i, y: at[1] + 4 * i, buttons: press.buttons, alt: press.alt });
+      const s = screenOf(cam, pivot);
+      worst = Math.max(worst, Math.hypot(s[0] - at[0], s[1] - at[1]));
+    }
+    pointer(canvas, "pointerup", { x: at[0] + 120, y: at[1] + 80, button: press.button, alt: press.alt });
+    return { worst, pose: [...cam.position.toArray(), ...cam.quaternion.toArray(), ...ctl.target.toArray()] };
+  }
+
+  it("Alt+left orbits about the same pivot as a middle press, the same way, and ends on its release", () => {
+    leftButton = altTool;
+    const at: [number, number] = [470, 260];
+    // The middle button first: its pivot and where 20 steps take the camera.
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 1, buttons: 4 });
+    const middlePivot = ctl.state().pivot;
+    expect(middlePivot).toEqual(hitAt(cam, ...at));
+    const middle = orbitFrom(at, { button: 1, buttons: 4 });
+    expect(middle.worst).toBeLessThan(1e-6);
+    // The same from the same starting camera with Alt and the left button.
+    ctl.dispose();
+    canvas.remove();
+    setup();
+    const down = pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 0, buttons: 1, alt: true });
+    expect(down.defaultPrevented).toBe(true);
+    expect(ctl.state()).toEqual({ mode: "orbit", pivot: middlePivot });
+    expect(navigating).toHaveBeenCalledTimes(1);
+    const left = orbitFrom(at, { button: 0, buttons: 1, alt: true });
+    expect(left.worst).toBeLessThan(1e-6);
+    expect(left.pose).toEqual(middle.pose);
+    expect(ctl.state()).toEqual({ mode: null, pivot: null });
+    expect(navigating).toHaveBeenCalledTimes(2);
+  });
+
+  it("Alt+Shift+left pans, keeping the grabbed point under the cursor, and letting Shift go orbits", () => {
+    leftButton = altTool;
+    const at: [number, number] = [300, 380];
+    const grabbed = hitAt(cam, ...at)!;
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 0, buttons: 1, alt: true, shift: true });
+    expect(ctl.state().mode).toBe("pan");
+    pointer(canvas, "pointermove", { x: at[0] - 90, y: at[1] + 40, buttons: 1, alt: true, shift: true });
+    const s = screenOf(cam, grabbed);
+    expect(Math.hypot(s[0] - (at[0] - 90), s[1] - (at[1] + 40))).toBeLessThan(1e-6);
+    // Shift let go, and Alt too: the drag keeps the Alt it started with.
+    pointer(canvas, "pointermove", { x: at[0] - 80, y: at[1] + 40, buttons: 1 });
+    expect(ctl.state().mode).toBe("orbit");
+    pointer(canvas, "pointerup", { x: at[0] - 80, y: at[1] + 40, button: 0 });
+    expect(ctl.state().mode).toBeNull();
+  });
+
+  it("Shift switches a drag both ways as often as it is pressed, and the release ends it, with moves that carry no button (as browsers send them)", () => {
+    for (const [press, rule] of [
+      [{ button: 1, buttons: 4 }, undefined],
+      [{ button: 0, buttons: 1, alt: true }, altTool],
+    ] as const) {
+      leftButton = rule;
+      pointer(canvas, "pointerdown", { x: 400, y: 300, ...press });
+      expect(ctl.state().mode).toBe("orbit");
+      const modes: (string | null)[] = [];
+      [true, false, true, false].forEach((shift, i) => {
+        // A pointermove's `button` is -1 in a browser.
+        pointer(canvas, "pointermove", { x: 410 + 10 * i, y: 300, button: -1, buttons: press.buttons, shift, alt: "alt" in press });
+        modes.push(ctl.state().mode);
+      });
+      expect(modes).toEqual(["pan", "orbit", "pan", "orbit"]);
+      pointer(canvas, "pointerup", { x: 450, y: 300, button: press.button });
+      expect(ctl.state().mode).toBeNull();
+    }
+  });
+
+  it("a left press without Alt in a tool is the tool's: not taken, nothing moves", () => {
+    leftButton = altTool;
+    const before = [...cam.position.toArray(), ...cam.quaternion.toArray()];
+    for (const shift of [false, true]) {
+      const down = pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, shift });
+      expect(down.defaultPrevented).toBe(false);
+      expect(ctl.state().mode).toBeNull();
+      pointer(canvas, "pointermove", { x: 480, y: 340, buttons: 1, shift });
+      pointer(canvas, "pointerup", { x: 480, y: 340, button: 0, shift });
+    }
+    expect([...cam.position.toArray(), ...cam.quaternion.toArray()]).toEqual(before);
+    expect(changes).toBe(0);
+    expect(navigating).not.toHaveBeenCalled();
+  });
+
+  it("with no rule from the host the left button is never taken, Alt or not (as before lane 30)", () => {
+    const down = pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, alt: true });
+    expect(down.defaultPrevented).toBe(false);
+    expect(ctl.state().mode).toBeNull();
+  });
+
+  it("under the Orbit tool a plain left press orbits about the point under it, and Shift pans", () => {
+    leftButton = orbitTool;
+    const at: [number, number] = [460, 250];
+    const pivot = hitAt(cam, ...at)!;
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 0, buttons: 1 });
+    expect(ctl.state()).toEqual({ mode: "orbit", pivot });
+    const r = orbitFrom(at, { button: 0, buttons: 1 });
+    expect(r.worst).toBeLessThan(1e-6);
+    expect(changes).toBeGreaterThan(10);
+    // Shift held at the press pans, as Shift+middle does.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, shift: true });
+    expect(ctl.state().mode).toBe("pan");
+    pointer(canvas, "pointerup", { x: 400, y: 300, button: 0, shift: true });
+    // A release we never heard ends a left drag too.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1 });
+    pointer(canvas, "pointermove", { x: 420, y: 300, buttons: 0 });
+    expect(ctl.state().mode).toBeNull();
+  });
+
+  it("under the Pan tool a left drag pans whatever Shift does", () => {
+    leftButton = () => "pan";
+    const at: [number, number] = [520, 300];
+    const grabbed = hitAt(cam, ...at)!;
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 0, buttons: 1 });
+    expect(ctl.state().mode).toBe("pan");
+    pointer(canvas, "pointermove", { x: 300, y: 410, buttons: 1, shift: true });
+    expect(ctl.state().mode).toBe("pan");
+    const s = screenOf(cam, grabbed);
+    expect(Math.hypot(s[0] - 300, s[1] - 410)).toBeLessThan(1e-6);
+    pointer(canvas, "pointerup", { x: 300, y: 410, button: 0 });
   });
 });
 

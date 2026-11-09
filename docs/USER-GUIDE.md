@@ -35,13 +35,18 @@ If an operation can't be done (for example, erasing an edge would open a solid),
 
 ## Navigating
 
-The left button belongs to the tool you are using; the middle button, the right button and the wheel move the view, whatever the tool.
+The left button belongs to the tool you are using; the middle button, the right button and the wheel move the view, whatever the tool. Without a middle button (a laptop's trackpad), the Orbit tool and Option+drag (Alt+drag on Windows and Linux) orbit with the left button.
 
 - **Orbit: middle-drag.** When you press the middle button, the point under the cursor becomes the **pivot**: a corner or a point on an edge if one is within a few pixels, else the face under the cursor, else the ground under it, else the middle of the view. A small crosshair marks it while you hold the button. The model turns around the pivot and the pivot stays exactly under the cursor for the whole drag, so you can zoom in on a joint and look at it from every side without it sliding away. Dragging across turns the model around the vertical (blue) axis; dragging up and down tips it toward or away from you, about a level axis. The tilt stops half a degree short of looking straight down or straight up, so the view never flips over, and dragging across still turns it there. Orbiting leaves the standard view (the view buttons let go).
 - **Pan: right-drag, or Shift+middle-drag.** The point you grab stays under the cursor, at its own depth: in perspective, grab the near corner of a long board and the near corner follows the cursor exactly. Pressing or releasing Shift during a middle-drag switches between orbit and pan.
+- **The Orbit tool (O, or View > Orbit).** A plain left-drag orbits exactly as a middle-drag does: the same pivot under the cursor, the same crosshair, the same stop short of straight down or up. Shift+drag pans. It stays the tool until you press Esc, which goes back to the tool you had before, or pick another tool.
+- **The Pan tool (H, or View > Pan).** A plain left-drag pans, the point you grab staying under the cursor. Esc goes back to the tool you had before.
+- **Option+drag orbits in any tool** (Alt+drag on Windows and Linux): hold Option, then drag with the left button, and the view turns as with the middle button, without leaving the tool you are in, even halfway through a line or a move. Option+Shift+drag pans. Two tools keep Option for themselves: in **Paint** Option+click picks a material up, and in **Section Plane** Option reverses the cut, so in those two press O to orbit. A tap of Option alone (press and let go, nothing else between) still does what it did: Move's autofold, Section Plane's reverse. On some Linux desktops Alt+drag moves the window instead; there the O key is the way.
 - **Zoom: the wheel.** It zooms toward the cursor: the point under the cursor stays put. On a trackpad, pinching zooms the same way.
 - **Touch:** one finger orbits around the point under it; two fingers pan, and pinch to zoom around their midpoint.
 - **Zoom Extents (Shift+Z)** frames the whole model; the **standard views** frame the model and the working area around the origin: Iso, Top, Front, Right and Persp on the top bar, and Back, Left and Bottom on the View menu (Bottom looks up from below with the front edge at the top, so red runs right as in Front and Top, the same as a sheet's Bottom view). **View > Perspective** switches between parallel and perspective projection without moving the view.
+
+**On a trackpad** (a MacBook, or any laptop without a mouse): a two-finger click and drag pans (the trackpad's right button), pinching or a two-finger scroll zooms toward the cursor, and Option+drag or the O key orbits. A trackpad is a mouse to the browser, not a touch screen, so the one-finger orbit of a touch screen does not apply to it.
 
 The view keeps a look-at point on the line of sight at the depth of whatever you last orbited, panned or zoomed toward. It is what the projection switch keeps the same size, what a scene saves with the camera, and what a sheet's viewport uses when it shows the 3D view's camera.
 
@@ -69,6 +74,9 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 | T | Tape | Click two points to measure. Click an edge, then move away from it, to place a parallel guide. | the offset, or a length that drops a guide point |
 | D | Dimension | Click two points (or one edge), then click where the dimension line goes | - |
 | B | Paint | Click a face to paint it with the active material; a closed group or component takes it as its default; Ctrl+click paints the whole solid; click something selected to paint the whole selection. Alt+click picks a material up. Double-click a textured face to move, turn or scale its texture with the handles. | - |
+| O | Orbit | Drag to orbit around the point under the cursor; Shift+drag pans; Esc goes back to the tool before | - |
+| H | Pan | Drag to pan; Esc goes back to the tool before | - |
+| Option+drag (Alt+drag) | | Orbits in any tool but Paint and Section Plane; Option+Shift+drag pans | |
 | Shift+Z | | Zoom extents | |
 | Ctrl+Z / Ctrl+Y | | Undo / redo (Ctrl+Shift+Z also redoes) | |
 | Ctrl+A | | Select all (in the open group or component) | |
@@ -84,7 +92,7 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 - Holding Shift locks whatever direction is showing, until you release it.
 - With Rectangle, arrow keys pressed before the first click choose the plane: level, upright facing red, or upright facing green.
 
-**Ctrl and Alt taps.** In Move and Rotate a tap of Ctrl switches copying on and off (holding it on the last click works too). In Scale, Ctrl switches between scaling about the opposite grip and about the centre. In Move, Alt switches autofold.
+**Ctrl and Alt taps.** In Move and Rotate a tap of Ctrl switches copying on and off (holding it on the last click works too). In Scale, Ctrl switches between scaling about the opposite grip and about the centre. In Move, a tap of Alt switches autofold: Alt pressed and let go with no other key or click between. Alt held for an Alt+drag orbit is not a tap and changes nothing.
 
 **Value Control Box.** Type a value at any point in a gesture. The units are your display units unless you type one: `3/4`, `1 1/2`, `1-1/2`, `18"`, `1'6"`, `457mm`, `45.7cm`, `0.457m`. Click the unit chip beside the box (or Edit > Units) to pick millimetres, centimetres, metres, decimal inches, feet and inches or fractional inches; the chip and the status line say which is in force. Esc clears what you typed, and Ctrl+Z still works while you type. Angles (`30°`, or a bare number in Rotate) and the array forms (`x3`, `3x`, `*3`, `/4`) belong to Rotate and Move; other tools say so. A value typed right after a move, turn, scale or offset changes it (one undo step).
 

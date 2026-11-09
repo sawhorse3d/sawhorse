@@ -116,6 +116,10 @@ export function dragUv(handle: Handle, start: UvXform, mat: Pick<MaterialInfo, "
 
 export class PaintTool extends Tool {
   readonly id = "paint" as const;
+  /** Alt+click picks a material up, so Alt+drag does not orbit here (lane 30: O does). */
+  keepsAlt(): boolean {
+    return true;
+  }
   private pos: Positioning | null = null;
   private previewSeq = 0;
 

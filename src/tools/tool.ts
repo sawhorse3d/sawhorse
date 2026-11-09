@@ -148,8 +148,19 @@ export abstract class Tool {
   }
   /** Shift went down or up (some tools lock the current inference while it is held). */
   onShift(_down: boolean): void {}
-  /** Ctrl or Alt was tapped (Move and Rotate toggle copying; Move toggles autofold). */
+  /** Ctrl or Alt was tapped (Move and Rotate toggle copying; Move toggles autofold). An Alt
+   * tap is a press and release of Alt with no other key or pointer press between them
+   * (lane 30: Alt held for an Alt+drag orbit is not a tap). */
   onModifier(_key: "ctrl" | "alt"): void {}
+  /** Lane 30: the left button moves the view under this tool (the Orbit and Pan tools). */
+  navigation(): "orbit" | "pan" | null {
+    return null;
+  }
+  /** Lane 30: Alt with the left button means something to this tool (Paint picks a material
+   * up, Section Plane reverses the cut), so Alt+drag does not orbit here. */
+  keepsAlt(): boolean {
+    return false;
+  }
   /** Enter in the Value Control Box. */
   onValue(_text: string): void {}
   /** Esc. Return true when it cancelled something. */

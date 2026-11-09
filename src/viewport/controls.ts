@@ -11,8 +11,14 @@
 //   wheel              zoom toward the cursor (the point under it stays put)
 //   one finger         orbit, as middle-drag
 //   two fingers        pinch to zoom about their midpoint, drag to pan
+//   left-drag          only when the host says so (lane 30, issue #36: a trackpad has no
+//                      middle button): under the Orbit tool it orbits (Shift pans), under
+//                      the Pan tool it pans, and with Alt (Option) it orbits (Alt+Shift
+//                      pans) in every tool that gives Alt no meaning of its own. Such a
+//                      drag is a middle-drag in every other way: the same pivot, marker,
+//                      clamps and look-at point, and Shift switches it mid-drag.
 //
-// The left button belongs to the active tool. After every move the look-at point
+// Otherwise the left button belongs to the active tool. After every move the look-at point
 // (`target`, what the standard views, zoom extents, the grid density, the projection
 // toggle and the Sheets' "use 3D view" read) is put back on the view direction at the
 // depth of the point the gesture holds. The maths is in navmath.ts (unit-tested); this
@@ -35,6 +41,10 @@ export interface NavHost {
   size(): { w: number; h: number };
   /** A gesture started or ended (the pivot marker shows or goes). */
   navigating(): void;
+  /** What a left-button press with these modifiers does to the view (lane 30): "orbit" or
+   * "pan" takes the press from the tool, null leaves it to the tool (the default). Asked
+   * again when Shift goes down or up mid-drag, with Alt as it was at the press. */
+  leftButton?(mods: { alt: boolean; shift: boolean }): "orbit" | "pan" | null;
 }
 
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
@@ -45,6 +55,8 @@ interface Drag {
   /** MouseEvent.buttons bit of the button holding the drag (0 for touch). */
   mask: number;
   button: number;
+  /** Alt (Option) at the press: a left-button drag asks the host again with it. */
+  alt: boolean;
   x: number;
   y: number;
   /** Orbit: the pivot. Pan and pinch: the grabbed point. */
@@ -191,7 +203,12 @@ export class CameraController {
   private start(mode: NavMode, e: PointerEvent, x: number, y: number, mask: number): void {
     const anchor = mode === "orbit" ? this.pivotAt(x, y) : this.grab(x, y);
     const fresh = !this.drag;
-    this.drag = { mode, pointerId: e.pointerId, mask, button: e.button, x, y, anchor };
+    // A switch mid-drag (Shift) comes from a move, whose `button` is -1: the drag keeps the
+    // button and the Alt of its press, so a later Shift still switches it and the release
+    // still ends it.
+    const button = this.drag?.button ?? e.button;
+    const alt = this.drag?.alt ?? e.altKey;
+    this.drag = { mode, pointerId: e.pointerId, mask, button, alt, x, y, anchor };
     if (fresh) {
       this.doc.addEventListener("pointermove", this.onMove);
       this.doc.addEventListener("pointerup", this.onUp);
@@ -263,8 +280,21 @@ export class CameraController {
       this.start(e.shiftKey ? "pan" : "orbit", e, x, y, 4);
     } else if (e.button === 2) {
       this.start("pan", e, x, y, 2);
+    } else if (e.button === 0) {
+      // Lane 30: the Orbit or Pan tool, or Alt in a tool without an Alt meaning of its own.
+      const mode = this.host.leftButton?.({ alt: e.altKey, shift: e.shiftKey }) ?? null;
+      if (!mode) return;
+      e.preventDefault();
+      this.start(mode, e, x, y, 1);
     }
   };
+
+  /** What the drag should be doing with Shift as it is now, or null to keep on as it is. */
+  private wanted(d: Drag, shift: boolean): NavMode | null {
+    if (d.button === 1) return shift ? "pan" : "orbit";
+    if (d.button === 0) return this.host.leftButton?.({ alt: d.alt, shift }) ?? null;
+    return null;
+  }
 
   /** Touch: one finger orbits, two pan and pinch; a finger more or less starts afresh. */
   private retouch(e: PointerEvent): void {
@@ -311,13 +341,12 @@ export class CameraController {
       this.endDrag();
       return;
     }
-    // Shift pressed or let go during a middle drag switches between orbit and pan.
-    if (d.button === 1) {
-      const want: NavMode = e.shiftKey ? "pan" : "orbit";
-      if (want !== d.mode) {
-        this.start(want, e, x, y, d.mask);
-        return;
-      }
+    // Shift pressed or let go during a middle drag (or a left one that orbits) switches
+    // between orbit and pan.
+    const want = this.wanted(d, e.shiftKey);
+    if (want && want !== d.mode) {
+      this.start(want, e, x, y, d.mask);
+      return;
     }
     if (d.mode === "orbit") this.orbitBy(x - d.x, y - d.y, d.anchor);
     else this.panTo(x, y, d.anchor);

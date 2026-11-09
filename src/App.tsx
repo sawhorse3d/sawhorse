@@ -82,6 +82,7 @@ import { pickFile as pickAnyFile } from "./io/files";
 import type { AppBridge } from "./plugins/manager";
 // Lane 12: section planes.
 import { SectionTool } from "./tools/section";
+import { isNavTool, leftButtonNav, OrbitTool, PanTool } from "./tools/navigate";
 import { activeSectionHere, describeSection, sceneSectionsOf, sectionById, sliceExportRefused } from "./lib/sections";
 
 /** The solids, groups and components a selection stands for (a face or edge stands for its
@@ -1082,6 +1083,11 @@ export function App() {
   const activeRef = useRef<Tool | null>(null);
   /** The active tool's id as of the last selectTool, ahead of the render that shows it. */
   const toolIdRef = useRef(toolId);
+  /** Lane 30: the tool Esc goes back to from the Orbit or Pan tool. */
+  const navReturnRef = useRef<ToolId>("select");
+  /** Lane 30: Alt is down and nothing else (no key, no pointer press) has happened since,
+   * so letting it go is a tap (Move's autofold, Section Plane's reverse). */
+  const altTapRef = useRef(false);
   const host = useMemo<ToolHost>(
     () => ({
       units: () => live.current.units,
@@ -1216,6 +1222,8 @@ export function App() {
       ["follow", new FollowTool(host)],
       ["paint", new PaintTool(host, paintCtx)],
       ["section", new SectionTool(host)],
+      ["orbit", new OrbitTool(host)],
+      ["pan", new PanTool(host)],
     ]);
   }
   const toolFor = (id: ToolId): Tool | null => toolsRef.current?.get(id) ?? pluginsRef.current?.toolFor(id) ?? null;
@@ -1294,6 +1302,10 @@ export function App() {
   pluginsRef.current = plugins;
 
   const onPointer = useCallback((p: ViewportPointer) => {
+    // Lane 30: a left press the camera controller took (the Orbit or Pan tool, or Alt where
+    // the tool gives Alt no meaning) never reaches the tool, nor does its double-click; its
+    // moves still do, as during a middle-drag.
+    if ((p.type === "down" || p.type === "dblclick") && p.button === 0 && leftButtonNav(activeRef.current, p)) return;
     if (!activeRef.current) {
       if (p.type === "up" && p.button === 0) setMessage({ text: `${toolById(toolIdRef.current).label} arrives in a later lane.`, error: false });
       return;
@@ -1328,6 +1340,8 @@ export function App() {
     (id: ToolId) => {
       const prev = activeRef.current;
       prev?.deactivate();
+      // Lane 30: Esc in the Orbit or Pan tool goes back to the tool before them.
+      if (isNavTool(id) && !isNavTool(toolIdRef.current)) navReturnRef.current = toolIdRef.current;
       toolIdRef.current = id;
       setToolId(id);
       setMessage(null);
@@ -2277,15 +2291,22 @@ export function App() {
         }
       }
       if (sheetsMode) return;
+      // Lane 30: any other key while Alt is down makes it a chord, not a tap.
+      if (e.key !== "Alt") altTapRef.current = false;
       if (e.key === "Shift" && !textEntry) activeRef.current?.onShift(true);
-      if ((e.key === "Control" || e.key === "Alt") && !e.repeat && !textEntry) {
-        // A tap of Ctrl or Alt alone (Move / Rotate copy, Move autofold). Alt must not
-        // focus the browser's menu bar.
-        if (e.key === "Alt") e.preventDefault();
-        // After any click or tool key still on its way: the tap belongs to the tool that is
-        // active by then ("s" then Ctrl scales about the centre).
-        const mod = e.key === "Control" ? "ctrl" : "alt";
-        void afterPointer(() => activeRef.current?.onModifier(mod));
+      if (e.key === "Alt" && !e.repeat && !textEntry) {
+        // Alt must not focus the browser's menu bar. Its tap (Move's autofold, Section
+        // Plane's reverse) is the release, and only when nothing came between (lane 30):
+        // Alt held for an Alt+drag orbit is not a tap (onKeyUp, onPress).
+        e.preventDefault();
+        altTapRef.current = true;
+        return;
+      }
+      if (e.key === "Control" && !e.repeat && !textEntry) {
+        // A tap of Ctrl alone (Move / Rotate copy, Scale about the centre), after any click
+        // or tool key still on its way: the tap belongs to the tool that is active by then
+        // ("s" then Ctrl scales about the centre).
+        void afterPointer(() => activeRef.current?.onModifier("ctrl"));
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2293,6 +2314,13 @@ export function App() {
       if (inVcb && (e.key === "Enter" || e.key === "Escape")) return; // the box's own keys
       if (e.key === "Escape") {
         setMessage(null);
+        // Lane 30: Esc in the Orbit or Pan tool goes back to the tool before it (Select when
+        // that was a plugin's tool and its plugin has stopped since).
+        if (isNavTool(toolIdRef.current)) {
+          const back = navReturnRef.current;
+          void afterPointer(() => selectTool(isNavTool(back) || !toolFor(back) ? "select" : back));
+          return;
+        }
         if (activeRef.current?.cancel()) return;
         if (live.current.selection.length) {
           live.current.selection = [];
@@ -2368,12 +2396,26 @@ export function App() {
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Shift") activeRef.current?.onShift(false);
+      if (e.key === "Alt") {
+        e.preventDefault();
+        if (!altTapRef.current) return;
+        altTapRef.current = false;
+        void afterPointer(() => activeRef.current?.onModifier("alt"));
+      }
+    };
+    // A press of any button while Alt is down (Alt+drag, Alt+click) is not an Alt tap.
+    const onPress = () => {
+      altTapRef.current = false;
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("pointerdown", onPress, true);
+    window.addEventListener("blur", onPress);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("pointerdown", onPress, true);
+      window.removeEventListener("blur", onPress);
     };
   }, [selectTool, undo, redo, zoomExtents, eraseSelection, selectAll, afterPointer, save, openDialog, importDialog, makeGroup, explode]);
 
@@ -2603,6 +2645,10 @@ export function App() {
         "-",
         ...VIEWS.map((v) => ({ label: `${v.label} view`, onSelect: () => setView(v.id) })),
         "-",
+        // Lane 30 (#36): the left button orbits or pans, for a trackpad without a middle button.
+        { label: "Orbit", keys: "O", checked: toolId === "orbit", title: "Drag with the left button to orbit (Alt+drag orbits in most tools)", onSelect: () => selectTool("orbit") },
+        { label: "Pan", keys: "H", checked: toolId === "pan", title: "Drag with the left button to pan", onSelect: () => selectTool("pan") },
+        "-",
         { label: "Add Scene", title: "Save this view (camera, hidden tags, open group) as a scene tab", onSelect: addScene },
         "-",
         // Lane 12: the style's section switches, here as in SketchUp's View menu.
@@ -2776,6 +2822,8 @@ export function App() {
         }}
         onEngine={(e) => {
           engineRef.current = e;
+          // Lane 30: the Orbit and Pan tools, and Alt+drag where the tool gives Alt no meaning.
+          e?.setLeftButton((mods) => leftButtonNav(activeRef.current, mods));
           setEngineObj(e);
         }}
       />

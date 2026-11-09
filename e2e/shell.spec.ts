@@ -18,9 +18,11 @@ interface Part {
 test("shell matches the approved mock's structure", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".app > header.top")).toBeVisible();
-  // The mock's fifteen tools plus Section (lane 12) at the end of the rail.
-  await expect(page.locator(".tool")).toHaveCount(16);
-  await expect(page.locator(".tool").last()).toHaveAttribute("data-tool", "section");
+  // The mock's fifteen tools, Section (lane 12), then Orbit and Pan (lane 30) at the end of the rail.
+  await expect(page.locator(".tool")).toHaveCount(18);
+  await expect(page.locator(".tool").nth(15)).toHaveAttribute("data-tool", "section");
+  await expect(page.locator(".tool").nth(16)).toHaveAttribute("data-tool", "orbit");
+  await expect(page.locator(".tool").last()).toHaveAttribute("data-tool", "pan");
   // The mock's tabs, plus Materials and Styles (lane 10) and the Plugins glyph tab (lane 11).
   // Render (and the Credits chip) only with a render service set and answering (lane 15):
   // none here, so neither is shown (e2e/render.spec.ts covers both states).
@@ -55,7 +57,7 @@ test("no render service configured: nothing asks for one, nothing logs a refused
 
 test("keyboard shortcuts switch tools", async ({ page }) => {
   await page.goto("/");
-  for (const [key, tool] of [["p", "pushpull"], ["r", "rect"], ["l", "line"], ["Space", "select"]] as const) {
+  for (const [key, tool] of [["p", "pushpull"], ["r", "rect"], ["l", "line"], ["o", "orbit"], ["h", "pan"], ["Space", "select"]] as const) {
     await page.keyboard.press(key);
     await expect(page.locator(`.tool[data-tool="${tool}"]`)).toHaveAttribute("aria-pressed", "true");
   }

@@ -238,7 +238,8 @@ export function Viewport(props: ViewportProps) {
   const centre = marker?.centre && marker.kind !== "centre" ? marker.centre : null;
   const centreXY = centre && engine ? engine.worldToScreen(centre) : null;
   const style = marker ? INFERENCE_STYLES[marker.kind] : null;
-  // Lane 21: the orbit pivot's marker, while the middle button (or one finger) is down.
+  // Lane 21: the orbit pivot's marker, while the middle button (or one finger, or lane 30's
+  // left button under the Orbit tool or with Alt) is down.
   const nav = engine?.navState() ?? null;
   const pivotXY = nav?.pivot && engine ? engine.worldToScreen(nav.pivot) : null;
 

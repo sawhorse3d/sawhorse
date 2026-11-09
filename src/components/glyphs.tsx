@@ -52,6 +52,14 @@ export const TOOL_GLYPHS: Record<BuiltinToolId, ReactElement> = {
   paint: <path d="M4 20c0-3 2-5 5-5l6-9 4 4-9 6c0 3-2 5-6 4z M12 8l4 4" />,
   // Lane 12: a plane seen at an angle, with the arrows that show the side it keeps.
   section: <path d="M5 8l10-4v12L5 20z M15 10h5 M18 8l2 2-2 2 M10 9v6" />,
+  // Lane 30: a tilted ring round a ball, its arrowhead showing the turn; an open hand.
+  orbit: (
+    <>
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M8.3 18.8A10 5.6 -28 1 1 19.7 12.8 M19.7 8.8L19.7 12.8L23.5 11.6" />
+    </>
+  ),
+  pan: <path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V11 M11 11V5a1.5 1.5 0 0 1 3 0v6 M14 11V6.5a1.5 1.5 0 0 1 3 0V14c0 3.9-2.6 7-6.2 7-2.4 0-4-1.2-5.2-3.2L3.4 13.6a1.5 1.5 0 0 1 2.4-1.7L8 14" />,
 };
 
 export function BrandMark() {

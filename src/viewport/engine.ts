@@ -7,7 +7,8 @@
 //   middle-drag orbits about the point under the cursor (pinned on screen, with a marker),
 //   Shift+middle-drag and right-drag pan with the point under the cursor, the wheel zooms
 //   toward the cursor; Shift+Z (zoom extents), the standard views and the projection toggle
-//   are driven from the app.
+//   are driven from the app. Lane 30: the left button orbits or pans when the app's
+//   `setLeftButton` says so (the Orbit and Pan tools, Alt+drag; src/tools/navigate.ts).
 //
 // Layers, back to front: ground grid (no depth writes, drawn first and nudged a hair below
 // z = 0, so sketch regions on the ground always draw over it), axes, model faces (pushed
@@ -230,6 +231,8 @@ export class ViewportEngine {
   private persp = new THREE.PerspectiveCamera(PERSPECTIVE_FOV_DEG, 1, 0.01, 1000);
   private camera: THREE.OrthographicCamera | THREE.PerspectiveCamera = this.ortho;
   private controls: CameraController;
+  /** Lane 30: what a left press does to the view (set by the app), null: the tool's. */
+  private leftButton: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | null = null;
   private gridMinor: THREE.LineSegments | null = null;
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
@@ -338,6 +341,7 @@ export class ViewportEngine {
       pick: (x, y, snap) => this.navPick(x, y, snap),
       size: () => this.size,
       navigating: () => this.requestRender(),
+      leftButton: (mods) => this.leftButton?.(mods) ?? null,
     });
     this.controls.onChange(() => {
       // Any orbit leaves the standard view; a pure zoom or pan keeps the direction.
@@ -1878,6 +1882,12 @@ varying float vOwnerState;`,
       if (visible(p)) return [p.x, p.y, p.z];
     }
     return null;
+  }
+
+  /** Lane 30: who decides whether a left press orbits or pans instead of reaching the tool
+   * (the app: the Orbit and Pan tools, and Alt+drag where the tool gives Alt no meaning). */
+  setLeftButton(fn: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | null): void {
+    this.leftButton = fn;
   }
 
   /** What navigation is doing (lane 21): the gesture, and the pivot while orbiting (the

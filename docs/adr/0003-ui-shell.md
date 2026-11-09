@@ -1,6 +1,6 @@
 # ADR-0003: UI shell
 
-- Status: Accepted, 2026-10-11. Mock approved by the maintainer: "mock looks great". Lane 3 (feel) and lane 4 (transforms) implemented, 2026-10-11.
+- Status: Accepted, 2026-10-11. Mock approved by the maintainer: "mock looks great". Lane 3 (feel) and lane 4 (transforms) implemented, 2026-10-11. Lane 30 (2026-11-09, #36): the Orbit (O) and Pan (H) tools in a sixth rail group and on the View menu, and Alt+drag orbits; see the lane-30 section below.
 - Deciders: the maintainer
 - Source: `docs/DECISIONS.md` seed; approved mock `docs/mock/sawhorse-mock.html`
 
@@ -72,3 +72,13 @@ People who already model furniture have SketchUp in their hands: the keys, the p
   - On an empty document (no solids, no edges, no imported meshes) the **status line** ends with that sentence as a button that opens the picker; a message or the first stroke replaces it.
   - The **browser demo only** (`VITE_WEB_DEMO=1`, never the desktop app) shows a one-sentence first-run hint above the chip (`src/components/UnitsHint.tsx`); "Got it" or opening the picker dismisses it for good on that browser (`localStorage`, like the demo banner).
 - Tests: `src/components/ValueBar.test.tsx` (the chip, the picker, the status line, the hint), `src/App.test.tsx` (the chip, Edit > Units), `src/lib/units.test.ts` (the choices), `e2e/units.spec.ts` (a cold open names the units; one pick makes a typed 300 come out as 300 mm; the choice survives a reload; Edit > Units). The other specs pick units through `setUnits` in `e2e/helpers.ts`.
+
+## Implementation status (lane 30, orbit without a middle button)
+
+- Issue #36: on a MacBook with only its trackpad, panning (two-finger click and drag, the right button) and zooming (pinch) worked and nothing orbited, because orbit was the middle button's alone. Two ways in, no kernel change:
+  - **The Orbit tool (O) and the Pan tool (H)**, SketchUp 2017's keys, in a sixth rail group after Section (the same way lane 12 added Section's group; the group sits below the fold of the rail in a window under about 820 px tall, as Section nearly did, so the View menu lists both too: "Orbit O", "Pan H", checked while active). Under them a plain left-drag orbits (Shift pans) or pans. Esc goes back to the tool active before them (Select if that was a plugin's tool whose plugin has stopped). Glyphs are our own: a ball with a turning ring, an open hand.
+  - **Alt (Option) + left-drag orbits, Alt+Shift pans**, in every tool whose `keepsAlt()` is false: all but Paint (Alt+click samples) and Section Plane (Alt reverses). A plugin's tool is treated as a built-in without an Alt meaning.
+- How: the camera controller (`src/viewport/controls.ts`) asks its host what a left press does (`NavHost.leftButton`; the app answers with `leftButtonNav` in `src/tools/navigate.ts`) and, for "orbit" or "pan", runs the middle button's own start, move and end, so the pivot, the marker, the clamps and the look-at point are the same code. The controller hears the press before React does; the app drops that press and its double-click before the tool driver, and moves still reach the tool as during a middle-drag.
+- A drag switched by Shift keeps the button it was pressed with (the switch used to take the button of the move that carried it, -1, so a middle-drag switched to a pan once and stayed one, and its release was heard only at the next move).
+- An Alt tap (Move's autofold, Section Plane's reverse) now fires when Alt is let go with no key and no pointer press since it went down; it fired on the key going down, so holding Alt for an Alt+drag would have switched Move's autofold. Section Plane's Alt+click now places the plane reversed as the guide said (the tap on the way down used to reverse it first, and the click reversed it back).
+- Tests: `src/viewport/controls.test.ts` (Alt+left: the same pivot and the same camera as a middle drag; Alt+Shift pans and Shift let go orbits; a plain left press in a tool is not taken; under Orbit and Pan), `src/tools/navigate.test.ts` (the rule per tool, Paint, Section, a plugin's tool), `src/App.test.tsx` (O, H, Esc back to the tool before, the View menu, the Alt tap), `e2e/orbit-trackpad.spec.ts`.
