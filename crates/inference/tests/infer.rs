@@ -211,6 +211,59 @@ fn axis_lines_from_the_start_point() {
 }
 
 #[test]
+fn a_lock_does_not_project_a_point_level_with_the_start_back_onto_it() {
+    // Push/Pull on a 12 x 12 in rectangle in the iso view: the cursor goes straight up the
+    // screen, which also runs diagonally over the ground, past the rectangle's far corner,
+    // its edges' midpoints and the lines through the corners just drawn. Those are level with
+    // the start, so projected onto the blue lock they gave a distance of 0 for a stretch.
+    let mut m = boxes(&[(1.0, 0.0, 0.5, 0.5, 0.25)]);
+    m.apply(&rect(0.0, 0.0, 12.0 * IN, 12.0 * IN)).unwrap();
+    let f = DVec3::new(1.0, 1.0, -1.0).normalize();
+    let iso = |target: DVec3, start: DVec3| {
+        let origin = target - f * 1.5;
+        InferQuery {
+            origin: origin.to_array(),
+            dir: f.to_array(),
+            px: PixelModel {
+                ortho: true,
+                scale: IN / 10.0,
+                eye: origin.to_array(),
+                forward: f.to_array(),
+            },
+            start: Some(start.to_array()),
+            lock: Some(LockQ {
+                dir: [0.0, 0.0, 1.0],
+                kind: K::AxisZ,
+            }),
+            // The corners just drawn: their axis lines run along the rectangle's far edges
+            // and on past them, so a "from point" line is crossed from most grabs.
+            anchors: vec![[12.0 * IN, 12.0 * IN, 0.0], [0.0, 0.0, 0.0]],
+            ..down(0.0, 0.0, 0.0)
+        }
+    };
+    for (x, y) in [
+        (9.0, 10.0),
+        (8.0, 8.0),
+        (6.0, 4.0),
+        (5.0, 3.0),
+        (3.0, 3.0),
+        (10.0, 4.0),
+    ] {
+        let s = DVec3::new(x * IN, y * IN, 0.0);
+        for i in 1..=300 {
+            let h = f64::from(i) * 0.05 * IN;
+            let r = run(&m, &iso(s + DVec3::Z * h, s));
+            assert!(r.point[2] > 0.0, "start ({x}, {y}), {h} up: {r:?}");
+        }
+    }
+    // A point that is not level still projects: level with a neighbour's top corner.
+    let s = DVec3::new(0.5, 0.2, 0.0);
+    let r = run(&m, &iso(DVec3::new(1.0, 0.0, 0.25), s));
+    assert_eq!(r.kind, K::FromPoint);
+    assert!(close(r.point, [0.5, 0.2, 0.25]), "{:?}", r.point);
+}
+
+#[test]
 fn locks_force_the_line_and_project_point_snaps_onto_it() {
     let m = model(&[rect(0.5, 0.5, 0.2, 0.2)]);
     let mut q = down(0.3, 0.4, 0.001);

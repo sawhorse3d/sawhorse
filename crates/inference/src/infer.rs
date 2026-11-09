@@ -657,8 +657,12 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
             let d = d.normalize();
             let on_lock =
                 (chosen.point - s).cross(d).length() <= 1e-9 * (1.0 + chosen.point.distance(s));
-            if chosen.kind.is_point() && !on_lock {
-                let p = s + d * (chosen.point - s).dot(d);
+            // A point level with the start projects back onto it: a snap to going nowhere,
+            // so the cursor keeps the line (Push/Pull dropped to 0 passing its own corners).
+            let along = (chosen.point - s).dot(d);
+            let moves = along.abs() > 1e-9 * (1.0 + chosen.point.distance(s));
+            if chosen.kind.is_point() && !on_lock && moves {
+                let p = s + d * along;
                 let from = chosen.point;
                 chosen = Cand {
                     kind: InferenceKind::FromPoint,
