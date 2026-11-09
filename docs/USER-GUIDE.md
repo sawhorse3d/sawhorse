@@ -41,7 +41,7 @@ The left button belongs to the tool you are using; the middle button, the right 
 - **Pan: right-drag, or Shift+middle-drag.** The point you grab stays under the cursor, at its own depth: in perspective, grab the near corner of a long board and the near corner follows the cursor exactly. Pressing or releasing Shift during a middle-drag switches between orbit and pan.
 - **Zoom: the wheel.** It zooms toward the cursor: the point under the cursor stays put. On a trackpad, pinching zooms the same way.
 - **Touch:** one finger orbits around the point under it; two fingers pan, and pinch to zoom around their midpoint.
-- **Zoom Extents (Shift+Z)** frames the whole model; the **standard views** (Iso, Top, Front, Right, Persp) frame the model and the working area around the origin. **View > Perspective** switches between parallel and perspective projection without moving the view.
+- **Zoom Extents (Shift+Z)** frames the whole model; the **standard views** frame the model and the working area around the origin: Iso, Top, Front, Right and Persp on the top bar, and Back, Left and Bottom on the View menu (Bottom looks up from below with the front edge at the top, so red runs right as in Front and Top, the same as a sheet's Bottom view). **View > Perspective** switches between parallel and perspective projection without moving the view.
 
 The view keeps a look-at point on the line of sight at the depth of whatever you last orbited, panned or zoomed toward. It is what the projection switch keeps the same size, what a scene saves with the camera, and what a sheet's viewport uses when it shows the 3D view's camera.
 

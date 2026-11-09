@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BrandMark } from "./glyphs";
-import { VIEWS, type ViewId } from "../viewport/camera";
+import { BAR_VIEWS, type ViewId } from "../viewport/camera";
 
 // "Plugins" (lane 11) sits after Tools: commands from enabled plugins, and managing them.
 const MENUS = ["File", "Edit", "View", "Draw", "Tools", "Plugins", "Window", "Help"];
@@ -137,7 +137,7 @@ export function TopBar({ view, onView, credits, showCredits = true, creditsState
       </nav>
       <div className="spacer"></div>
       <div className="views" role="group" aria-label="Views">
-        {VIEWS.map((v) => (
+        {BAR_VIEWS.map((v) => (
           <button key={v.id} type="button" title={v.title} aria-pressed={view === v.id} onClick={() => onView(v.id)}>
             {v.label}
           </button>

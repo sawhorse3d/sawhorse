@@ -35,7 +35,6 @@ So nobody finds out the hard way:
 - **`.skp` export** (you can open SketchUp files, not save them).
 - **Fillet and chamfer** tools (Follow Me can route a chamfer).
 - **Copy and paste in place**.
-- **Back and Bottom views** (Top, Front, Right, Iso and perspective are there).
 - **Text, and radius or diameter dimensions in the model** (linear dimensions only; drawing sheets have radius and diameter).
 - **Weld Edges**: erasing the line that split a circle leaves two arcs.
 - **Signed installers**: Windows and macOS warn before the first launch, and on Apple Silicon alpha.4 may say it is "damaged" ([how to get past both](docs/releases/v0.1.0-alpha.4.md#unsigned-installers)).
