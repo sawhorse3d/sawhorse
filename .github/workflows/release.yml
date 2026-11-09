@@ -4,7 +4,8 @@ name: Release
 # a draft pre-release; then SHA256SUMS.txt, the SHA-256 of every file the three builds
 # uploaded, is written, checked and uploaded to the same draft (the checksums job).
 # Unsigned until signing secrets exist: every signing variable is optional and only
-# exported when its secret is set, so this workflow needs no secrets today.
+# exported when its secret is set, so this workflow needs no secrets today. Until then the
+# macOS app is signed ad hoc (lane 28, #27), which Apple Silicon requires to open it at all.
 on:
   push:
     tags: ["v*"]
@@ -86,6 +87,19 @@ jobs:
               echo "signing: $v set"
             fi
           done
+      # Lane 28 (#27): with no Apple identity, sign ad hoc. On Apple Silicon an unsigned app
+      # is "damaged and can't be opened" and Gatekeeper never offers Open Anyway. The identity
+      # "-" makes tauri-bundler sign the .app itself, after it is assembled and before the
+      # .dmg is made from it: Tauri's beforeBundleCommand runs before the .app exists, and
+      # tauri-action builds and uploads in one step, so this is the one hook between the two.
+      - name: "macOS: ad-hoc signing while there is no Apple identity"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "signing: ad hoc (APPLE_SIGNING_IDENTITY=-)"
+          fi
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,6 +110,16 @@ jobs:
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+      # Lane 28 (#27): the app, and the app inside the .dmg, must verify (codesign --verify
+      # --deep --strict). If tauri left either unsigned, the script signs the app ad hoc,
+      # makes the .dmg and the app archive again and uploads them over the draft's copies,
+      # before the checksums job sums what the release holds (scripts/macos-adhoc-check.sh).
+      - name: "macOS: check the app's signature, in the .dmg too"
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/macos-adhoc-check.sh src-tauri/target/release/bundle "${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || format('v{0}-dev', github.run_number) }}"
 
   checksums:
     name: SHA256SUMS.txt

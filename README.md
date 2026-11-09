@@ -38,7 +38,7 @@ So nobody finds out the hard way:
 - **Back and Bottom views** (Top, Front, Right, Iso and perspective are there).
 - **Text, and radius or diameter dimensions in the model** (linear dimensions only; drawing sheets have radius and diameter).
 - **Weld Edges**: erasing the line that split a circle leaves two arcs.
-- **Signed installers**: Windows and macOS warn before the first launch ([how to get past it](docs/releases/v0.1.0-alpha.4.md#unsigned-installers)).
+- **Signed installers**: Windows and macOS warn before the first launch, and on Apple Silicon alpha.4 may say it is "damaged" ([how to get past both](docs/releases/v0.1.0-alpha.4.md#unsigned-installers)).
 - **Render credits**: an AI render service exists in the code but is not launched; the app shows nothing about it unless you point it at a service of your own (Edit > Settings).
 
 Known limits (model size, `.skp` versions that do not open): [docs/LIMITS.md](docs/LIMITS.md).
