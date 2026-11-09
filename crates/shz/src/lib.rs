@@ -2103,4 +2103,85 @@ mod tests {
         assert_eq!(o.document.hash(), d.hash());
         assert_eq!(o.document.model().graph(), d.model().graph());
     }
+
+    /// Lane 28 follow-up (CI's long fuzz, seed 20261011): a component copy emptied while
+    /// another copy is opened goes in that same edit, so no model in the window holds an
+    /// empty copy that a file of it would open without. Three copies of a one-box
+    /// component; the box grouped inside the third copy (so a group in every copy); the
+    /// box deleted from inside the first copy's group and a line drawn there; the second
+    /// copy opened. The empty groups go, which takes the group out of the definition and
+    /// so out of the first copy too, line and all. Tidying used to stop after one sweep, leaving the first copy, now empty,
+    /// for the next edit to remove; undoing that edit brought it back, and Save refused
+    /// because the file opened without it.
+    #[test]
+    fn a_component_copy_emptied_by_tidying_is_not_saved_as_a_ghost() {
+        let mut d = Document::new();
+        for op in [
+            serde_json::json!({ "op": "new_sketch", "origin": [0, 0, 0], "normal": [0, 0, 1] }),
+            serde_json::json!({ "op": "add_rectangle", "sketch": 1, "x": 0, "y": 0, "w": 0.25, "h": 0.25 }),
+            serde_json::json!({ "op": "extrude", "sketch": 1, "region": 1, "distance": 0.25 }),
+            serde_json::json!({ "op": "make_component", "items": [{ "object": 1 }], "name": "Part" }),
+            serde_json::json!({ "op": "array", "objects": [], "nodes": [1], "count": 2,
+                "xform": { "linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [0, 0, 0] } }),
+        ] {
+            apply(&mut d, op);
+        }
+        let copies = |d: &Document| -> Vec<u64> {
+            d.model()
+                .nodes()
+                .into_iter()
+                .filter(|(_, n)| n.member.parent.is_none())
+                .map(|(id, _)| id)
+                .collect()
+        };
+        assert_eq!(copies(&d), [1, 2, 3]);
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "set_context", "node": 3 }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "create_group", "name": "Box", "objects": [3] }),
+        );
+        // The group's counterpart in the first copy, opened; its box deleted.
+        let group_in_first = d
+            .model()
+            .nodes()
+            .into_iter()
+            .find(|(_, n)| n.member.parent.map(sawhorse_kernel::ids::to_public) == Some(1))
+            .map(|(id, _)| id)
+            .expect("the group is in every copy");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "set_context", "node": group_in_first }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_object", "object": 1 }),
+        );
+        // A line drawn there keeps that group from being swept with its counterparts.
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "draw", "target": { "on": "plane", "origin": [0, 0, 0], "normal": [0, 0, 1] },
+                "points": [[0, 0, 0], [0, -0.25, 0]], "closed": false }),
+        );
+        saves_and_opens_the_same(
+            &d,
+            "the box deleted and a line drawn inside a group of a copy",
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "set_context", "node": 2 }),
+        );
+        // The component is empty now: every copy but the open one went in this edit.
+        assert_eq!(copies(&d), [2], "the emptied copies go when they empty");
+        saves_and_opens_the_same(&d, "the second copy opened");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "add_section", "origin": [0, 0.25, 0.5], "normal": [0, 0, -1] }),
+        );
+        d.undo().unwrap();
+        assert_eq!(copies(&d), [2], "undo brings back no empty copy");
+        saves_and_opens_the_same(&d, "a section plane added and undone");
+    }
 }

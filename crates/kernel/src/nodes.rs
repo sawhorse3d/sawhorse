@@ -2166,37 +2166,22 @@ impl Model {
     /// Remove empty groups and instances (not the open context or its ancestors, nor their
     /// counterparts in other copies of a component), purge unused definitions, forget scene
     /// contexts that are gone. Propagates what it changed.
+    ///
+    /// A fixed point: propagating a removal can empty another node (an empty group removed
+    /// from one copy of a component leaves the definition, so its counterpart in every
+    /// other copy goes too, and a copy that held nothing else is now empty), so the sweep
+    /// runs again after each propagation until it finds nothing. One pass left that copy
+    /// behind for the next edit to remove; a file of the model in between opened without it
+    /// (lane 28 follow-up).
     pub(crate) fn tidy(&mut self) -> Result<(), KernelError> {
         loop {
-            let kids = self.kids();
-            let path = self.path_of(self.context);
-            // An open group inside a component is the same member in every copy: its empty
-            // counterparts elsewhere stay too (removing one would remove it from the
-            // definition, and so the open one).
-            let open: BTreeSet<(DefId, u32)> =
-                path.iter().filter_map(|&k| self.member_key(k)).collect();
-            let empty: Vec<NodeId> = self
-                .nodes
-                .keys()
-                .filter(|k| !path.contains(k))
-                .filter(|&k| self.member_key(k).is_none_or(|m| !open.contains(&m)))
-                .filter(|k| kids.of(Some(*k)).is_empty())
-                .filter(|k| {
-                    kids.sketches
-                        .get(&Some(*k))
-                        .is_none_or(|v| v.iter().all(|&s| self.sketches[s].edge_count() == 0))
-                })
-                .collect();
-            if empty.is_empty() {
+            let removed = self.remove_empty_nodes();
+            let dirty = !self.dirty.containers.is_empty();
+            self.propagate()?;
+            if !removed && !dirty {
                 break;
             }
-            for n in empty {
-                let parent = self.nodes[n].member.parent;
-                self.remove_thing(&kids, Thing::Node(n));
-                self.mark(parent);
-            }
         }
-        self.propagate()?;
         // Definitions reachable from the world.
         let mut used = BTreeSet::new();
         let mut stack: Vec<DefId> = self
@@ -2232,6 +2217,43 @@ impl Model {
             }
         }
         Ok(())
+    }
+
+    /// One sweep of [`Model::tidy`]: remove the empty groups and instances it may remove,
+    /// until none is left as the tree now stands (before any propagation). Whether it
+    /// removed any.
+    fn remove_empty_nodes(&mut self) -> bool {
+        let mut removed = false;
+        loop {
+            let kids = self.kids();
+            let path = self.path_of(self.context);
+            // An open group inside a component is the same member in every copy: its empty
+            // counterparts elsewhere stay too (removing one would remove it from the
+            // definition, and so the open one).
+            let open: BTreeSet<(DefId, u32)> =
+                path.iter().filter_map(|&k| self.member_key(k)).collect();
+            let empty: Vec<NodeId> = self
+                .nodes
+                .keys()
+                .filter(|k| !path.contains(k))
+                .filter(|&k| self.member_key(k).is_none_or(|m| !open.contains(&m)))
+                .filter(|k| kids.of(Some(*k)).is_empty())
+                .filter(|k| {
+                    kids.sketches
+                        .get(&Some(*k))
+                        .is_none_or(|v| v.iter().all(|&s| self.sketches[s].edge_count() == 0))
+                })
+                .collect();
+            if empty.is_empty() {
+                return removed;
+            }
+            removed = true;
+            for n in empty {
+                let parent = self.nodes[n].member.parent;
+                self.remove_thing(&kids, Thing::Node(n));
+                self.mark(parent);
+            }
+        }
     }
 
     // ---- validation ------------------------------------------------------------------

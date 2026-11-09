@@ -1,0 +1,155 @@
+{
+  "name": "2026-11-09-save-after-a-component-copy-emptied-by-tidy",
+  "error": "(fixed) save: the file opens with other ids: ([], [2], [1], [1], []) vs ([], [1, 2], [1], [1], []) Three copies of a one-box component; a group made in one copy (so in all three), the box deleted from inside another copy's group, then the third copy opened. Tidying removed the empty groups, which took the group out of the definition and so out of every copy, and the copy that had held it was then empty; one sweep had already run, so it stayed until the next edit (the section plane) removed it. Undoing that edit brought the empty copy back, and the file of that model opened without it. CI long fuzz, seed 20261011 (lane 28 follow-up).",
+  "ops": [
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "add_rectangle",
+      "sketch": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "w": 0.25,
+      "h": 0.25
+    },
+    {
+      "op": "extrude",
+      "sketch": 1,
+      "region": 1,
+      "distance": 0.25
+    },
+    {
+      "op": "make_component",
+      "items": [
+        {
+          "object": 1
+        }
+      ],
+      "name": "Part 0"
+    },
+    {
+      "op": "array",
+      "objects": [],
+      "xform": {
+        "linear": [
+          [
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "count": 2,
+      "nodes": [
+        1
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 3
+    },
+    {
+      "op": "new_sketch",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "op": "create_group",
+      "name": "Fuzz",
+      "objects": [
+        3
+      ]
+    },
+    {
+      "op": "set_context",
+      "node": 5
+    },
+    {
+      "op": "delete_object",
+      "object": 1
+    },
+    {
+      "op": "draw",
+      "target": {
+        "on": "plane",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "points": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.25,
+          0.0
+        ]
+      ],
+      "closed": false
+    },
+    {
+      "op": "set_context",
+      "node": 2
+    },
+    {
+      "op": "add_section",
+      "origin": [
+        0.0,
+        0.25,
+        0.5
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "op": "undo"
+    }
+  ]
+}
