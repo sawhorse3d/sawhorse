@@ -1,5 +1,7 @@
 # Developing Sawhorse
 
+Sending a change? [`CONTRIBUTING.md`](../CONTRIBUTING.md) says what makes one fit and which checks to run; this page says how to run them.
+
 Three places run the code: the maintainer's Windows machine (no MSVC), WSL Ubuntu on that machine (all Rust work), and GitHub Actions (everything, plus the installers). Commands below are exact; run them from the repo root (`%USERPROFILE%\Desktop\sawhorse\app`, or wherever you cloned it) in Git Bash unless a section says otherwise.
 
 ## The two rules that shape everything

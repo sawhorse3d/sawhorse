@@ -84,6 +84,10 @@ bash scripts/cargo.sh test --workspace           # kernel: unit, property, fuzze
 PW_CHANNEL=msedge REQUIRE_KERNEL=1 npx playwright test
 ```
 
+## Contributing
+
+Reports, fixes, larger work and testing on real hardware are all welcome; [`CONTRIBUTING.md`](CONTRIBUTING.md) says how each fits (AI-assisted pull requests included).
+
 ## Credits
 
 - SketchUp files are read by [openskp](https://www.npmjs.com/package/openskp) (MIT). Third-party code and licences: [`docs/THIRD-PARTY.md`](docs/THIRD-PARTY.md).
