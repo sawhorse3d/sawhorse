@@ -1352,8 +1352,10 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
         }
     }
     let placed: usize = pieces.iter().map(|p| p.placements.len()).sum();
-    let parts_area: f64 = pieces.iter().map(|p| p.parts_area).sum();
-    let stock_area: f64 = pieces.iter().map(|p| p.stock_area).sum();
+    // Added up from 0.0: an f64 `sum` over nothing is -0.0, which a nesting with nothing
+    // placed showed as -0.0 areas (lane 30).
+    let parts_area: f64 = pieces.iter().fold(0.0, |s, p| s + p.parts_area);
+    let stock_area: f64 = pieces.iter().fold(0.0, |s, p| s + p.stock_area);
     let totals = NestTotals {
         sheets: groups
             .iter()

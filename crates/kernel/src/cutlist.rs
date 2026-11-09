@@ -1667,7 +1667,9 @@ fn totals(rows: &[CutRow], r: Rounding) -> CutTotals {
             .iter()
             .map(|r| r.total - r.occurrences.iter().filter(|o| o.visible).count())
             .sum(),
-        board_feet: counted().map(|r| r.board_feet).sum(),
+        // Added up from 0.0: an f64 `sum` over nothing is -0.0, which a model with no
+        // lumber showed as "board_feet": -0.0 (lane 30).
+        board_feet: counted().fold(0.0, |s, r| s + r.board_feet),
         lumber: lumber
             .into_iter()
             .map(|(material, board_feet)| LumberTotal {

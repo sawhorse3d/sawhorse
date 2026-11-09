@@ -84,6 +84,49 @@ describe("Nesting section", () => {
     vi.useRealTimers();
   });
 
+  // Lane 30, from the #33 review: the field's 700 ms pause timer kept the value, the shown
+  // text and the settings of the render it was set in.
+  it("Enter commits a typed kerf once: the pause after the typing does not commit it again", () => {
+    vi.useFakeTimers();
+    const p = props();
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    // Typed the way the field shows lengths, so the shown text will not change it back.
+    fireEvent.change(kerf, { target: { value: "3/16 in" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    // The app applies it and the field shows it.
+    const n = smallNesting();
+    rerender(<NestingSection {...p} nesting={{ ...n, settings: { ...n.settings, kerf: (3 / 16) * IN } }} />);
+    expect(kerf.value).toBe("3/16 in");
+    vi.advanceTimersByTime(800);
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("a value changed from outside while a typed one waits is kept: the timer neither commits again nor undoes the other field", () => {
+    vi.useFakeTimers();
+    const p = props();
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    fireEvent.change(kerf, { target: { value: "3/16 in" } });
+    vi.advanceTimersByTime(300);
+    // A plugin (or Redo) sets the kerf to what was typed and the trim to 1/4 in.
+    const n = smallNesting();
+    rerender(<NestingSection {...p} nesting={{ ...n, settings: { ...n.settings, kerf: (3 / 16) * IN, trim: IN / 4 } }} />);
+    expect(kerf.value).toBe("3/16 in");
+    expect((screen.getByLabelText("Trim") as HTMLInputElement).value).toBe("1/4 in");
+    vi.advanceTimersByTime(800);
+    // Nothing to commit: the kerf already is 3/16, and the trim must not go back to 0.
+    expect(p.onSettings).not.toHaveBeenCalled();
+    // Typing after that commits against the settings as they are now.
+    fireEvent.change(kerf, { target: { value: "1/16" } });
+    vi.advanceTimersByTime(800);
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 16, trim: IN / 4, algorithm: "guillotine" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it("exports: every SVG, one piece's SVG, both DXFs and the PDF", () => {
     const p = props();
     render(<NestingSection {...p} />);

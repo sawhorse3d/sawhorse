@@ -4,7 +4,7 @@
 // stock takes, with why; then one diagram per sheet or board, drawn to scale, each part
 // labelled with its tag (hover: its name and size, and the part lights up in the model;
 // click: select it), the cuts in order underneath; and the SVG, DXF and PDF exports.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { NestAlgorithm, Nesting, NestSettings, Placement, StockPiece } from "../kernel/types";
 import { parseLength, type UnitSystem } from "../lib/units";
 import { diagram } from "../nesting/diagram";
@@ -38,19 +38,36 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
   const [text, setText] = useState(shown);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => setText(shown), [shown]);
+  // Lane 30 (from the #33 review): a commit reads the value and the settings as they are
+  // now, not as they were when the pause timer was set. The timer used to keep its render's:
+  // Enter, then the pause, committed the same length twice, and a change from outside while
+  // a typed length waited (a plugin, Redo) was undone in the other field when it fired.
+  const now = useRef({ value, shown, units, rounding, max, label, onCommit });
+  now.current = { value, shown, units, rounding, max, label, onCommit };
+  const timer = useRef<number | null>(null);
+  const stopTimer = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+  };
   const commit = (t: string) => {
-    if (t.trim() === shown) return setErr(null);
-    const r = parseLength(t, units);
+    // Enter or leaving the field commits now; the pause has nothing left to do.
+    stopTimer();
+    const c = now.current;
+    if (t.trim() === c.shown) return setErr(null);
+    const r = parseLength(t, c.units);
     if (!r.ok) return setErr(r.error);
-    if (r.metres < 0 || r.metres > max) return setErr(`${label}: 0 to ${fineU(max, rounding)}.`);
+    if (r.metres < 0 || r.metres > c.max) return setErr(`${c.label}: 0 to ${fineU(c.max, c.rounding)}.`);
     setErr(null);
-    if (Math.abs(r.metres - value) > 1e-9) onCommit(r.metres);
+    if (Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
   };
   // A short pause after typing re-nests too.
   useEffect(() => {
     if (text === shown) return;
-    const t = window.setTimeout(() => commit(text), 700);
-    return () => window.clearTimeout(t);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      commit(text);
+    }, 700);
+    return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return (

@@ -61,6 +61,57 @@ fn the_cut_list_is_the_kernels_own_for_the_file() {
     assert!(v["hash"].as_str().unwrap().len() >= 8);
 }
 
+/// A model with nothing to cut, saved as a .shz.
+fn empty() -> Vec<u8> {
+    sawhorse_shz::write(
+        Document::with_ground_sketch().model(),
+        &SaveOptions {
+            display_units: Some("mm".to_string()),
+            thumbnail_png: None,
+            generator: None,
+            plugin_data: None,
+        },
+    )
+    .unwrap()
+}
+
+/// Lane 30: a model with no lumber printed `"board_feet":-0.0` in its totals (a float sum
+/// over nothing is -0.0 in Rust), and its nesting `-0.0` areas. Totals are formed from zero.
+#[test]
+fn nothing_to_cut_totals_zero_not_minus_zero() {
+    let bytes = empty();
+    let cut = cut_list_json(&bytes, &CutOptions::default(), false).unwrap();
+    assert!(cut.contains(r#""board_feet":0.0"#), "{cut}");
+    assert!(!cut.contains("-0.0"), "{cut}");
+    let v: serde_json::Value = serde_json::from_str(&cut).unwrap();
+    assert!(
+        v["totals"]["board_feet"]
+            .as_f64()
+            .unwrap()
+            .is_sign_positive()
+    );
+    let nest = nest_json(&bytes, &NestOptions::default(), false).unwrap();
+    assert!(!nest.contains("-0.0"), "{nest}");
+    let n: serde_json::Value = serde_json::from_str(&nest).unwrap();
+    for k in ["parts_area", "stock_area"] {
+        assert!(
+            n["totals"][k].as_f64().unwrap().is_sign_positive(),
+            "{k}: {nest}"
+        );
+    }
+    // The pretty printer says the same.
+    let pretty = cut_list_json(&bytes, &CutOptions::default(), true).unwrap();
+    assert!(pretty.contains(r#""board_feet": 0.0"#), "{pretty}");
+    // A model with lumber adds up as before: the total is its one row's board feet.
+    let (_, shelf) = shelves();
+    let v: serde_json::Value =
+        serde_json::from_str(&cut_list_json(&shelf, &CutOptions::default(), false).unwrap())
+            .unwrap();
+    let row = v["rows"][0]["board_feet"].as_f64().unwrap();
+    assert!(row > 0.0, "{v}");
+    assert_eq!(v["totals"]["board_feet"].as_f64().unwrap(), row);
+}
+
 #[test]
 fn rounding_and_visible_only_reach_the_kernel() {
     let (d, bytes) = shelves();
