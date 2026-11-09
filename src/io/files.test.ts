@@ -1,7 +1,10 @@
 // Lane 16 (C6): a file is measured before it is read. A dropped or chosen file over its
 // limit is refused by its size, without its bytes ever being read.
-import { describe, expect, it, vi } from "vitest";
-import { checkSize, FileTooLarge, MAX_READ_BYTES, readBrowserFile, readLimit } from "./files";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { askYesNo, checkSize, FileTooLarge, MAX_READ_BYTES, readBrowserFile, readLimit } from "./files";
+
+const dialog = vi.hoisted(() => ({ confirm: vi.fn<(message: string, options?: object) => Promise<boolean>>() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 
 /** A File that says it is `size` bytes and fails the test if it is read. */
 function claimed(name: string, size: number) {
@@ -36,5 +39,44 @@ describe("reading files", () => {
   it("checkSize names the file, its size and the limit", () => {
     expect(() => checkSize("C/models/big.zip", 100 * 1024 * 1024)).toThrow("big.zip is 100 MB; Sawhorse reads plugin packages of at most 64 MB");
     expect(() => checkSize("small.zip", 1024)).not.toThrow();
+  });
+});
+
+// The desktop's dialog plugin replaces window.confirm with an asynchronous one: a Promise,
+// truthy whatever the answer, to code that does not wait. The question is asked where each
+// host answers it, and awaited.
+describe("asking before discarding", () => {
+  const w = window as unknown as Record<string, unknown>;
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__;
+    dialog.confirm.mockReset();
+  });
+
+  it("in the browser it is window.confirm, answered at once", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await expect(askYesNo("Discard the unsaved changes to this model?")).resolves.toBe(false);
+    expect(confirm).toHaveBeenCalledWith("Discard the unsaved changes to this model?");
+    confirm.mockReturnValue(true);
+    await expect(askYesNo("Again?")).resolves.toBe(true);
+    confirm.mockRestore();
+    expect(dialog.confirm).not.toHaveBeenCalled();
+  });
+
+  it("in the desktop app it is the dialog plugin's question, with the app's name, waited for", async () => {
+    w.__TAURI_INTERNALS__ = {};
+    const confirm = vi.spyOn(window, "confirm");
+    let answer: ((yes: boolean) => void) | null = null;
+    dialog.confirm.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
+    const asked = askYesNo("Discard the unsaved changes to this model?");
+    let settled = false;
+    void asked.then(() => (settled = true));
+    // The plugin is loaded on demand, so the question reaches it a few ticks later.
+    await vi.waitFor(() => expect(dialog.confirm).toHaveBeenCalledWith("Discard the unsaved changes to this model?", expect.objectContaining({ title: "Sawhorse" })));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    answer!(false);
+    await expect(asked).resolves.toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });
