@@ -268,8 +268,8 @@ fn a_lock_does_not_project_a_point_level_with_the_start_back_onto_it() {
 fn skipped_start_lines_leave_a_square_corner_seen_in_3d_to_the_grid() {
     // Issue #9: a rectangle from the origin to 12 x 12 in, seen from an eye in the plane
     // x = y as in an iso view. The square's diagonal lies over the blue axis on screen, so
-    // the blue axis through the start wins: a rectangle standing up with no width. With the
-    // axes skipped (the Rectangle's far corner, plane still open) the grid gets the corner.
+    // the blue axis through the start wins: a rectangle standing up with no width. With blue
+    // skipped (the Rectangle's far corner, plane still open) the grid gets the corner.
     let m = model(&[]);
     let eye = DVec3::new(-3.0, -3.0, 3.0);
     let corner = DVec3::new(12.0 * IN, 12.0 * IN, 0.0);
@@ -287,7 +287,7 @@ fn skipped_start_lines_leave_a_square_corner_seen_in_3d_to_the_grid() {
         ..down(0.0, 0.0, 0.0)
     };
     assert_eq!(run(&m, &q).kind, K::AxisZ);
-    q.start_skip = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    q.start_skip = vec![[0.0, 0.0, 1.0]];
     let r = run(&m, &q);
     assert_eq!(r.kind, K::Grid);
     assert!(close(r.point, corner.to_array()), "{:?}", r.point);
@@ -295,22 +295,36 @@ fn skipped_start_lines_leave_a_square_corner_seen_in_3d_to_the_grid() {
 
 #[test]
 fn skipped_start_lines_take_their_from_point_alignments_and_only_those_directions() {
-    let axes = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    // A "from point" on a skipped line would still be a zero-width rectangle.
+    let blue = vec![[0.0, 0.0, 1.0]];
+    // A "from point" on the blue line through the start, level with a point beside it, would
+    // still stand the rectangle up with no width. Seen from the front, 2 px off that line.
     let m = model(&[]);
-    let mut q = down(0.5, 0.002, 0.001);
-    q.start = Some([0.0, 0.0, 0.0]);
-    q.anchors = vec![[0.5, 0.3, 0.0]];
-    q.grid = false;
-    assert_eq!(run(&m, &q).kind, K::FromPoint);
-    q.start_skip = axes.clone();
-    assert!(close(run(&m, &q).point, [0.5, 0.002, 0.0]));
+    let eye = [0.002, -10.0, 0.5];
+    let mut q = InferQuery {
+        origin: eye,
+        dir: [0.0, 1.0, 0.0],
+        px: PixelModel {
+            ortho: true,
+            scale: 0.001,
+            eye,
+            forward: [0.0, 1.0, 0.0],
+        },
+        start: Some([0.0, 0.0, 0.0]),
+        anchors: vec![[0.3, 0.0, 0.5]],
+        grid: false,
+        ..down(0.0, 0.0, 0.0)
+    };
+    let r = run(&m, &q);
+    assert_eq!(r.kind, K::FromPoint);
+    assert!(close(r.point, [0.0, 0.0, 0.5]), "{:?}", r.point);
+    q.start_skip = blue.clone();
+    assert!(close(run(&m, &q).point, [0.002, 0.0, 0.5]));
     // A diagonal reference is not one of a rectangle's sides: the far corner keeps it.
     let mut q = down(2.5, 0.5, 0.001);
     q.start = Some([2.0, 0.0, 0.0]);
     q.refs = vec![[[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]];
     q.grid = false;
-    q.start_skip = axes;
+    q.start_skip = blue;
     let r = run(&m, &q);
     assert_eq!(r.kind, K::Parallel);
     assert!(close(r.point, [2.5, 0.5, 0.0]), "{:?}", r.point);
