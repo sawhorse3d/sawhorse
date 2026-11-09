@@ -85,7 +85,11 @@ fn open_plugin_folder(app: AppHandle, path: String) -> Result<(), String> {
 
 /// Save a file without ever leaving it half written (lane 16, `sawhorse-safe-save`): the
 /// bytes are the request's raw body, the path a percent-encoded `x-path` header. Only a path
-/// in the fs scope (one the person picked in a Save dialog, or opened) is written.
+/// in the fs scope (one the person picked in a Save dialog, or opened) is written, or one
+/// the page made from such a path by adding the file type's extension (GTK's Save dialog
+/// hands the name back as typed): then, if a file of that name already exists, the dialog
+/// never asked about it, so the save is refused with `exists:<name>` unless the request
+/// carries `x-replace: yes`, which the page sends after asking.
 #[tauri::command]
 fn save_file_atomic(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
@@ -99,19 +103,40 @@ fn save_file_atomic(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
         .ok_or("save_file_atomic needs the path in its x-path header")?;
     let path = std::path::PathBuf::from(path);
     let scope = app.fs_scope();
+    let direct = scope.is_allowed(&path);
     // The page puts the file type's extension on a name the dialog returned without one
     // (GTK's chooser hands the name back as typed; Windows and macOS add the filter's), so
-    // the path the person chose may be this one less its last extension.
-    let chosen = sawhorse_safe_save::without_added_extension(&path);
-    if !scope.is_allowed(&path) && !chosen.as_deref().is_some_and(|c| scope.is_allowed(c)) {
+    // the path the person chose may be this one less its added extension: 1 to 10 letters
+    // or digits, and never a folder (`sawhorse_safe_save::without_added_extension`).
+    let via_added_extension = !direct
+        && sawhorse_safe_save::without_added_extension(&path)
+            .is_some_and(|chosen| scope.is_allowed(&chosen));
+    if !direct && !via_added_extension {
         return Err(format!(
             "{} was not chosen in a Save dialog",
             path.display()
         ));
     }
+    if via_added_extension && path.exists() {
+        // The dialog asked about the typed name, not this one: the page asks, then resends.
+        let consented = request
+            .headers()
+            .get("x-replace")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v == "yes");
+        if !consented {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return Err(format!("exists:{name}"));
+        }
+    }
     sawhorse_safe_save::write_atomic(&path, bytes).map_err(|e| e.to_string())?;
-    // The file is now the one chosen: later saves and reads go by its full name.
-    let _ = scope.allow_file(&path);
+    if via_added_extension {
+        // The file is now the one chosen: later saves and reads go by its full name.
+        let _ = scope.allow_file(&path);
+    }
     Ok(())
 }
 

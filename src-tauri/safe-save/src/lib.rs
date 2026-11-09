@@ -88,10 +88,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SaveError> {
 /// The path a Save dialog returned when the page put the file type's extension on it
 /// (GTK's chooser hands the name back as typed, without one; Windows and macOS add the
 /// filter's): `path` less its last extension, `cabinet.shz` to `cabinet` and
-/// `cabinet.v2.shz` to `cabinet.v2`. None when there is no extension to take off.
+/// `cabinet.v2.shz` to `cabinet.v2`. None when there is nothing to take off that the page
+/// could have added: the extension must be 1 to 10 ASCII letters or digits (the rule the
+/// plugins' `file.save` keeps), and the path less its extension must not be a folder, so
+/// a folder the person picked (Load unpacked folder) never makes `<folder>.shz` writable.
 pub fn without_added_extension(path: &Path) -> Option<PathBuf> {
-    path.extension()?;
-    Some(path.with_extension(""))
+    let ext = path.extension()?.to_str()?;
+    if ext.is_empty() || ext.len() > 10 || !ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let chosen = path.with_extension("");
+    if chosen.is_dir() {
+        return None;
+    }
+    Some(chosen)
 }
 
 /// Percent-decode a path sent from the webview in a header (`encodeURIComponent`).
@@ -189,5 +199,56 @@ mod added_extension {
     fn a_name_without_an_extension_has_none_to_take_off() {
         assert_eq!(without_added_extension(Path::new("/home/me/cabinet")), None);
         assert_eq!(without_added_extension(Path::new("/home/me/.shz")), None);
+    }
+
+    #[test]
+    fn only_an_extension_the_page_could_have_added_counts() {
+        // 1 to 10 ASCII letters or digits, as the plugins' file.save allows.
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.3mf")),
+            Some(PathBuf::from("/home/me/part"))
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.a234567890")),
+            Some(PathBuf::from("/home/me/part"))
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.a2345678901")),
+            None
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.tar-gz")),
+            None
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.sh z")),
+            None
+        );
+        assert_eq!(
+            without_added_extension(Path::new("/home/me/part.shz.")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_folder_less_its_extension_is_never_the_chosen_file() {
+        let dir =
+            std::env::temp_dir().join(format!("sawhorse-safe-save-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("plans")).unwrap();
+        // "plans" is a folder the person may have picked: "plans.shz" beside it is not theirs.
+        assert_eq!(without_added_extension(&dir.join("plans.shz")), None);
+        // A file of that name is fine.
+        std::fs::write(dir.join("cabinet"), b"x").unwrap();
+        assert_eq!(
+            without_added_extension(&dir.join("cabinet.shz")),
+            Some(dir.join("cabinet"))
+        );
+        // And so is a name that exists nowhere yet.
+        assert_eq!(
+            without_added_extension(&dir.join("new.shz")),
+            Some(dir.join("new"))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -274,7 +274,18 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
     // Lane 16: written beside, synced, read back, then renamed over the file (the previous
     // one kept as .bak), never truncated in place (src-tauri/safe-save).
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("save_file_atomic", bytes, { headers: { "x-path": encodeURIComponent(path) } });
+    const headers: Record<string, string> = { "x-path": encodeURIComponent(path) };
+    try {
+      await invoke("save_file_atomic", bytes, { headers });
+    } catch (e) {
+      // The extension was added here and a file of that name exists: the dialog asked
+      // about the typed name, not this one, so the shell refuses until the person agrees.
+      const message = e instanceof Error ? e.message : String(e);
+      if (!message.startsWith("exists:")) throw e;
+      if (!(await askYesNo(`${baseName(path)} already exists. Replace it?`))) return null;
+      if (signal?.aborted) return null;
+      await invoke("save_file_atomic", bytes, { headers: { ...headers, "x-replace": "yes" } });
+    }
     return { name: baseName(path), handle: { kind: "tauri", path } };
   }
   const api = fsa();

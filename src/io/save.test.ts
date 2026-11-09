@@ -7,7 +7,7 @@ import { type FileType, saveFile, SHZ, withExtension } from "./files";
 /** An export type, as the STL exporter names it. */
 const STL: FileType = { description: "STL", mime: "model/stl", extensions: [".stl"] };
 
-const dialog = vi.hoisted(() => ({ save: vi.fn<() => Promise<string | null>>() }));
+const dialog = vi.hoisted(() => ({ save: vi.fn<() => Promise<string | null>>(), confirm: vi.fn<(message: string, options?: object) => Promise<boolean>>() }));
 const core = vi.hoisted(() => ({ invoke: vi.fn<(cmd: string, body: unknown, opts: { headers: Record<string, string> }) => Promise<void>>() }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 vi.mock("@tauri-apps/api/core", () => core);
@@ -36,6 +36,7 @@ describe("saving in the desktop app", () => {
   afterEach(() => {
     delete w.__TAURI_INTERNALS__;
     dialog.save.mockReset();
+    dialog.confirm.mockReset();
     core.invoke.mockReset();
   });
 
@@ -64,6 +65,33 @@ describe("saving in the desktop app", () => {
     dialog.save.mockResolvedValue(null);
     expect(await saveFile("Untitled.shz", bytes, SHZ)).toBeNull();
     expect(core.invoke).not.toHaveBeenCalled();
+  });
+
+  it("a name that already exists once the extension is added is asked about, and No saves nothing", async () => {
+    dialog.save.mockResolvedValue("/home/me/cabinet");
+    core.invoke.mockRejectedValueOnce("exists:cabinet.shz");
+    dialog.confirm.mockResolvedValue(false);
+    expect(await saveFile("Untitled.shz", bytes, SHZ)).toBeNull();
+    expect(dialog.confirm).toHaveBeenCalledWith("cabinet.shz already exists. Replace it?", expect.objectContaining({ title: "Sawhorse" }));
+    expect(core.invoke).toHaveBeenCalledOnce();
+    expect(core.invoke.mock.calls[0][2].headers).not.toHaveProperty("x-replace");
+  });
+
+  it("Yes sends the save again with consent, and the file is replaced", async () => {
+    dialog.save.mockResolvedValue("/home/me/cabinet");
+    core.invoke.mockRejectedValueOnce(new Error("exists:cabinet.shz")).mockResolvedValueOnce(undefined);
+    dialog.confirm.mockResolvedValue(true);
+    const r = await saveFile("Untitled.shz", bytes, SHZ);
+    expect(core.invoke).toHaveBeenCalledTimes(2);
+    expect(core.invoke.mock.calls[1][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz"), "x-replace": "yes" });
+    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz" } });
+  });
+
+  it("any other refusal from the shell is an error, not a question", async () => {
+    dialog.save.mockResolvedValue("/home/me/cabinet");
+    core.invoke.mockRejectedValueOnce("/home/me/cabinet.shz was not chosen in a Save dialog");
+    await expect(saveFile("Untitled.shz", bytes, SHZ)).rejects.toMatch(/not chosen/);
+    expect(dialog.confirm).not.toHaveBeenCalled();
   });
 
   it("saving again goes to the handle's path without a dialog", async () => {
