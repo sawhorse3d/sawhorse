@@ -4,6 +4,12 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed (a right-drag pans a drawing sheet, 2026-11-09)
+
+- **A right-drag pans a drawing sheet, as it pans the 3D view; on a Mac, a Control+drag does too** ([#40](https://github.com/sawhorse3d/sawhorse/issues/40)). A sheet panned only on the middle button or Space+drag, and a right press did nothing there, so the right-drag that pans the model did nothing on the paper, and a Mac's Control+click (its right click) reached the sheet tools as a plain click.
+- How: the sheet canvas starts its pan on the right button and on a macOS Control+click (`isMacControlClick`, `src/lib/platform.ts`) as it does on the middle button; the browser's menu was already kept off the paper. Every platform gets the right-drag; Control+drag is macOS only.
+- Tests: `e2e/sheets.spec.ts` (with the View tool in hand, a right-drag and a macOS Control+drag each move the paper by the drag and place no viewport). It fails without the change.
+
 ### Fixed (Control+click is the right click on macOS, 2026-11-09)
 
 - **On a Mac, Control+drag pans the view, in every tool** ([#40](https://github.com/sawhorse3d/sawhorse/issues/40)). Control+click is the Mac's right click in every app, and with a one-button mouse, a trackpad, or a left hand on a Magic Mouse it is the right click that comes easily. Sawhorse took it as a left click with Ctrl held: in Select it toggled, in Paint it painted the whole solid, and the view never panned; only the right button itself did.

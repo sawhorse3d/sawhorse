@@ -319,3 +319,29 @@ test("a dimension on the model follows it when the model changes; a click on it 
   expect(d1.bounds[2]).toBeGreaterThan(36 * IN * f - 1e-9);
   await page.screenshot({ path: "test-results/sheets-dimension-follows.png" });
 });
+
+test("a right-drag pans the paper, and on macOS a Control+drag does too; neither places anything", async ({ page }) => {
+  // The browser here may not be on a Mac: say it is (the platform is all the app reads).
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
+  await ready(page);
+  await sheetsMode(page);
+  await page.getByRole("button", { name: "Add a sheet", exact: true }).first().click();
+  await expect.poll(async () => (await render(page))?.size[0]).toBeCloseTo(11 * IN, 9);
+  // The View tool is in hand: a plain drag would place a viewport.
+  await expect.poll(() => page.evaluate(() => (window as unknown as W).__sawhorse.sheet.tool())).toBe("viewport");
+  const mid: P2 = [5.5 * IN, 4.25 * IN];
+  for (const how of ["right", "control"] as const) {
+    const a = await client(page, mid);
+    const button = how === "right" ? "right" : "left";
+    await page.mouse.move(a[0], a[1]);
+    if (how === "control") await page.keyboard.down("Control");
+    await page.mouse.down({ button });
+    await page.mouse.move(a[0] - 60, a[1] + 30, { steps: 4 });
+    await page.mouse.move(a[0] - 120, a[1] + 50, { steps: 4 });
+    await page.mouse.up({ button });
+    if (how === "control") await page.keyboard.up("Control");
+    const b = await client(page, mid);
+    expect(Math.hypot(b[0] - (a[0] - 120), b[1] - (a[1] + 50)), how).toBeLessThan(1);
+    expect((await render(page))!.viewports, how).toHaveLength(0);
+  }
+});
