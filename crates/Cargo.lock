@@ -547,6 +547,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sawhorse-cli"
+version = "0.1.0-alpha.4"
+dependencies = [
+ "sawhorse-kernel",
+ "sawhorse-shz",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "sawhorse-export"
 version = "0.1.0-alpha.4"
 dependencies = [
