@@ -51,14 +51,18 @@ describe("saving in the desktop app", () => {
     expect(core.invoke.mock.calls[0][0]).toBe("save_file_atomic");
     expect(core.invoke.mock.calls[0][1]).toBe(bytes);
     expect(written()).toBe("/home/me/cabinet.shz");
-    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz" } });
+    // The dialog's own path travels with the save, so the shell can see the file is the person's.
+    expect(core.invoke.mock.calls[0][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz"), "x-chosen": encodeURIComponent("/home/me/cabinet") });
+    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz", chosen: "/home/me/cabinet" } });
   });
 
   it("a name chosen with the extension is saved as it is", async () => {
     dialog.save.mockResolvedValue("/home/me/Cabinet.SHZ");
     const r = await saveFile("Untitled.shz", bytes, SHZ);
     expect(written()).toBe("/home/me/Cabinet.SHZ");
-    expect(r?.name).toBe("Cabinet.SHZ");
+    // Nothing was added, so there is no chosen path to send: the dialog asked about replacing itself.
+    expect(core.invoke.mock.calls[0][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/Cabinet.SHZ") });
+    expect(r).toEqual({ name: "Cabinet.SHZ", handle: { kind: "tauri", path: "/home/me/Cabinet.SHZ" } });
   });
 
   it("a cancelled dialog saves nothing", async () => {
@@ -83,8 +87,8 @@ describe("saving in the desktop app", () => {
     dialog.confirm.mockResolvedValue(true);
     const r = await saveFile("Untitled.shz", bytes, SHZ);
     expect(core.invoke).toHaveBeenCalledTimes(2);
-    expect(core.invoke.mock.calls[1][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz"), "x-replace": "yes" });
-    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz" } });
+    expect(core.invoke.mock.calls[1][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz"), "x-chosen": encodeURIComponent("/home/me/cabinet"), "x-replace": "yes" });
+    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz", chosen: "/home/me/cabinet" } });
   });
 
   it("any other refusal from the shell is an error, not a question", async () => {
@@ -97,7 +101,15 @@ describe("saving in the desktop app", () => {
   it("saving again goes to the handle's path without a dialog", async () => {
     const r = await saveFile("cabinet.shz", bytes, SHZ, { kind: "tauri", path: "/home/me/cabinet.shz" });
     expect(dialog.save).not.toHaveBeenCalled();
-    expect(written()).toBe("/home/me/cabinet.shz");
-    expect(r?.name).toBe("cabinet.shz");
+    expect(core.invoke.mock.calls[0][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz") });
+    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz" } });
+  });
+
+  it("saving again to a file whose extension was added here sends the chosen path and consent, and asks nothing", async () => {
+    const r = await saveFile("cabinet.shz", bytes, SHZ, { kind: "tauri", path: "/home/me/cabinet.shz", chosen: "/home/me/cabinet" });
+    expect(dialog.save).not.toHaveBeenCalled();
+    expect(dialog.confirm).not.toHaveBeenCalled();
+    expect(core.invoke.mock.calls[0][2].headers).toEqual({ "x-path": encodeURIComponent("/home/me/cabinet.shz"), "x-chosen": encodeURIComponent("/home/me/cabinet"), "x-replace": "yes" });
+    expect(r).toEqual({ name: "cabinet.shz", handle: { kind: "tauri", path: "/home/me/cabinet.shz", chosen: "/home/me/cabinet" } });
   });
 });

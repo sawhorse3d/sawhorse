@@ -18,7 +18,12 @@ export interface FileType {
 }
 
 /** Where a picked or saved file lives, so Save can write it again. */
-export type FileHandle = { kind: "fsa"; handle: FsaFileHandle } | { kind: "tauri"; path: string };
+/**
+ * Where a saved file lives. On the desktop, `chosen` is the path the Save dialog returned
+ * when the type's extension was added here (`path` is it plus the extension); every later
+ * save sends it along, so the shell can see the file is the person's own.
+ */
+export type FileHandle = { kind: "fsa"; handle: FsaFileHandle } | { kind: "tauri"; path: string; chosen?: string };
 
 export interface PickedFile {
   name: string;
@@ -262,19 +267,32 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
   const { signal } = opts;
   if (signal?.aborted) return null;
   if (isTauri()) {
-    let path = handle?.kind === "tauri" ? handle.path : null;
-    if (!path) {
+    let path: string;
+    let chosen: string | undefined;
+    const again = handle?.kind === "tauri";
+    if (handle?.kind === "tauri") {
+      path = handle.path;
+      chosen = handle.chosen;
+    } else {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      path = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
-      if (!path || signal?.aborted) return null;
-      // A name typed without the extension gets it (the shell then allows the path, as the
-      // one chosen less its added extension: src-tauri/src/lib.rs, save_file_atomic).
-      path = withExtension(path, type);
+      const picked = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
+      if (!picked || signal?.aborted) return null;
+      // GTK's chooser hands the name back as typed (Windows and macOS add the filter's
+      // extension): a name without one of the type's gets the type's first, and the dialog's
+      // own path travels with the save so the shell can see the file is the person's
+      // (src-tauri/src/lib.rs, save_file_atomic; sawhorse-safe-save, decide).
+      path = withExtension(picked, type);
+      if (path !== picked) chosen = picked;
     }
     // Lane 16: written beside, synced, read back, then renamed over the file (the previous
     // one kept as .bak), never truncated in place (src-tauri/safe-save).
     const { invoke } = await import("@tauri-apps/api/core");
     const headers: Record<string, string> = { "x-path": encodeURIComponent(path) };
+    if (chosen) {
+      headers["x-chosen"] = encodeURIComponent(chosen);
+      // Saving again to the file this handle made: the person's own, no question.
+      if (again) headers["x-replace"] = "yes";
+    }
     try {
       await invoke("save_file_atomic", bytes, { headers });
     } catch (e) {
@@ -286,7 +304,7 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
       if (signal?.aborted) return null;
       await invoke("save_file_atomic", bytes, { headers: { ...headers, "x-replace": "yes" } });
     }
-    return { name: baseName(path), handle: { kind: "tauri", path } };
+    return { name: baseName(path), handle: chosen ? { kind: "tauri", path, chosen } : { kind: "tauri", path } };
   }
   const api = fsa();
   if (api) {
