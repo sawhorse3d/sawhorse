@@ -56,12 +56,19 @@ Readers must ignore entries and JSON fields they do not know. Writers must not p
 
 Numbers are JSON numbers written so that they read back to the same IEEE 754 double (Sawhorse writes shortest round-trip decimals). All coordinates are metres, Z up, right-handed.
 
+### Ids (lane 28)
+
+Every list whose entries ops and other entries name by number carries each entry's `id`: `sketches`, `objects`, `meshes`, `nodes`, `definitions`, `guides`, `dimensions`, `sections` and `sheets`. An id is the entry's slot (the low 32 bits, at least 1) and how many times that slot was used before (the high bits): `1`, `2`, `3` for a model where nothing was deleted, `4294967297` (slot 1, used once before) after something was deleted and something new took its place. A list may have gaps. A reader keeps every id exactly as written, so the opened model is the one saved: the same ids, the same model hash, and every reference (a `parent`, a scene's `context` or `sections`, a group's `objects`, a plugin's data in `plugin-data.json`) still names the same thing. Ids are unique within their list (two entries in one slot are refused); a slot is at most twice that list's limit (below; sketches: twice the solids'); a reader refuses a file whose ids would take more than about 17 million steps to restore (one per slot up to a list's largest and one per earlier use).
+
+`sketches`, `definitions`, `guides`, `dimensions` and `sheets` have carried `id` since lane 28 (after 0.1.0-alpha.4). In an older file that list has none, and its entries are numbered 1, 2, 3 ... in the order listed, as older readers numbered them. Older readers ignore the new fields. Before lane 28 Sawhorse numbered every list 1, 2, 3 ... on open, so a model with a deletion in it opened with other ids and another hash, and Save, which reads its own file back and compares the hash (lane 16), refused to write it ([#21](https://github.com/sawhorse3d/sawhorse/issues/21), [#34](https://github.com/sawhorse3d/sawhorse/issues/34), [#35](https://github.com/sawhorse3d/sawhorse/issues/35)).
+
 ### `sketches[]`
 
 A sketch is a planar graph of strokes whose closed circuits are regions.
 
 | Field | Type | Meaning |
 |---|---|---|
+| `id` | integer, optional | The id it had when saved (lane 28; see Ids). Absent in older files. |
 | `plane` | plane | The sketch plane: `origin`, `normal`, `u`, `v`, each `[x, y, z]`. `normal`, `u`, `v` are unit length, `u` x `v` = `normal`. |
 | `vertices` | `[[u, v], ...]` | Vertex positions in the plane's frame (metres along `u` and `v`). |
 | `edges` | `[[a, b], ...]` | Edges as indices into `vertices`. No two edges cross, overlap or repeat; no vertex lies on an edge it does not end; every vertex has an edge. |
@@ -90,7 +97,7 @@ An object is a watertight solid.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | integer | The id it had when saved; `groups` refer to objects by it. Unique in the file. |
+| `id` | integer | The id it had when saved (see Ids); `groups` refer to objects by it. Unique in the file. A reader keeps it (since lane 28). |
 | `name`, `tag`, `material` | string, optional | Display name; tag (layer) name, which must be a key of `tags`; material name, which must be in `materials`. |
 | `next_face_id` | integer | The next persistent face id the object will hand out. Greater than every face id. |
 | `number` | integer, optional | Display number ("Solid 3"), at least 1. Kept on open when every solid has one and none repeats; otherwise every solid is renumbered in saved order. |
@@ -124,7 +131,7 @@ The model is a tree. Its inner nodes are groups and component instances; solids,
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | integer | The id it had when saved. Unique among nodes. |
+| `id` | integer | The id it had when saved (see Ids). Unique among nodes. A reader keeps it (since lane 28). |
 | `kind` | `"group"` or `"instance"` | |
 | `definition` | integer | Instances only: index into `definitions`. |
 | `parent` | integer, optional | The node it is in. Absent: the top level. Parents form no cycle. |
@@ -144,6 +151,7 @@ A component definition is geometry and structure its instances share, stored onc
 
 | Field | Type | Meaning |
 |---|---|---|
+| `id` | integer, optional | The id it had when saved (lane 28; see Ids). Absent in older files. Instances still name their definition by its index in this list. |
 | `name` | string | Shown for every instance without a name of its own. |
 | `next_slot` | integer | Greater than every member's `slot`; slots are never reused. |
 | `members` | member[] | What the definition holds. |
@@ -187,8 +195,8 @@ Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`
 | `style` | style, optional | The drawing style (absent: the default). `{ "preset"?, "face"?: "textured" / "shaded" / "monochrome" / "hidden_line" / "wireframe" / "x_ray", "edges"?: { "edges"?, "profiles"?, "extensions"?, "endpoints"? }, "background"?: [r, g, b], "sky"?: [r, g, b], "ground"?: [r, g, b], "section_cuts"?, "section_planes"?, "section_fill"?, "section_fill_color"?: [r, g, b], "section_line_color"?: [r, g, b], "section_line_width"?, "grid"? }`. Absent fields take the defaults: textured, edges on, the rest off, the theme's background, no sky or ground, section cuts, planes and fill on (lane 12: `section_cuts` makes active planes cut, `section_planes` draws the planes, `section_fill` fills the cut faces), the theme's section fill, the edge colour for cut lines, cut lines 3 px (1 to 12), and the ground grid shown (lane 21: `"grid": false` hides it; it is written only when false, so a file from before lane 21 shows the grid). |
 | `shadows` | shadows, optional | The sun: `{ "on", "month" (1-12), "day", "minutes" (after midnight, local solar time), "latitude" (degrees, -90..90), "light", "dark" (0..100), "ground", "faces" }`. North is +Y. |
 | `scenes[]` | `{ "name", "eye", "target", "up", "fov", "parallel", "hidden_tags"?, "context"?, "style"?, "shadows"?, "sections"?, "grid"? }` | Saved views: camera in metres, vertical field of view in degrees (for a parallel view, the angle a perspective camera at the eye's distance would need to show the same height), parallel or perspective projection, the tags the scene hides (every other tag is shown when it is activated), the node open for editing in it, and the style and shadows it brings back when activated (absent: it leaves them as they are). `sections` (lane 12) is `{ "active"?: [section id, ...], "hidden"?: [section id, ...] }`: activating the scene makes exactly those planes active and hidden and every other plane inactive and shown (`{}`: no plane cuts); absent, the scene leaves the planes as they are. `grid` (lane 26), `true` or `false`: the ground grid shown when the scene is activated; absent (older files, imported scenes): the scene leaves the grid as it is; `null` reads as absent (lane 27). Activating a scene sets the style's `grid` to it, after bringing back the scene's `style` if it has one (so when both are present, `grid` wins; Sawhorse writes them to agree); a style that ends up the default is stored as no style. Sawhorse writes `grid` on every scene it saves or updates, so a scene saved with the default style (stored as no `style`) still brings the grid back. Names are unique. |
-| `guides[]` | `{ "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). |
-| `dimensions[]` | `{ "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. |
+| `guides[]` | `{ "id"?, "point", "dir"? }` | Construction lines (a point and a unit direction) and guide points (no `dir`). A unit `dir` is read exactly as written (lane 28; one that is not unit is normalised). `id` since lane 28 (see Ids). |
+| `dimensions[]` | `{ "id"?, "a", "b", "offset" }` | Linear dimensions between `a` and `b`, the line drawn at `offset` from them. `id` since lane 28 (see Ids). |
 | `last_number` | integer, optional | The last display number handed out, so a deleted solid's number is not reused after a reopen. |
 | `stock` | stock library, optional | The sheets and boards the model's parts are nested on, each material's default stock, and the nesting settings (below). Absent: the built-in library. |
 
@@ -233,10 +241,10 @@ A reader refuses a library that breaks any rule above (as it refuses any invalid
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | integer | The plane's id in this file; scenes refer to it. Unique. A reader may renumber planes (Sawhorse does), mapping the scenes' ids along. |
+| `id` | integer | The plane's id when saved (see Ids); scenes refer to it. Unique. Since lane 28 a reader keeps it (before, Sawhorse renumbered planes on open, mapping the scenes' ids along). |
 | `name` | string | 1 to 64 characters. |
 | `origin` | [x, y, z] | A point on the plane, metres, model coordinates. |
-| `normal` | [x, y, z] | The direction of the side the plane **keeps**. A reader normalises it and refuses a zero or non-finite one. Everything on the other side is cut away while the plane is active. |
+| `normal` | [x, y, z] | The direction of the side the plane **keeps**. A reader normalises it and refuses a zero or non-finite one; a unit one is read exactly as written (lane 28: normalising it again moved it by the last bit on every save). Everything on the other side is cut away while the plane is active. |
 | `parent` | integer, optional | The node (`nodes[].id`) the plane is in: a group or a component instance (the plane belongs to that copy, not to the definition). Absent: the model's top level. |
 | `active` | boolean, optional | The plane cuts. At most one active plane per `parent` (the top level counts as one). Absent: false. |
 | `hidden` | boolean, optional | The plane is not drawn (an active hidden plane still cuts). Absent: false. |
@@ -271,6 +279,7 @@ The cut itself is not stored: it is computed from the planes and the solids, the
 
 | Field | Type | Meaning |
 |---|---|---|
+| `id` | integer, optional | The sheet's id when saved (lane 28; see Ids). Absent in older files. |
 | `name` | string | 1 to 64 characters. |
 | `paper` | `{ "kind": "letter" / "legal" / "tabloid" / "a4" / "a3" / "a2" }` or `{ "kind": "custom", "width", "height" }` | The paper, given portrait (Letter 8.5 x 11 in, Legal 8.5 x 14, Tabloid 11 x 17, A4 210 x 297 mm, A3 297 x 420, A2 420 x 594; custom in metres, 50 mm to 2 m each side). |
 | `landscape` | boolean, optional | Turned on its side. Absent: portrait. |
@@ -316,6 +325,8 @@ A reader may refuse a file that would take unreasonable memory or time to read; 
 - components nested more than 64 deep, a definition that contains itself, or a model whose components would derive more than the model limits (100,000 solids and meshes, 100,000 groups and instances, 20,000 definitions, 5,000,000 faces, 10,000,000 points), counted along the definitions before anything is derived.
 - (lane 16b) more than a model may hold of what `scene.json` lists: 50,000 `guides`, 50,000 `dimensions`, 10,000 `tags`, 10,000 `tag_colors`, 4,096 `materials`, 1,000 `scenes` (each hiding at most 10,000 tags), 1,000 `sections`, 200 `sheets` (each of at most 2,000 items), 512 `textures`, 100,000 `objects` or `meshes`, 100,000 `nodes`, 20,000 `definitions`. A reader counts these as it reads `scene.json`, without building them, and may stop at the first element past a limit; a file that lists more is refused as a whole.
 
+- (lane 28) ids no model could have: zero, a slot over twice its list's limit, one slot listed twice, or ids whose restoring would take more than 2^24 steps (see Ids).
+
 Files Sawhorse writes are always within these. `docs/LIMITS.md` lists every limit with its reason.
 
 ## Compatibility rules
@@ -327,4 +338,4 @@ Files Sawhorse writes are always within these. `docs/LIMITS.md` lists every limi
 
 ## Reference implementation
 
-`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/kernel/src/stock.rs` (the stock library and its rules), `crates/kernel/src/section.rs` and `sheets.rs` (section planes and sheets, lane 12), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals), `crates/kernel/src/snapshot.rs` (every golden document round-trips), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).
+`crates/shz` (write and read), `crates/kernel/src/snapshot.rs` (the model data and its validation), `crates/kernel/src/nodes.rs` (groups, components and how instances are derived), `crates/kernel/src/stock.rs` (the stock library and its rules), `crates/kernel/src/section.rs` and `sheets.rs` (section planes and sheets, lane 12), `crates/export/src/gltf.rs` (`geometry.glb`). Tests: `crates/shz/src/lib.rs` (save then open gives the same model hash, with and without groups, components, tags and scenes; a file with no B-rep is rebuilt from `geometry.glb` in place; lane-6 flat groups still open; refusals; lane 28: the cabinet generator's cabinet updated in place, exploded, grouped and deleted parts, components copied, scaled, made unique and deleted, a deletion from every list, refused ids, files without the new ids), `crates/kernel/src/snapshot.rs` (every golden document round-trips, with its ids), `crates/kernel/src/testing.rs` (`check_saved`, lane 28: every sequence the op fuzzer and the repro files build is saved, opened and compared), `src/io/save-roundtrip.wasm.test.ts` (every corpus `.skp` imported, saved and opened through the WASM kernel, lane 28), `crates/kernel/tests/structure.rs` (a definition's geometry is stored once; tampered instances are refused).

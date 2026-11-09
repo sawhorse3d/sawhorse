@@ -124,6 +124,69 @@ test("cabinet generator: Update replaces the selected cabinet in place", async (
   expect(box(second)).toEqual(box(first));
 });
 
+// Lane 28 (#34, #21): Generate pressed again with the cabinet selected ("Update selected
+// cabinet") deletes the old cabinet and makes a new one in its slots, and Explode removes
+// the cabinet's instance; either left ids the file reader numbered afresh, so Ctrl+S said
+// "Could not save: the file did not read back as written: the model differs", and kept
+// saying it for every edit after. Each is saved here, opened again, and must be the same
+// model; the cabinet the plugin keeps in the document is still the one it updates.
+async function saveAndReopen(page: Page) {
+  const vp = page.locator("main.vp");
+  const hash = await vp.getAttribute("data-hash");
+  const [d] = await Promise.all([page.waitForEvent("download"), page.keyboard.press("Control+s")]);
+  await expect(page.locator("#hint")).toContainText(/Saved (Untitled|cabinet)\.shz/);
+  const bytes = readFileSync((await d.path())!);
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New", exact: true }).click();
+  await expect.poll(async () => (await solids(page)).length).toBe(0);
+  await page.getByTestId("file-input").setInputFiles({ name: "cabinet.shz", mimeType: "application/octet-stream", buffer: bytes });
+  await expect(page).toHaveTitle("cabinet - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+}
+
+test("cabinet generator: a cabinet updated in place saves and opens as the same model, and Update still finds it (#34)", async ({ page }) => {
+  await start(page);
+  await enable(page, CABINET, "Cabinet generator", ["model.read", "model.write", "ui", "storage"]);
+  const panel = `${CABINET}/cabinet`;
+  const generate = page.locator(`[data-panel="${panel}"] [data-action="generate"]`);
+  await generate.click();
+  await expect(page.locator("#hint")).toContainText("Made a cabinet");
+  await field(page, panel, "shelves", "2");
+  await generate.click();
+  await expect(page.locator("#hint")).toContainText("Updated the cabinet");
+  await saveAndReopen(page);
+  expect(await solids(page)).toHaveLength(8);
+  // The plugin's stored id names the reopened cabinet: selected, the button updates it.
+  await page.getByRole("tab", { name: "Outliner" }).click();
+  await page.locator('.outline li[data-kind="instance"]', { hasText: "Cabinet" }).first().locator(".label").first().click();
+  await page.getByRole("tab", { name: "Plugins" }).click();
+  await expect(generate).toHaveText("Update selected cabinet");
+  await field(page, panel, "shelves", "3");
+  await generate.click();
+  await expect(page.locator("#hint")).toContainText("Updated the cabinet");
+  expect(await solids(page)).toHaveLength(9);
+  // And the model saves again.
+  await saveAndReopen(page);
+});
+
+test("cabinet generator: a cabinet exploded and its parts grouped saves and opens as the same model (#21)", async ({ page }) => {
+  await start(page);
+  await enable(page, CABINET, "Cabinet generator", ["model.read", "model.write", "ui", "storage"]);
+  await page.locator(`[data-panel="${CABINET}/cabinet"] [data-action="generate"]`).click();
+  await expect(page.locator("#hint")).toContainText("Made a cabinet");
+  // The new cabinet is selected: Ctrl+Shift+G explodes it into its parts.
+  await page.keyboard.press("Control+Shift+g");
+  await expect(page.locator("#hint")).toContainText("Exploded");
+  // Its seven parts are top-level components now; all of them grouped.
+  const top = async () => (await page.evaluate(() => (window as unknown as { __sawhorse: { graph(): { nodes: { kind: string; parent: number | null }[] } } }).__sawhorse.graph())).nodes.filter((n) => n.parent === null).map((n) => n.kind);
+  await expect.poll(top).toEqual(Array(7).fill("instance"));
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+g");
+  await expect.poll(top).toEqual(["group"]);
+  await saveAndReopen(page);
+  expect(await solids(page)).toHaveLength(7);
+});
+
 test("shelf pin holes: hover a face, see the column, click to drill it; one undo removes it", async ({ page }) => {
   await start(page);
   await enable(page, PINS, "Shelf pin holes", ["model.read", "model.write", "ui", "storage"]);

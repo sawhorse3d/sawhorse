@@ -146,6 +146,44 @@ test("save as .shz, start a new model, open the file again", async ({ page }) =>
   await expect(page.locator(".hud")).toContainText("undo 0");
 });
 
+// Lane 28: when Save's own file would not open as the same model (the read-back check, made
+// to fail here through ?kerneltest=1), nothing is written, the status says what to do, and the
+// work stays: the model, its undo, the unsaved mark. The next Ctrl+S saves it.
+test("a save refused by its read-back check writes nothing and keeps the unsaved work", async ({ page }) => {
+  await page.goto("/?io=basic&kerneltest=1");
+  const vp = page.locator("main.vp");
+  await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
+  if (!requireKernel && (await vp.getAttribute("data-kernel")) === "missing") test.skip(true, "kernel WASM not built (run npm run wasm)");
+  await expect(vp).toHaveAttribute("data-kernel", "ready");
+  await pick(page, "parts.stl", stlBoxes([{ at: [0, 0, 0], size: [40, 40, 40] }, { at: [100, 0, 0], size: [20, 30, 10] }]));
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  const hash = await vp.getAttribute("data-hash");
+  await expect(page).toHaveTitle("• Untitled - Sawhorse");
+  const downloads: string[] = [];
+  page.on("download", (d) => downloads.push(d.suggestedFilename()));
+  await page.evaluate(() => (window as unknown as { __sawhorse: { kernelTest: { failNextSave(): void } } }).__sawhorse.kernelTest.failNextSave());
+  await page.keyboard.press("Control+s");
+  await expect(page.locator("#hint")).toHaveText(
+    "Can't do that. Could not save: the saved copy would not have opened as the same model, so nothing was written; File > Export keeps the shapes. Please report this.",
+  );
+  expect(downloads).toEqual([]);
+  // The work is all still there, unsaved, and undoable.
+  await expect(page).toHaveTitle("• Untitled - Sawhorse");
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  await expect(page.locator(".hud")).toContainText("undo 1");
+  // Export still writes the shapes.
+  const stl = await download(page, () => menu(page, "File", "Export", "STL…"));
+  expect(stl.bytes.length).toBeGreaterThan(84);
+  // The next save writes the model, and it opens as the same one.
+  const saved = await download(page, () => page.keyboard.press("Control+s"));
+  await expect(page).toHaveTitle("Untitled - Sawhorse");
+  await menu(page, "File", "New");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await pick(page, "parts.shz", saved.bytes);
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+});
+
 test("drag and drop: an SVG becomes sketch regions on the ground", async ({ page }) => {
   const vp = await ready(page);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><rect x="10" y="10" width="50" height="30"/><circle cx="80" cy="70" r="10"/></svg>`;

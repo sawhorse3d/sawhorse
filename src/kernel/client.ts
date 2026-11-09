@@ -70,6 +70,8 @@ export class KernelClient {
   private dead: string | null = null;
   /** Tests: the next import fails inside the kernel the way a panic would. */
   private failNext: string | null = null;
+  /** Tests (lane 28): the next save is refused by its read-back check. */
+  private failSave = false;
   private makeWorker: () => Worker;
 
   constructor(makeWorker: () => Worker = () => new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module", name: "sawhorse-kernel" })) {
@@ -108,6 +110,12 @@ export class KernelClient {
   /** Tests: make the next import fail inside the kernel ("panic"). */
   failNextImport(how = "panic"): void {
     this.failNext = how;
+  }
+
+  /** Tests (lane 28): make the next save refuse as it does when its file would not open as
+   * the same model (the kernel's read-back check, run against a wrong hash). */
+  failNextSave(): void {
+    this.failSave = true;
   }
 
   /** Stop what the kernel is doing (a long import or open): the worker is replaced and the
@@ -233,6 +241,10 @@ export class KernelClient {
     if ((req.kind === "importFile" || req.kind === "importSkp") && this.failNext) {
       req = { ...req, failForTest: this.failNext };
       this.failNext = null;
+    }
+    if (req.kind === "saveShz" && this.failSave) {
+      req = { ...req, failForTest: "save-differs" };
+      this.failSave = false;
     }
     return this.send(req);
   }

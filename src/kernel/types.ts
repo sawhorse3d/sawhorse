@@ -901,7 +901,7 @@ export type RequestBody =
   | { kind: "exportFile"; format: ExportFormat; options: ExportOptions }
   | { kind: "importFile"; name: string; bytes: Uint8Array; options: ImportOptions; failForTest?: string }
   | { kind: "importSkp"; name: string; bytes: Uint8Array; failForTest?: string }
-  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array; pluginData: string }
+  | { kind: "saveShz"; displayUnits: string; thumbnail: Uint8Array; pluginData: string; failForTest?: string }
   | { kind: "openShz"; bytes: Uint8Array }
   | { kind: "cutList"; options: CutOptions }
   | { kind: "nest"; options: NestOptions }

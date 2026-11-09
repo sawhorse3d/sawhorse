@@ -80,6 +80,9 @@ impl SnapPlane {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SnapSketch {
+    /// The public id it had when saved (lane 28; absent in older files: 1, 2, 3 ... in order).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub plane: SnapPlane,
     #[serde(flatten)]
     pub graph: RawSketch,
@@ -241,6 +244,9 @@ pub enum SnapNodeKind {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SnapDefinition {
+    /// The public id it had when saved (lane 28; absent in older files: 1, 2, 3 ... in order).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub name: String,
     pub next_slot: u32,
     pub members: Vec<SnapMember>,
@@ -353,6 +359,9 @@ pub struct SnapGroup {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SnapGuide {
+    /// The public id it had when saved (lane 28; absent in older files: 1, 2, 3 ... in order).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub point: [f64; 3],
     /// Direction of a guide line; absent for a guide point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -362,6 +371,9 @@ pub struct SnapGuide {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SnapDimension {
+    /// The public id it had when saved (lane 28; absent in older files: 1, 2, 3 ... in order).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub a: [f64; 3],
     pub b: [f64; 3],
     pub offset: [f64; 3],
@@ -442,7 +454,18 @@ pub struct Snapshot {
     pub sections: Vec<SnapSection>,
     /// Drawing sheets (lane 12), in the document's order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sheets: Vec<crate::sheets::Sheet>,
+    pub sheets: Vec<SnapSheet>,
+}
+
+/// A drawing sheet as saved: the sheet, and (lane 28) the public id it had.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SnapSheet {
+    /// Absent in older files: 1, 2, 3 ... in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    #[serde(flatten)]
+    pub sheet: crate::sheets::Sheet,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -541,7 +564,11 @@ fn check_snapshot(s: &Snapshot) -> Result<(), KernelError> {
     l::count("section planes", s.sections.len(), l::MAX_SECTIONS)?;
     l::count("sheets", s.sheets.len(), l::MAX_SHEETS)?;
     for sh in &s.sheets {
-        l::count("items on one sheet", sh.items.len(), l::MAX_SHEET_ITEMS)?;
+        l::count(
+            "items on one sheet",
+            sh.sheet.items.len(),
+            l::MAX_SHEET_ITEMS,
+        )?;
     }
     let long = |n: &str, max: usize| n.chars().count() > max;
     let name_ok = |what: &str, n: Option<&str>| -> Result<(), KernelError> {
@@ -699,6 +726,43 @@ fn check_snapshot(s: &Snapshot) -> Result<(), KernelError> {
         return Err(LimitError::Nodes(total.3).into());
     }
     Ok(())
+}
+
+/// Lane 28: a direction saved unit (as the model keeps it) is kept exactly as saved, else
+/// `normalized`: dividing a unit vector by its length again moved it by the last bit on
+/// every save, so a saved file did not save the same twice.
+fn unit_as_saved(saved: &[f64; 3], normalized: DVec3) -> DVec3 {
+    let v = DVec3::from_array(*saved);
+    if v.is_finite() && (v.length() - 1.0).abs() <= 1e-12 {
+        v
+    } else {
+        normalized
+    }
+}
+
+/// Lane 28: the ids a list was saved with, or (a file older than lane 28, which saved
+/// none for this list) 1, 2, 3 ... in order, as that reader numbered them.
+fn saved_ids(ids: impl ExactSizeIterator<Item = Option<u64>> + Clone) -> std::vec::IntoIter<u64> {
+    let n = ids.len() as u64;
+    let all: Option<Vec<u64>> = ids.collect();
+    all.unwrap_or_else(|| (1..=n).collect()).into_iter()
+}
+
+/// The highest slot a list of at most `limit` things can have used: a live map grows only
+/// while every slot is full, so its largest index is the most it ever held at once, and an
+/// edit may hold a few more than the limit until it is checked. Twice the limit is ample.
+fn id_slots(limit: usize) -> u64 {
+    2 * limit as u64
+}
+
+fn id_error(what: &str, e: crate::ids::IdError) -> KernelError {
+    match e {
+        crate::ids::IdError::OutOfRange(id) => bad(format!("{what} {id}: not an id it can have")),
+        crate::ids::IdError::Twice(id) => bad(format!("{what} {id} listed twice")),
+        crate::ids::IdError::TooMuchWork => bad(format!(
+            "the {what}s' ids have been reused more often than a file may hold"
+        )),
+    }
 }
 
 fn bad(m: impl Into<String>) -> KernelError {
@@ -920,6 +984,7 @@ impl Model {
                 .map(|&k| {
                     let s = &self.sketches[k];
                     SnapSketch {
+                        id: Some(to_public(k)),
                         plane: s.plane().into(),
                         graph: s.to_raw(),
                         parent: s.parent.map(to_public),
@@ -1004,7 +1069,8 @@ impl Model {
             guides: self
                 .guides()
                 .into_iter()
-                .map(|(_, g)| SnapGuide {
+                .map(|(id, g)| SnapGuide {
+                    id: Some(id),
                     point: g.point.to_array(),
                     dir: (g.dir != DVec3::ZERO).then(|| g.dir.to_array()),
                 })
@@ -1012,7 +1078,8 @@ impl Model {
             dimensions: self
                 .dimensions()
                 .into_iter()
-                .map(|(_, d)| SnapDimension {
+                .map(|(id, d)| SnapDimension {
+                    id: Some(id),
                     a: d.a.to_array(),
                     b: d.b.to_array(),
                     offset: d.offset.to_array(),
@@ -1044,7 +1111,14 @@ impl Model {
                     hidden: x.hidden,
                 })
                 .collect(),
-            sheets: self.sheets().into_iter().map(|(_, s)| s.clone()).collect(),
+            sheets: self
+                .sheets()
+                .into_iter()
+                .map(|(id, s)| SnapSheet {
+                    id: Some(id),
+                    sheet: s.clone(),
+                })
+                .collect(),
         }
     }
 
@@ -1081,8 +1155,9 @@ impl Model {
 
     fn snap_definitions(&self, def_index: &BTreeMap<DefId, usize>) -> Vec<SnapDefinition> {
         self.defs
-            .values()
-            .map(|d| SnapDefinition {
+            .iter()
+            .map(|(k, d)| SnapDefinition {
+                id: Some(to_public(k)),
                 name: d.name.clone(),
                 next_slot: d.next_slot,
                 part: d.part.clone(),
@@ -1137,7 +1212,11 @@ impl Model {
         // checked before anything is built.
         check_snapshot(s)?;
         let mut m = Model::new();
-        let mut sketch_ids = Vec::with_capacity(s.sketches.len());
+        // Lane 28: every list keyed by id comes back at the ids it was saved with (holes and
+        // reused slots included), so the model is the one saved, hash and all, and what
+        // refers to an id (an op, a scene, a plugin's data) still names the same thing.
+        let mut work = crate::limits::MAX_ID_WORK;
+        let mut sketches = Vec::with_capacity(s.sketches.len());
         for (i, sk) in s.sketches.iter().enumerate() {
             let plane = sk
                 .plane
@@ -1145,10 +1224,20 @@ impl Model {
                 .map_err(|e| bad(format!("sketch {i}: {e}")))?;
             let sketch = crate::sketch::Sketch::from_raw(plane, &sk.graph)
                 .map_err(|e| bad(format!("sketch {i}: {e}")))?;
-            let id = m.sketches.insert(sketch);
-            m.sketch_order.push(id);
-            sketch_ids.push(id);
+            sketches.push(sketch);
         }
+        let blank = crate::sketch::Sketch::new(Plane::GROUND);
+        let (map, sketch_ids) = crate::ids::with_ids(
+            saved_ids(s.sketches.iter().map(|x| x.id))
+                .zip(sketches)
+                .collect(),
+            || blank.clone(),
+            id_slots(crate::limits::MAX_OBJECTS),
+            &mut work,
+        )
+        .map_err(|e| id_error("sketch", e))?;
+        m.sketches = map;
+        m.sketch_order = sketch_ids.clone();
         for (t, c) in &s.tag_colors {
             let c = parse_hex(c).ok_or_else(|| bad(format!("tag {t:?}: colour {c:?}")))?;
             m.tag_colors.insert(t.clone(), c);
@@ -1162,18 +1251,26 @@ impl Model {
             }
         }
         // Definitions: keys first (members refer to each other by index), then members.
-        let def_ids: Vec<DefId> = s
-            .definitions
-            .iter()
-            .map(|d| {
-                m.defs.insert(Definition {
+        let (map, def_ids) = crate::ids::with_ids::<DefId, Definition>(
+            saved_ids(s.definitions.iter().map(|d| d.id))
+                .zip(s.definitions.iter().map(|d| Definition {
                     name: d.name.clone(),
                     members: BTreeMap::new(),
                     next_slot: d.next_slot,
                     part: d.part.clone(),
-                })
-            })
-            .collect();
+                }))
+                .collect(),
+            || Definition {
+                name: String::new(),
+                members: BTreeMap::new(),
+                next_slot: 0,
+                part: PartAttrs::default(),
+            },
+            id_slots(crate::limits::MAX_DEFINITIONS),
+            &mut work,
+        )
+        .map_err(|e| id_error("definition", e))?;
+        m.defs = map;
         for (di, d) in s.definitions.iter().enumerate() {
             let mut members = BTreeMap::new();
             for mem in &d.members {
@@ -1250,7 +1347,7 @@ impl Model {
             m.defs[def_ids[di]].members = members;
         }
         // Nodes (parents first), then their parents by saved id.
-        let mut node_ids: BTreeMap<u64, NodeId> = BTreeMap::new();
+        let mut nodes = Vec::with_capacity(s.nodes.len());
         for n in &s.nodes {
             let kind = match (n.kind, n.definition) {
                 (SnapNodeKind::Group, _) => NodeKind::Group,
@@ -1266,24 +1363,41 @@ impl Model {
                     )));
                 }
             };
-            let k = m.nodes.insert(Node {
-                name: n.name.clone(),
-                kind,
-                xform: n.xform.unwrap_or(Xform::IDENTITY),
-                tag: n.tag.clone(),
-                member: Membership {
-                    parent: None,
-                    slot: n.slot,
-                    hidden: n.hidden,
-                    locked: n.locked,
+            nodes.push((
+                n.id,
+                Node {
+                    name: n.name.clone(),
+                    kind,
+                    xform: n.xform.unwrap_or(Xform::IDENTITY),
+                    tag: n.tag.clone(),
+                    member: Membership {
+                        parent: None,
+                        slot: n.slot,
+                        hidden: n.hidden,
+                        locked: n.locked,
+                    },
+                    part: n.part.clone(),
+                    material: n.material.clone(),
                 },
-                part: n.part.clone(),
-                material: n.material.clone(),
-            });
-            if node_ids.insert(n.id, k).is_some() {
-                return Err(bad(format!("node {} listed twice", n.id)));
-            }
+            ));
         }
+        let (map, keys) = crate::ids::with_ids::<NodeId, Node>(
+            nodes,
+            || Node {
+                name: None,
+                kind: NodeKind::Group,
+                xform: Xform::IDENTITY,
+                tag: None,
+                member: Membership::default(),
+                part: PartAttrs::default(),
+                material: None,
+            },
+            id_slots(crate::limits::MAX_NODES),
+            &mut work,
+        )
+        .map_err(|e| id_error("node", e))?;
+        m.nodes = map;
+        let node_ids: BTreeMap<u64, NodeId> = s.nodes.iter().map(|n| n.id).zip(keys).collect();
         let node_of = |id: Option<u64>, what: &str| -> Result<Option<NodeId>, KernelError> {
             match id {
                 None => Ok(None),
@@ -1351,6 +1465,7 @@ impl Model {
                 .unwrap_or(0);
             m.last_number = top.max(s.last_number);
         }
+        let mut objects: Vec<(u64, Object)> = Vec::with_capacity(s.objects.len());
         for o in &s.objects {
             let what = format!("object {}", o.id);
             let mut obj = match (&o.brep, o.slot) {
@@ -1389,41 +1504,77 @@ impl Model {
                 .source_sketch
                 .and_then(|i| sketch_ids.get(i))
                 .map(|&sketch| crate::object::Provenance { sketch });
-            let id = match o.number {
-                Some(n) if keep_numbers => {
-                    obj.number = n;
-                    let id = m.objects.insert(obj);
-                    m.object_order.push(id);
-                    id
+            // Numbered as `insert_object` numbers a new solid when the saved ones cannot stay.
+            obj.number = match o.number {
+                Some(n) if keep_numbers => n,
+                _ => {
+                    m.last_number += 1;
+                    m.last_number
                 }
-                _ => m.insert_object(obj),
             };
-            object_ids.insert(o.id, crate::ids::to_public(id));
+            objects.push((o.id, obj));
         }
+        let stand_in = objects.first().map(|(_, o)| o.clone());
+        let (map, keys) = crate::ids::with_ids(
+            objects,
+            || stand_in.clone().expect("a hole lies below some object"),
+            id_slots(crate::limits::MAX_OBJECTS),
+            &mut work,
+        )
+        .map_err(|e| id_error("object", e))?;
+        m.objects = map;
+        for k in keys {
+            object_ids.insert(to_public(k), to_public(k));
+            m.object_order.push(k);
+        }
+        let mut meshes = Vec::with_capacity(s.meshes.len());
         for mesh in &s.meshes {
             let what = format!("mesh {}", mesh.id);
-            let id = m.meshes.insert(LooseMesh::from(LooseMeshData {
-                name: mesh.name.clone(),
-                positions: mesh
-                    .positions
-                    .iter()
-                    .map(|p| DVec3::from_array(*p))
-                    .collect(),
-                faces: mesh.faces.clone(),
-                lines: mesh.lines.clone(),
-                tag: mesh.tag.clone(),
-                material: mesh.material.clone(),
-                note: mesh.note.clone(),
-                edge_flags: mesh_flags(&what, &mesh.edge_flags, mesh.positions.len())?,
-                member: Membership {
-                    parent: node_of(mesh.parent, &what)?,
-                    slot: mesh.slot,
-                    hidden: mesh.hidden,
-                    locked: mesh.locked,
-                },
-            }));
-            m.mesh_order.push(id);
+            meshes.push((
+                mesh.id,
+                LooseMesh::from(LooseMeshData {
+                    name: mesh.name.clone(),
+                    positions: mesh
+                        .positions
+                        .iter()
+                        .map(|p| DVec3::from_array(*p))
+                        .collect(),
+                    faces: mesh.faces.clone(),
+                    lines: mesh.lines.clone(),
+                    tag: mesh.tag.clone(),
+                    material: mesh.material.clone(),
+                    note: mesh.note.clone(),
+                    edge_flags: mesh_flags(&what, &mesh.edge_flags, mesh.positions.len())?,
+                    member: Membership {
+                        parent: node_of(mesh.parent, &what)?,
+                        slot: mesh.slot,
+                        hidden: mesh.hidden,
+                        locked: mesh.locked,
+                    },
+                }),
+            ));
         }
+        let (map, keys) = crate::ids::with_ids(
+            meshes,
+            || {
+                LooseMesh::from(LooseMeshData {
+                    name: String::new(),
+                    positions: Vec::new(),
+                    faces: Vec::new(),
+                    lines: Vec::new(),
+                    tag: None,
+                    material: None,
+                    note: String::new(),
+                    edge_flags: Default::default(),
+                    member: Membership::default(),
+                })
+            },
+            id_slots(crate::limits::MAX_OBJECTS),
+            &mut work,
+        )
+        .map_err(|e| id_error("mesh", e))?;
+        m.meshes = map;
+        m.mesh_order = keys;
         // Lane-2 files: flat groups of solids (a solid in two groups stays in the first).
         if s.nodes.is_empty() {
             for g in &s.groups {
@@ -1450,26 +1601,46 @@ impl Model {
                 }
             }
         }
-        // Section planes before the scenes that name them (lane 12): saved id -> new id.
+        // Section planes before the scenes that name them (lane 12), at their saved ids.
         let mut section_ids: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut sections = Vec::with_capacity(s.sections.len());
         for x in &s.sections {
             let parent = node_of(x.parent, &format!("section {}", x.id))?;
             let (origin, normal) = crate::section::plane_from(&x.origin, &x.normal)
                 .map_err(|e| bad(format!("section {}: {e}", x.id)))?;
+            let normal = unit_as_saved(&x.normal, normal);
             if x.name.trim().is_empty() || x.name.chars().count() > crate::section::MAX_NAME {
                 return Err(bad(format!("section {}: bad name", x.id)));
             }
-            let k = m.sections.insert(crate::section::SectionPlane {
-                name: x.name.clone(),
-                origin,
-                normal,
-                parent,
-                active: x.active,
-                hidden: x.hidden,
-            });
-            if section_ids.insert(x.id, to_public(k)).is_some() {
-                return Err(bad(format!("section {} listed twice", x.id)));
-            }
+            sections.push((
+                x.id,
+                crate::section::SectionPlane {
+                    name: x.name.clone(),
+                    origin,
+                    normal,
+                    parent,
+                    active: x.active,
+                    hidden: x.hidden,
+                },
+            ));
+        }
+        let (map, keys) = crate::ids::with_ids(
+            sections,
+            || crate::section::SectionPlane {
+                name: String::new(),
+                origin: DVec3::ZERO,
+                normal: DVec3::Z,
+                parent: None,
+                active: false,
+                hidden: false,
+            },
+            id_slots(crate::limits::MAX_SECTIONS),
+            &mut work,
+        )
+        .map_err(|e| id_error("section", e))?;
+        m.sections = map;
+        for (x, k) in s.sections.iter().zip(keys) {
+            section_ids.insert(x.id, to_public(k));
         }
         for sc in &s.scenes {
             let mut sc = sc.clone();
@@ -1492,21 +1663,44 @@ impl Model {
             m.scenes.push(sc);
         }
         // Drawing sheets (lane 12), in order; the validator checks them below.
-        for sh in &s.sheets {
-            let k = m.sheets.insert(sh.clone());
-            m.sheet_order.push(k);
-        }
+        let blank_sheet = s.sheets.first().map(|x| x.sheet.clone());
+        let (map, keys) = crate::ids::with_ids(
+            saved_ids(s.sheets.iter().map(|x| x.id))
+                .zip(s.sheets.iter().map(|x| x.sheet.clone()))
+                .collect(),
+            || blank_sheet.clone().expect("a hole lies below some sheet"),
+            id_slots(crate::limits::MAX_SHEETS),
+            &mut work,
+        )
+        .map_err(|e| id_error("sheet", e))?;
+        m.sheets = map;
+        m.sheet_order = keys;
+        let mut guides = Vec::with_capacity(s.guides.len());
         for g in &s.guides {
             let point = DVec3::from_array(g.point);
             let dir = g
                 .dir
-                .map(|d| DVec3::from_array(d).normalize_or_zero())
+                .map(|d| unit_as_saved(&d, DVec3::from_array(d).normalize_or_zero()))
                 .unwrap_or(DVec3::ZERO);
             if !point.is_finite() || !dir.is_finite() {
                 return Err(bad("a guide is not finite"));
             }
-            m.guides.insert(crate::model::Guide { point, dir });
+            guides.push(crate::model::Guide { point, dir });
         }
+        let (map, _) = crate::ids::with_ids(
+            saved_ids(s.guides.iter().map(|g| g.id))
+                .zip(guides)
+                .collect(),
+            || crate::model::Guide {
+                point: DVec3::ZERO,
+                dir: DVec3::ZERO,
+            },
+            id_slots(crate::limits::MAX_GUIDES),
+            &mut work,
+        )
+        .map_err(|e| id_error("guide", e))?;
+        m.guides = map;
+        let mut dimensions = Vec::with_capacity(s.dimensions.len());
         for d in &s.dimensions {
             let (a, b, offset) = (
                 DVec3::from_array(d.a),
@@ -1516,9 +1710,22 @@ impl Model {
             if !(a.is_finite() && b.is_finite() && offset.is_finite()) {
                 return Err(bad("a dimension is not finite"));
             }
-            m.dimensions
-                .insert(crate::model::Dimension { a, b, offset });
+            dimensions.push(crate::model::Dimension { a, b, offset });
         }
+        let (map, _) = crate::ids::with_ids(
+            saved_ids(s.dimensions.iter().map(|d| d.id))
+                .zip(dimensions)
+                .collect(),
+            || crate::model::Dimension {
+                a: DVec3::ZERO,
+                b: DVec3::ZERO,
+                offset: DVec3::ZERO,
+            },
+            id_slots(crate::limits::MAX_DIMENSIONS),
+            &mut work,
+        )
+        .map_err(|e| id_error("dimension", e))?;
+        m.dimensions = map;
         // Component instances: derive their solids (outermost first; nested ones follow).
         let outer: Vec<NodeId> = m
             .nodes
@@ -1571,15 +1778,12 @@ mod tests {
             let back: Snapshot = serde_json::from_str(&json).unwrap();
             assert_eq!(back, snap, "{}", f.display());
             let m = Model::from_snapshot(&back).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-            // Ids are compact in these documents unless something was deleted.
-            let compact = |ids: Vec<u64>| ids.iter().enumerate().all(|(i, &id)| id == i as u64 + 1);
-            let ids_compact = compact(d.model().object_ids())
-                && compact(d.model().nodes().iter().map(|(id, _)| *id).collect())
-                && compact(d.model().definitions().iter().map(|(id, _)| *id).collect());
-            if ids_compact {
-                assert_eq!(m.hash(), d.hash(), "{}", f.display());
-            }
-            // Saving what was opened gives the same snapshot (ids renumbered once).
+            // Lane 28: every document, deletions and all, opens with its ids and its hash
+            // (this test used to excuse the documents whose ids were not 1, 2, 3 ...).
+            assert_eq!(m.hash(), d.hash(), "{}", f.display());
+            assert_eq!(m.object_ids(), d.model().object_ids(), "{}", f.display());
+            // Saving what was opened gives the same snapshot.
+            assert_eq!(m.snapshot(), snap, "{}", f.display());
             let again = Model::from_snapshot(&m.snapshot()).unwrap();
             assert_eq!(again.snapshot(), m.snapshot(), "{}", f.display());
             assert_eq!(again.hash(), m.hash());

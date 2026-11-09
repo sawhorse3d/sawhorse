@@ -498,7 +498,7 @@ fn sheets_survive_the_snapshot_and_hash_only_when_present() {
     assert_eq!(m.sheets().len(), 2);
     // A tampered sheet (an item id at or above the counter) is refused, not repaired.
     let mut bad = snap.clone();
-    bad.sheets[0].next_item = 1;
+    bad.sheets[0].sheet.next_item = 1;
     assert!(Model::from_snapshot(&bad).is_err());
     // Deleting the sheets brings the hash back.
     ok(&mut d, Op::DeleteSheet { sheet: a });

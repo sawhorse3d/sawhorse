@@ -197,6 +197,8 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
       case "saveShz": {
+        // Lane 28, tests only: the next save's read-back check is run against a wrong hash.
+        if (req.failForTest) document(mod).fail_for_test(req.failForTest);
         const file = document(mod).save_shz(req.displayUnits, req.thumbnail, req.pluginData ?? "");
         res = { id: req.id, ok: true, file };
         break;

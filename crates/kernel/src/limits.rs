@@ -75,6 +75,11 @@ pub const MAX_SECTIONS: usize = 1_000;
 /// the limits `crate::sheets` has kept since lane 12, stated here with the others.
 pub const MAX_SHEETS: usize = crate::sheets::MAX_SHEETS;
 pub const MAX_SHEET_ITEMS: usize = crate::sheets::MAX_ITEMS;
+/// Lane 28: a file's ids are restored exactly (holes and reused slots included), which
+/// costs one step per slot up to each list's largest id and one per time a slot was
+/// reused. This bounds those steps for one file (about 17 million, a fraction of a second);
+/// a session would have to delete and recreate things millions of times to reach it.
+pub const MAX_ID_WORK: u64 = 1 << 24;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LimitError {

@@ -888,11 +888,11 @@ export function App() {
           : { text: `The kernel stopped (${friendlyError(info.reason)}) and was restarted from your last step: nothing was lost, and undo works as before.`, error: true },
       );
     };
-    // Tests (?kerneltest=1): make the next import fail inside the kernel.
+    // Tests (?kerneltest=1): make the next import fail inside the kernel, or (lane 28) the next save refuse.
     try {
       if (new URLSearchParams(window.location.search).get("kerneltest") === "1") {
         const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
+        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), failNextSave: () => k.failNextSave(), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
       }
     } catch {
       /* no URL */

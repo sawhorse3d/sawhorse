@@ -1619,4 +1619,488 @@ mod tests {
         );
         assert_eq!(back.objects()[0].1.curves(), m.objects()[0].1.curves());
     }
+
+    // ---- Lane 28: Save refused models whose ids were not 1, 2, 3 ... (#21, #34, #35) ----
+
+    /// Save, then open what was saved, as the app's Save checks it (`save_shz`): the same
+    /// hash, the same ids, the same tree, and saving the opened file writes the same
+    /// scene.json. Returns what opened.
+    fn saves_and_opens_the_same(d: &Document, what: &str) -> Opened {
+        let bytes = write(d.model(), &SaveOptions::default()).unwrap();
+        let o = read(&bytes).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let (a, b) = (d.model(), o.document.model());
+        assert!(o.notes.is_empty(), "{what}: {:?}", o.notes);
+        assert_eq!(b.object_ids(), a.object_ids(), "{what}: solids");
+        let ids = |m: &sawhorse_kernel::Model| {
+            (
+                m.nodes().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.definitions()
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>(),
+                m.sketches().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.meshes().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.guides().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.dimensions().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.sections().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.sheets().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(ids(b), ids(a), "{what}: ids");
+        assert_eq!(b.graph(), a.graph(), "{what}: the tree");
+        assert_eq!(o.document.hash(), d.hash(), "{what}: the model hash");
+        let again = read(&write(b, &SaveOptions::default()).unwrap()).unwrap();
+        assert_eq!(again.scene.model, o.scene.model, "{what}: saved twice");
+        o
+    }
+
+    fn apply(d: &mut Document, op: serde_json::Value) -> OpOutcome {
+        let op: Op = serde_json::from_value(op.clone()).unwrap_or_else(|e| panic!("{op}: {e}"));
+        d.apply(&op).unwrap_or_else(|e| panic!("{op:?}: {e}"))
+    }
+
+    /// The cabinet generator's default cabinet in inches (plugins/cabinet-generator/main.js):
+    /// the import op its batch sends (`componentOp` in packages/plugin-api/src/runtime.ts),
+    /// seven part definitions of boxes, the left side a mirrored copy of the right, inside
+    /// one "Cabinet" component placed at `at`.
+    fn cabinet(at: [f64; 3]) -> serde_json::Value {
+        let inch = 0.0254;
+        let (t, w, h, d, b, toe) = (
+            0.75 * inch,
+            24.0 * inch,
+            34.5 * inch,
+            24.0 * inch,
+            0.25 * inch,
+            4.0 * inch,
+        );
+        let (iw, id) = (w - 2.0 * t, d - b);
+        let floor = toe + t;
+        let gap = (h - t - floor - t) / 2.0;
+        let boxed = |name: &str, s: [f64; 3]| {
+            let p: Vec<[f64; 3]> = (0..8)
+                .map(|k| {
+                    let f = |bit: usize, v: f64| if k & bit != 0 { v } else { 0.0 };
+                    [f(1, s[0]), f(2, s[1]), f(4, s[2])]
+                })
+                .collect();
+            serde_json::json!({ "name": name, "positions": p, "faces": [
+                [[0, 2, 3, 1]], [[4, 5, 7, 6]], [[0, 1, 5, 4]], [[2, 6, 7, 3]], [[0, 4, 6, 2]], [[1, 3, 7, 5]]
+            ] })
+        };
+        let at3 = |x: [f64; 3]| serde_json::json!({ "linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": x });
+        let mirrored = serde_json::json!({ "linear": [[-1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [t, 0, 0] });
+        // (part name, box size, its copies: placement and name)
+        type Part<'a> = (&'a str, [f64; 3], Vec<(serde_json::Value, &'a str)>);
+        let parts: Vec<Part> = vec![
+            (
+                "Side",
+                [t, d, h],
+                vec![
+                    (mirrored, "Left side"),
+                    (at3([w - t, 0.0, 0.0]), "Right side"),
+                ],
+            ),
+            ("Top", [iw, id, t], vec![(at3([t, 0.0, h - t]), "Top")]),
+            ("Bottom", [iw, id, t], vec![(at3([t, 0.0, toe]), "Bottom")]),
+            (
+                "Shelf",
+                [iw, id, t],
+                vec![(at3([t, 0.0, floor + gap]), "Shelf 1")],
+            ),
+            (
+                "Back",
+                [iw, b, h - toe],
+                vec![(at3([t, d - b, toe]), "Back")],
+            ),
+            (
+                "Toe kick",
+                [iw, t, toe],
+                vec![(at3([t, 3.0 * inch, 0.0]), "Toe kick")],
+            ),
+        ];
+        let mut definitions: Vec<serde_json::Value> = parts
+            .iter()
+            .map(|(name, size, _)| serde_json::json!({ "name": name, "items": [boxed(name, *size)] }))
+            .collect();
+        let children: Vec<serde_json::Value> = parts
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_, _, copies))| {
+                copies.iter().map(move |(x, name)| {
+                    serde_json::json!({ "kind": "instance", "definition": i, "xform": x, "name": name })
+                })
+            })
+            .collect();
+        definitions.push(serde_json::json!({ "name": "Cabinet 24 x 34 1/2 x 24", "items": [], "children": children }));
+        serde_json::json!({ "op": "import", "definitions": definitions, "nodes": [
+            { "kind": "instance", "definition": parts.len(), "xform": at3(at), "name": "Cabinet" }
+        ] })
+    }
+
+    /// The outermost cabinet instance (the node the generator stores and updates).
+    fn top_cabinets(d: &Document) -> Vec<u64> {
+        d.model()
+            .nodes()
+            .into_iter()
+            .filter(|(_, n)| n.member.parent.is_none() && n.name.as_deref() == Some("Cabinet"))
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    fn board(d: &mut Document, x: f64) -> u64 {
+        apply(
+            d,
+            serde_json::json!({ "op": "draw", "target": { "on": "plane", "origin": [0, 0, 0], "normal": [0, 0, 1] },
+                "points": [[x, 0, 0], [x + 0.6, 0, 0], [x + 0.6, 0.3, 0], [x, 0.3, 0]], "closed": true }),
+        );
+        let s = d.model().sketch(1).unwrap();
+        let region = s
+            .regions()
+            .map(|(k, _)| sawhorse_kernel::ids::to_public(k))
+            .max()
+            .unwrap();
+        match apply(
+            d,
+            serde_json::json!({ "op": "extrude", "sketch": 1, "region": region, "distance": 0.019 }),
+        ) {
+            OpOutcome::ObjectCreated { object, .. } => object,
+            o => panic!("{o:?}"),
+        }
+    }
+
+    /// #34 (MX Linux, alpha.4): a blank document saved, the cabinet generator run, and
+    /// Ctrl+S refused, and from then on any model at all. On bf2c9f0 the first cabinet saved;
+    /// Generate pressed again with the cabinet selected ("Update selected cabinet": the old
+    /// cabinet deleted and a new one made in one batch) left node ids in reused slots
+    /// (4294967297 and on), the reader numbered them 1, 2, 3 ..., and every save after that
+    /// was refused, whatever was drawn next.
+    #[test]
+    fn a_cabinet_from_the_generator_updated_in_place_round_trips() {
+        let mut d = Document::with_ground_sketch();
+        saves_and_opens_the_same(&d, "the blank document");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "batch", "ops": [cabinet([0.0, 0.0, 0.0])] }),
+        );
+        saves_and_opens_the_same(&d, "a cabinet");
+        // Update selected cabinet: one batch, the old one deleted, a new one made.
+        for k in 0..3 {
+            let old = top_cabinets(&d)[0];
+            apply(
+                &mut d,
+                serde_json::json!({ "op": "batch", "ops": [{ "op": "delete_node", "node": old }, cabinet([0.0, 0.0, 0.0])] }),
+            );
+            let now = top_cabinets(&d)[0];
+            assert!(
+                now >> 32 > 0,
+                "update {k}: a reused slot, as in the app ({now})"
+            );
+            let o = saves_and_opens_the_same(&d, &format!("the cabinet updated {} times", k + 1));
+            // The id the generator keeps in the document's plugin data still names it.
+            let n = o
+                .document
+                .model()
+                .node(now)
+                .expect("the stored id names the cabinet");
+            assert_eq!(n.name.as_deref(), Some("Cabinet"));
+        }
+        // "Creating any object or geometry at all causes the file to not be able to save."
+        board(&mut d, 2.0);
+        saves_and_opens_the_same(&d, "a board drawn after the update");
+    }
+
+    /// #21 (Windows, alpha.4): a cabinet designed, a smaller file saved, "as soon as I
+    /// grouped a few parts" Save refused. Parts of a generated cabinet are only loose after
+    /// an Explode, which removes its instance node; grouping them, a second cabinet beside
+    /// the first and the first one deleted, leave holes the reader closed up.
+    #[test]
+    fn exploded_grouped_and_deleted_cabinet_parts_round_trip() {
+        let mut d = Document::with_ground_sketch();
+        apply(&mut d, cabinet([0.0, 0.0, 0.0]));
+        let first = top_cabinets(&d)[0];
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "explode", "node": first }),
+        );
+        saves_and_opens_the_same(&d, "the cabinet exploded");
+        let loose: Vec<serde_json::Value> = d
+            .model()
+            .nodes()
+            .into_iter()
+            .filter(|(_, n)| n.member.parent.is_none())
+            .take(3)
+            .map(|(id, _)| serde_json::json!({ "node": id }))
+            .collect();
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "make_group", "items": loose, "name": "Carcass" }),
+        );
+        saves_and_opens_the_same(&d, "three parts grouped");
+        apply(&mut d, cabinet([1.0, 0.0, 0.0]));
+        apply(&mut d, cabinet([2.0, 0.0, 0.0]));
+        let second = top_cabinets(&d)[0];
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_node", "node": second }),
+        );
+        saves_and_opens_the_same(&d, "a cabinet of three deleted");
+        // Grouping parts inside a cabinet still open for editing (the context is saved).
+        let third = top_cabinets(&d)[0];
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "set_context", "node": third }),
+        );
+        let inside: Vec<serde_json::Value> = d
+            .model()
+            .nodes()
+            .into_iter()
+            .filter(|(_, n)| n.member.parent.map(sawhorse_kernel::ids::to_public) == Some(third))
+            .take(2)
+            .map(|(id, _)| serde_json::json!({ "node": id }))
+            .collect();
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "make_group", "items": inside }),
+        );
+        let o = saves_and_opens_the_same(&d, "two parts grouped inside an open cabinet");
+        assert_eq!(o.document.model().context(), Some(third));
+    }
+
+    /// #35 (alpha.4): "stopped working when I started to use components". A component, its
+    /// copies (one scaled, one turned), Make Unique on one, a copy deleted, the original
+    /// solid's component exploded: each leaves ids the file must keep. After opening, an
+    /// edit inside one copy still reaches its siblings.
+    #[test]
+    fn components_copied_scaled_made_unique_and_deleted_round_trip() {
+        let mut d = Document::with_ground_sketch();
+        let a = board(&mut d, 0.0);
+        board(&mut d, 1.0);
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "make_component", "items": [{ "object": a }], "name": "Shelf" }),
+        );
+        let shelf = d.model().nodes()[0].0;
+        let x =
+            |l: [[f64; 3]; 3], t: [f64; 3]| serde_json::json!({ "linear": l, "translation": t });
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "array", "objects": [], "nodes": [shelf], "xform": x(id, [0.0, 0.0, 0.3]), "count": 3 }),
+        );
+        saves_and_opens_the_same(&d, "a component and three copies");
+        let copies: Vec<u64> = d.model().nodes().iter().map(|(id, _)| *id).collect();
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "transform", "objects": [], "nodes": [copies[1]], "xform": x([[1.5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], [0.0, 0.0, 0.0]) }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "transform", "objects": [], "nodes": [copies[2]], "xform": x([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], [0.0, 0.0, 0.0]) }),
+        );
+        saves_and_opens_the_same(&d, "one copy scaled, one turned");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "make_unique", "node": copies[3] }),
+        );
+        saves_and_opens_the_same(&d, "one made unique");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_node", "node": copies[1] }),
+        );
+        saves_and_opens_the_same(&d, "the scaled copy deleted");
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "explode", "node": copies[0] }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_object", "object": 2 }),
+        );
+        let o = saves_and_opens_the_same(&d, "the first exploded, the plain board deleted");
+        // The copies still follow their definition after opening.
+        let mut doc = o.document;
+        let turned = copies[2];
+        apply(
+            &mut doc,
+            serde_json::json!({ "op": "set_context", "node": turned }),
+        );
+        let solid = back_solid(&doc, turned);
+        apply(
+            &mut doc,
+            serde_json::json!({ "op": "push_pull", "object": solid, "face": 2, "distance": 0.006 }),
+        );
+        let height = |doc: &Document, n: u64| {
+            let (lo, hi) = doc.model().object(back_solid(doc, n)).unwrap().bounds();
+            hi.z - lo.z
+        };
+        assert!((height(&doc, copies[2]) - 0.025).abs() < 1e-9);
+        assert!(
+            (height(&doc, copies[3]) - 0.019).abs() < 1e-9,
+            "the unique one"
+        );
+    }
+
+    /// Every list keyed by id, with something deleted from the middle of it and a slot
+    /// used again: solids, sketches, imported meshes, guides, dimensions, section planes
+    /// and sheets all open with the ids they had.
+    #[test]
+    fn deletions_from_every_list_keep_their_ids() {
+        let mut d = Document::with_ground_sketch();
+        for x in [0.0, 1.0, 2.0] {
+            board(&mut d, x);
+        }
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_object", "object": 2 }),
+        );
+        board(&mut d, 3.0); // slot 2 again
+        // A sketch on a face of its own, then gone with its strokes.
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "new_sketch", "origin": [0, 0, 1], "normal": [0, 0, 1] }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "new_sketch", "origin": [0, 0, 2], "normal": [0, 0, 1] }),
+        );
+        for k in 0..3 {
+            apply(
+                &mut d,
+                serde_json::json!({ "op": "add_guide", "point": [k, 0, 0], "dir": [0.6, 0.8, 0] }),
+            );
+            apply(
+                &mut d,
+                serde_json::json!({ "op": "add_dimension", "a": [k, 0, 0], "b": [k, 1, 0], "offset": [0.1, 0, 0] }),
+            );
+            apply(
+                &mut d,
+                serde_json::json!({ "op": "add_section", "origin": [0.1 * f64::from(k), 0, 0], "normal": [1, 1, 0], "active": false }),
+            );
+        }
+        let ids = |d: &Document| {
+            let m = d.model();
+            (
+                m.guides().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.dimensions().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                m.sections().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            )
+        };
+        let (g, dm, sx) = ids(&d);
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "erase_guide", "guide": g[1] }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "erase_dimension", "dimension": dm[0] }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_section", "section": sx[1] }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "add_guide", "point": [9, 0, 0], "dir": null }),
+        );
+        for name in ["A", "B", "C"] {
+            d.apply(&Op::AddSheet {
+                setup: Box::new(sawhorse_kernel::sheets::SheetSetup::named(name)),
+            })
+            .unwrap();
+        }
+        let sheet = d.model().sheets()[0].0;
+        d.apply(&Op::DeleteSheet { sheet }).unwrap();
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "import", "items": [
+                { "name": "Open sheet", "positions": [[5, 0, 0], [6, 0, 0], [6, 1, 0]], "faces": [[[0, 1, 2]]] },
+                { "name": "Another", "positions": [[7, 0, 0], [8, 0, 0], [8, 1, 0]], "faces": [[[0, 1, 2]]] }
+            ] }),
+        );
+        let mesh = d.model().meshes()[0].0;
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "delete_mesh", "mesh": mesh }),
+        );
+        let m = d.model();
+        assert!(
+            m.object_ids().iter().any(|&id| id >> 32 > 0),
+            "a reused solid slot"
+        );
+        assert!(m.guides().len() == 3 && m.dimensions().len() == 2 && m.sections().len() == 2);
+        assert_eq!(m.sheets().len(), 2);
+        saves_and_opens_the_same(&d, "deletions from every list");
+    }
+
+    /// The ids in a tampered scene.json are refused with a plain message, quickly: an id of
+    /// zero, a slot past what a model can hold, one slot named twice, a slot "reused" a
+    /// billion times (restoring that would be a billion steps).
+    #[test]
+    fn ids_no_model_could_have_are_refused() {
+        let mut d = Document::with_ground_sketch();
+        board(&mut d, 0.0);
+        board(&mut d, 1.0);
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "make_group", "items": [{ "object": 1 }], "name": "G" }),
+        );
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "add_guide", "point": [0, 0, 0], "dir": [1, 0, 0] }),
+        );
+        let v = scene_json_of(&d);
+        let refused = |edit: &dyn Fn(&mut serde_json::Value), says: &str| {
+            let mut v = v.clone();
+            edit(&mut v);
+            let t = std::time::Instant::now();
+            let e = read(&rezip(&v)).map(|_| ()).unwrap_err().to_string();
+            assert!(t.elapsed().as_millis() < 1000, "{says}: {:?}", t.elapsed());
+            assert!(e.contains(says), "{says}: {e}");
+        };
+        refused(
+            &|v| v["objects"][1]["id"] = 0.into(),
+            "object 0: not an id it can have",
+        );
+        refused(
+            &|v| v["objects"][1]["id"] = 4_000_000.into(),
+            "object 4000000: not an id it can have",
+        );
+        refused(
+            &|v| v["objects"][1]["id"] = ((1u64 << 32) | 1).into(),
+            "object 4294967297 listed twice",
+        );
+        refused(
+            &|v| v["guides"][0]["id"] = ((1_000_000_000u64 << 32) | 1).into(),
+            "ids have been reused more often than a file may hold",
+        );
+        refused(
+            &|v| v["nodes"][0]["id"] = ((u64::from(u32::MAX)) << 32 | 1).into(),
+            "node",
+        );
+    }
+
+    /// Files written before lane 28 keep no ids for sketches, definitions, guides,
+    /// dimensions and sheets: those lists open numbered 1, 2, 3 ... as they always did.
+    #[test]
+    fn files_from_before_lane_28_still_open() {
+        let mut d = structured();
+        apply(
+            &mut d,
+            serde_json::json!({ "op": "add_guide", "point": [0, 0, 0], "dir": [1, 0, 0] }),
+        );
+        d.apply(&Op::AddSheet {
+            setup: Box::new(sawhorse_kernel::sheets::SheetSetup::named("A")),
+        })
+        .unwrap();
+        let mut v = scene_json_of(&d);
+        for list in ["sketches", "definitions", "guides", "dimensions", "sheets"] {
+            for x in v[list].as_array_mut().into_iter().flatten() {
+                x.as_object_mut().unwrap().remove("id");
+            }
+        }
+        let o = read(&rezip(&v)).unwrap();
+        // Ids that were compact come back the same, so the model does too.
+        assert_eq!(o.document.hash(), d.hash());
+        assert_eq!(o.document.model().graph(), d.model().graph());
+    }
 }

@@ -1162,8 +1162,88 @@ pub fn check_sequence(ops: &[Op]) -> Result<RunSummary, String> {
             d.hash_hex()
         ));
     }
+    check_saved(&d)?;
     summary.objects = d.model().objects().len();
     Ok(summary)
+}
+
+/// Lane 28: the model, saved as a `.shz` saves it (its snapshot, through JSON as
+/// `scene.json` holds it) and opened again, is the same model: the same hash and the same
+/// ids, and saving what opened writes the same snapshot. Save reads its own file back and
+/// refuses one that differs, so a model this fails on is a model that cannot be saved.
+pub fn check_saved(d: &Document) -> Result<(), String> {
+    let snap = d.model().snapshot();
+    let json = serde_json::to_string(&snap).map_err(|e| format!("save: to JSON: {e}"))?;
+    let back: crate::snapshot::Snapshot =
+        serde_json::from_str(&json).map_err(|e| format!("save: from JSON: {e}"))?;
+    let opened = Document::open(back).map_err(|e| format!("save: the file does not open: {e}"))?;
+    let ids = |m: &Model| {
+        (
+            m.object_ids(),
+            m.nodes().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            m.definitions()
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            m.sketches().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            m.meshes().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        )
+    };
+    if ids(opened.model()) != ids(d.model()) {
+        return Err(format!(
+            "save: the file opens with other ids: {:?} vs {:?}",
+            ids(opened.model()),
+            ids(d.model())
+        ));
+    }
+    if opened.hash() != d.hash() {
+        return Err(format!(
+            "save: the file opens as another model: {} vs {}",
+            opened.hash_hex(),
+            d.hash_hex()
+        ));
+    }
+    let again = opened.model().snapshot();
+    if again != snap {
+        return Err(format!(
+            "save: saving the opened file writes another snapshot ({})",
+            json_difference(
+                &serde_json::to_value(&snap).unwrap_or_default(),
+                &serde_json::to_value(&again).unwrap_or_default(),
+                String::new()
+            )
+            .unwrap_or_default()
+        ));
+    }
+    Ok(())
+}
+
+/// Where two JSON values first differ, as a path and the two values (for test messages).
+fn json_difference(a: &serde_json::Value, b: &serde_json::Value, at: String) -> Option<String> {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            keys.into_iter().find_map(|k| {
+                let n = Value::Null;
+                json_difference(
+                    x.get(k).unwrap_or(&n),
+                    y.get(k).unwrap_or(&n),
+                    format!("{at}.{k}"),
+                )
+            })
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x
+            .iter()
+            .zip(y)
+            .enumerate()
+            .find_map(|(i, (p, q))| json_difference(p, q, format!("{at}[{i}]"))),
+        _ if a == b => None,
+        _ => {
+            let short = |v: &Value| v.to_string().chars().take(200).collect::<String>();
+            Some(format!("{at}: {} then {}", short(a), short(b)))
+        }
+    }
 }
 
 /// A repro file: the failing sequence plus context.

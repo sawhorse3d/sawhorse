@@ -70,6 +70,29 @@ pub struct DocCore {
     /// The last sheet viewport's drawing a snap used (lane 12, `drawings.rs`): a cursor
     /// moving over a viewport asks again and again between edits. Dropped with `scene`.
     snaps: std::cell::RefCell<Option<drawings::SnapCache>>,
+    /// Lane 28, tests only (`fail_for_test("save-differs")`): the next save's read-back
+    /// compares its file with another hash than the model's, so it refuses as it would if
+    /// the file had not read back as the same model.
+    fail_next_save: std::cell::Cell<bool>,
+}
+
+/// Lane 28: what Save says when the file it wrote would not open as the same model. The
+/// app shows it after "Could not save: ". Nothing has been written, the model in the window
+/// is as it was, and Export still writes its shapes.
+pub const SAVE_DIFFERS: &str = "the saved copy would not have opened as the same model, so nothing was written; File > Export keeps the shapes. Please report this.";
+
+/// Lane 16, worded in lane 28: read a file Save is about to hand over and check it opens
+/// as the model hashed `expected`. Either message follows "Could not save: ".
+pub fn read_back(bytes: &[u8], expected: u64) -> Result<(), String> {
+    let back = sawhorse_shz::read(bytes).map_err(|e| {
+        format!(
+            "the saved copy would not have opened ({e}), so nothing was written; File > Export keeps the shapes. Please report this."
+        )
+    })?;
+    if back.document.hash() != expected {
+        return Err(SAVE_DIFFERS.into());
+    }
+    Ok(())
 }
 
 impl Default for DocCore {
@@ -242,6 +265,7 @@ impl DocCore {
             doc,
             scene: std::cell::RefCell::new(None),
             snaps: std::cell::RefCell::new(None),
+            fail_next_save: std::cell::Cell::new(false),
         }
     }
 
@@ -736,11 +760,8 @@ impl DocCore {
         // Lane 16: what is written is read back (its directory, CRCs, limits and scene)
         // before it leaves the kernel, so a file that would not open is never written over
         // the person's last good copy.
-        let back = sawhorse_shz::read(&bytes)
-            .map_err(|e| format!("the file did not read back as written: {e}"))?;
-        if back.document.hash() != self.doc.model().hash() {
-            return Err("the file did not read back as written: the model differs".into());
-        }
+        let expected = self.doc.model().hash() ^ u64::from(self.fail_next_save.replace(false));
+        read_back(&bytes, expected)?;
         Ok(bytes)
     }
 
@@ -1151,9 +1172,16 @@ impl Doc {
     /// Lane 16, tests only: fail the way a kernel bug or an out-of-memory would, in the
     /// middle of an edit (a Rust panic is a WebAssembly trap with this document borrowed).
     /// The app must notice, start a fresh worker and rebuild the document from its log.
+    ///
+    /// Lane 28: `"save-differs"` makes the next `save_shz` refuse as it does when its file
+    /// would not open as the same model (the read-back check, run on a wrong hash).
     pub fn fail_for_test(&mut self, how: &str) -> Result<String, JsError> {
         match how {
             "panic" => panic!("fail_for_test: a deliberate kernel panic"),
+            "save-differs" => {
+                self.core.fail_next_save.set(true);
+                Ok(String::new())
+            }
             _ => Err(JsError::new("fail_for_test: unknown failure")),
         }
     }
@@ -1986,5 +2014,53 @@ mod tests {
     #[should_panic(expected = "fail_for_test")]
     fn lane_16_the_test_fault_is_a_panic() {
         let _ = Doc::default().fail_for_test("panic");
+    }
+
+    /// Lane 28: what Save says when its file would not open as the model, and that the
+    /// model, its log and its undo are untouched by the refusal (the work stays in memory;
+    /// the next save writes it).
+    #[test]
+    fn lane_28_a_refused_save_says_what_to_do_and_keeps_the_work() {
+        let mut d = Doc::default();
+        for op in [
+            r#"{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":0.3,"h":0.2}"#,
+            r#"{"op":"extrude","sketch":1,"region":1,"distance":0.1}"#,
+        ] {
+            d.core.apply_json(op).unwrap();
+        }
+        let (hash, log, undo) = (
+            d.core.document().hash(),
+            d.op_log_len(),
+            d.core.document().can_undo(),
+        );
+        d.fail_for_test("save-differs").unwrap();
+        let e = d.core.save_shz("mm", &[], "").unwrap_err();
+        assert_eq!(
+            e,
+            "the saved copy would not have opened as the same model, so nothing was written; File > Export keeps the shapes. Please report this."
+        );
+        assert_eq!(
+            (
+                d.core.document().hash(),
+                d.op_log_len(),
+                d.core.document().can_undo()
+            ),
+            (hash, log, undo),
+            "the work is still there"
+        );
+        // Export still writes the shapes, and the next save writes the model.
+        assert!(!d.core.export("stl", "").unwrap().is_empty());
+        let bytes = d.core.save_shz("mm", &[], "").unwrap();
+        assert_eq!(sawhorse_shz::read(&bytes).unwrap().document.hash(), hash);
+        // A file that does not read back at all says why, in the same sentence.
+        let e = read_back(b"not a zip", hash).unwrap_err();
+        assert!(
+            e.starts_with("the saved copy would not have opened (not a Sawhorse file: ")
+                && e.ends_with(
+                    "so nothing was written; File > Export keeps the shapes. Please report this."
+                ),
+            "{e}"
+        );
+        assert_eq!(read_back(&bytes, hash ^ 2), Err(SAVE_DIFFERS.to_string()));
     }
 }

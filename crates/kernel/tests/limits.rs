@@ -284,12 +284,14 @@ fn annotated(guides: usize, dims: usize) -> Document {
     let mut s = boxed().model().snapshot();
     s.guides = (0..guides)
         .map(|i| SnapGuide {
+            id: None,
             point: [(i % 1000) as f64 * 1e-3, (i / 1000) as f64 * 1e-3, 0.0],
             dir: Some([0.0, 1.0, 0.0]),
         })
         .collect();
     s.dimensions = (0..dims)
         .map(|i| SnapDimension {
+            id: None,
             a: [i as f64 * 1e-4, 0.0, 0.0],
             b: [i as f64 * 1e-4, 1.0, 0.0],
             offset: [0.0, 0.0, 0.1],
@@ -348,6 +350,7 @@ fn a_snapshot_over_any_count_is_refused_before_it_is_built() {
         count_error(&e).unwrap_or_else(|| panic!("not a count: {e}"))
     };
     let g = SnapGuide {
+        id: None,
         point: [0.0; 3],
         dir: None,
     };
@@ -356,6 +359,7 @@ fn a_snapshot_over_any_count_is_refused_before_it_is_built() {
         "guides"
     );
     let dm = SnapDimension {
+        id: None,
         a: [0.0; 3],
         b: [1.0, 0.0, 0.0],
         offset: [0.0; 3],
