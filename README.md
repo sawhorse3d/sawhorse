@@ -28,7 +28,7 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 
 **Plugins**: tools, panels and commands in sandboxed JavaScript with declared permissions; three samples come with the app. Writing one: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
-**Headless**: From a checkout, `cargo run -p sawhorse-cli -- cutlist Bookshelf.shz` prints the cut list of a saved file as JSON, and `cargo run -p sawhorse-cli -- nest Bookshelf.shz` its nesting, exactly what the app's panes read (`--visible-only`, `--rounding`, `--algorithm guillotine|maxrects`, `--pretty`; what the reader had to do to open the file goes to stderr as `note:` lines; `crates/cli`). For scripts and agents that want the numbers without the app. The installers do not include it yet.
+**Headless**: From a checkout, in its `crates/` folder (the Rust workspace), `cargo run -p sawhorse-cli -- cutlist Bookshelf.shz` prints the cut list of a saved file as JSON, and `cargo run -p sawhorse-cli -- nest Bookshelf.shz` its nesting, exactly what the app's panes read (`--visible-only`, `--rounding`, `--algorithm guillotine|maxrects`, `--pretty`; what the reader had to do to open the file goes to stderr as `note:` lines; `crates/cli`). For scripts and agents that want the numbers without the app. The installers do not include it yet.
 
 ## Not yet
 
@@ -70,7 +70,7 @@ A production build: `npm run build:all` (kernel + app into `dist/`, servable fro
 | `crates/inference` | Picking and inference snapping: own BVH, pixel tolerance at depth, occlusion, ranked inference kinds, locks |
 | `crates/import`, `crates/export`, `crates/shz` | File readers and writers, the `.shz` format |
 | `crates/wasm-api` | The wasm-bindgen surface the front end's kernel worker loads |
-| `crates/cli` | `sawhorse-cli`: the cut list or the nesting of a saved `.shz` as JSON, with no app (`cargo run -p sawhorse-cli -- cutlist Bookshelf.shz`) |
+| `crates/cli` | `sawhorse-cli`: the cut list or the nesting of a saved `.shz` as JSON, with no app (`cargo run -p sawhorse-cli -- cutlist Bookshelf.shz`, in `crates/`) |
 | `packages/plugin-api` | The plugin API's types, runtime and checks |
 | `src-tauri/` | Tauri 2 desktop shell |
 | `site/` | The public site's landing page; `scripts/build-site.mjs` adds the demo, the guide and the changelog |
