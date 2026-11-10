@@ -72,6 +72,7 @@ test("the status bar's volume follows the units (#26)", async ({ page }) => {
     await setUnits(page, metric);
     await expect(hud).toContainText(`Units: ${metric}`);
     await expect(hud).toContainText("0.027 m³");
+    await expect(hud).not.toContainText("in³");
   }
   // The inch systems are unchanged: cubic inches to one decimal.
   for (const [inch, label] of [["frac-in", "fractional in"], ["in", "decimal in"], ["ft-in", "ft-in"]] as const) {
