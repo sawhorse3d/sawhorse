@@ -34,14 +34,19 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
-          # macos-15 (arm64, like macos-latest), pinned 2026-11-10. It was macos-14 from
-          # 2026-10-20, when macos-latest, macos-15 and macos-26 handed out no runner for a
-          # whole afternoon ("not acquired by Runner of type hosted", nine attempts). GitHub
-          # retired every macOS 14 image on 2026-11-02: the v0.1.0-alpha.5 tag's macos-14
-          # job was cancelled in one second with "The configuration
-          # 'macos-14-arm64-us-default' is not supported", and a rerun did the same.
-          - platform: macos-15
-            args: ""
+          # The Apple Silicon app, built on the Intel macOS runner (2026-11-10): rustc
+          # cross-compiles to aarch64-apple-darwin and codesign signs either architecture,
+          # so the files and their names are the ones an arm64 runner makes. This
+          # repository's arm64 macOS jobs keep getting no runner ("not acquired by Runner
+          # of type hosted", cancelled at 15 minutes): macos-latest, macos-15 and macos-26
+          # all afternoon on 2026-10-20, and macos-15 three times in a row on 2026-11-10
+          # while other projects' macos-15 jobs started in seconds. macos-14, which did
+          # start, was retired by GitHub on 2026-11-02 ("The configuration
+          # 'macos-14-arm64-us-default' is not supported", cancelled in one second).
+          - platform: macos-15-intel
+            args: "--target aarch64-apple-darwin"
+            rust_targets: "wasm32-unknown-unknown,aarch64-apple-darwin"
+            bundle: src-tauri/target/aarch64-apple-darwin/release/bundle
           - platform: ubuntu-22.04
             args: ""
     runs-on: ${{ matrix.platform }}
@@ -53,7 +58,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: ${{ matrix.rust_targets || 'wasm32-unknown-unknown' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -122,7 +127,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/macos-adhoc-check.sh src-tauri/target/release/bundle "${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || format('v{0}-dev', github.run_number) }}"
+        run: bash scripts/macos-adhoc-check.sh "${{ matrix.bundle || 'src-tauri/target/release/bundle' }}" "${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || format('v{0}-dev', github.run_number) }}"
 
   checksums:
     name: SHA256SUMS.txt
