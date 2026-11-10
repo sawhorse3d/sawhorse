@@ -399,7 +399,7 @@ Sheets turn the model into shop drawings on paper: elevations and plans at a rea
 
 **The Model / Sheets switch** at the start of the tab row above the view changes the window between the model and its sheets. In Sheets mode the tabs are your sheets (**+** adds one, a click shows it, double-click renames, right-click to rename, move left or right, or delete), the rail on the left holds the sheet tools, and the right panel is the **Sheet** pane. A new sheet is Letter landscape in inches (A4 when you work in metric) with half-inch margins and a title block.
 
-**Moving around.** The wheel zooms about the pointer; drag with the middle button, or hold Space and drag, to pan; **Fit** shows the whole sheet. **Grid snap** snaps what you place and move to the sheet's grid (1/8 in to start).
+**Moving around.** The wheel zooms about the pointer; drag with the middle or the right button (on a Mac, Control+drag too), or hold Space and drag, to pan; **Fit** shows the whole sheet. **Grid snap** snaps what you place and move to the sheet's grid (1/8 in to start).
 
 **The tools.**
 - **Select**: click an item (Shift adds), drag a box round several, drag to move, drag a corner to resize, drag a dimension to stand it off (a click on one only selects it). **Alt+drag inside a viewport slides its drawing** without moving the frame (to bring the bottom shelves into a detail). The arrow keys nudge the selection by the grid (Shift: ten times), Delete removes it, Ctrl+A selects everything, Esc clears the selection.

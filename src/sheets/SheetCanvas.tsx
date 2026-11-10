@@ -7,6 +7,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DimKind, ItemKind, LeaderEnd, ModelAnchor, Sheet } from "../kernel/sheetTypes";
 import type { V3 } from "../kernel/types";
+import { isMacControlClick } from "../lib/platform";
 import { itemRect, rectFrom } from "./paper";
 import { CANVAS_K, dimOffset, dimPreview, hitItem, modelToPaper, sheetLayers, snapPoint, type Href, type ItemInfo, type SheetRender, type SheetSnap, type ViewportInfo } from "./render";
 
@@ -317,7 +318,9 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, SheetCanvasProps>(funct
     if (!render || !view) return;
     host.current?.focus();
     const p = toPaper(e.clientX, e.clientY);
-    if (e.button === 1 || (e.button === 0 && spaceDown.current)) {
+    // Pan: middle-drag, Space+drag, or a right-drag as in the 3D view (on macOS Control+drag,
+    // Control+click being the Mac's right click).
+    if (e.button === 1 || e.button === 2 || isMacControlClick(e) || (e.button === 0 && spaceDown.current)) {
       e.preventDefault();
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
       touched.current = true;
