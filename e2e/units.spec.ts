@@ -52,6 +52,36 @@ test("a cold open says the units, one click changes them, and 300 is then 300 mm
   await expect(page.locator(".vcb button.units")).toHaveText("mm");
 });
 
+test("the status bar's volume follows the units (#26)", async ({ page }) => {
+  // #26: with the units on mm the badge still read "26967.5 in³". A 300 mm cube is 0.027 m3,
+  // which is 1647.6 cubic inches.
+  const vp = await ready(page);
+  const hud = page.locator(".vp .hud");
+  await setUnits(page, "mm");
+  await page.keyboard.press("r");
+  await page.keyboard.type("300,300");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("p");
+  await page.keyboard.type("300");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#hint")).toContainText("Extruded 300 mm");
+  expect(Number(await vp.getAttribute("data-volume"))).toBeCloseTo(0.3 ** 3, 9);
+  await expect(hud).toContainText("0.027 m³");
+  await expect(hud).not.toContainText("in³");
+  for (const metric of ["cm", "m"] as const) {
+    await setUnits(page, metric);
+    await expect(hud).toContainText(`Units: ${metric}`);
+    await expect(hud).toContainText("0.027 m³");
+  }
+  // The inch systems are unchanged: cubic inches to one decimal.
+  for (const [inch, label] of [["frac-in", "fractional in"], ["in", "decimal in"], ["ft-in", "ft-in"]] as const) {
+    await setUnits(page, inch);
+    await expect(hud).toContainText(`Units: ${label}`);
+    await expect(hud).toContainText("1647.6 in³");
+    await expect(hud).not.toContainText("m³");
+  }
+});
+
 test("Edit > Units lists the same six, checks the current one, and Choose… opens the picker", async ({ page }) => {
   await ready(page);
   await page.getByRole("button", { name: "Edit", exact: true }).click();

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatFractionalInches,
   formatLength,
+  formatVolume,
   nextUnitSystem,
   UNIT_CHOICES,
   UNIT_SYSTEMS,
@@ -181,6 +182,31 @@ describe("formatting", () => {
   it("cycles unit systems", () => {
     expect(nextUnitSystem("frac-in")).toBe("in");
     expect(nextUnitSystem("m")).toBe("frac-in");
+  });
+});
+
+describe("the status bar's volume follows the units (#26)", () => {
+  it("the inch systems read cubic inches to one decimal, as before", () => {
+    const m3 = 2761.03125 * IN ** 3; // the bookshelf of e2e/bookshelf.spec.ts
+    for (const s of ["frac-in", "in", "ft-in"] as const) expect(formatVolume(m3, s)).toBe("2761.0 in³");
+    expect(formatVolume(0, "frac-in")).toBe("0.0 in³");
+  });
+
+  it("the metric systems read cubic metres, never cubic inches", () => {
+    // A 300 mm cube, and a 19 x 90 board 2400 long.
+    for (const s of ["mm", "cm", "m"] as const) {
+      expect(formatVolume(0.3 ** 3, s)).toBe("0.027 m³");
+      expect(formatVolume(0.019 * 0.09 * 2.4, s)).toBe("0.004104 m³");
+      expect(formatVolume(0, s)).toBe("0 m³");
+    }
+    // Six decimals: a cubic centimetre is the smallest step shown.
+    expect(formatVolume(1.5, "mm")).toBe("1.5 m³");
+    expect(formatVolume(0.0000004, "mm")).toBe("0 m³");
+    expect(formatVolume(0.0000016, "mm")).toBe("0.000002 m³");
+  });
+
+  it("every unit system has a volume", () => {
+    for (const u of UNIT_SYSTEMS) expect(formatVolume(1, u.id)).toMatch(/ (in³|m³)$/);
   });
 });
 

@@ -35,7 +35,7 @@ import { isMac } from "./lib/platform";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
-import { formatLength, M_PER_IN, UNIT_CHOICES, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
+import { formatLength, formatVolume, M_PER_IN, UNIT_CHOICES, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
 import type { Projection, ViewId, ViewportEngine } from "./viewport/engine";
 import { gridSpec, projectionForView, VIEWS } from "./viewport/camera";
 import { EMPTY_VIEW, type Tool, type ToolHost, type ToolView } from "./tools/tool";
@@ -2455,7 +2455,7 @@ export function App() {
     hud.push(
       s.objects > 0
         ? {
-            text: `${s.objects} solid${s.objects === 1 ? "" : "s"} · ${s.faces} faces · genus ${s.genus} · ${(s.volume_m3 / M_PER_IN ** 3).toFixed(1)} in³ · ${s.watertight ? "watertight" : "open"}`,
+            text: `${s.objects} solid${s.objects === 1 ? "" : "s"} · ${s.faces} faces · genus ${s.genus} · ${formatVolume(s.volume_m3, units)} · ${s.watertight ? "watertight" : "open"}`,
             tone: s.watertight ? "ok" : "err",
           }
         : { text: `Sketch: ${s.regions} region${s.regions === 1 ? "" : "s"} · draw with Rect (R)` },
