@@ -27,8 +27,8 @@ function screenOf(cam: THREE.Camera, p: Vec3): [number, number] {
   return [((v.x + 1) / 2) * W, ((1 - v.y) / 2) * H];
 }
 
-function pointer(el: EventTarget, type: string, init: { x: number; y: number; button?: number; buttons?: number; shift?: boolean; alt?: boolean; id?: number; kind?: string }) {
-  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: init.x, clientY: init.y, button: init.button ?? 0, buttons: init.buttons ?? 0, shiftKey: !!init.shift, altKey: !!init.alt });
+function pointer(el: EventTarget, type: string, init: { x: number; y: number; button?: number; buttons?: number; shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean; id?: number; kind?: string }) {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: init.x, clientY: init.y, button: init.button ?? 0, buttons: init.buttons ?? 0, shiftKey: !!init.shift, altKey: !!init.alt, ctrlKey: !!init.ctrl, metaKey: !!init.meta });
   Object.defineProperty(e, "pointerId", { value: init.id ?? 1 });
   Object.defineProperty(e, "pointerType", { value: init.kind ?? "mouse" });
   el.dispatchEvent(e);
@@ -41,7 +41,7 @@ let ctl: CameraController;
 let navigating: ReturnType<typeof vi.fn<() => void>>;
 let changes = 0;
 /** Lane 30: what the app says a left press does (unset: the tool's, as before lane 30). */
-let leftButton: ((mods: { alt: boolean; shift: boolean }) => "orbit" | "pan" | null) | undefined;
+let leftButton: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | undefined;
 
 function setup(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new THREE.PerspectiveCamera(35, W / H, 0.01, 100)) {
   canvas = document.createElement("canvas");
@@ -305,6 +305,41 @@ describe("left-button orbit and pan (lane 30, issue #36: a trackpad has no middl
     const s = screenOf(cam, grabbed);
     expect(Math.hypot(s[0] - 300, s[1] - 410)).toBeLessThan(1e-6);
     pointer(canvas, "pointerup", { x: 300, y: 410, button: 0 });
+  });
+
+  it("macOS: a Control+left press is the right click and pans, through Control let go and Shift, until its release; elsewhere and with Cmd it is a left press", () => {
+    // The app's rule under the Orbit tool, the Mac's Control+click first (src/tools/navigate.ts).
+    leftButton = (m) => (m.macControl ? "pan" : orbitTool(m));
+    const platform = vi.spyOn(navigator, "platform", "get");
+    try {
+      platform.mockReturnValue("Win32");
+      pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, ctrl: true });
+      expect(ctl.state().mode).toBe("orbit");
+      pointer(canvas, "pointerup", { x: 400, y: 300, button: 0 });
+      platform.mockReturnValue("MacIntel");
+      pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, ctrl: true, meta: true });
+      expect(ctl.state().mode).toBe("orbit");
+      pointer(canvas, "pointerup", { x: 400, y: 300, button: 0 });
+      const at: [number, number] = [520, 300];
+      const grabbed = hitAt(cam, ...at)!;
+      pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 0, buttons: 1, ctrl: true });
+      expect(ctl.state().mode).toBe("pan");
+      // Control let go, Shift pressed, Shift let go: still the pan, the grabbed point under the cursor.
+      for (const [x, y, sh] of [
+        [500, 320, false],
+        [300, 410, true],
+        [150, 120, false],
+      ] as const) {
+        pointer(canvas, "pointermove", { x, y, buttons: 1, shift: sh });
+        expect(ctl.state().mode).toBe("pan");
+        const s = screenOf(cam, grabbed);
+        expect(Math.hypot(s[0] - x, s[1] - y)).toBeLessThan(1e-6);
+      }
+      pointer(canvas, "pointerup", { x: 150, y: 120, button: 0 });
+      expect(ctl.state().mode).toBeNull();
+    } finally {
+      platform.mockRestore();
+    }
   });
 });
 

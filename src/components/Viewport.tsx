@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MeshData, MeshPart } from "../kernel/types";
 import type { Vec3 } from "../lib/edit";
 import { INFERENCE_STYLES, LEGEND_KINDS, type InferenceKind } from "../lib/inferenceStyle";
+import { isMacControlClick } from "../lib/platform";
 import type { UnitSystem } from "../lib/units";
 import { NO_HIGHLIGHT, ViewportEngine, webgl2Available, type Highlight, type OverlayItem, type Projection, type ViewId } from "../viewport/engine";
 
@@ -17,6 +18,9 @@ export interface ViewportPointer {
   shift: boolean;
   ctrl: boolean;
   alt: boolean;
+  /** A Control+click on macOS, the Mac's right click (src/lib/platform.ts): it pans, and the
+   * tool never sees its press. `ctrl` is true for Ctrl or Cmd. */
+  macControl?: boolean;
 }
 
 /** The inference marker: a dot in the inference's colour plus its tooltip. */
@@ -227,7 +231,7 @@ export function Viewport(props: ViewportProps) {
   };
   const send = (type: ViewportPointer["type"], e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) => {
     const [x, y] = local(e);
-    cb.current.onPointer?.({ type, x, y, button: e.button, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey });
+    cb.current.onPointer?.({ type, x, y, button: e.button, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, macControl: isMacControlClick(e) });
   };
 
   const tri = mesh ? mesh.indices.length / 3 : 0;

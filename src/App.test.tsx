@@ -149,6 +149,83 @@ describe("App shell", () => {
     expect(hint()).toMatch(/^Move\. Autofold off/);
   });
 
+  it("Windows and Linux: a Ctrl tap still counts as the key goes down, and its release does nothing more", async () => {
+    for (const os of ["Win32", "Linux x86_64"]) {
+      const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(os);
+      try {
+        render(<App />);
+        const hint = () => document.getElementById("hint")?.textContent ?? "";
+        await act(async () => {
+          fireEvent.keyDown(window, { key: "m" });
+        });
+        expect(pressed("move")).toBe(true);
+        await act(async () => {
+          fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+        });
+        expect(hint(), os).toMatch(/Copying/);
+        await act(async () => {
+          fireEvent.keyUp(window, { key: "Control" });
+        });
+        expect(hint(), os).toMatch(/Copying/);
+        // Ctrl held while the button goes down and comes up: the key down was the tap, as before.
+        await act(async () => {
+          fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+          fireEvent.pointerDown(document.getElementById("cv")!, { button: 0, buttons: 1, ctrlKey: true });
+          fireEvent.pointerUp(document.getElementById("cv")!, { button: 0, ctrlKey: true });
+          fireEvent.keyUp(window, { key: "Control" });
+        });
+        expect(hint(), os).toMatch(/Moving \(not copying\)/);
+      } finally {
+        platform.mockRestore();
+        cleanup();
+      }
+    }
+  });
+
+  it("macOS: a Control tap is its release with nothing between, so a Control+drag pan is not one", async () => {
+    const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    try {
+      render(<App />);
+      const hint = () => document.getElementById("hint")?.textContent ?? "";
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "m" });
+      });
+      expect(pressed("move")).toBe(true);
+      // A tap switches Move's copying, on the release.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+      });
+      expect(hint()).not.toMatch(/Copying/);
+      await act(async () => {
+        fireEvent.keyUp(window, { key: "Control" });
+      });
+      expect(hint()).toMatch(/Copying/);
+      // Control held while the button goes down (a Control+drag pan): no switch.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+        fireEvent.pointerDown(document.getElementById("cv")!, { button: 0, buttons: 1, ctrlKey: true });
+        fireEvent.pointerUp(document.getElementById("cv")!, { button: 0, ctrlKey: true });
+        fireEvent.keyUp(window, { key: "Control" });
+      });
+      expect(hint()).toMatch(/Copying/);
+      // Nor with another key between (Control+Z).
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+        fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+        fireEvent.keyUp(window, { key: "Control" });
+      });
+      expect(hint()).not.toMatch(/Moving \(not copying\)/);
+      // And the next tap switches it back.
+      await act(async () => {
+        fireEvent.keyDown(window, { key: "Control", ctrlKey: true });
+        fireEvent.keyUp(window, { key: "Control" });
+      });
+      expect(hint()).toMatch(/Moving \(not copying\)/);
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("does not steal keys typed into the prompt box", async () => {
     renderServiceUp();
     render(<App />);

@@ -12,13 +12,18 @@
 // Alt (Option on a Mac) with the left button orbits, and Alt+Shift pans, in every tool
 // whose `keepsAlt()` is false: all of them but Paint (Alt+click picks a material up) and
 // Section Plane (Alt reverses the cut). A plugin's tool is one of the others.
+//
+// On macOS, Control+click is the right click (src/lib/platform.ts), and a right-drag pans in
+// every tool, so a left press with Control pans in every tool too, Shift or Alt or not.
 import type { NavMode } from "../viewport/controls";
 import type { ToolId } from "../lib/tools";
 import { Tool, type ToolView } from "./tool";
 
 /** What a left-button press does to the view under `tool`: "orbit" or "pan" takes it from
- * the tool (the Orbit and Pan tools, or Alt where Alt is free), null leaves it to the tool. */
-export function leftButtonNav(tool: Tool | null, mods: { alt: boolean; shift: boolean }): Exclude<NavMode, "pinch"> | null {
+ * the tool (the Orbit and Pan tools, Alt where Alt is free, or the Mac's Control+click), null
+ * leaves it to the tool. `macControl`: the press is a Control+click on macOS. */
+export function leftButtonNav(tool: Tool | null, mods: { alt: boolean; shift: boolean; macControl?: boolean }): Exclude<NavMode, "pinch"> | null {
+  if (mods.macControl) return "pan";
   const own = tool?.navigation() ?? null;
   if (own === "pan") return "pan";
   if (own === "orbit") return mods.shift ? "pan" : "orbit";

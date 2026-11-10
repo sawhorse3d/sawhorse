@@ -16,7 +16,9 @@
 //                      the Pan tool it pans, and with Alt (Option) it orbits (Alt+Shift
 //                      pans) in every tool that gives Alt no meaning of its own. Such a
 //                      drag is a middle-drag in every other way: the same pivot, marker,
-//                      clamps and look-at point, and Shift switches it mid-drag.
+//                      clamps and look-at point, and Shift switches it mid-drag. On macOS
+//                      Control+drag pans in every tool: Control+click is the Mac's right
+//                      click (src/lib/platform.ts).
 //
 // Otherwise the left button belongs to the active tool. After every move the look-at point
 // (`target`, what the standard views, zoom extents, the grid density, the projection
@@ -26,6 +28,7 @@
 // the document, so it follows the pointer off the canvas, and ends when the button is
 // found released (a release outside the window) or the window loses focus.
 import * as THREE from "three";
+import { isMacControlClick } from "../lib/platform";
 import type { Vec3 } from "./camera";
 import { dragAngles, lookTarget, orbit, panOffset, rayAt, wheelZoomFactor, zoomAt, type Lens, type Pose } from "./navmath";
 
@@ -43,8 +46,9 @@ export interface NavHost {
   navigating(): void;
   /** What a left-button press with these modifiers does to the view (lane 30): "orbit" or
    * "pan" takes the press from the tool, null leaves it to the tool (the default). Asked
-   * again when Shift goes down or up mid-drag, with Alt as it was at the press. */
-  leftButton?(mods: { alt: boolean; shift: boolean }): "orbit" | "pan" | null;
+   * again when Shift goes down or up mid-drag, with Alt as it was at the press. `macControl`:
+   * the press is a Control+click on macOS, the Mac's right click. */
+  leftButton?(mods: { alt: boolean; shift: boolean; macControl?: boolean }): "orbit" | "pan" | null;
 }
 
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
@@ -57,6 +61,9 @@ interface Drag {
   button: number;
   /** Alt (Option) at the press: a left-button drag asks the host again with it. */
   alt: boolean;
+  /** A Control+click on macOS at the press (the Mac's right click): asked again with it too,
+   * so letting go of Control mid-drag does not hand the drag back. */
+  macControl: boolean;
   x: number;
   y: number;
   /** Orbit: the pivot. Pan and pinch: the grabbed point. */
@@ -204,11 +211,12 @@ export class CameraController {
     const anchor = mode === "orbit" ? this.pivotAt(x, y) : this.grab(x, y);
     const fresh = !this.drag;
     // A switch mid-drag (Shift) comes from a move, whose `button` is -1: the drag keeps the
-    // button and the Alt of its press, so a later Shift still switches it and the release
-    // still ends it.
+    // button and the Alt (and the Mac's Control) of its press, so a later Shift still switches
+    // it and the release still ends it.
     const button = this.drag?.button ?? e.button;
     const alt = this.drag?.alt ?? e.altKey;
-    this.drag = { mode, pointerId: e.pointerId, mask, button, alt, x, y, anchor };
+    const macControl = this.drag?.macControl ?? isMacControlClick(e);
+    this.drag = { mode, pointerId: e.pointerId, mask, button, alt, macControl, x, y, anchor };
     if (fresh) {
       this.doc.addEventListener("pointermove", this.onMove);
       this.doc.addEventListener("pointerup", this.onUp);
@@ -281,8 +289,9 @@ export class CameraController {
     } else if (e.button === 2) {
       this.start("pan", e, x, y, 2);
     } else if (e.button === 0) {
-      // Lane 30: the Orbit or Pan tool, or Alt in a tool without an Alt meaning of its own.
-      const mode = this.host.leftButton?.({ alt: e.altKey, shift: e.shiftKey }) ?? null;
+      // Lane 30: the Orbit or Pan tool, or Alt in a tool without an Alt meaning of its own;
+      // on macOS, Control+click (the Mac's right click).
+      const mode = this.host.leftButton?.({ alt: e.altKey, shift: e.shiftKey, macControl: isMacControlClick(e) }) ?? null;
       if (!mode) return;
       e.preventDefault();
       this.start(mode, e, x, y, 1);
@@ -292,7 +301,7 @@ export class CameraController {
   /** What the drag should be doing with Shift as it is now, or null to keep on as it is. */
   private wanted(d: Drag, shift: boolean): NavMode | null {
     if (d.button === 1) return shift ? "pan" : "orbit";
-    if (d.button === 0) return this.host.leftButton?.({ alt: d.alt, shift }) ?? null;
+    if (d.button === 0) return this.host.leftButton?.({ alt: d.alt, shift, macControl: d.macControl }) ?? null;
     return null;
   }
 

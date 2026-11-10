@@ -115,14 +115,15 @@ test("paint a box from the library, sample it, position its texture, switch styl
   // Undo walks back through the looks too, one step each.
   await expect(vp).toHaveAttribute("data-can-undo", "true");
 
-  // Ctrl+click paints the whole solid; the cut list then reads the species from it.
+  // Ctrl+click paints the whole solid (Cmd+click on macOS, where Control+click is the right
+  // click); the cut list then reads the species from it.
   await page.getByRole("tab", { name: "Materials" }).click();
   await page.getByRole("listbox", { name: "Materials in the model" }).getByRole("option", { name: "White oak" }).click();
   await hover(page, [6, 0, 3], "face", 1, -1, "data-hover");
   const [sx, sy] = await at(page, [6, 0, 3], 1, -1);
-  await page.keyboard.down("Control");
+  await page.keyboard.down("ControlOrMeta");
   await page.mouse.click(sx, sy);
-  await page.keyboard.up("Control");
+  await page.keyboard.up("ControlOrMeta");
   await expect(hint(page)).toContainText(/Painted solid .*White oak/);
   await page.getByRole("tab", { name: "Cut list" }).click();
   await expect(page.getByTestId("cutlist")).toContainText("White oak");

@@ -31,6 +31,7 @@ import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, with
 import { thumbnailUrl } from "./lib/thumbnail";
 import { contextTrail, describeNode, entityShown, graphIndex, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
+import { isMac } from "./lib/platform";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
@@ -1088,6 +1089,10 @@ export function App() {
   /** Lane 30: Alt is down and nothing else (no key, no pointer press) has happened since,
    * so letting it go is a tap (Move's autofold, Section Plane's reverse). */
   const altTapRef = useRef(false);
+  /** The same for Control on macOS, where Control+click is the right click (it pans): a tap
+   * of Control (Move and Rotate copy, Scale about the centre) is its release with nothing
+   * between, so a Control+drag pan does not switch copying. */
+  const ctrlTapRef = useRef(false);
   const host = useMemo<ToolHost>(
     () => ({
       units: () => live.current.units,
@@ -1302,9 +1307,9 @@ export function App() {
   pluginsRef.current = plugins;
 
   const onPointer = useCallback((p: ViewportPointer) => {
-    // Lane 30: a left press the camera controller took (the Orbit or Pan tool, or Alt where
-    // the tool gives Alt no meaning) never reaches the tool, nor does its double-click; its
-    // moves still do, as during a middle-drag.
+    // Lane 30: a left press the camera controller took (the Orbit or Pan tool, Alt where the
+    // tool gives Alt no meaning, or on macOS Control+click, the Mac's right click) never
+    // reaches the tool, nor does its double-click; its moves still do, as during a middle-drag.
     if ((p.type === "down" || p.type === "dblclick") && p.button === 0 && leftButtonNav(activeRef.current, p)) return;
     if (!activeRef.current) {
       if (p.type === "up" && p.button === 0) setMessage({ text: `${toolById(toolIdRef.current).label} arrives in a later lane.`, error: false });
@@ -2235,6 +2240,9 @@ export function App() {
   // Esc, Delete, Shift+Z, and "just type" into the VCB like SketchUp.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // macOS: any other key while Control is down (Control+Z, a plugin's shortcut) makes it a
+      // chord, not a tap; first, since those keys return early below.
+      if (e.key !== "Control") ctrlTapRef.current = false;
       const inVcb = e.target === vcbRef.current;
       // Focus rules: the Value Control Box only owns the keyboard while something is being
       // typed into it; Ctrl+Z / Ctrl+Y always step the document, even mid-entry.
@@ -2305,7 +2313,12 @@ export function App() {
       if (e.key === "Control" && !e.repeat && !textEntry) {
         // A tap of Ctrl alone (Move / Rotate copy, Scale about the centre), after any click
         // or tool key still on its way: the tap belongs to the tool that is active by then
-        // ("s" then Ctrl scales about the centre).
+        // ("s" then Ctrl scales about the centre). On macOS the tap is the release, as Alt's
+        // is (onKeyUp, onPress): Control held for a Control+drag pan is not a tap.
+        if (isMac()) {
+          ctrlTapRef.current = true;
+          return;
+        }
         void afterPointer(() => activeRef.current?.onModifier("ctrl"));
         return;
       }
@@ -2402,10 +2415,16 @@ export function App() {
         altTapRef.current = false;
         void afterPointer(() => activeRef.current?.onModifier("alt"));
       }
+      if (e.key === "Control" && ctrlTapRef.current) {
+        ctrlTapRef.current = false;
+        void afterPointer(() => activeRef.current?.onModifier("ctrl"));
+      }
     };
-    // A press of any button while Alt is down (Alt+drag, Alt+click) is not an Alt tap.
+    // A press of any button while Alt is down (Alt+drag, Alt+click) is not an Alt tap, nor,
+    // on macOS, one while Control is down (Control+drag, Control+click) a Control tap.
     const onPress = () => {
       altTapRef.current = false;
+      ctrlTapRef.current = false;
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
