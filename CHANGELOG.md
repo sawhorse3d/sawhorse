@@ -4,6 +4,14 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] - 2026-11-10
+
+A pre-release, [v0.1.0-alpha.5](https://github.com/sawhorse3d/sawhorse/releases/tag/v0.1.0-alpha.5); every change since alpha.4: [v0.1.0-alpha.4...v0.1.0-alpha.5](https://github.com/sawhorse3d/sawhorse/compare/v0.1.0-alpha.4...v0.1.0-alpha.5). The release notes: [docs/releases/v0.1.0-alpha.5.md](docs/releases/v0.1.0-alpha.5.md).
+
+### Release (the alpha.5 hygiene pass, 2026-11-10)
+
+- Version 0.1.0-alpha.5 in npm, Tauri (MSI version 0.1.0.5), both Cargo workspaces and their locks (only the members' own version lines), the `.shz` generator examples, the site's download links and `docs/DEVELOPMENT.md`'s list of the release's files; the release notes in `docs/releases/v0.1.0-alpha.5.md` (Save after a deletion, #21, #34 and #35, first; the macOS ad-hoc signing, #27, with what it does not change; orbit without a middle button, #36; Back, Left and Bottom views; the discard question, #32; SketchUp curves and older files' scenes; the unit picker, #13; `sawhorse-cli`, #14; the smaller fixes; not yet, with the trackpad's two-finger orbit, #36, metric stock, #26, and Control+click on a Mac, #40; the known limits, with the window's close button, the Linux Save As name, #31, and the SketchUp 5 file, #15, with its re-save; an antivirus's hold on an unsigned download beside SmartScreen; thanks by GitHub login). The README, the site and `docs/SIGNING.md` point at them.
+
 ### Fixed (lane 30's small corrections, 2026-11-09)
 
 - **A cut list with no lumber totals 0 board feet, not -0.** `sawhorse-cli cutlist` printed `"board_feet":-0.0` for a model with nothing to cut or only sheet goods, and `sawhorse-cli nest` printed `-0.0` areas for a nesting with nothing placed: an f64 sum over nothing is -0.0 in Rust. The kernel adds those totals up from 0.0 now (`cutlist.rs`, `nesting.rs`), so the app's panes get the same 0 the command line prints. Nothing else changes: every other total adds up in the same order to the same value, and no hash reads them.
