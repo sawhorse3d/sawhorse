@@ -17,8 +17,13 @@ export interface FileType {
   extensions: string[];
 }
 
-/** Where a picked or saved file lives, so Save can write it again. */
-export type FileHandle = { kind: "fsa"; handle: FsaFileHandle } | { kind: "tauri"; path: string };
+/**
+ * Where a picked or saved file lives, so Save can write it again. On the desktop, `chosen`
+ * is the path the Save dialog returned when the type's extension was added here (`path` is
+ * it plus the extension); every later save sends it along, so the shell can see the file is
+ * the person's own.
+ */
+export type FileHandle = { kind: "fsa"; handle: FsaFileHandle } | { kind: "tauri"; path: string; chosen?: string };
 
 export interface PickedFile {
   name: string;
@@ -79,6 +84,16 @@ export function extensionOf(name: string): string {
 
 export function baseName(path: string): string {
   return path.replace(/^.*[\\/]/, "");
+}
+
+/**
+ * `path` with one of `type`'s extensions: as it is when it already ends in one (any case),
+ * else with the first appended. The desktop's Save dialog hands the name back as typed on
+ * Linux (GTK's chooser adds no extension; Windows and macOS add the filter's), and a file
+ * saved without one is then hidden by the Open dialog's filter.
+ */
+export function withExtension(path: string, type: FileType): string {
+  return type.extensions.includes(extensionOf(path)) ? path : `${path}${type.extensions[0]}`;
 }
 
 /** The name without its extension. */
@@ -252,17 +267,44 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
   const { signal } = opts;
   if (signal?.aborted) return null;
   if (isTauri()) {
-    let path = handle?.kind === "tauri" ? handle.path : null;
-    if (!path) {
+    let path: string;
+    let chosen: string | undefined;
+    const again = handle?.kind === "tauri";
+    if (handle?.kind === "tauri") {
+      path = handle.path;
+      chosen = handle.chosen;
+    } else {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      path = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
-      if (!path || signal?.aborted) return null;
+      const picked = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
+      if (!picked || signal?.aborted) return null;
+      // GTK's chooser hands the name back as typed (Windows and macOS add the filter's
+      // extension): a name without one of the type's gets the type's first, and the dialog's
+      // own path travels with the save so the shell can see the file is the person's
+      // (src-tauri/src/lib.rs, save_file_atomic; sawhorse-safe-save, decide).
+      path = withExtension(picked, type);
+      if (path !== picked) chosen = picked;
     }
     // Lane 16: written beside, synced, read back, then renamed over the file (the previous
     // one kept as .bak), never truncated in place (src-tauri/safe-save).
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("save_file_atomic", bytes, { headers: { "x-path": encodeURIComponent(path) } });
-    return { name: baseName(path), handle: { kind: "tauri", path } };
+    const headers: Record<string, string> = { "x-path": encodeURIComponent(path) };
+    if (chosen) {
+      headers["x-chosen"] = encodeURIComponent(chosen);
+      // Saving again to the file this handle made: the person's own, no question.
+      if (again) headers["x-replace"] = "yes";
+    }
+    try {
+      await invoke("save_file_atomic", bytes, { headers });
+    } catch (e) {
+      // The extension was added here and a file of that name exists: the dialog asked
+      // about the typed name, not this one, so the shell refuses until the person agrees.
+      const message = e instanceof Error ? e.message : String(e);
+      if (!message.startsWith("exists:")) throw e;
+      if (!(await askYesNo(`${baseName(path)} already exists. Replace it?`))) return null;
+      if (signal?.aborted) return null;
+      await invoke("save_file_atomic", bytes, { headers: { ...headers, "x-replace": "yes" } });
+    }
+    return { name: baseName(path), handle: chosen ? { kind: "tauri", path, chosen } : { kind: "tauri", path } };
   }
   const api = fsa();
   if (api) {

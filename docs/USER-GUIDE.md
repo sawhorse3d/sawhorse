@@ -463,3 +463,5 @@ How large a model has been tried, which SketchUp files do not open, and the hard
 ## Unsaved work
 
 Sawhorse keeps your work in this browser as you go. If the tab closes or reloads, the status line offers **Restore unsaved work?** with Restore and Discard; Edit > Restore Unsaved Work does the same while the offer stands. Restoring brings the undo history back too. Real files (.shz) arrive with their lane.
+
+**Saving in the desktop app.** A name typed in Save As without its extension gets it: `cabinet` is saved as `cabinet.shz`, and an export named `part` as `part.stl`. The Windows and macOS dialogs do this themselves; on Linux the app does. If a file of that name is already there, the app asks first ("cabinet.shz already exists. Replace it?"); No saves nothing, and Yes keeps the old copy as `cabinet.shz.bak`, as every save does.
