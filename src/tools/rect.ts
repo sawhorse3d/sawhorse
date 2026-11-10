@@ -48,6 +48,11 @@ export class RectTool extends StrokeTool {
     const ctx = super.inferContext();
     // While the plane is open, snap in 3D (the cursor may be choosing an upright plane).
     if (this.undecided && !this.edgeEnd) ctx.plane = null;
+    // In a 3D view the blue axis through the first corner lies over a square's diagonal and
+    // took the far corner, standing the rectangle up with no width (issue #9). Skip it while
+    // the plane is open. Red and green stay (they say the rectangle is square to an axis),
+    // and on a set plane the line that would leave it is already dropped.
+    if (this.variant === "rect" && this.anchor && this.undecided && !this.edgeEnd) ctx.skipStartLines = [[0, 0, 1]];
     return ctx;
   }
 

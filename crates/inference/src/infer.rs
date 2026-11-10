@@ -59,6 +59,11 @@ pub struct InferQuery {
     /// The gesture's start point (axis, parallel and perpendicular lines run from it).
     #[serde(default)]
     pub start: Option<[f64; 3]>,
+    /// Directions not to offer as lines through `start`, nor as "from point" alignments
+    /// along them: a rectangle's far corner on its own sides would have no width. A lock
+    /// keeps them all.
+    #[serde(default)]
+    pub start_skip: Vec<[f64; 3]>,
     /// Keep the result on this plane.
     #[serde(default)]
     pub plane: Option<PlaneQ>,
@@ -269,6 +274,14 @@ fn start_directions(q: &InferQuery, ctx: &Ctx) -> Vec<(DVec3, InferenceKind)> {
         }
     }
     dirs.retain(|(d, _)| ctx.in_plane(*d));
+    if q.lock.is_none() {
+        dirs.retain(|(d, _)| {
+            !q.start_skip.iter().any(|s| {
+                let s = DVec3::from_array(*s).normalize_or_zero();
+                s != DVec3::ZERO && d.cross(s).length() < 1e-9
+            })
+        });
+    }
     dirs
 }
 

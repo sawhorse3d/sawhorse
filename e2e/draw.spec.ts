@@ -87,6 +87,21 @@ test("Rect across a board's face cuts a dado strip; push it in", async ({ page }
   expect(v).toBeCloseTo(24 * 6 * 0.75 - 0.75 * 6 * 0.375, 6);
 });
 
+test("Rect drawn square on the ground in the iso view stays a square, not a line up blue (#9, #23)", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "iso");
+  await page.keyboard.press("r");
+  await click(page, [0, 0, 0]);
+  // From the iso eye the square's far corner lies over the blue axis through the first
+  // corner on screen; the blue line took it and stood the rectangle up as "0, 12".
+  const [x, y] = await at(page, [12 * IN, 12 * IN, 0]);
+  await page.mouse.move(x, y, { steps: 4 });
+  await expect(vp).not.toHaveAttribute("data-inference", "axis-z");
+  await page.mouse.click(x, y);
+  await expect(page.locator("#hint")).toContainText("Rectangle 12 × 12 in on the ground");
+});
+
 test("Rotated rectangle, circle and polygon with typed counts, arc with a typed radius", async ({ page }) => {
   const vp = await ready(page);
   await page.getByRole("button", { name: "Top", exact: true }).click();

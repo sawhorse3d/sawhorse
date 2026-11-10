@@ -188,6 +188,22 @@ describe("draw tools", () => {
     close(rot.points[2], [0, 2, 0]);
   });
 
+  it("Rect: the far corner skips blue while the plane is open, nothing on a set plane; the Rotated Rectangle skips nothing (issue #9)", async () => {
+    const t = new RectTool(fakeHost());
+    expect(t.inferContext().skipStartLines).toBeUndefined();
+    t.onEvent(ev("click", [0, 0, 0], { snapKind: "grid" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(t.inferContext()).toMatchObject({ start: [0, 0, 0], skipStartLines: [[0, 0, 1]], plane: null });
+    t.cycleVariant();
+    t.onEvent(ev("click", [0, 0, 0], { snapKind: "grid" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(t.inferContext().skipStartLines).toBeUndefined();
+    t.cycleVariant();
+    t.onEvent({ ...ev("click", [0.5, 0.5, 1], { snapKind: "on-face" }), snap: snap([0.5, 0.5, 1], "on-face", topFace) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(t.inferContext().skipStartLines).toBeUndefined();
+  });
+
   it("Circle and Polygon: centre, radius, typed segments and sides", async () => {
     const h = fakeHost({ outcome: { kind: "drawn", sketch: 1, regions: [3], faces: [], inside: null } });
     const t = new CircleTool(h);
