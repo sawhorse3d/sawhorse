@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatFractionalInches,
   formatLength,
+  formatVolume,
   nextUnitSystem,
   UNIT_CHOICES,
   UNIT_SYSTEMS,
@@ -181,6 +182,72 @@ describe("formatting", () => {
   it("cycles unit systems", () => {
     expect(nextUnitSystem("frac-in")).toBe("in");
     expect(nextUnitSystem("m")).toBe("frac-in");
+  });
+});
+
+describe("the status bar's volume follows the units (#26)", () => {
+  it("the inch systems read cubic inches to one decimal, as before", () => {
+    const m3 = 2761.03125 * IN ** 3; // the bookshelf of e2e/bookshelf.spec.ts
+    for (const s of ["frac-in", "in", "ft-in"] as const) expect(formatVolume(m3, s)).toBe("2761.0 in³");
+    expect(formatVolume(0, "frac-in")).toBe("0.0 in³");
+  });
+
+  it("the metric systems read cubic metres, never cubic inches", () => {
+    // A 300 mm cube, and a 19 x 90 board 2400 long.
+    for (const s of ["mm", "cm", "m"] as const) {
+      expect(formatVolume(0.3 ** 3, s)).toBe("0.027 m³");
+      expect(formatVolume(0.019 * 0.09 * 2.4, s)).toBe("0.004104 m³");
+      expect(formatVolume(0, s)).toBe("0 m³");
+    }
+    // Six decimals: a cubic centimetre is the smallest step shown.
+    expect(formatVolume(1.5, "mm")).toBe("1.5 m³");
+    expect(formatVolume(0.0000016, "mm")).toBe("0.000002 m³");
+    // A 20 mm cube.
+    expect(formatVolume(0.02 ** 3, "mm")).toBe("0.000008 m³");
+  });
+
+  it("a real solid smaller than the step never reads as 0 (from the squash)", () => {
+    // A 7 mm cube (0.343 cm³), a 5 mm dowel 20 long (0.39 cm³), half a cubic centimetre
+    // (5e-7 is a hair under it in binary), and the smallest volume a double holds.
+    for (const m3 of [0.007 ** 3, Math.PI * 0.0025 ** 2 * 0.02, 5e-7, 4.9e-7, Number.MIN_VALUE])
+      for (const s of ["mm", "cm", "m"] as const) expect(formatVolume(m3, s)).toBe("< 0.000001 m³");
+    // Just over half a cubic centimetre rounds up to the step.
+    expect(formatVolume(5.0001e-7, "mm")).toBe("0.000001 m³");
+    expect(formatVolume(1e-6, "mm")).toBe("0.000001 m³");
+    // Nothing (an empty or open model) is 0, and so is a tiny negative from an open mesh.
+    expect(formatVolume(0, "m")).toBe("0 m³");
+    expect(formatVolume(-0, "m")).toBe("0 m³");
+    expect(formatVolume(-4e-7, "m")).toBe("0 m³");
+    expect(formatVolume(-0.027, "m")).toBe("-0.027 m³");
+  });
+
+  it("a large model reads in whole cubic metres and their decimals (from the squash)", () => {
+    expect(formatVolume(1234.5678901, "m")).toBe("1234.56789 m³");
+    expect(formatVolume(1e6, "mm")).toBe("1000000 m³");
+  });
+
+  it("the inch systems print exactly what the badge printed before #46 (from the squash)", () => {
+    // The badge's expression at a6792ea, whatever the units were.
+    const before = (m3: number) => `${(m3 / M_PER_IN ** 3).toFixed(1)} in³`;
+    const spread = [0, -0, 1e-12, 0.05 * IN ** 3, 0.3 ** 3, 2761.03125 * IN ** 3, 26967.5 * IN ** 3, 12345.678, -0.027, NaN, Infinity];
+    for (const s of ["frac-in", "in", "ft-in"] as const) for (const m3 of spread) expect(formatVolume(m3, s)).toBe(before(m3));
+    expect(formatVolume(0.3 ** 3, "frac-in")).toBe("1647.6 in³");
+  });
+
+  it("the metric badge and the inch badge give the same volume, each to its own step (from the squash)", () => {
+    // The kernel's volume in m³, read back from both texts: the m³ text within half a cubic
+    // centimetre, the in³ text within half a tenth of a cubic inch.
+    for (const m3 of [0.3 ** 3, 0.019 * 0.09 * 2.4, 0.441918, 2761.03125 * IN ** 3, 0.000123456, 3.75]) {
+      const metric = Number(formatVolume(m3, "mm").replace(/ m³$/, ""));
+      const inch = Number(formatVolume(m3, "frac-in").replace(/ in³$/, ""));
+      expect(Math.abs(metric - m3)).toBeLessThanOrEqual(0.5e-6 + 1e-12);
+      expect(Math.abs(inch * IN ** 3 - m3)).toBeLessThanOrEqual(0.05 * IN ** 3 + 1e-12);
+    }
+  });
+
+  it("every unit system has a volume", () => {
+    for (const u of UNIT_SYSTEMS) expect(formatVolume(1, u.id)).toMatch(/ (in³|m³)$/);
+    expect(UNIT_SYSTEMS.map((u) => u.id).sort()).toEqual(["cm", "frac-in", "ft-in", "in", "m", "mm"]);
   });
 });
 
