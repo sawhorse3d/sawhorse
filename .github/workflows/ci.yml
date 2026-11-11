@@ -146,3 +146,6 @@ jobs:
       - name: close question tests (lane 35; the window is never held open)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-close-guard
+      - name: start-up file tests (lane 37; which argument, if any, is the file to open)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-start-file

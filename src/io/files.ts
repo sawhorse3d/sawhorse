@@ -349,16 +349,24 @@ export function download(name: string, bytes: Uint8Array, mime: string): void {
 export async function onTauriDrop(cb: (files: PickedFile[]) => Promise<void> | void, refused?: (message: string) => void): Promise<() => void> {
   if (!isTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<string[]>("sawhorse://dropped", async (e) => {
-    // One at a time (lane 16): each file is measured, read and taken in before the next is
-    // read, so dropping several large files never holds them all at once.
-    for (const path of e.payload) {
-      if (!ALL_EXTENSIONS.includes(extensionOf(path))) continue;
-      try {
-        await cb([{ name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } }]);
-      } catch (err) {
-        refused?.(err instanceof Error ? err.message : String(err));
-      }
+  return listen<string[]>("sawhorse://dropped", (e) => takeTauriPaths(e.payload, cb, refused));
+}
+
+/**
+ * Desktop: read files the shell allowed in the fs scope (dropped on the window, or the file
+ * the app was started with, src/io/startup.ts) and hand each to `cb`, the same way for both:
+ * a name File > Open does not take is skipped, a file over its limit is refused before it is
+ * read, and a file that cannot be read goes to `refused` with the reason.
+ */
+export async function takeTauriPaths(paths: readonly string[], cb: (files: PickedFile[]) => Promise<void> | void, refused?: (message: string) => void): Promise<void> {
+  // One at a time (lane 16): each file is measured, read and taken in before the next is
+  // read, so dropping several large files never holds them all at once.
+  for (const path of paths) {
+    if (!ALL_EXTENSIONS.includes(extensionOf(path))) continue;
+    try {
+      await cb([{ name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } }]);
+    } catch (err) {
+      refused?.(err instanceof Error ? err.message : String(err));
     }
-  });
+  }
 }

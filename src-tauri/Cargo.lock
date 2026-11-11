@@ -3202,6 +3202,7 @@ dependencies = [
  "sawhorse-close-guard",
  "sawhorse-device-key",
  "sawhorse-safe-save",
+ "sawhorse-start-file",
  "serde",
  "serde_json",
  "tauri",
@@ -3225,6 +3226,10 @@ dependencies = [
 
 [[package]]
 name = "sawhorse-safe-save"
+version = "0.1.0-alpha.5"
+
+[[package]]
+name = "sawhorse-start-file"
 version = "0.1.0-alpha.5"
 
 [[package]]

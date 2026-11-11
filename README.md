@@ -40,6 +40,7 @@ So nobody finds out the hard way:
 - **Text, and radius or diameter dimensions in the model** (linear dimensions only; drawing sheets have radius and diameter).
 - **Weld Edges**: erasing the line that split a circle leaves two arcs.
 - **A question before the browser tab closes**: the desktop app asks before its window closes over unsaved changes, the browser build does not (it keeps your work as you go and offers it back the next time). On a Mac, Quit Sawhorse in the app menu (Cmd+Q) quits without asking; the red button and File > Quit Sawhorse ask.
+- **Double-clicking a `.shz` on a Mac or in a Linux file manager**: on Windows a double-click opens the model in Sawhorse (the installers associate `.shz` files with it). On a Mac and on Linux, open it with File > Open, by dragging it onto the window, or with its path after the program's on a command line.
 - **Signed installers**: Windows and macOS warn before the first launch. On Apple Silicon alpha.4 said it was "damaged"; alpha.5 is the first build signed ad hoc, which should leave only the usual warning, and is not yet confirmed on a Mac ([how to get past both](docs/releases/v0.1.0-alpha.5.md#unsigned-installers)).
 - **Render credits**: an AI render service exists in the code but is not launched; the app shows nothing about it unless you point it at a service of your own (Edit > Settings).
 

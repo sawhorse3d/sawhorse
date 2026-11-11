@@ -35,6 +35,8 @@ sawhorse-device-key = { path = "device-key" }
 sawhorse-safe-save = { path = "safe-save" }
 # The question before the window closes over unsaved changes (lane 35): never held open.
 sawhorse-close-guard = { path = "close-guard" }
+# Which argument, if any, is the file to open at start (lane 37): a double-click on a .shz.
+sawhorse-start-file = { path = "start-file" }
 
 [profile.release]
 codegen-units = 1

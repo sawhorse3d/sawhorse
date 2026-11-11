@@ -5,13 +5,20 @@
 //! Native-only concerns live here: file dialogs and file access (lane 6: the dialog and fs
 //! plugins), drag-and-drop of files onto the window, the render-credit device key in the
 //! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout in the
-//! system browser, showing a plugin's folder (lane 11), and the question before the window
-//! closes over unsaved changes (lane 35, `close-guard/`). The .shz file association lands
-//! in a later lane.
+//! system browser, showing a plugin's folder (lane 11), the question before the window
+//! closes over unsaved changes (lane 35, `close-guard/`), and the file the app was started
+//! with (lane 37, `start-file/`): a double-click on a `.shz` in Windows Explorer, where the
+//! installers associate `.shz` with Sawhorse (`tauri.windows.conf.json`), or a path after the
+//! program's name on any system. A second double-click starts a second window, as starting
+//! Sawhorse twice does. macOS hands a double-clicked file to an app as an event, not as an
+//! argument, so the association is not declared there yet, nor on Linux, where no MIME type
+//! for `.shz` exists for a file manager to match.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
-//! (the dialog plugin adds them to the scope) or dropped on the window (added below).
+//! (the dialog plugin adds them to the scope), dropped on the window (added below), or the
+//! one file the app was started with (added by `start_file`, below, when the page asks).
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -194,6 +201,36 @@ fn close_guard(
     }
 }
 
+/// The file the app was started with (lane 37, #45), until the page takes it.
+struct StartFile(Mutex<Option<PathBuf>>);
+
+impl StartFile {
+    /// Read the process's arguments once: the first that names an existing regular file
+    /// File > Open takes (`sawhorse_start_file::pick`), or none.
+    fn from_args() -> Self {
+        let cwd = std::env::current_dir().ok();
+        // Path::is_file follows a link to what it names: a folder, a missing file or a
+        // device is not a regular file.
+        let args = std::env::args_os().skip(1);
+        let path = sawhorse_start_file::pick(args, cwd.as_deref(), std::path::Path::is_file);
+        StartFile(Mutex::new(path))
+    }
+}
+
+/// The file the app was started with, handed to the page once (src/io/startup.ts): the
+/// first call returns its path and every later one nothing, so a reload of the page never
+/// opens it again. Exactly that one path is added to the fs scope, the way a dropped file
+/// is, and only then: no folder, no pattern, nothing else made from it. The page reads it
+/// through the fs plugin as it reads a dropped file. A path that is not valid Unicode is
+/// never taken (the page could not name it), and one the scope refuses is not handed over.
+#[tauri::command]
+fn start_file(app: AppHandle, state: State<'_, StartFile>) -> Option<String> {
+    let path = state.0.lock().ok()?.take()?;
+    let text = path.to_str()?.to_owned();
+    app.fs_scope().allow_file(&path).ok()?;
+    Some(text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -202,6 +239,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(Device::default())
         .manage(CloseGuard::default())
+        .manage(StartFile::from_args())
         .on_window_event(|window, event| match event {
             // Files dropped on the window: allow exactly those paths, then tell the page,
             // which reads them through the fs plugin (src/io/files.ts, onTauriDrop).
@@ -237,7 +275,8 @@ pub fn run() {
             open_external,
             open_plugin_folder,
             save_file_atomic,
-            close_guard
+            close_guard,
+            start_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");

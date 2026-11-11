@@ -7,9 +7,27 @@ import type { Page } from "@playwright/test";
 // it plays the way src-tauri/src/lib.rs does with sawhorse_close_guard (a close request over
 // unsaved changes sends sawhorse://close-requested; "close" ends the window; "exit" is a
 // close request). Every other command is refused, as a shell without it would.
+//
+// Lane 37 (#45): the file the app was started with. The shell's start_file command is played
+// as lib.rs plays it: the first call adds the path to the fs scope and returns it, every later
+// call returns null. The shell outlives a reload of its page, so what it has handed over is
+// kept in the tab's sessionStorage, and restart() plays a new start of the app with another
+// file (the page's IndexedDB, where the autosave lives, is kept, as it is between two runs
+// of the desktop app). The fs plugin's stat and read_file read the files given to
+// desktopBridge, and only paths in the scope, as the real scope allows: a dropped path
+// (drop()) or the start-up file.
 
 /** How the stand-in's message dialog behaves. */
 export type DialogMode = "answer" | "throw" | "throw-sync" | "never";
+
+/** The files on the stand-in's disk: base64 bytes, or null for a file that cannot be read. */
+export type DesktopFiles = Record<string, string | null>;
+
+/** The desktop app's start: the file it was started with, and the files on its disk. */
+export interface DesktopStart {
+  start?: string | null;
+  files?: DesktopFiles;
+}
 
 export interface TauriMock {
   /** Every command the page invoked, in order. */
@@ -33,16 +51,49 @@ export interface TauriMock {
   /** Send an event to the page's listeners. */
   emit(event: string, payload?: unknown): void;
   listeners(event: string): number;
+  /** Every path the shell added to the fs scope, in order (this page load). */
+  allowed: string[];
+  /** Every path the fs plugin was asked to read (stat or read_file), in order (this page load). */
+  reads: string[];
+  /** Files dropped on the window: allowed in the scope, then sawhorse://dropped, as lib.rs does. */
+  drop(paths: string[]): void;
 }
 
 /** Install the stand-in before the page's scripts run. */
-export async function desktopBridge(page: Page, platform = "Win32"): Promise<void> {
-  await page.addInitScript((platform: string) => {
+export async function desktopBridge(page: Page, platform = "Win32", start: DesktopStart = {}): Promise<void> {
+  await page.addInitScript(({ platform, start }: { platform: string; start: DesktopStart }) => {
     Object.defineProperty(Navigator.prototype, "platform", { get: () => platform });
     const w = window as unknown as Record<string, unknown>;
     const callbacks = new Map<number, (payload: unknown) => void>();
     const listeners = new Map<string, number[]>();
     let next = 1;
+    // The shell's own state, which a reload of the page does not reset.
+    const SHELL = "__tauriShell";
+    let shell: { start: string | null } | null = null;
+    try {
+      shell = JSON.parse(sessionStorage.getItem(SHELL) ?? "null");
+    } catch {
+      shell = null;
+    }
+    if (!shell) shell = { start: start.start ?? null };
+    const keep = () => {
+      try {
+        sessionStorage.setItem(SHELL, JSON.stringify(shell));
+      } catch {
+        /* a page with no storage (about:blank): nothing to keep */
+      }
+    };
+    keep();
+    const files = start.files ?? {};
+    const scope = new Set<string>();
+    /** The bytes of a file in the scope, as the fs plugin would read them. */
+    const read = (path: string): Uint8Array => {
+      mock.reads.push(path);
+      if (!scope.has(path)) throw `forbidden path: ${path}`;
+      const b64 = files[path];
+      if (b64 === undefined || b64 === null) throw `failed to open file at path: ${path} with error: The system cannot find the file specified. (os error 2)`;
+      return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    };
     const mock: TauriMock = {
       log: [],
       said: [],
@@ -53,6 +104,8 @@ export async function desktopBridge(page: Page, platform = "Win32"): Promise<voi
       failWords: [],
       unsaved: false,
       ended: null,
+      allowed: [],
+      reads: [],
       request() {
         if (mock.unsaved) mock.emit("sawhorse://close-requested", null);
         else mock.ended = "closed";
@@ -61,6 +114,13 @@ export async function desktopBridge(page: Page, platform = "Win32"): Promise<voi
         for (const id of listeners.get(event) ?? []) callbacks.get(id)?.({ event, id, payload });
       },
       listeners: (event) => (listeners.get(event) ?? []).length,
+      drop(paths) {
+        for (const p of paths) {
+          scope.add(p);
+          mock.allowed.push(p);
+        }
+        mock.emit("sawhorse://dropped", paths);
+      },
     };
     w.__tauriMock = mock;
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
@@ -112,20 +172,37 @@ export async function desktopBridge(page: Page, platform = "Win32"): Promise<voi
               if (say === "exit") mock.request();
               return null;
             }
+            case "start_file": {
+              // lib.rs: taken once; exactly that path goes into the fs scope, then it is returned.
+              const path = shell!.start;
+              shell!.start = null;
+              keep();
+              if (path === null) return null;
+              scope.add(path);
+              mock.allowed.push(path);
+              return path;
+            }
+            case "plugin:fs|stat": {
+              const bytes = read(String(args.path));
+              const none = { mtime: null, atime: null, birthtime: null, fileAttributes: null, dev: null, ino: null, mode: null, nlink: null, uid: null, gid: null, rdev: null, blksize: null, blocks: null };
+              return { isFile: true, isDirectory: false, isSymlink: false, size: bytes.length, readonly: false, ...none };
+            }
+            case "plugin:fs|read_file":
+              return read(String(args.path)).buffer;
             default:
               throw new Error(`${cmd} is not in this stand-in for the desktop shell`);
           }
         })();
       },
     };
-  }, platform);
+  }, { platform, start });
 }
 
 /** The stand-in's record, read from the page. */
-export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended">> {
+export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended" | "allowed" | "reads">> {
   return page.evaluate(() => {
     const m = (window as unknown as { __tauriMock: TauriMock }).__tauriMock;
-    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended };
+    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended, allowed: [...m.allowed], reads: [...m.reads] };
   });
 }
 
@@ -137,4 +214,19 @@ export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answe
 /** A close request from the system (the window's X, Alt+F4). */
 export async function closeWindow(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as { __tauriMock: TauriMock }).__tauriMock.request());
+}
+
+/** Files dropped on the window (allowed in the scope, then sawhorse://dropped). */
+export async function dropFiles(page: Page, paths: string[]): Promise<void> {
+  await page.evaluate((p) => (window as unknown as { __tauriMock: TauriMock }).__tauriMock.drop(p), paths);
+}
+
+/**
+ * A new start of the desktop app, started with `start` (or with no file): the page loads
+ * again and the shell has a start-up file to hand over once more. The page's storage, the
+ * autosave with it, is kept, as it is between two runs of the app.
+ */
+export async function restart(page: Page, start: string | null): Promise<void> {
+  await page.evaluate((s) => sessionStorage.setItem("__tauriShell", JSON.stringify({ start: s })), start);
+  await page.reload();
 }

@@ -57,8 +57,9 @@ import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
-import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, type FileHandle, type PickedFile } from "./io/files";
+import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
 import { closeHandler, desktopShell, discardQuestion } from "./io/closing";
+import { notOpenedNote, openLabel, startupOrder, takeStartupFile, waitingNote } from "./io/startup";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
@@ -547,6 +548,24 @@ export function App() {
     [run],
   );
 
+  // Lane 37 (#45): the file the desktop app was started with, while it waits for the answer to
+  // "Restore unsaved work?" (src/io/startup.ts): Restore offers it beside the restored work,
+  // Discard opens it. The state is for the offer's text, the ref for the answers.
+  const [startupWaiting, setStartupWaitingRaw] = useState<string | null>(null);
+  const startupWaitingRef = useRef<string | null>(null);
+  const setStartupWaiting = useCallback((path: string | null) => {
+    startupWaitingRef.current = path;
+    setStartupWaitingRaw(path);
+  }, []);
+  /** The waiting start-up file, no longer waiting. */
+  const takeStartupWaiting = useCallback(() => {
+    const path = startupWaitingRef.current;
+    if (path !== null) setStartupWaiting(null);
+    return path;
+  }, [setStartupWaiting]);
+  /** Opens a start-up file the way a dropped file opens (set below, where that is defined). */
+  const openStartupRef = useRef<(path: string) => Promise<void>>(async () => {});
+
   const restore = useCallback(
     (a: Autosave) => {
       const k = kernelRef.current;
@@ -567,7 +586,12 @@ export function App() {
           setTarget(null);
           live.current.selection = [];
           setSelection([]);
-          setMessage({ text: `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.steps} steps (undo works as before).`, error: false });
+          const restored = `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.steps} steps (undo works as before).`;
+          // A start-up file was waiting for this answer: it is offered, not opened, so the
+          // restored work stays in front of the person, and opening it asks about the work.
+          const waiting = takeStartupWaiting();
+          if (waiting) setMessage({ text: `${restored} ${notOpenedNote(waiting)}`, error: false, actions: [{ label: openLabel(waiting), run: () => void openStartupRef.current(waiting) }] });
+          else setMessage({ text: restored, error: false });
           setFitSeq((n) => n + 1);
           scheduleAutosave();
         } catch (err) {
@@ -579,13 +603,16 @@ export function App() {
       void next.finally(() => editsPending.current--);
       queue.current = next;
     },
-    [scheduleAutosave],
+    [scheduleAutosave, takeStartupWaiting],
   );
   const discardRestore = useCallback(() => {
     setPendingRestore(null);
     void clearOffered();
     setMessage({ text: "Unsaved work discarded.", error: false });
-  }, []);
+    // Lane 37: a start-up file waiting for this answer opens now (its own message follows).
+    const waiting = takeStartupWaiting();
+    if (waiting) void openStartupRef.current(waiting);
+  }, [takeStartupWaiting]);
   const discardRef = useRef(discardRestore);
   discardRef.current = discardRestore;
 
@@ -898,6 +925,13 @@ export function App() {
     ).then((f) => (off = f));
     return () => off();
   }, [takeFiles]);
+  // Lane 37 (#45): the file the desktop app was started with opens exactly as a dropped one.
+  openStartupRef.current = (path: string) =>
+    takeTauriPaths(
+      [path],
+      (files) => takeFiles(files),
+      (text) => setMessage({ text, error: true }),
+    );
 
   useEffect(() => {
     const k = createKernel();
@@ -943,15 +977,32 @@ export function App() {
         setScene(s);
         setKernelState("ready");
         setSavedLogLen(s.state.log_len);
-        if (!autosaveEnabled()) return;
-        // Never blocks the start (lane 16): a record that cannot be read or is too large is
-        // offered for discarding only.
-        try {
-          const saved = await takeAutosave();
-          if (worthRestoring(saved)) setPendingRestore(saved);
-        } catch {
-          /* nothing kept */
+        let offered = false;
+        if (autosaveEnabled()) {
+          // Never blocks the start (lane 16): a record that cannot be read or is too large is
+          // offered for discarding only.
+          try {
+            const saved = await takeAutosave();
+            if (worthRestoring(saved)) {
+              setPendingRestore(saved);
+              offered = true;
+            }
+          } catch {
+            /* nothing kept */
+          }
         }
+        // Lane 37 (#45): the file the desktop app was started with, asked for only now that
+        // the last run's work is set aside (opening a file deletes this session's autosave),
+        // and kept waiting while that work is offered back (src/io/startup.ts).
+        let path: string | null = null;
+        try {
+          path = await takeStartupFile();
+        } catch {
+          /* a shell that cannot say: no start-up file */
+        }
+        const order = startupOrder(path, offered);
+        if (path !== null && order === "wait") setStartupWaiting(path);
+        else if (path !== null && order === "open") void openStartupRef.current(path);
       })
       .catch((err) => {
         if (err instanceof KernelUnavailableError) {
@@ -971,8 +1022,9 @@ export function App() {
   useEffect(() => {
     if (!pendingRestore) return;
     const usable = pendingRestore.state === "ok";
+    const waiting = startupWaiting ? ` ${waitingNote(startupWaiting)}` : "";
     setMessage({
-      text: usable ? `Restore unsaved work? ${describeAutosave(pendingRestore)}.` : `Unsaved work was kept in this browser, but ${describeAutosave(pendingRestore)}; it is set aside, not loaded.`,
+      text: usable ? `Restore unsaved work? ${describeAutosave(pendingRestore)}.${waiting}` : `Unsaved work was kept in this browser, but ${describeAutosave(pendingRestore)}; it is set aside, not loaded.${waiting}`,
       error: !usable,
       actions: usable
         ? [
@@ -981,7 +1033,7 @@ export function App() {
           ]
         : [{ label: "Discard", run: discardRestore }],
     });
-  }, [pendingRestore, restore, discardRestore]);
+  }, [pendingRestore, restore, discardRestore, startupWaiting]);
 
   // Read-only hooks for e2e tests: every solid with its display number, bounds and volume,
   // and the scene graph (groups, components, the open context).
