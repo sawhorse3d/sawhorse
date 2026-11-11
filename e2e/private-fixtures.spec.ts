@@ -119,11 +119,16 @@ async function importFile(page: Page, file: string) {
   return { title, lines, refused, last };
 }
 
-/** The HUD's model line: "2 solids · 32 faces · genus 0 · 123.4 in³ · watertight". */
+/**
+ * The HUD's model line: "2 solids · 32 faces · genus 0 · 123.4 in³ · watertight". Since lane
+ * 33 its volume is in the document's units (`formatVolume` in src/lib/units.ts): cubic inches
+ * in the inch systems, cubic metres in mm, cm and m ("0.441918 m³"), and a solid under the
+ * step reads "< 0.1 in³" or "< 0.000001 m³". `volume` is the number as shown, in `unit`.
+ */
 async function hudLine(page: Page) {
   const text = await page.locator(".vp .hud").innerText();
-  const m = /(\d+) solids? · (\d+) faces · genus (\d+) · ([\d.]+) in³ · (watertight|open)/.exec(text);
-  return { text, solids: m ? +m[1] : -1, faces: m ? +m[2] : -1, genus: m ? +m[3] : -1, volume: m ? +m[4] : NaN, state: m ? m[5] : "" };
+  const m = /(\d+) solids? · (\d+) faces · genus (\d+) · (< )?(-?[\d.]+) (in³|m³) · (watertight|open)/.exec(text);
+  return { text, solids: m ? +m[1] : -1, faces: m ? +m[2] : -1, genus: m ? +m[3] : -1, under: !!m?.[4], volume: m ? +m[5] : NaN, unit: m ? m[6] : "", state: m ? m[7] : "" };
 }
 
 /** The Outliner's rows: key, kind, label and the muted hint. */
@@ -459,6 +464,12 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     expect.soft(hud.faces, "IMPORT: 26 faces on the slab + 6 on the Leg").toBe(32);
     expect.soft(hud.genus, "IMPORT: genus").toBe(0);
     expect.soft(hud.state).toBe("watertight");
+    // IMPORT: the HUD's volume, in whichever unit the document is in, is the two solids'
+    // volume within its step (a tenth of a cubic inch, or a cubic centimetre).
+    expect.soft(hud.under, "IMPORT: the HUD's volume is not under its step").toBe(false);
+    const total = all.reduce((a, x) => a + x.volume, 0);
+    if (hud.unit === "m³") near("IMPORT: HUD volume (m^3)", hud.volume, total * IN ** 3, 0.5e-6 + 1e-12);
+    else near("IMPORT: HUD volume (in^3)", hud.volume, total, 0.05 + 1e-9);
     const slabFaces = (await parts(page)).filter((p) => p.kind === "face" && p.owner === slab.id);
     expect.soft(slabFaces.filter((p) => Math.abs(p.normal[2]) < 1e-6), "IMPORT: the circle's 24 side faces").toHaveLength(24);
     expect.soft(slabFaces.filter((p) => Math.abs(p.normal[2]) > 0.999), "IMPORT: top and bottom").toHaveLength(2);
@@ -871,6 +882,10 @@ test.describe("private SketchUp fixtures: every .skp under the directory", () =>
       sweepRows.push(row as SweepRow);
       await info.attach("row", { contentType: "application/json", body: JSON.stringify(row, null, 2) });
       info.annotations.push({ type: "capture", description: shot });
+      // A model with solids has the HUD's model line, whatever its units. Lane 38: the
+      // pattern read cubic inches only, so in a metric document (lane 33) it read nothing and
+      // the next check passed without looking.
+      if (counts.stats.solids > 0) expect.soft(hud.state, `the HUD's model line is read (${hudText})`).not.toBe("");
       expect.soft(hud.state === "" || hud.state === "watertight" || meshes > 0 || refused, "every solid in the model is watertight").toBe(true);
       expect.soft(dialogs, "no dialogs").toEqual([]);
       expect.soft(errors, "no page errors or console errors").toEqual([]);
