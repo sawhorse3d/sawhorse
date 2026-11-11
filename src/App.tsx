@@ -2576,6 +2576,8 @@ export function App() {
       File: [
         { label: "New", onSelect: () => void newDocument() },
         { label: "Open…", keys: "Ctrl+O", onSelect: () => void openDialog() },
+        // Next to Open, where #44 looked for it (and where macOS and Windows apps keep it).
+        { label: "Close", title: "Close this model and start an empty one (asks first if there are unsaved changes)", onSelect: () => void newDocument("close") },
         { label: "Save", keys: "Ctrl+S", onSelect: () => void save(false) },
         { label: "Save As…", keys: "Ctrl+Shift+S", onSelect: () => void save(true) },
         "-",
@@ -2607,12 +2609,12 @@ export function App() {
           ],
         },
         { label: "Print Sheets…", disabled: !scene?.sheets?.length, title: "Every drawing sheet through the system print dialog, at 100%", onSelect: () => exportSheets("print-all") },
-        "-",
-        { label: "Close", title: "Close this model and start an empty one (asks first if there are unsaved changes)", onSelect: () => void newDocument("close") },
-        // The desktop app only: a page cannot close its browser tab. The same path as the
-        // window's X: the shell raises a close request and asks over unsaved changes.
+        // The desktop app only, last after a separator: a page cannot close its browser tab.
+        // The same path as the window's X: the shell raises a close request and asks over
+        // unsaved changes.
         ...(closeShell
           ? [
+              "-" as const,
               {
                 label: quitLabel(),
                 title: "Close Sawhorse (asks first if there are unsaved changes)",

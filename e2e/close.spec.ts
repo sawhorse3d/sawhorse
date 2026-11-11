@@ -59,10 +59,10 @@ function autosaved(page: Page) {
   );
 }
 
-test("the desktop File menu ends with Close and Exit, named for the platform, and listens for close requests", async ({ page }) => {
+test("the desktop File menu has Close next to Open and ends with Exit, named for the platform, and listens for close requests", async ({ page }) => {
   await desktopBridge(page);
   await ready(page);
-  await expect(await fileMenu(page)).toHaveText([/New/, /Open…\s*Ctrl\+O/, /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/, /Print Sheets…/, "Close", "Exit"]);
+  await expect(await fileMenu(page)).toHaveText([/New/, /Open…\s*Ctrl\+O/, "Close", /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/, /Print Sheets…/, "Exit"]);
   expect(await page.evaluate(() => (window as unknown as { __tauriMock: { listeners(e: string): number } }).__tauriMock.listeners("sawhorse://close-requested"))).toBe(1);
   // The page never registers Tauri's own close-requested listener, which would have the shell
   // hold every close until the page destroyed the window.
@@ -78,7 +78,8 @@ test("on macOS the last item is Quit Sawhorse", async ({ page }) => {
 test("the browser build has File > Close and no Exit (a page cannot close its tab)", async ({ page }) => {
   await ready(page);
   const items = await fileMenu(page);
-  await expect(items.last()).toHaveText("Close");
+  await expect(items.nth(2)).toHaveText("Close");
+  await expect(items.last()).toHaveText(/Print Sheets…/);
   await expect(page.getByRole("menuitem", { name: /^(Exit|Quit)/ })).toHaveCount(0);
 });
 
