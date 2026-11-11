@@ -219,7 +219,7 @@ What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-
 |---|---|---|
 | `stocks[]` | stock[] | At most 200. |
 | `stocks[].name` | string | 1 to 64 characters, no surrounding spaces, unique in the library compared without case. Parts and defaults refer to stock by it. |
-| `stocks[].kind` | `"sheet"` or `"board"` | Sheet goods (any part lies anywhere on it) or a board (parts are cut along its length, one across its width). |
+| `stocks[].kind` | `"sheet"` or `"board"` | Sheet goods (any part lies anywhere on it) or a board (parts are cut along its length; narrow ones side by side across its width when that saves a board). |
 | `stocks[].length`, `width`, `thickness` | number | Metres, each 1 mm to 10 m; the thickness (actual, not nominal) at most the width and the length. `length` runs along the grain. |
 | `stocks[].nominal` | string, optional | A board's nominal thickness ("4/4", "8/4"), at most 16 characters; "n/4" also gives the board feet bought (n/4 in thick). |
 | `stocks[].grain` | `"length"` or `"none"` | The grain runs along the length (default), or there is none (MDF): only then may a grained part turn across it. |

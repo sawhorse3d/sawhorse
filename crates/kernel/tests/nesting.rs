@@ -832,6 +832,95 @@ fn library() -> impl Strategy<Value = StockLibrary> {
     })
 }
 
+/// Oak rails on the built-in boards, no material defaults, kerf 1/8 in, no trim.
+fn rails(width: f64, length: f64, qty: usize) -> Nesting {
+    let list = list_of(&[(0.75, width, length, qty, Grain::Length, false, 0)], 0);
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    n
+}
+
+/// #50: narrow parts share a board's width. Four 1 1/2 x 40 in rails go on a 4/4 x 4 x 96
+/// board; each one taking the whole 4 in, two to a board, needed two boards. Crosscut into
+/// two 40 in sections, two rails ripped from each, they fit on one.
+#[test]
+fn narrow_rails_share_a_boards_width() {
+    let n = rails(1.5, 40.0, 4);
+    assert_eq!(n.totals.unplaced, 0);
+    assert_eq!(n.totals.boards, 1, "{:#?}", n.pieces);
+    let p = &n.pieces[0];
+    assert_eq!(p.stock, "4/4 x 4 x 96");
+    assert_eq!(p.placements.len(), 4);
+    // Two sections along the board, two rails across each, a kerf apart both ways.
+    let mut xs: Vec<f64> = p.placements.iter().map(|q| q.x).collect();
+    let mut ys: Vec<f64> = p.placements.iter().map(|q| q.y).collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    ys.sort_by(f64::total_cmp);
+    ys.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    assert_eq!(xs, vec![0.0, 40.0 * IN + IN / 8.0]);
+    assert_eq!(ys, vec![0.0, 1.5 * IN + IN / 8.0]);
+    // The crosscut that frees a section comes before the rips inside it.
+    let first_rip = p.cuts.iter().position(|c| c.dir == CutDir::Rip).unwrap();
+    let first_cross = p
+        .cuts
+        .iter()
+        .position(|c| c.dir == CutDir::Crosscut)
+        .unwrap();
+    assert!(first_cross < first_rip, "{:#?}", p.cuts);
+}
+
+/// Width nesting changes a layout only when it saves a board: two rails that already fit
+/// end to end on one board stay end to end, each on the board's near edge.
+#[test]
+fn rails_that_fit_end_to_end_stay_end_to_end() {
+    let n = rails(1.5, 40.0, 2);
+    assert_eq!(n.totals.boards, 1);
+    assert!(
+        n.pieces[0].placements.iter().all(|q| q.y == 0.0),
+        "{:#?}",
+        n.pieces
+    );
+}
+
+/// A part as wide as the board still takes the whole width, and a narrow one shares a
+/// section only beside a part with room left across it.
+#[test]
+fn a_full_width_part_takes_its_own_section() {
+    let list = list_of(
+        &[
+            (0.75, 4.0, 40.0, 1, Grain::Length, false, 0),
+            (0.75, 1.5, 50.0, 2, Grain::Length, false, 0),
+        ],
+        0,
+    );
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    // 40 + 50 + 50 end to end is two boards; the two rails side by side in one 50 in
+    // section beside the 40 in part make one.
+    assert_eq!(n.totals.boards, 1, "{:#?}", n.pieces);
+    let wide = n.pieces[0]
+        .placements
+        .iter()
+        .find(|q| q.dy == 4.0 * IN)
+        .unwrap();
+    assert_eq!(wide.y, 0.0);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 

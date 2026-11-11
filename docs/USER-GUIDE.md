@@ -381,6 +381,8 @@ Parts of different materials never share a sheet or a board.
 
 **Saw, kerf and trim.** **Saw: Table saw** (the default) lays sheets out so they come apart in straight cuts from edge to edge, the way a table saw or panel saw cuts. **Tightest (CNC)** packs parts as tightly as their rectangles allow; some of its layouts need a track saw, a jigsaw or a CNC (the diagram says "not all straight cuts"). **Kerf** is the width of every cut (1/8 in to start; type 3/32 for a thin-kerf blade). **Trim** is taken off every edge of a sheet and both ends of a board before anything else (factory edges, checked ends). Both commit when you press Enter, leave the field, or stop typing.
 
+**Boards.** Parts go end to end along a board. When that would take more boards than needed, narrow parts share its width: the board is crosscut into sections, each as long as its longest part, and parts that fit side by side are ripped from a section, a kerf apart. Four 1 1/2 x 40 in rails come off one 4/4 x 4 x 96 board this way, where end to end they would take two. A layout only changes like this when it saves a board.
+
 **Grain.** A part's grain runs along each sheet's and board's length, so a part is never turned across the grain; it turns 90 degrees only when it, or the stock (MDF), has no grain. Set a part's grain across (right-click its row) and it lies across the sheet.
 
 **Reading it.**
