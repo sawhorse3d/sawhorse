@@ -454,6 +454,8 @@ A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piec
 
 **Edit > Units** sets the units lengths are typed and shown in (see [Units](#the-first-ten-minutes) under The first ten minutes); the unit chip beside the Value Control Box opens the same picker.
 
+**File > Import units** is what an STL, an OBJ or a DXF without units is read in, when the file does not say (millimetres to start; Sawhorse remembers the choice). An STL or OBJ that Sawhorse exported says "units mm" inside, so it always comes back in at its true size, whatever this is set to: a 48 in board exported and imported again is 48 in, not 48 x 25.4. The import report says which it was ("Sawhorse STL: read as millimetres, as its header says"). A part that came in too big this way in an earlier version stays that size: delete it and import the original export again, or scale it by 0.0393701 (1 / 25.4) once for each time it went out and back.
+
 **Edit > Settings…** holds one setting today: the **render service**. Renders (and the Credits chip and the Render pane) are not part of this alpha: they appear only when a render service address is saved here and that service answers when the app starts. Without one, the line under the field says "Renders are off" and nothing about credits is shown. Nothing else in Sawhorse needs a network or an account.
 
 ## Known limits

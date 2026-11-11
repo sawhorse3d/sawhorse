@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { FAMILIES, rng } from "../src/io/corpus/models";
+import { IN, near, solids, type Solid, type V3 } from "./helpers";
 
 // Lane 6: the File menu, import, export, save and open, drag-and-drop, on the production
 // browser build. `?io=basic` uses the file input and downloads (the File System Access
@@ -108,6 +109,44 @@ test("import an STL, export STL and 3MF, re-import the STL", async ({ page }) =>
   // One undo step per import.
   await page.keyboard.press("Control+z");
   await expect(vp).toHaveAttribute("data-objects", "1");
+});
+
+// Lane 34 (#47, #48): Sawhorse writes STL and OBJ in millimetres and says so inside the file,
+// but the importer read them in File > Import units: with it on Inches, every export and
+// import made a part 25.4 times bigger. Sawhorse's own files now come back at their size.
+test("with Import units on Inches, an STL and an OBJ that Sawhorse exported come back at their size", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Import units", exact: true }).hover();
+  await page.getByRole("menuitemcheckbox", { name: "Inches (STL, OBJ, unitless DXF)" }).click();
+  expect(await page.evaluate(() => localStorage.getItem("sawhorse.importUnits"))).toBe("in");
+  const rail: V3 = [48, 3.5, 1.5];
+  const size = (s: Solid) => s.max.map((m, k) => m - s.min[k]) as V3;
+  const volume = 48 * 3.5 * 1.5 * IN ** 3;
+
+  // Another program's STL (a header that is not ours), its numbers in inches: the menu holds.
+  await pick(page, "rail.stl", stlBoxes([{ at: [0, 0, 0], size: rail }]));
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(page.getByTestId("import-report")).toContainText("STL has no units; read as inches (File > Import units)");
+  near(size((await solids(page))[0]), rail);
+
+  // Our STL, out and back in: 48 in long, not 48 x 25.4.
+  const stl = await download(page, () => menu(page, "File", "Export", "STL…"));
+  expect(stl.bytes.subarray(0, 35).toString("latin1")).toBe("Sawhorse binary STL; units mm; Z up");
+  await pick(page, "rail-again.stl", stl.bytes);
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await expect(page.getByTestId("import-report")).toContainText("Sawhorse STL: read as millimetres, as its header says (File > Import units is for other STL files)");
+  for (const s of await solids(page)) near(size(s), rail);
+  expect(Number(await vp.getAttribute("data-volume"))).toBeCloseTo(2 * volume, 7);
+
+  // Our OBJ of both rails, out and back in.
+  const obj = await download(page, () => menu(page, "File", "Export", "OBJ…"));
+  expect(obj.bytes.toString("utf8").split("\n")[0]).toBe("# Sawhorse OBJ; units mm; Z up");
+  await pick(page, "rails.obj", obj.bytes);
+  await expect(vp).toHaveAttribute("data-objects", "4");
+  await expect(page.getByTestId("import-report")).toContainText("Sawhorse OBJ: read as millimetres, as its first line says (File > Import units is for other OBJ files)");
+  for (const s of await solids(page)) near(size(s), rail);
+  expect(Number(await vp.getAttribute("data-volume"))).toBeCloseTo(4 * volume, 7);
 });
 
 test("an open mesh comes in visible, is named in the HUD, and STL export refuses it by name", async ({ page }) => {

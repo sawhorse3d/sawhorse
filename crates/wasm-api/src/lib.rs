@@ -1608,13 +1608,23 @@ mod tests {
         let st: serde_json::Value = serde_json::from_str(&fresh.state_json()).unwrap();
         assert_eq!(st["object_info"][0]["name"], "part");
         assert!((st["stats"]["volume_m3"].as_f64().unwrap() - 0.006).abs() < 1e-9);
-        // In inches, the same bytes come in 25.4 times bigger.
+        // The units reach the reader: another program's STL (the same triangles, a blank
+        // header) read in inches comes in 25.4 times bigger.
+        let mut foreign = stl.clone();
+        foreign[..80].fill(0);
         let mut inch = DocCore::default();
-        inch.import("part.stl", &stl, r#"{"units":"in"}"#).unwrap();
+        inch.import("part.stl", &foreign, r#"{"units":"in"}"#)
+            .unwrap();
         let st: serde_json::Value = serde_json::from_str(&inch.state_json()).unwrap();
         assert!(
             (st["stats"]["volume_m3"].as_f64().unwrap() - 0.006 * 25.4f64.powi(3)).abs() < 1e-6
         );
+        // #47: Sawhorse's own STL says millimetres in its header and comes back at its size,
+        // whatever the import units are.
+        let mut ours = DocCore::default();
+        ours.import("part.stl", &stl, r#"{"units":"in"}"#).unwrap();
+        let st: serde_json::Value = serde_json::from_str(&ours.state_json()).unwrap();
+        assert!((st["stats"]["volume_m3"].as_f64().unwrap() - 0.006).abs() < 1e-9);
         assert!(
             fresh
                 .import("x.bin", b"nope", "")
