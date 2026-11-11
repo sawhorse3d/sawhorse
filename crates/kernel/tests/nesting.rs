@@ -832,6 +832,169 @@ fn library() -> impl Strategy<Value = StockLibrary> {
     })
 }
 
+/// Oak rails on the built-in boards, no material defaults, kerf 1/8 in, no trim.
+fn rails(width: f64, length: f64, qty: usize) -> Nesting {
+    let list = list_of(&[(0.75, width, length, qty, Grain::Length, false, 0)], 0);
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    n
+}
+
+/// #50: narrow parts share a board's width. Four 1 1/2 x 40 in rails go on a 4/4 x 4 x 96
+/// board; each one taking the whole 4 in, two to a board, needed two boards. Crosscut into
+/// two 40 in sections, two rails ripped from each, they fit on one.
+#[test]
+fn narrow_rails_share_a_boards_width() {
+    let n = rails(1.5, 40.0, 4);
+    assert_eq!(n.totals.unplaced, 0);
+    assert_eq!(n.totals.boards, 1, "{:#?}", n.pieces);
+    let p = &n.pieces[0];
+    assert_eq!(p.stock, "4/4 x 4 x 96");
+    assert_eq!(p.placements.len(), 4);
+    // Two sections along the board, two rails across each, a kerf apart both ways.
+    let mut xs: Vec<f64> = p.placements.iter().map(|q| q.x).collect();
+    let mut ys: Vec<f64> = p.placements.iter().map(|q| q.y).collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    ys.sort_by(f64::total_cmp);
+    ys.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    assert_eq!(xs, vec![0.0, 40.0 * IN + IN / 8.0]);
+    assert_eq!(ys, vec![0.0, 1.5 * IN + IN / 8.0]);
+    // The crosscut that frees a section comes before the rips inside it.
+    let first_rip = p.cuts.iter().position(|c| c.dir == CutDir::Rip).unwrap();
+    let first_cross = p
+        .cuts
+        .iter()
+        .position(|c| c.dir == CutDir::Crosscut)
+        .unwrap();
+    assert!(first_cross < first_rip, "{:#?}", p.cuts);
+}
+
+/// Width nesting changes a layout only when it saves a board: two rails that already fit
+/// end to end on one board stay end to end, each on the board's near edge.
+#[test]
+fn rails_that_fit_end_to_end_stay_end_to_end() {
+    let n = rails(1.5, 40.0, 2);
+    assert_eq!(n.totals.boards, 1);
+    assert!(
+        n.pieces[0].placements.iter().all(|q| q.y == 0.0),
+        "{:#?}",
+        n.pieces
+    );
+}
+
+/// A part as wide as the board still takes the whole width, and a narrow one shares a
+/// section only beside a part with room left across it.
+#[test]
+fn a_full_width_part_takes_its_own_section() {
+    let list = list_of(
+        &[
+            (0.75, 4.0, 40.0, 1, Grain::Length, false, 0),
+            (0.75, 1.5, 50.0, 2, Grain::Length, false, 0),
+        ],
+        0,
+    );
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    // 40 + 50 + 50 end to end is two boards; the two rails side by side in one 50 in
+    // section beside the 40 in part make one.
+    assert_eq!(n.totals.boards, 1, "{:#?}", n.pieces);
+    let wide = n.pieces[0]
+        .placements
+        .iter()
+        .find(|q| q.dy == 4.0 * IN)
+        .unwrap();
+    assert_eq!(wide.y, 0.0);
+}
+
+/// A section whose parts differ in length and width: two each of 1 1/2 x 40, 1 1/4 x 30
+/// and 1 x 20 in on a 4 in board. End to end they take two boards; in sections of 40, 30
+/// and 20 in they take one. The cuts come in an order a person can make them, each across
+/// the whole piece in hand: a section crosscut off the board, its rips, a crosscut to
+/// length where a shorter part rides beside a longer one, then the next section. The parts
+/// are listed in the same order, section by section.
+#[test]
+fn parts_of_different_lengths_share_sections_and_cut_in_order() {
+    let list = list_of(
+        &[
+            (0.75, 1.5, 40.0, 2, Grain::Length, false, 0),
+            (0.75, 1.25, 30.0, 2, Grain::Length, false, 0),
+            (0.75, 1.0, 20.0, 2, Grain::Length, false, 0),
+        ],
+        0,
+    );
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    assert_eq!(n.totals.boards, 1, "{:#?}", n.pieces);
+    let p = &n.pieces[0];
+    assert_eq!(p.stock, "4/4 x 4 x 96");
+    assert!(p.guillotine);
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    // Sections at 0, 40 1/8 and 70 1/4 in: the two 40s; the two 30s with a 20 beside them;
+    // the other 20 alone.
+    let want = [
+        ("1a", 0.0, 0.0),
+        ("1b", 0.0, 1.625),
+        ("2a", 40.125, 0.0),
+        ("2b", 40.125, 1.375),
+        ("3a", 40.125, 2.75),
+        ("3b", 70.25, 0.0),
+    ];
+    assert_eq!(p.placements.len(), want.len());
+    for (q, &(tag, x, y)) in p.placements.iter().zip(&want) {
+        assert!(
+            q.tag == tag && near(q.x / IN, x) && near(q.y / IN, y) && !q.turned,
+            "{tag} at ({x}, {y}): {q:#?}"
+        );
+    }
+    use CutDir::{Crosscut, Rip};
+    let cuts = [
+        (Crosscut, 40.0, 40.0),
+        (Rip, 1.5, 1.5),
+        (Rip, 3.125, 1.5),
+        (Crosscut, 70.125, 30.0),
+        (Rip, 1.25, 1.25),
+        (Rip, 2.625, 1.25),
+        (Crosscut, 60.125, 20.0),
+        (Rip, 3.75, 1.0),
+        (Crosscut, 90.25, 20.0),
+        (Rip, 1.0, 1.0),
+    ];
+    assert_eq!(p.cuts.len(), cuts.len(), "{:#?}", p.cuts);
+    for (k, (c, &(dir, at, size))) in p.cuts.iter().zip(&cuts).enumerate() {
+        assert!(
+            c.n as usize == k + 1
+                && c.dir == dir
+                && near(c.at / IN, at)
+                && near(c.size / IN, size)
+                && !c.trim,
+            "cut {}: {c:#?}",
+            k + 1
+        );
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 

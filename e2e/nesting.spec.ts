@@ -10,6 +10,7 @@ import DxfParser from "dxf-parser";
 // 5 x 5 sheets are reported); then the SVGs, the DXF and the PDF booklet saved and read
 // back with every part in them. Every layout is checked for overlaps and kerf gaps.
 import { buildBookshelf, hint, ready } from "./bookshelf-build";
+import { buildShz, openShz } from "./shz";
 import { readPdf } from "../src/cutlist/pdf";
 
 const IN = 0.0254;
@@ -211,4 +212,87 @@ test("nesting the bookshelf: boards and a sheet, kerf, maxrects, ply, stock, and
   const pages = book.text.slice(1).map((t) => t.join("\n"));
   for (const t of tags(n)) expect(pages.some((pg) => pg.includes(t))).toBe(true);
   await expect(hint(page)).toContainText("a page per sheet or board");
+});
+
+// Lane 36 (#50, #51): four 1 1/2 x 3/4 x 40 in rails on a 4 in board. End to end, two to a
+// board, they took two 4/4 x 4 x 96 boards; crosscut into two 40 in sections and ripped two
+// from each, they come off one. The panel draws one board with the rails side by side, a
+// kerf apart each way, every tag on it, and lists the cuts in an order a person can make
+// them: a section crosscut off, its rips, then the next section.
+test("narrow rails share a board's width: one board in the panel, two sections of two", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    for (let k = 0; k < 4; k++) {
+      const y = k * 4;
+      const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, y * IN, 0], [40 * IN, y * IN, 0], [40 * IN, (y + 1.5) * IN, 0], [0, (y + 1.5) * IN, 0]], closed: true });
+      const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+      apply({ op: "make_component", items: [{ object: made.object }], name: `Rail ${k + 1}` });
+    }
+  });
+  await openShz(page, shz, 4, "rails.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  await expect(section).toBeVisible();
+  await expect(page.getByTestId("tile-nest-boards")).toHaveText("1board: 1 × 4/4, 2.7 bd ft");
+  const n = await nest(page);
+  expect([n.totals.boards, n.totals.sheets, n.totals.placed, n.totals.unplaced]).toEqual([1, 0, 4, 0]);
+  const [p] = n.pieces;
+  expect(p.stock).toBe("4/4 x 4 x 96");
+  expect(p.guillotine).toBe(true);
+  checkLayout(n);
+  // Two sections along the board (x), two rails across each (y), a kerf apart both ways.
+  const uniq = (v: number[]) => [...new Set(v.map((x) => Math.round(x / IN * 1e6) / 1e6))].sort((a, b) => a - b);
+  expect(uniq(p.placements.map((q) => q.x))).toEqual([0, 40.125]);
+  expect(uniq(p.placements.map((q) => q.y))).toEqual([0, 1.625]);
+  expect(p.placements.every((q) => !q.turned && Math.abs(q.dx - 40 * IN) < 1e-9 && Math.abs(q.dy - 1.5 * IN) < 1e-9)).toBe(true);
+  // The panel: one board drawn, its four rails where the layout puts them, each tagged.
+  await expect(section.locator("figure.nest-piece")).toHaveCount(1);
+  const parts = section.locator("figure.nest-piece svg.nest-diagram g.part");
+  await expect(parts).toHaveCount(4);
+  const drawn = await parts.evaluateAll((gs) =>
+    gs.map((g) => {
+      const r = g.querySelector("rect")!;
+      return { tag: g.getAttribute("data-tag"), text: g.querySelector("text")?.textContent ?? null, x: Number(r.getAttribute("x")), y: Number(r.getAttribute("y")), w: Number(r.getAttribute("width")), h: Number(r.getAttribute("height")) };
+    }),
+  );
+  for (const q of p.placements) {
+    const d = drawn.find((g) => g.tag === q.tag)!;
+    expect(d, q.tag).toBeTruthy();
+    expect(d.text).toBe(q.tag);
+    expect(d.x).toBeCloseTo(q.x * 1000, 6);
+    expect(d.y).toBeCloseTo(q.y * 1000, 6);
+    expect(d.w).toBeCloseTo(q.dx * 1000, 6);
+    expect(d.h).toBeCloseTo(q.dy * 1000, 6);
+  }
+  // The cut sequence, numbered: the first section crosscut off and ripped (the second rip
+  // leaves the waste strip), then the second section the same way.
+  await section.locator("figure.nest-piece details summary").first().click({ position: { x: 4, y: 4 } });
+  await expect(section.locator("figure.nest-piece details").first()).toHaveAttribute("open", "");
+  const cuts = section.locator("figure.nest-piece ol.nest-cuts li");
+  await expect(cuts).toHaveText([
+    "Crosscut to 40 in (cut 4 across)",
+    "Rip to 1 1/2 in (cut 40 long)",
+    "Rip to 1 1/2 in (cut 40 long)",
+    "Crosscut to 40 in (cut 4 across)",
+    "Rip to 1 1/2 in (cut 40 long)",
+    "Rip to 1 1/2 in (cut 40 long)",
+  ]);
+  expect(await cuts.evaluateAll((li) => li.map((x) => (x as HTMLLIElement).value))).toEqual([1, 2, 3, 4, 5, 6]);
+  // Each cut drawn on the diagram where it runs (the kerf's centre line), across the piece it
+  // splits: the crosscuts the board's whole 4 in, the rips their section's 40 in.
+  const lines = await section.locator("figure.nest-piece svg.nest-diagram line.cut").evaluateAll((ls) => ls.map((l) => ["x1", "y1", "x2", "y2"].map((a) => Number(l.getAttribute(a)) / 1000 / 0.0254)));
+  const k = 1 / 16;
+  expect(lines.map((v) => v.map((x) => Math.round(x * 1e6) / 1e6))).toEqual([
+    [40 + k, 0, 40 + k, 4],
+    [0, 1.5 + k, 40, 1.5 + k],
+    [0, 3.125 + k, 40, 3.125 + k],
+    [80.125 + k, 0, 80.125 + k, 4],
+    [40.125, 1.5 + k, 80.125, 1.5 + k],
+    [40.125, 3.125 + k, 80.125, 3.125 + k],
+  ]);
+  // The parts listed in the order the cuts free them: section by section, Rail 1 and Rail 2
+  // ripped from the first, Rail 3 and Rail 4 from the second.
+  await expect(section.locator("figure.nest-piece ul.nest-parts li")).toHaveText([/^1 Rail 1 /, /^2 Rail 2 /, /^3 Rail 3 /, /^4 Rail 4 /]);
 });

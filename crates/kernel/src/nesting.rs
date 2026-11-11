@@ -29,10 +29,13 @@
 //!   cuttable on a table saw.
 //! - **Sheets, maxrects**: maximal free rectangles, best short side fit, every part grown
 //!   by the kerf inside a bin grown by the kerf; tighter, but not always guillotine.
-//! - **Boards**: one-dimensional cutting on the lengths (the part's width must fit the
-//!   board's): first-fit-decreasing, and a lookahead that fills each board in turn with the
-//!   subset of the remaining parts that leaves the least waste (a bounded search); the one
-//!   with fewer boards wins.
+//! - **Boards**: cutting on the lengths (the part's width must fit the board's):
+//!   first-fit-decreasing, and a lookahead that fills each board in turn with the subset of
+//!   the remaining parts that leaves the least waste (a bounded search); the one with fewer
+//!   boards wins. Both run on sections: first each part its own section across the whole
+//!   width, then shelves (longest part first, into the first section with room left across
+//!   the board, else a new section as long as itself), so narrow parts are ripped side by
+//!   side from one crosscut section. The shelves win only with fewer boards.
 //!
 //! **Cuts.** Each piece's cut sequence is found from its layout: trim cuts first, then
 //! recursively the first straight cut across the current offcut that crosses no part (rips
@@ -1009,28 +1012,69 @@ fn board_layout(items: &[Item2], u: Rect, kerf: f64) -> Vec<Vec<Put>> {
                 .expect("only fitting parts are laid out")
         })
         .collect();
-    let lens: Vec<(usize, f64)> = chosen.iter().enumerate().map(|(i, o)| (i, o.0)).collect();
-    let a = ffd(&lens, u.w, kerf);
-    let b = lookahead(&lens, u.w, kerf);
-    let bins = if a.len() < b.len() { a } else { b };
+    // Each part its own section, the whole board's width: one-dimensional on the lengths.
+    let single: Vec<Vec<usize>> = (0..chosen.len()).map(|i| vec![i]).collect();
+    // Shelves: longest part first, each into the first section with room left across the
+    // board (a kerf between parts), else a new section as long as itself.
+    let mut order: Vec<usize> = (0..chosen.len()).collect();
+    order.sort_by(|&a, &b| chosen[b].0.total_cmp(&chosen[a].0).then(a.cmp(&b)));
+    let mut shelves: Vec<(f64, Vec<usize>)> = Vec::new();
+    for i in order {
+        let dy = chosen[i].1;
+        match shelves
+            .iter_mut()
+            .find(|(across, _)| across + kerf + dy <= u.h + EPS)
+        {
+            Some((across, v)) => {
+                *across += kerf + dy;
+                v.push(i);
+            }
+            None => shelves.push((dy, vec![i])),
+        }
+    }
+    let shelves: Vec<Vec<usize>> = shelves.into_iter().map(|(_, v)| v).collect();
+    let pack = |sections: &[Vec<usize>]| -> Vec<Vec<usize>> {
+        // A section is as long as its longest part.
+        let lens: Vec<(usize, f64)> = sections
+            .iter()
+            .enumerate()
+            .map(|(k, s)| (k, s.iter().map(|&i| chosen[i].0).fold(0.0, f64::max)))
+            .collect();
+        let a = ffd(&lens, u.w, kerf);
+        let b = lookahead(&lens, u.w, kerf);
+        if a.len() < b.len() { a } else { b }
+    };
+    let one = pack(&single);
+    let shelved = pack(&shelves);
+    // Width nesting only where it saves a board; otherwise the one-dimensional layout.
+    let (sections, bins) = if shelved.len() < one.len() {
+        (shelves, shelved)
+    } else {
+        (single, one)
+    };
     bins.into_iter()
         .map(|bin| {
             let mut x = u.x;
-            bin.into_iter()
-                .map(|i| {
+            let mut puts = Vec::new();
+            for k in bin {
+                let mut y = u.y;
+                let mut len: f64 = 0.0;
+                for &i in &sections[k] {
                     let (dx, dy, turned) = chosen[i];
-                    let p = Put {
+                    puts.push(Put {
                         need: items[i].need,
                         x,
-                        y: u.y,
+                        y,
                         dx,
                         dy,
                         turned,
-                    };
-                    x += dx + kerf;
-                    p
-                })
-                .collect()
+                    });
+                    y += dy + kerf;
+                    len = len.max(dx);
+                }
+                x += len + kerf;
+            }
+            puts
         })
         .collect()
 }
@@ -1266,11 +1310,18 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
             board_feet: s.board_feet() * count as f64,
         };
         for (seq, puts) in layout.into_iter().enumerate() {
-            // Placements in reading order: along the length, then across.
+            // Placements in reading order: on a sheet along the length, then across; on a
+            // board section by section along it, then across a section, the order its cuts
+            // free them (#50). A board whose parts all lie on its near edge reads the same
+            // either way.
             let mut puts = puts;
             puts.sort_by(|a, b| {
-                a.y.total_cmp(&b.y)
-                    .then(a.x.total_cmp(&b.x))
+                let (a1, a2, b1, b2) = match s.kind {
+                    StockKind::Sheet => (a.y, a.x, b.y, b.x),
+                    StockKind::Board => (a.x, a.y, b.x, b.y),
+                };
+                a1.total_cmp(&b1)
+                    .then(a2.total_cmp(&b2))
                     .then(a.need.cmp(&b.need))
             });
             let (mut cuts, guillotine) = decompose(u, &puts, kerf, s.kind);
