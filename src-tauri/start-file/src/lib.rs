@@ -213,6 +213,28 @@ mod tests {
     }
 
     #[test]
+    fn the_pieces_of_an_unquoted_program_path_are_skipped() {
+        // The setup .exe registers `<install folder>\<program>.exe "%1"` with the program's
+        // own path unquoted, so when the install folder has a space in it the program's name
+        // reaches Sawhorse split at the space: its first piece is the program's name (never
+        // looked at) and the rest arrives as an argument before the file. That piece names an
+        // .exe, so it is skipped, and the file after it is the one opened.
+        let shelf = at("shelf.shz");
+        for piece in [
+            r"Smith\AppData\Local\Sawhorse\sawhorse.exe",
+            r"Files\Sawhorse\sawhorse.exe",
+            "Files/Sawhorse/sawhorse",
+        ] {
+            assert_eq!(pick_all(&[piece]), None, "{piece}");
+            assert_eq!(
+                pick_all(&[piece, &shelf]),
+                Some(PathBuf::from(&shelf)),
+                "{piece}"
+            );
+        }
+    }
+
+    #[test]
     fn an_empty_argument_is_skipped() {
         assert_eq!(pick_all(&[""]), None);
         let shelf = at("shelf.shz");
