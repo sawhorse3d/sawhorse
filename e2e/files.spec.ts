@@ -64,7 +64,7 @@ test("the File menu: open, save, import, units and every export", async ({ page 
   await page.goto("/");
   await page.getByRole("button", { name: "File", exact: true }).click();
   const items = page.getByRole("menu", { name: "File" }).locator(":scope > button, :scope > .subwrap > button");
-  await expect(items).toHaveText([/New/, /Open…\s*Ctrl\+O/, /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/, /Print Sheets…/]);
+  await expect(items).toHaveText([/New/, /Open…\s*Ctrl\+O/, /Save\s*Ctrl\+S/, /Save As…/, /Import…\s*Ctrl\+I/, /Import units/, /Export/, /Print Sheets…/, "Close"]);
   await page.getByRole("menuitem", { name: "Export", exact: true }).hover();
   await expect(page.getByRole("menu", { name: "Export" }).getByRole("menuitem")).toHaveText([
     "STL…",

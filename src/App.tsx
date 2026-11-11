@@ -31,7 +31,7 @@ import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, with
 import { thumbnailUrl } from "./lib/thumbnail";
 import { contextTrail, describeNode, entityShown, graphIndex, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
-import { isMac } from "./lib/platform";
+import { isMac, quitLabel } from "./lib/platform";
 import { describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
@@ -57,7 +57,8 @@ import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
-import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, type FileHandle, type PickedFile } from "./io/files";
+import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, type FileHandle, type PickedFile } from "./io/files";
+import { closeHandler, desktopShell, discardQuestion } from "./io/closing";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
@@ -598,7 +599,39 @@ export function App() {
   }, [dirty, docName]);
 
   /** True when the model may be replaced: it has no unsaved changes, or the person says so. Awaited: the desktop's question is asynchronous. */
-  const confirmDiscard = useCallback(async () => (dirtyRef.current ? askYesNo("Discard the unsaved changes to this model?") : true), []);
+  const confirmDiscard = useCallback(async () => (dirtyRef.current ? askYesNo(discardQuestion()) : true), []);
+
+  // Lane 35 (#44): in the desktop app the shell asks before the window closes over unsaved
+  // changes (src/io/closing.ts): it is told whether there are any, and asks the page when a
+  // close request finds some. The question is the one above, with "and close Sawhorse"; Yes
+  // does to the autosave what File > New does (deletes it) and closes, No keeps everything.
+  const closeShell = useMemo(() => (isTauri() ? desktopShell() : null), []);
+  useEffect(() => {
+    void closeShell?.say(dirty ? "unsaved" : "saved").catch(() => undefined);
+  }, [closeShell, dirty]);
+  useEffect(() => {
+    if (!closeShell) return;
+    const handle = closeHandler({
+      shell: closeShell,
+      unsaved: () => dirtyRef.current,
+      discard: async () => {
+        if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+        await clearAutosave();
+      },
+      failed: (text) => setMessage({ text, error: true }),
+    });
+    let off = () => {};
+    let gone = false;
+    void closeShell
+      .onRequest(() => void handle())
+      .then((f) => (gone ? f() : (off = f)))
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+      off();
+    };
+  }, [closeShell, setMessage]);
 
   /** Bring a file into the model as one undo step (`.skp` through openskp, the rest through the kernel's readers). */
   const importBytes = useCallback(
@@ -725,9 +758,12 @@ export function App() {
     [takeFiles],
   );
 
-  const newDocument = useCallback(async () => {
+  /** File > New, and File > Close (lane 35, #44), which is the same: the current model goes
+   * (asked first over unsaved changes) and an empty untitled one takes its place. */
+  const newDocument = useCallback(async (how: "new" | "close" = "new") => {
     if (!(await confirmDiscard())) return;
-    const r = await run((k) => k.newDocument(), null, () => "New model.");
+    const closed = docName ? stem(docName) : "Untitled";
+    const r = await run((k) => k.newDocument(), null, () => (how === "close" ? `Closed ${closed}.` : "New model."));
     if (r) {
       pluginsRef.current?.documentOpened(null);
       setDocName(null);
@@ -738,7 +774,7 @@ export function App() {
       setSelection([]);
       setView("iso");
     }
-  }, [run, confirmDiscard, markClean]);
+  }, [run, confirmDiscard, markClean, docName]);
 
   const openDialog = useCallback(async () => {
     try {
@@ -2571,6 +2607,19 @@ export function App() {
           ],
         },
         { label: "Print Sheets…", disabled: !scene?.sheets?.length, title: "Every drawing sheet through the system print dialog, at 100%", onSelect: () => exportSheets("print-all") },
+        "-",
+        { label: "Close", title: "Close this model and start an empty one (asks first if there are unsaved changes)", onSelect: () => void newDocument("close") },
+        // The desktop app only: a page cannot close its browser tab. The same path as the
+        // window's X: the shell raises a close request and asks over unsaved changes.
+        ...(closeShell
+          ? [
+              {
+                label: quitLabel(),
+                title: "Close Sawhorse (asks first if there are unsaved changes)",
+                onSelect: () => void closeShell.say("exit").catch((e) => setMessage({ text: `Could not close the window: ${e instanceof Error ? e.message : String(e)}`, error: true })),
+              },
+            ]
+          : []),
       ],
       Edit: [
         { label: `Undo${stepName(st?.undo_depth, st?.stats.hash) ? ` ${stepName(st?.undo_depth, st?.stats.hash)}` : ""}`, keys: "Ctrl+Z", disabled: !st?.can_undo, onSelect: () => void undo() },
@@ -2701,7 +2750,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
   );
 
   const valueLabel = active?.valueLabel() ?? null;

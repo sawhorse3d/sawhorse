@@ -143,3 +143,6 @@ jobs:
       - name: atomic save tests (lane 16)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-safe-save
+      - name: close question tests (lane 35; the window is never held open)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-close-guard

@@ -7,6 +7,21 @@ export function isMac(): boolean {
   return /Mac/.test(navigator.platform || navigator.userAgent || "");
 }
 
+/** Running on Linux (the desktop app or a browser): navigator.platform, else the user agent. */
+function isLinux(): boolean {
+  if (typeof navigator === "undefined" || isMac()) return false;
+  return /Linux|X11/.test(navigator.platform || navigator.userAgent || "");
+}
+
+/**
+ * The desktop app's last File menu item (lane 35, #44), named as each platform's own apps
+ * name it: "Exit" on Windows, "Quit Sawhorse" on macOS, "Quit" on Linux.
+ */
+export function quitLabel(): string {
+  if (isMac()) return "Quit Sawhorse";
+  return isLinux() ? "Quit" : "Exit";
+}
+
 /**
  * A press macOS means as the right click: the left button with Control held (not Cmd). On a
  * Mac, Control+click is the secondary click everywhere, and for a one-button mouse, a

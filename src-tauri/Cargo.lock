@@ -3192,9 +3192,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sawhorse-close-guard"
+version = "0.1.0-alpha.5"
+
+[[package]]
 name = "sawhorse-desktop"
 version = "0.1.0-alpha.5"
 dependencies = [
+ "sawhorse-close-guard",
  "sawhorse-device-key",
  "sawhorse-safe-save",
  "serde",

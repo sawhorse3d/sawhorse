@@ -5,14 +5,17 @@
 //! Native-only concerns live here: file dialogs and file access (lane 6: the dialog and fs
 //! plugins), drag-and-drop of files onto the window, the render-credit device key in the
 //! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout in the
-//! system browser, and showing a plugin's folder (lane 11). The .shz file association lands
+//! system browser, showing a plugin's folder (lane 11), and the question before the window
+//! closes over unsaved changes (lane 35, `close-guard/`). The .shz file association lands
 //! in a later lane.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
 //! (the dialog plugin adds them to the scope) or dropped on the window (added below).
 
 use std::sync::Mutex;
+use std::time::Instant;
 
+use sawhorse_close_guard::{Guard, Request, Say, Then};
 use sawhorse_device_key::{external_url_allowed, DeviceKey, KeyringStore};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_fs::FsExt;
@@ -137,6 +140,60 @@ fn save_file_atomic(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
     }
 }
 
+/// The close question's state (lane 35, `sawhorse_close_guard`), with the clock it reads.
+struct CloseGuard {
+    started: Instant,
+    guard: Mutex<Guard>,
+}
+
+impl Default for CloseGuard {
+    fn default() -> Self {
+        CloseGuard {
+            started: Instant::now(),
+            guard: Mutex::new(Guard::new()),
+        }
+    }
+}
+
+impl CloseGuard {
+    /// What to do with a close request. A guard that cannot be read lets the window close:
+    /// it is never held open by a fault here.
+    fn request(&self) -> Request {
+        let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match self.guard.lock() {
+            Ok(mut g) => g.request(now),
+            Err(_) => Request::Close,
+        }
+    }
+}
+
+/// The page's side of the close question (lane 35, #44; src/io/closing.ts): "unsaved" and
+/// "saved" as the model changes, then the answer to a `sawhorse://close-requested` event:
+/// "keep" (No), "close" (Yes: the window is destroyed) or "failed" (it could not ask: the
+/// next close request closes at once); "exit" is File > Exit, an ordinary close request.
+/// Whatever the page says or fails to say, a close request two seconds after an unanswered
+/// question closes the window (`sawhorse_close_guard`).
+#[tauri::command]
+fn close_guard(
+    window: tauri::Window,
+    state: State<'_, CloseGuard>,
+    say: String,
+) -> Result<(), String> {
+    let say = Say::parse(&say).ok_or_else(|| format!("close_guard: no such message {say:?}"))?;
+    // The lock is released at the end of this statement: Window::close raises a close
+    // request whose handler takes it again.
+    let then = state
+        .guard
+        .lock()
+        .map_err(|_| "close guard lock poisoned".to_string())?
+        .say(say);
+    match then {
+        Then::Nothing => Ok(()),
+        Then::Destroy => window.destroy().map_err(|e| e.to_string()),
+        Then::RequestClose => window.close().map_err(|e| e.to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -144,16 +201,34 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Device::default())
-        .on_window_event(|window, event| {
+        .manage(CloseGuard::default())
+        .on_window_event(|window, event| match event {
             // Files dropped on the window: allow exactly those paths, then tell the page,
             // which reads them through the fs plugin (src/io/files.ts, onTauriDrop).
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
                 let scope = window.app_handle().fs_scope();
                 for p in paths {
                     let _ = scope.allow_file(p);
                 }
                 let _ = window.emit("sawhorse://dropped", paths);
             }
+            // The X, Alt+F4, the taskbar's Close, the red button, Window::close (File > Exit):
+            // with unsaved changes the page is asked first (lane 35). The page never registers
+            // Tauri's own close-requested listener, which would hold every close until the
+            // page destroyed the window.
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                match window.state::<CloseGuard>().request() {
+                    Request::Close => {}
+                    Request::Wait => api.prevent_close(),
+                    // Kept open only when the question reached the page's event system.
+                    Request::Ask => {
+                        if window.emit("sawhorse://close-requested", ()).is_ok() {
+                            api.prevent_close();
+                        }
+                    }
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             shell_version,
@@ -161,7 +236,8 @@ pub fn run() {
             device_sign,
             open_external,
             open_plugin_folder,
-            save_file_atomic
+            save_file_atomic,
+            close_guard
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");

@@ -1,0 +1,15 @@
+[package]
+name = "sawhorse-close-guard"
+version = "0.1.0-alpha.5"
+description = "Sawhorse desktop: the question before the window closes over unsaved changes, decided so the window can never be held open."
+authors = ["Sawhorse contributors"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# A member of the src-tauri workspace (a path dependency under its root), kept apart from the
+# Tauri crate so its tests run without the webview toolchain:
+#   cd src-tauri && cargo test -p sawhorse-close-guard
+
+[dependencies]
