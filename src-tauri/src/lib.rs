@@ -206,11 +206,13 @@ struct StartFile(Mutex<Option<PathBuf>>);
 
 impl StartFile {
     /// Read the process's arguments once: the first that names an existing regular file
-    /// File > Open takes (`sawhorse_start_file::pick`), or none.
+    /// File > Open takes (`sawhorse_start_file::pick`), or none. The path kept is absolute
+    /// and cleaned of every `.` and `..` on its text alone (lane 39, #52): the fs plugin the
+    /// page reads it through refuses a path that holds a `..`.
     fn from_args() -> Self {
         let cwd = std::env::current_dir().ok();
-        // Path::is_file follows a link to what it names: a folder, a missing file or a
-        // device is not a regular file.
+        // Asked of the cleaned path. Path::is_file follows a link to what it names: a folder,
+        // a missing file or a device is not a regular file.
         let args = std::env::args_os().skip(1);
         let path = sawhorse_start_file::pick(args, cwd.as_deref(), std::path::Path::is_file);
         StartFile(Mutex::new(path))
@@ -220,7 +222,9 @@ impl StartFile {
 /// The file the app was started with, handed to the page once (src/io/startup.ts): the
 /// first call returns its path and every later one nothing, so a reload of the page never
 /// opens it again. Exactly that one path is added to the fs scope, the way a dropped file
-/// is, and only then: no folder, no pattern, nothing else made from it. The page reads it
+/// is, and only then: no folder, no pattern, nothing else made from it. It is the cleaned
+/// path `sawhorse_start_file::pick` returned, with no `.` or `..` in it, so the fs plugin's
+/// reads (which take their path as tauri's `SafePathBuf`) never refuse it for that. The page reads it
 /// through the fs plugin as it reads a dropped file. A path that is not valid Unicode is
 /// never taken (the page could not name it), and one the scope refuses is not handed over.
 #[tauri::command]
