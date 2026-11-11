@@ -1,16 +1,19 @@
 name: Desktop test build
 
-# An unsigned Windows installer of one commit, to try by hand before a release (Save, Save As,
-# Ctrl+S and the close question cannot be tried in CI). Run it from the Actions tab on any
-# branch; the installers come back as a workflow artifact kept for 7 days.
+# Desktop files of one commit, to try by hand before a release (Save, Save As, Ctrl+S and the
+# close question cannot be tried in CI): the unsigned Windows installers (.exe, .msi), the
+# Apple Silicon disk image (.dmg, signed ad hoc only) and the Linux AppImage, .deb and .rpm
+# (unsigned). Run it from the Actions tab on any branch; each of the three jobs uploads its
+# own workflow artifact, kept for 7 days. The jobs do not depend on each other, so one that
+# fails still leaves the other two's files.
 #
 # It publishes nothing: no release, no tag, no secrets, read-only permissions. release.yml
 # cannot do this job: its manual run makes a v<run>-dev draft release. The build steps are
-# release.yml's Windows steps (same Node, Rust, wasm-pack and Tauri CLI, same environment),
-# except the build itself: `npx tauri build` instead of tauri-action, the same Tauri CLI
-# from package.json that tauri-action runs, with no GitHub token and no release to upload to,
-# so it can only write files on the runner. The signing step is left out: this workflow
-# reads no secret.
+# release.yml's steps for the same platform (same runner, Node, Rust, wasm-pack and Tauri
+# CLI, same environment), except the build itself: `npx tauri build` instead of
+# tauri-action, the same Tauri CLI from package.json that tauri-action runs, with no GitHub
+# token and no release to upload to, so it can only write files on the runner. The signing
+# secrets step is left out: this workflow reads no secret.
 on:
   workflow_dispatch:
 
@@ -89,3 +92,107 @@ jobs:
           if ($associate -eq 0) { Write-Error "the NSIS script does not associate .shz"; exit 1 }
           if ($remove -eq 0) { Write-Error "the NSIS uninstaller does not remove the .shz association"; exit 1 }
           Write-Host "NSIS: $associate line(s) associating .shz, $remove removing it; .msi sources: $msi .shz extension(s)"
+
+  macos:
+    name: macOS disk image for Apple Silicon (ad-hoc signed test build)
+    # As in release.yml: the Apple Silicon app is built on the Intel macOS runner, rustc
+    # cross-compiling to aarch64-apple-darwin (codesign signs either architecture), because
+    # this repository's arm64 macOS jobs keep getting no runner ("not acquired by Runner of
+    # type hosted", cancelled at 15 minutes: macos-latest, macos-15 and macos-26 on
+    # 2026-10-20, macos-15 three times in a row on 2026-11-10), and macos-14, which did start,
+    # was retired by GitHub on 2026-11-02. release.yml's comment on its matrix has the detail.
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates
+            src-tauri
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: Tauri stays on 2.x
+        run: npm run check:tauri
+      # release.yml's "Optional signing secrets" step is left out: it reads secrets, and this
+      # workflow reads none, so no Apple identity is ever set here and the app is signed ad
+      # hoc. The next step is release.yml's, unchanged (lane 28, #27): on Apple Silicon an
+      # unsigned app is "damaged and can't be opened" and Gatekeeper never offers Open
+      # Anyway. The identity "-" makes tauri-bundler sign the .app itself, after it is
+      # assembled and before the .dmg is made from it.
+      - name: "macOS: ad-hoc signing while there is no Apple identity"
+        shell: bash
+        run: |
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "signing: ad hoc (APPLE_SIGNING_IDENTITY=-)"
+          fi
+      # tauri.conf.json's beforeBuildCommand (npm run build:all) builds the kernel and the page.
+      - name: build the disk image (nothing is uploaded anywhere but this run)
+        run: npx tauri build --target aarch64-apple-darwin
+      # release.yml's check (lane 28, #27), with no release tag: the app, and the app inside
+      # the .dmg, must verify (codesign --verify --deep --strict); if either does not, the
+      # script signs the app ad hoc and makes the .dmg again. Given no tag it uploads nothing
+      # and needs no token (scripts/macos-adhoc-check.sh), so release.yml's GH_TOKEN is left
+      # out. It runs before the upload, so the artifact holds the checked .dmg.
+      - name: "macOS: check the app's signature, in the .dmg too"
+        id: check
+        shell: bash
+        run: bash scripts/macos-adhoc-check.sh "src-tauri/target/aarch64-apple-darwin/release/bundle"
+      # After a passing check, and after a failing one too, so the .dmg can still be looked
+      # at; never after a failed build.
+      - uses: actions/upload-artifact@v5
+        if: success() || steps.check.outcome == 'failure'
+        with:
+          name: unsigned-test-build-${{ github.sha }}-macos
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    name: Linux AppImage, .deb and .rpm (unsigned test build)
+    # release.yml's Linux runner, kept on the older glibc the Linux release build targets.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates
+            src-tauri
+      - name: Linux webview deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: Tauri stays on 2.x
+        run: npm run check:tauri
+      # release.yml's "Optional signing secrets" step is left out: this workflow reads no secret.
+      # tauri.conf.json's beforeBuildCommand (npm run build:all) builds the kernel and the page.
+      - name: build the packages (nothing is uploaded anywhere but this run)
+        run: npx tauri build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-test-build-${{ github.sha }}-linux
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
+          retention-days: 7

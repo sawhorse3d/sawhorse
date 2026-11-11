@@ -442,7 +442,13 @@ Production builds emit no source maps: a map embeds every dependency's original 
 
 Stay on Tauri 2.x stable. 3.0 is alpha; `npm run check:tauri` fails on anything else.
 
-**A Windows installer to try by hand** (`.github/workflows/desktop-test-build.yml`): run "Desktop test build" from the Actions tab on any branch, or `gh workflow run desktop-test-build.yml --ref <branch>`, and the run's artifact `unsigned-test-build-<commit>-windows` (kept 7 days) holds that commit's unsigned `.exe` and `.msi`. It uses `release.yml`'s Windows steps with `npx tauri build` in place of tauri-action, reads no secret and has read-only permissions, so it makes no release and no tag; it is how Save, Ctrl+S and the close question get tried in a real installer before a release.
+**Desktop files to try by hand** (`.github/workflows/desktop-test-build.yml`): run "Desktop test build" from the Actions tab on any branch, or `gh workflow run desktop-test-build.yml --ref <branch>`. It has three jobs that do not depend on each other, so one that fails still leaves the others' files, and each uploads one artifact of that commit, kept 7 days:
+
+- `unsigned-test-build-<commit>-windows`: the unsigned `.exe` and `.msi`, then the check that they register `.shz`.
+- `unsigned-test-build-<commit>-macos`: the Apple Silicon `.dmg`, built as `release.yml` builds it, on the Intel `macos-15-intel` runner with `--target aarch64-apple-darwin`. The app is signed ad hoc and nothing more: no secret is read, so there is no Apple identity and no notarization, and `scripts/macos-adhoc-check.sh` checks the app and the app inside the `.dmg` before the upload. An ad-hoc signature says nothing about who built the app, so macOS will ask on the first open; the steps under Unsigned installers in the [alpha.5 release notes](releases/v0.1.0-alpha.5.md#unsigned-installers) are the way through, including the Terminal command for a build that says it is damaged.
+- `unsigned-test-build-<commit>-linux`: the unsigned `.AppImage`, `.deb` and `.rpm`, built on `ubuntu-22.04` with `release.yml`'s apt packages.
+
+Downloading an artifact needs a signed-in GitHub account. The jobs use `release.yml`'s steps for their platform with `npx tauri build` in place of tauri-action, read no secret, hand no GitHub token to any build step and have read-only permissions, so the workflow makes no release and no tag. It is how Save, Ctrl+S and the close question get tried in a real installer before a release, on Windows, a Mac or Linux. The Mac and Linux jobs were added in lane 40 and had not yet been run when it landed.
 
 ## CI (`.github/workflows/ci.yml`)
 
