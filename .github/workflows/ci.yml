@@ -149,3 +149,6 @@ jobs:
       - name: start-up file tests (lane 37; which argument, if any, is the file to open)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-start-file
+      - name: window title tests (lane 39; what the title bar shows, from the page's title)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-window-title

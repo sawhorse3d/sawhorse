@@ -60,6 +60,7 @@ import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOff
 import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
 import { closeHandler, desktopShell, discardQuestion } from "./io/closing";
 import { notOpenedNote, openLabel, startupOrder, takeStartupFile, waitingNote } from "./io/startup";
+import { showTitle } from "./io/title";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
@@ -621,8 +622,9 @@ export function App() {
   const dirty = !!scene && savedLogLen !== null && scene.state.log_len !== savedLogLen;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  // Lane 39: in the desktop app the window's title bar shows the same text (src/io/title.ts).
   useEffect(() => {
-    document.title = `${dirty ? "• " : ""}${docName ? stem(docName) : "Untitled"} - Sawhorse`;
+    void showTitle(`${dirty ? "• " : ""}${docName ? stem(docName) : "Untitled"} - Sawhorse`);
   }, [dirty, docName]);
 
   /** True when the model may be replaced: it has no unsaved changes, or the person says so. Awaited: the desktop's question is asynchronous. */

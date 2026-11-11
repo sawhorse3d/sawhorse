@@ -16,6 +16,10 @@ import type { Page } from "@playwright/test";
 // of the desktop app). The fs plugin's stat and read_file read the files given to
 // desktopBridge, and only paths in the scope, as the real scope allows: a dropped path
 // (drop()) or the start-up file.
+//
+// Lane 39: the window's title. The shell's window_title command is recorded with the text the
+// page sent (`titles`); the shell's cleaning of it is tested in src-tauri/window-title.
+// `titleFails` makes the command throw, as a shell without it would.
 
 /** How the stand-in's message dialog behaves. */
 export type DialogMode = "answer" | "throw" | "throw-sync" | "never";
@@ -55,6 +59,10 @@ export interface TauriMock {
   allowed: string[];
   /** Every path the fs plugin was asked to read (stat or read_file), in order (this page load). */
   reads: string[];
+  /** Every title the page sent through window_title, in order (this page load). */
+  titles: string[];
+  /** window_title throws instead of answering. */
+  titleFails: boolean;
   /** Files dropped on the window: allowed in the scope, then sawhorse://dropped, as lib.rs does. */
   drop(paths: string[]): void;
 }
@@ -106,6 +114,8 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
       ended: null,
       allowed: [],
       reads: [],
+      titles: [],
+      titleFails: false,
       request() {
         if (mock.unsaved) mock.emit("sawhorse://close-requested", null);
         else mock.ended = "closed";
@@ -182,6 +192,12 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
               mock.allowed.push(path);
               return path;
             }
+            case "window_title": {
+              // lib.rs: the text goes through sawhorse_window_title::title onto this window.
+              if (mock.titleFails) throw new Error("window_title did not reach the shell");
+              mock.titles.push(String(args.title));
+              return null;
+            }
             case "plugin:fs|stat": {
               const bytes = read(String(args.path));
               const none = { mtime: null, atime: null, birthtime: null, fileAttributes: null, dev: null, ino: null, mode: null, nlink: null, uid: null, gid: null, rdev: null, blksize: null, blocks: null };
@@ -199,15 +215,15 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
 }
 
 /** The stand-in's record, read from the page. */
-export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended" | "allowed" | "reads">> {
+export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended" | "allowed" | "reads" | "titles">> {
   return page.evaluate(() => {
     const m = (window as unknown as { __tauriMock: TauriMock }).__tauriMock;
-    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended, allowed: [...m.allowed], reads: [...m.reads] };
+    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended, allowed: [...m.allowed], reads: [...m.reads], titles: [...m.titles] };
   });
 }
 
 /** Change how the stand-in behaves. */
-export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords">>): Promise<void> {
+export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords" | "titleFails">>): Promise<void> {
   await page.evaluate((o) => Object.assign((window as unknown as { __tauriMock: TauriMock }).__tauriMock, o), over);
 }
 

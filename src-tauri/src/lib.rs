@@ -12,7 +12,8 @@
 //! program's name on any system. A second double-click starts a second window, as starting
 //! Sawhorse twice does. macOS hands a double-clicked file to an app as an event, not as an
 //! argument, so the association is not declared there yet, nor on Linux, where no MIME type
-//! for `.shz` exists for a file manager to match.
+//! for `.shz` exists for a file manager to match. The window's title bar follows the page's
+//! title, the model's name (lane 39, `window-title/`), so two windows can be told apart.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
 //! (the dialog plugin adds them to the scope), dropped on the window (added below), or the
@@ -235,6 +236,20 @@ fn start_file(app: AppHandle, state: State<'_, StartFile>) -> Option<String> {
     Some(text)
 }
 
+/// The window's title bar follows the page's title (lane 39, src/io/title.ts): the model's
+/// name, with the unsaved mark, as a browser shows it on the tab. The page sends the text it
+/// gives `document.title`; `sawhorse_window_title::title` removes control characters and
+/// line breaks, keeps at most 200 characters and falls back to "Sawhorse" when nothing is
+/// left; the answer is set on the window that asked (the `Window` an app command is given is
+/// the calling webview's window) and on no other. The webview is given no core:window
+/// permission for this: it can set no other window's title, and nothing else about a window.
+#[tauri::command]
+fn window_title(window: tauri::Window, title: String) -> Result<(), String> {
+    window
+        .set_title(&sawhorse_window_title::title(&title))
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -280,7 +295,8 @@ pub fn run() {
             open_plugin_folder,
             save_file_atomic,
             close_guard,
-            start_file
+            start_file,
+            window_title
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");

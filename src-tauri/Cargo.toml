@@ -37,6 +37,8 @@ sawhorse-safe-save = { path = "safe-save" }
 sawhorse-close-guard = { path = "close-guard" }
 # Which argument, if any, is the file to open at start (lane 37): a double-click on a .shz.
 sawhorse-start-file = { path = "start-file" }
+# What the window's title bar shows, from the page's title (lane 39): the model's name.
+sawhorse-window-title = { path = "window-title" }
 
 [profile.release]
 codegen-units = 1
