@@ -54,3 +54,38 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 7
+      # Lane 37 (#45): evidence that the installers register the .shz association
+      # (src-tauri/tauri.windows.conf.json). The bundler leaves the scripts it generated under the
+      # target folder (the NSIS script installer.nsi, the .msi's WiX source main.wxs); this finds
+      # them there by name instead of trusting one path, prints every line about the association,
+      # and fails when the NSIS script does not associate .shz or its uninstaller does not remove
+      # it. It runs after the upload, so a failure still leaves the installers to look at.
+      - name: the installers register .shz (prints the association lines; fails without them)
+        shell: pwsh
+        run: |
+          $target = "src-tauri/target"
+          $nsi = @(Get-ChildItem -Path $target -Recurse -File -Filter installer.nsi -ErrorAction SilentlyContinue)
+          $wxs = @(Get-ChildItem -Path $target -Recurse -File -Filter *.wxs -ErrorAction SilentlyContinue)
+          if ($nsi.Count -eq 0) { Write-Error "no installer.nsi under $target"; exit 1 }
+          $associate = 0
+          $remove = 0
+          foreach ($f in $nsi) {
+            Write-Host "== $($f.FullName)"
+            foreach ($m in Select-String -Path $f.FullName -Pattern 'APP_ASSOCIATE|APP_UNASSOCIATE') {
+              Write-Host ("{0}: {1}" -f $m.LineNumber, $m.Line.Trim())
+              if ($m.Line -match '!insertmacro APP_ASSOCIATE "shz"') { $associate++ }
+              if ($m.Line -match '!insertmacro APP_UNASSOCIATE "shz"') { $remove++ }
+            }
+          }
+          $msi = 0
+          foreach ($f in $wxs) {
+            Write-Host "== $($f.FullName)"
+            foreach ($m in Select-String -Path $f.FullName -Pattern '<ProgId|<Extension|<Verb') {
+              Write-Host ("{0}: {1}" -f $m.LineNumber, $m.Line.Trim())
+              if ($m.Line -match '<Extension Id="shz"') { $msi++ }
+            }
+          }
+          if ($msi -eq 0) { Write-Host "::warning::no .shz extension found in a .wxs under $target (the .msi's sources)" }
+          if ($associate -eq 0) { Write-Error "the NSIS script does not associate .shz"; exit 1 }
+          if ($remove -eq 0) { Write-Error "the NSIS uninstaller does not remove the .shz association"; exit 1 }
+          Write-Host "NSIS: $associate line(s) associating .shz, $remove removing it; .msi sources: $msi .shz extension(s)"
