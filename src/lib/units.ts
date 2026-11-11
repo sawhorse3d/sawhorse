@@ -234,15 +234,18 @@ export function formatLength(metres: number, system: UnitSystem): string {
 /**
  * A volume for the viewport's badge, with its unit (#26): cubic inches to one decimal in the
  * inch systems, as the badge always read, and cubic metres in the metric ones, to six
- * decimals (a cubic centimetre) with trailing zeros dropped. A solid smaller than half a
- * cubic centimetre reads "< 0.000001 m³", never "0 m³".
+ * decimals (a cubic centimetre) with trailing zeros dropped. A solid too small for the step
+ * reads as under it, never as nothing: "< 0.1 in³" (under half a tenth of a cubic inch) and
+ * "< 0.000001 m³" (under half a cubic centimetre), never "0.0 in³" or "0 m³".
  */
 export function formatVolume(cubicMetres: number, system: UnitSystem): string {
   switch (system) {
     case "frac-in":
     case "in":
-    case "ft-in":
-      return `${(cubicMetres / M_PER_IN ** 3).toFixed(1)} in³`;
+    case "ft-in": {
+      const text = (cubicMetres / M_PER_IN ** 3).toFixed(1);
+      return text === "0.0" && cubicMetres > 0 ? "< 0.1 in³" : `${text} in³`;
+    }
     case "mm":
     case "cm":
     case "m": {

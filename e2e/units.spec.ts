@@ -83,13 +83,15 @@ test("the status bar's volume follows the units (#26)", async ({ page }) => {
   }
 });
 
-for (const [side, text] of [
+for (const [side, text, inchText] of [
   // A 7 mm cube is 0.343 cm³, under the badge's step of a cubic centimetre: it reads
-  // "< 0.000001 m³", never "0 m³". A 20 mm cube is 8 cm³.
-  [7, "< 0.000001 m³"],
-  [20, "0.000008 m³"],
+  // "< 0.000001 m³", never "0 m³". A 20 mm cube is 8 cm³. In the inch systems (lane 38) the
+  // 7 mm cube is 0.0209 in³, under the step of a tenth: "< 0.1 in³", never "0.0 in³"; the
+  // 20 mm cube is 0.488 in³.
+  [7, "< 0.000001 m³", "< 0.1 in³"],
+  [20, "0.000008 m³", "0.5 in³"],
 ] as const) {
-  test(`a ${side} mm cube's volume reads "${text}", never 0 (#26, from the squash)`, async ({ page }) => {
+  test(`a ${side} mm cube's volume reads "${text}" and "${inchText}", never 0 (#26, from the squash)`, async ({ page }) => {
     const vp = await ready(page);
     const hud = page.locator(".vp .hud");
     await setUnits(page, "mm");
@@ -106,6 +108,12 @@ for (const [side, text] of [
       await setUnits(page, metric);
       await expect(hud).toContainText(`Units: ${metric}`);
       await expect(hud).toContainText(`genus 0 · ${text} · watertight`);
+    }
+    for (const [inch, label] of [["frac-in", "fractional in"], ["in", "decimal in"], ["ft-in", "ft-in"]] as const) {
+      await setUnits(page, inch);
+      await expect(hud).toContainText(`Units: ${label}`);
+      await expect(hud).toContainText(`genus 0 · ${inchText} · watertight`);
+      await expect(hud).not.toContainText("0.0 in³");
     }
   });
 }

@@ -221,16 +221,35 @@ describe("the status bar's volume follows the units (#26)", () => {
     expect(formatVolume(-0.027, "m")).toBe("-0.027 m³");
   });
 
+  it("a real solid smaller than the inch step never reads as 0.0 either (lane 38)", () => {
+    // The same rule in cubic inches, whose step is a tenth: a 7 mm cube (0.0209 in³), a
+    // 1/4 in cube (0.0156 in³), a hair under half a tenth, and the smallest volume a double
+    // holds all read "< 0.1 in³" in every inch system, never "0.0 in³".
+    for (const m3 of [0.007 ** 3, (0.25 * IN) ** 3, 0.0499 * IN ** 3, 1e-12, Number.MIN_VALUE])
+      for (const s of ["frac-in", "in", "ft-in"] as const) expect(formatVolume(m3, s)).toBe("< 0.1 in³");
+    // Half a tenth and more rounds to the step, as before; a 20 mm cube is 0.488 in³.
+    expect(formatVolume(0.051 * IN ** 3, "in")).toBe("0.1 in³");
+    expect(formatVolume(0.02 ** 3, "frac-in")).toBe("0.5 in³");
+    // Nothing (an empty or open model) is still 0.0, and a tiny negative from an open mesh
+    // reads as it always did.
+    expect(formatVolume(0, "in")).toBe("0.0 in³");
+    expect(formatVolume(-0, "in")).toBe("0.0 in³");
+    expect(formatVolume(-1e-12, "in")).toBe("-0.0 in³");
+  });
+
   it("a large model reads in whole cubic metres and their decimals (from the squash)", () => {
     expect(formatVolume(1234.5678901, "m")).toBe("1234.56789 m³");
     expect(formatVolume(1e6, "mm")).toBe("1000000 m³");
   });
 
   it("the inch systems print exactly what the badge printed before #46 (from the squash)", () => {
-    // The badge's expression at a6792ea, whatever the units were.
+    // The badge's expression at a6792ea, whatever the units were. One change since lane 38:
+    // a real solid that expression printed as "0.0 in³" (1e-12 here) reads "< 0.1 in³".
     const before = (m3: number) => `${(m3 / M_PER_IN ** 3).toFixed(1)} in³`;
     const spread = [0, -0, 1e-12, 0.05 * IN ** 3, 0.3 ** 3, 2761.03125 * IN ** 3, 26967.5 * IN ** 3, 12345.678, -0.027, NaN, Infinity];
-    for (const s of ["frac-in", "in", "ft-in"] as const) for (const m3 of spread) expect(formatVolume(m3, s)).toBe(before(m3));
+    const now = (m3: number) => (m3 > 0 && before(m3) === "0.0 in³" ? "< 0.1 in³" : before(m3));
+    for (const s of ["frac-in", "in", "ft-in"] as const) for (const m3 of spread) expect(formatVolume(m3, s)).toBe(now(m3));
+    expect(spread.filter((m3) => now(m3) !== before(m3))).toEqual([1e-12]);
     expect(formatVolume(0.3 ** 3, "frac-in")).toBe("1647.6 in³");
   });
 
