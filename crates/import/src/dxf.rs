@@ -1,5 +1,6 @@
-//! DXF, ASCII (R12 through current). Units from `$INSUNITS` (millimetres when it is
-//! missing or 0). What comes in:
+//! DXF, ASCII (R12 through current). Units from `$INSUNITS`; when it is missing, 0 or a
+//! code this reader does not support, File > Import units, millimetres when that is unset.
+//! What comes in:
 //!
 //! - `3DFACE` and polyface meshes (`POLYLINE` with flag 64) become faces, one item per
 //!   layer, coplanar triangles merged (Sawhorse's own DXF writes faces this way).

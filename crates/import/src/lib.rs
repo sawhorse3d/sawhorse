@@ -8,11 +8,11 @@
 //!
 //! | Format | Reader | Units | Becomes |
 //! |---|---|---|---|
-//! | STL (binary and ASCII) | [`stl`] | none in the file: millimetres unless told otherwise | one item per `solid` block, coplanar triangles merged |
-//! | Wavefront OBJ | [`obj`] | none: millimetres unless told otherwise | one item per `o` (or `g`); `l` lines kept |
+//! | STL (binary and ASCII) | [`stl`] | Sawhorse's own binary STL (its header, exactly): millimetres (#47); any other says nothing: [`ImportOptions::units`] (File > Import units), millimetres when unset | one item per `solid` block, coplanar triangles merged |
+//! | Wavefront OBJ | [`obj`] | Sawhorse's own OBJ (its first line, after any byte order mark): millimetres (#47); any other says nothing: [`ImportOptions::units`] (File > Import units), millimetres when unset | one item per `o` (or `g`); `l` lines kept |
 //! | glTF 2.0 / GLB | [`gltf`] | metres, Y up | one item per node with a mesh, transforms applied; `_FACE_ID` honoured |
 //! | 3MF | [`three_mf`] | the file's `unit` | one item per build item (components resolved), base-material colours |
-//! | DXF (ASCII) | [`dxf`] | `$INSUNITS` (millimetres when unset) | `3DFACE` and polyface meshes as items per layer; `LINE`, `LWPOLYLINE`, `POLYLINE`, `CIRCLE`, `ARC` as sketch strokes |
+//! | DXF (ASCII) | [`dxf`] | `$INSUNITS` (inches, feet, millimetres, centimetres or metres); when it is missing, 0 or another code, [`ImportOptions::units`] (File > Import units), millimetres when unset | `3DFACE` and polyface meshes as items per layer; `LINE`, `LWPOLYLINE`, `POLYLINE`, `CIRCLE`, `ARC` as sketch strokes |
 //! | SVG | [`svg`] | the root's `width`/`height` + `viewBox` (CSS px when unitless) | every path and shape as strokes on the ground plane |
 //!
 //! `.skp` is read in the webview by the npm `openskp` package (`src/io/skp.ts`), which

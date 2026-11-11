@@ -27,6 +27,7 @@ Open an issue whenever something is wrong, odd or missing. Say which version you
   cargo test --workspace
   cargo clippy --workspace --all-targets -- -D warnings
   cargo fmt --check
+  cargo check --workspace --target wasm32-unknown-unknown
   ```
 
   and from the repository root:
@@ -39,6 +40,7 @@ Open an issue whenever something is wrong, odd or missing. Say which version you
   npm run golden:wasm
   npm run boolean:diff
   npm run corpus:skp
+  npm run site && npm run site:check
   npx playwright test
   ```
 
