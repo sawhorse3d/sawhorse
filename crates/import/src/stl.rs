@@ -1,9 +1,10 @@
 //! STL, binary and ASCII. STL carries no units: millimetres unless the options say
-//! otherwise (Sawhorse's own STL says "units mm" in its header, and that is what slicers
-//! assume). Each ASCII `solid` block is its own item; a binary file is one item.
+//! otherwise. Sawhorse's own STL says "units mm" in its header (that is what slicers
+//! assume), and it is read as millimetres whatever the options say (#47). Each ASCII
+//! `solid` block is its own item; a binary file is one item.
 
 use crate::util::{plural, soup};
-use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, Unit, malformed};
 
 /// An ASCII `solid` block being read: name, vertices, faces.
 type Block = (String, Vec<[f64; 3]>, Vec<Vec<Vec<u32>>>);
@@ -16,11 +17,26 @@ fn binary_len_ok(bytes: &[u8]) -> Option<usize> {
     (84 + n.checked_mul(50)? == bytes.len()).then_some(n)
 }
 
+/// The header Sawhorse's own STL starts with (`sawhorse_export::stl`), padded with NULs.
+const OUR_HEADER: &[u8] = b"Sawhorse binary STL; units mm; Z up";
+
+/// A binary STL Sawhorse wrote: millimetres, whatever File > Import units says (#47).
+fn ours(bytes: &[u8]) -> bool {
+    let header = &bytes[..80];
+    let text = header.split(|&b| b == 0).next().unwrap_or(header);
+    text == OUR_HEADER && header[text.len()..].iter().all(|&b| b == 0)
+}
+
 pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
-    let unit = opts.units.unwrap_or_default();
+    let ascii = bytes.trim_ascii_start().starts_with(b"solid") && binary_len_ok(bytes).is_none();
+    let ours = !ascii && binary_len_ok(bytes).is_some() && ours(bytes);
+    let unit = if ours {
+        Unit::Mm
+    } else {
+        opts.units.unwrap_or_default()
+    };
     let s = unit.metres();
     let mut out = Parsed::default();
-    let ascii = bytes.trim_ascii_start().starts_with(b"solid") && binary_len_ok(bytes).is_none();
     let name = opts.stem();
     let mut budget = Budget::default();
     if let Some(n) = binary_len_ok(bytes).filter(|_| !ascii) {
@@ -122,10 +138,14 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             out.items.push(soup(&n, p, f));
         }
     }
-    out.notes.push(format!(
-        "STL has no units; read as {} (File > Import units)",
-        unit.label()
-    ));
+    out.notes.push(if ours {
+        "Sawhorse STL: read as millimetres, as its header says (File > Import units is for other STL files)".to_string()
+    } else {
+        format!(
+            "STL has no units; read as {} (File > Import units)",
+            unit.label()
+        )
+    });
     Ok(out)
 }
 
@@ -192,5 +212,85 @@ mod tests {
         let bad = "solid a\n outer loop\n vertex 0 0\n";
         assert!(read(bad.as_bytes(), &ImportOptions::default()).is_err());
         assert!(read(&[0xff, 0xfe, 0x00], &ImportOptions::default()).is_err());
+    }
+
+    /// #47: a 48 in rail exported as STL and imported back, twice, with File > Import units
+    /// on Inches read 30967 11/16 in (25.4 x 25.4 too long). Sawhorse's own STL says "units
+    /// mm" in its header, and the reader now believes it whatever the menu says.
+    #[test]
+    fn our_stl_reads_as_millimetres_whatever_the_import_units_say() {
+        use crate::test_support::{rail_48in, x_extent};
+        for unit in [Unit::Mm, Unit::Cm, Unit::M, Unit::In, Unit::Ft] {
+            let opts = ImportOptions {
+                units: Some(unit),
+                name: "frame.stl".into(),
+            };
+            let mut d = rail_48in();
+            let volume = d.model().stats().volume_m3;
+            for trip in 1..=2 {
+                let bytes = stl::document(d.model(), &Scope::visible(d.model())).unwrap();
+                let p = read(&bytes, &opts).unwrap();
+                let long = x_extent(&p) / 0.0254;
+                assert!(
+                    (long - 48.0).abs() < 1e-4,
+                    "{unit:?}, trip {trip}: {long} in"
+                );
+                assert!(
+                    p.notes
+                        .iter()
+                        .any(|n| n.contains("Sawhorse STL") && n.contains("millimetres")),
+                    "{:?}",
+                    p.notes
+                );
+                d = Document::with_ground_sketch();
+                d.apply(&p.op()).unwrap();
+                let v = d.model().stats().volume_m3;
+                assert!((v - volume).abs() < 1e-9, "{unit:?}, trip {trip}: {v} m³");
+            }
+        }
+    }
+
+    /// Any other binary STL still follows File > Import units (a part from a slicer, or
+    /// one written in inches by another program).
+    #[test]
+    fn another_programs_stl_still_follows_the_import_units() {
+        let mut bytes = Vec::new();
+        let mut header = [0u8; 80];
+        header[..20].copy_from_slice(b"Exported by OtherCAD");
+        bytes.extend_from_slice(&header);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for v in [
+            [0.0f32, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ] {
+            for x in v {
+                bytes.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        let p = read(
+            &bytes,
+            &ImportOptions {
+                units: Some(Unit::In),
+                name: "part.stl".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(p.items[0].positions[1], [0.0254, 0.0, 0.0]);
+        assert!(p.notes[0].contains("read as inches"), "{:?}", p.notes);
+        // A header that only starts like ours is not ours.
+        header[..36].copy_from_slice(b"Sawhorse binary STL; units mm; Z up!");
+        bytes[..80].copy_from_slice(&header);
+        let p = read(
+            &bytes,
+            &ImportOptions {
+                units: Some(Unit::In),
+                name: "part.stl".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(p.items[0].positions[1], [0.0254, 0.0, 0.0]);
     }
 }

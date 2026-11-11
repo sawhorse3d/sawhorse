@@ -1,6 +1,7 @@
 //! Wavefront OBJ: `v`, `f` (with `v/vt/vn` forms and negative indices), `l`, `o`, `g`,
-//! `usemtl`. OBJ carries no units: millimetres unless the options say otherwise (Sawhorse's
-//! own OBJ is millimetres). Each `o` (or, without any `o`, each `g`) is its own item;
+//! `usemtl`. OBJ carries no units: millimetres unless the options say otherwise. Sawhorse's
+//! own OBJ says "units mm" on its first line and is read as millimetres whatever the
+//! options say (#47). Each `o` (or, without any `o`, each `g`) is its own item;
 //! faces stay polygons, merged into coplanar n-gons only when every face is a triangle (a
 //! triangulated export), so drawn edges between coplanar n-gons survive. Materials named by
 //! `usemtl` live in a separate `.mtl` file that a single-file import cannot see, so the
@@ -9,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use crate::util::{plural, soup};
-use crate::{Budget, ImportError, ImportOptions, Parsed, malformed};
+use crate::{Budget, ImportError, ImportOptions, Parsed, Unit, malformed};
 
 struct Piece {
     name: String,
@@ -17,10 +18,19 @@ struct Piece {
     lines: Vec<[u32; 2]>,
 }
 
+/// The first line of Sawhorse's own OBJ (`sawhorse_export::obj`).
+const OUR_FIRST_LINE: &str = "# Sawhorse OBJ; units mm; Z up";
+
 pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
-    let unit = opts.units.unwrap_or_default();
-    let s = unit.metres();
     let text = String::from_utf8_lossy(bytes);
+    // Sawhorse's own OBJ is millimetres, whatever File > Import units says (#47).
+    let ours = text.lines().next().map(str::trim_end) == Some(OUR_FIRST_LINE);
+    let unit = if ours {
+        Unit::Mm
+    } else {
+        opts.units.unwrap_or_default()
+    };
+    let s = unit.metres();
     let mut verts: Vec<[f64; 3]> = Vec::new();
     let mut pieces: Vec<Piece> = Vec::new();
     let mut have_o = text.lines().any(|l| l.trim_start().starts_with("o "));
@@ -144,10 +154,14 @@ pub fn read(bytes: &[u8], opts: &ImportOptions) -> Result<Parsed, ImportError> {
             mtls.into_iter().collect::<Vec<_>>().join(", ")
         ));
     }
-    out.notes.push(format!(
-        "OBJ has no units; read as {} (File > Import units)",
-        unit.label()
-    ));
+    out.notes.push(if ours {
+        "Sawhorse OBJ: read as millimetres, as its first line says (File > Import units is for other OBJ files)".to_string()
+    } else {
+        format!(
+            "OBJ has no units; read as {} (File > Import units)",
+            unit.label()
+        )
+    });
     Ok(out)
 }
 
@@ -212,5 +226,68 @@ mod tests {
         assert!(p.notes.iter().any(|n| n.contains("skipped 1 face")));
         assert!(p.notes.iter().any(|n| n.contains("materials Red")));
         assert!(read(b"v 1 2\n", &ImportOptions::default()).is_err());
+    }
+
+    /// #47: as for STL, Sawhorse's own OBJ says "units mm" on its first line, and the reader
+    /// believes it whatever File > Import units says: a 48 in rail sent out and back twice
+    /// with the menu on Inches stays 48 in.
+    #[test]
+    fn our_obj_reads_as_millimetres_whatever_the_import_units_say() {
+        use crate::test_support::{rail_48in, x_extent};
+        for unit in [Unit::Mm, Unit::Cm, Unit::M, Unit::In, Unit::Ft] {
+            let opts = ImportOptions {
+                units: Some(unit),
+                name: "frame.obj".into(),
+            };
+            let mut d = rail_48in();
+            let volume = d.model().stats().volume_m3;
+            for trip in 1..=2 {
+                let text = obj::document(d.model(), &Scope::visible(d.model()), "m.mtl").unwrap();
+                let p = read(text.as_bytes(), &opts).unwrap();
+                let long = x_extent(&p) / 0.0254;
+                assert!(
+                    (long - 48.0).abs() < 1e-9,
+                    "{unit:?}, trip {trip}: {long} in"
+                );
+                assert!(
+                    p.notes
+                        .iter()
+                        .any(|n| n.contains("Sawhorse OBJ") && n.contains("millimetres")),
+                    "{:?}",
+                    p.notes
+                );
+                d = Document::with_ground_sketch();
+                d.apply(&p.op()).unwrap();
+                let v = d.model().stats().volume_m3;
+                assert!((v - volume).abs() < 1e-12, "{unit:?}, trip {trip}: {v} m³");
+            }
+            // The one-object writer says the same.
+            let one = obj::write(d.model().object(1).unwrap(), "rail").unwrap();
+            let p = read(one.as_bytes(), &opts).unwrap();
+            assert!((x_extent(&p) / 0.0254 - 48.0).abs() < 1e-9, "{unit:?}");
+        }
+    }
+
+    /// Any other OBJ still follows File > Import units, also one whose comment only looks
+    /// like ours further down the file.
+    #[test]
+    fn another_programs_obj_still_follows_the_import_units() {
+        let inches = ImportOptions {
+            units: Some(Unit::In),
+            name: "part.obj".into(),
+        };
+        for text in [
+            "# Blender\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+            "v 0 0 0\n# Sawhorse OBJ; units mm; Z up\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+            "# Sawhorse OBJ; units in; Z up\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+        ] {
+            let p = read(text.as_bytes(), &inches).unwrap();
+            assert_eq!(p.items[0].positions[1], [0.0254, 0.0, 0.0], "{text}");
+            assert!(
+                p.notes.iter().any(|n| n.contains("read as inches")),
+                "{:?}",
+                p.notes
+            );
+        }
     }
 }

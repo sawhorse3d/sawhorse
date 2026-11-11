@@ -375,6 +375,40 @@ pub(crate) mod test_support {
         .unwrap();
         d
     }
+
+    /// One 48 x 3 1/2 x 1 1/2 in board: the base rail of #47's bench frame.
+    pub fn rail_48in() -> Document {
+        const IN: f64 = 0.0254;
+        let mut d = Document::with_ground_sketch();
+        d.apply(
+            &serde_json::from_str(&format!(
+                r#"{{"op":"add_rectangle","sketch":1,"x":0,"y":0,"w":{},"h":{}}}"#,
+                48.0 * IN,
+                3.5 * IN
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        d.apply(
+            &serde_json::from_str(&format!(
+                r#"{{"op":"extrude","sketch":1,"region":1,"distance":{}}}"#,
+                1.5 * IN
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        d
+    }
+
+    /// The longest extent along x of everything the reader found, in metres.
+    pub fn x_extent(p: &crate::Parsed) -> f64 {
+        let xs = || {
+            p.items
+                .iter()
+                .flat_map(|i| i.positions.iter().map(|q| q[0]))
+        };
+        xs().fold(f64::MIN, f64::max) - xs().fold(f64::MAX, f64::min)
+    }
 }
 
 #[cfg(test)]
