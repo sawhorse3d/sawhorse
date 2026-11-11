@@ -432,6 +432,8 @@ Production builds emit no source maps: a map embeds every dependency's original 
 
 Stay on Tauri 2.x stable. 3.0 is alpha; `npm run check:tauri` fails on anything else.
 
+**A Windows installer to try by hand** (`.github/workflows/desktop-test-build.yml`): run "Desktop test build" from the Actions tab on any branch, or `gh workflow run desktop-test-build.yml --ref <branch>`, and the run's artifact `unsigned-test-build-<commit>-windows` (kept 7 days) holds that commit's unsigned `.exe` and `.msi`. It uses `release.yml`'s Windows steps with `npx tauri build` in place of tauri-action, reads no secret and has read-only permissions, so it makes no release and no tag; it is how Save, Ctrl+S and the close question get tried in a real installer before a release.
+
 ## CI (`.github/workflows/ci.yml`)
 
 - `rust` (ubuntu-24.04): `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace`, the 10,000-sequence fuzz on the fixed seed `FUZZ_SEED=20261011` (deterministic: a red `main` reproduces locally with the same two variables), wasm32 check; a failing fuzz uploads its shrunk sequence as the `fuzz-repro` artifact.

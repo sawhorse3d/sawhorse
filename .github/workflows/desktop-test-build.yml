@@ -1,0 +1,56 @@
+name: Desktop test build
+
+# An unsigned Windows installer of one commit, to try by hand before a release (Save, Save As,
+# Ctrl+S and the close question cannot be tried in CI). Run it from the Actions tab on any
+# branch; the installers come back as a workflow artifact kept for 7 days.
+#
+# It publishes nothing: no release, no tag, no secrets, read-only permissions. release.yml
+# cannot do this job: its manual run makes a v<run>-dev draft release. The build steps are
+# release.yml's Windows steps (same Node, Rust, wasm-pack and Tauri CLI, same environment),
+# except the build itself: `npx tauri build` instead of tauri-action, the same Tauri CLI
+# from package.json that tauri-action runs, with no GitHub token and no release to upload to,
+# so it can only write files on the runner. The signing step is left out: this workflow
+# reads no secret.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAWHORSE_NO_WSL: "1"
+
+jobs:
+  windows:
+    name: Windows installer (unsigned test build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates
+            src-tauri
+      - name: install wasm-pack
+        run: npm install -g wasm-pack@0.15.0
+      - run: npm ci
+      - name: Tauri stays on 2.x
+        run: npm run check:tauri
+      # tauri.conf.json's beforeBuildCommand (npm run build:all) builds the kernel and the page.
+      - name: build the installers (nothing is uploaded anywhere but this run)
+        run: npx tauri build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-test-build-${{ github.sha }}-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 7
