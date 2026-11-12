@@ -2143,7 +2143,7 @@ export function App() {
   }, [nestOpen]);
   const setNestSettings = useCallback(
     (s: NestSettings) =>
-      void apply({ op: "set_nest_settings", settings: s }, () => `Nesting: kerf ${fineU(s.kerf, nestUnits)}, trim ${s.trim > 0 ? `${fineU(s.trim, nestUnits)} per edge` : "none"}, ${s.algorithm === "guillotine" ? "table saw (straight cuts edge to edge)" : "tightest layout"}.`),
+      void apply({ op: "set_nest_settings", settings: s }, () => `Nesting: kerf ${fineU(s.kerf, nestUnits)}, trim ${s.trim > 0 ? `${fineU(s.trim, nestUnits)} per edge` : "none"}${s.jointLoss !== undefined ? `, joint loss ${fineU(s.jointLoss, nestUnits)}` : ""}, ${s.algorithm === "guillotine" ? "table saw (straight cuts edge to edge)" : "tightest layout"}.`),
     [apply, nestUnits],
   );
   const defineStock = useCallback(
@@ -2183,7 +2183,8 @@ export function App() {
     }
     for (const piece of nesting.pieces)
       for (const q of piece.placements) {
-        if ("object" in q.item ? q.item.object === object : ancestors.has(q.item.node)) return q.tag;
+        // #49: a glued part lights all its strips (by the part's tag, "4a" for "4a.2").
+        if ("object" in q.item ? q.item.object === object : ancestors.has(q.item.node)) return q.strip ? q.tag.slice(0, q.tag.lastIndexOf(".")) : q.tag;
       }
     return null;
   }, [nesting, hover, nestShown, scene]);

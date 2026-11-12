@@ -578,6 +578,10 @@ pub fn check_nesting_of(
         }
     }
     let mut seen = BTreeSet::new();
+    // #49: the strips of each glued part, (row, copy) -> (strip, of, width, piece's stock).
+    type Strips = Vec<(usize, usize, f64, String)>;
+    let mut strips: std::collections::BTreeMap<(usize, usize), Strips> =
+        std::collections::BTreeMap::new();
     let kerf = n.settings.kerf;
     let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
     let mut placed = 0;
@@ -595,7 +599,22 @@ pub fn check_nesting_of(
                 .rows
                 .get(q.row)
                 .ok_or_else(|| format!("piece {}: no row {}", p.index, q.row))?;
-            if !seen.insert((q.row, q.copy)) {
+            if let Some(st) = q.strip {
+                // A strip: the part's length along the board, a strip's width across it.
+                if p.kind != StockKind::Board || row.sheet {
+                    return bad(format!("{} is a strip off a sheet", q.tag));
+                }
+                // A strip has a width: positive, and not NaN.
+                if q.turned || q.dx != row.size[2] || q.dy.is_nan() || q.dy <= 0.0 {
+                    return bad(format!("{} is not a strip of its part", q.tag));
+                }
+                strips.entry((q.row, q.copy)).or_default().push((
+                    st.n,
+                    st.of,
+                    q.dy,
+                    p.stock.clone(),
+                ));
+            } else if !seen.insert((q.row, q.copy)) {
                 return bad(format!("{} placed twice", q.tag));
             }
             if row.uncounted.is_some() {
@@ -605,7 +624,9 @@ pub fn check_nesting_of(
                 return bad(format!("{} is not its row's piece", q.tag));
             }
             let (w, l) = (row.size[1], row.size[2]);
-            let dims_ok = if q.turned {
+            let dims_ok = if q.strip.is_some() {
+                true
+            } else if q.turned {
                 q.dx == w && q.dy == l
             } else {
                 q.dx == l && q.dy == w
@@ -680,7 +701,77 @@ pub fn check_nesting_of(
         {
             return bad("a guillotine or board layout does not come apart in straight cuts".into());
         }
-        placed += p.placements.len();
+        placed += p
+            .placements
+            .iter()
+            .filter(|q| q.strip.is_none_or(|s| s.n == 1))
+            .count();
+    }
+    // #49: every glued part is strips 1..=of, each once, all off one stock: full-width
+    // strips of that board and one filler no wider, their widths the part's width plus a
+    // joint loss per joint; and listed among the glue-ups with exactly those widths.
+    let joint = n.settings.joint_loss;
+    for (&(row_i, copy), v) in &mut strips {
+        let row = &list.rows[row_i];
+        v.sort_by_key(|s| s.0);
+        let of = v[0].1;
+        let numbers: Vec<usize> = v.iter().map(|s| s.0).collect();
+        if of < 2 || v.iter().any(|s| s.1 != of) || numbers != (1..=of).collect::<Vec<_>>() {
+            return Err(format!(
+                "part {} {copy}: strips {numbers:?} of {of}",
+                row_i + 1
+            ));
+        }
+        if v.iter().any(|s| s.3 != v[0].3) {
+            return Err(format!(
+                "part {} {copy}: strips off different stock",
+                row_i + 1
+            ));
+        }
+        let board = n
+            .library
+            .find(&v[0].3)
+            .ok_or_else(|| format!("part {} {copy}: strips name a missing stock", row_i + 1))?
+            .1;
+        let full = v[..of - 1].iter().all(|s| close(s.2, board.width));
+        let filler = v[of - 1].2;
+        let total: f64 = v.iter().map(|s| s.2).sum();
+        if !full
+            || !(filler > joint - EPS && filler <= board.width + EPS)
+            || !close(total, row.size[1] + (of - 1) as f64 * joint)
+            || row.size[1] <= board.width + EPS
+        {
+            return Err(format!(
+                "part {} {copy}: strips {:?} do not glue up to {} on {}",
+                row_i + 1,
+                v.iter().map(|s| s.2).collect::<Vec<_>>(),
+                row.size[1],
+                board.name
+            ));
+        }
+        let listed = n
+            .glue_ups
+            .iter()
+            .filter(|g| g.row == row_i && g.copy == copy)
+            .collect::<Vec<_>>();
+        if listed.len() != 1
+            || listed[0].stock != board.name
+            || listed[0].widths != v.iter().map(|s| s.2).collect::<Vec<_>>()
+        {
+            return Err(format!(
+                "part {} {copy}: glue-up not listed as placed",
+                row_i + 1
+            ));
+        }
+        if !seen.insert((row_i, copy)) {
+            return Err(format!(
+                "part {} {copy}: placed whole and as strips",
+                row_i + 1
+            ));
+        }
+    }
+    if n.glue_ups.len() != strips.len() {
+        return Err("a glue-up is listed with no strips placed".into());
     }
     for u in &n.unplaced {
         let row = list
@@ -729,10 +820,19 @@ pub fn check_nesting_of(
                 holds(l, w)
             };
             let fits_any = holds(l, w) || holds(w, l);
-            let ok = match u.reason {
-                UnplacedReason::TooLarge => !fits_any,
-                _ => fits_any && !fits_allowed,
-            };
+            // #49: a board part too wide but not too long, grain along, is glued up.
+            let joint = n.settings.joint_loss;
+            let gluable = s.kind == StockKind::Board
+                && !row.sheet
+                && row.grain != Grain::Width
+                && l <= uw + EPS
+                && w > uh + EPS
+                && uh > joint + EPS;
+            let ok = !gluable
+                && match u.reason {
+                    UnplacedReason::TooLarge => !fits_any,
+                    _ => fits_any && !fits_allowed,
+                };
             if !ok {
                 return Err(format!("{} reported {:?} but it is not", u.tag, u.reason));
             }

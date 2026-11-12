@@ -27,6 +27,11 @@ pub const DEFAULT_KERF: f64 = M_PER_IN / 8.0;
 pub const MAX_KERF: f64 = 0.5 * M_PER_IN;
 /// Most trim accepted per edge: 4 in.
 pub const MAX_TRIM: f64 = 4.0 * M_PER_IN;
+/// The joint loss a new document assumes (#49): 1/8 in, the width a glued edge loses to
+/// jointing, both edges of a joint together.
+pub const DEFAULT_JOINT_LOSS: f64 = M_PER_IN / 8.0;
+/// Most joint loss accepted: 1/2 in.
+pub const MAX_JOINT_LOSS: f64 = 0.5 * M_PER_IN;
 /// Smallest stock dimension accepted: 1 mm.
 pub const MIN_STOCK: f64 = 0.001;
 /// Largest stock dimension accepted: 10 m.
@@ -128,10 +133,27 @@ pub struct NestSettings {
     pub trim: f64,
     #[serde(default)]
     pub algorithm: NestAlgorithm,
+    /// #49: the width each glue joint costs, metres: a solid part wider than every board
+    /// is planned as strips edge-glued, and each joint loses this much to jointing. Left
+    /// out of files and the hash at the default, so older documents keep both.
+    #[serde(
+        rename = "jointLoss",
+        default = "default_joint_loss",
+        skip_serializing_if = "is_default_joint_loss"
+    )]
+    pub joint_loss: f64,
 }
 
 fn default_kerf() -> f64 {
     DEFAULT_KERF
+}
+
+fn default_joint_loss() -> f64 {
+    DEFAULT_JOINT_LOSS
+}
+
+fn is_default_joint_loss(j: &f64) -> bool {
+    *j == DEFAULT_JOINT_LOSS
 }
 
 impl Default for NestSettings {
@@ -140,6 +162,7 @@ impl Default for NestSettings {
             kerf: DEFAULT_KERF,
             trim: 0.0,
             algorithm: NestAlgorithm::Guillotine,
+            joint_loss: DEFAULT_JOINT_LOSS,
         }
     }
 }
@@ -154,6 +177,11 @@ impl NestSettings {
                 "the trim must be 0 to 4 in per edge",
             ));
         }
+        if !(self.joint_loss.is_finite() && (0.0..=MAX_JOINT_LOSS).contains(&self.joint_loss)) {
+            return Err(StockError::BadSettings(
+                "the joint loss must be 0 to 1/2 in",
+            ));
+        }
         Ok(())
     }
 
@@ -164,6 +192,11 @@ impl NestSettings {
             NestAlgorithm::Guillotine => 0,
             NestAlgorithm::Maxrects => 1,
         });
+        // #49: only when set, so every hash from before the setting stays the same.
+        if !is_default_joint_loss(&self.joint_loss) {
+            h.tag("jointLoss");
+            h.len(self.joint_loss);
+        }
     }
 }
 

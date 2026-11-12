@@ -12,7 +12,11 @@
 //! sheet within 1/16 in of its thickness that it fits, the closest thickness first, then
 //! library order; solid lumber of one material and thickness class (the thinnest board
 //! thickness that covers it) comes from one board size, the narrowest as wide as its widest
-//! part (then the longest), so a narrow part rides on the offcuts of the wide ones. A part
+//! part (then the longest), so a narrow part rides on the offcuts of the wide ones. A solid
+//! part wider than every board of its class (#49), no longer than the board and with its
+//! grain along it, is glued up: full-width strips of a board and one filler, a joint loss
+//! (`NestSettings::joint_loss`) per joint, from the board the rest of its class uses (else
+//! its own best board); each strip is a piece tagged "4a.1", "4a.2" ([`GlueUp`]). A part
 //! no stock covers is reported, never dropped: no stock of its kind and thickness, too thick
 //! or thin for the stock it names, larger than the stock, or fitting only with its grain
 //! across the stock's.
@@ -127,6 +131,34 @@ pub struct Placement {
     /// Lane 15: its part is not a solid; the rectangle is the box around its faces.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub not_solid: bool,
+    /// #49: one strip of a part glued up for width ("4a.2" is strip 2 of part 4a). `dy` is
+    /// the strip's width; `size` stays the whole part's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strip: Option<Strip>,
+}
+
+/// Which strip of a glue-up: `n` of `of` (1-based).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Strip {
+    pub n: usize,
+    pub of: usize,
+}
+
+/// #49: a solid part wider than every board, planned as strips edge-glued: full-width
+/// strips of the board and one narrower filler. Their widths add up to the part's width
+/// plus the joint loss of each joint.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct GlueUp {
+    pub row: usize,
+    pub copy: usize,
+    /// The part's tag ("4a"); its strips are "4a.1", "4a.2"...
+    pub tag: String,
+    pub name: String,
+    pub item: Item,
+    /// The board the strips come from.
+    pub stock: String,
+    /// Each strip's width, in strip order (metres).
+    pub widths: Vec<f64>,
 }
 
 /// One sheet or board and what is cut from it.
@@ -289,6 +321,8 @@ pub struct Nesting {
     pub library: StockLibrary,
     pub pieces: Vec<StockPiece>,
     pub unplaced: Vec<Unplaced>,
+    /// #49: the parts planned as glue-ups, in cut list order.
+    pub glue_ups: Vec<GlueUp>,
     pub totals: NestTotals,
     /// Deterministic hash of the layout (hex).
     pub hash: String,
@@ -303,6 +337,7 @@ struct Need {
     copy: usize,
     tag: String,
     item: Item,
+    strip: Option<Strip>,
 }
 
 /// "a".."z", "aa".. for 1, 2, 3...
@@ -398,6 +433,28 @@ fn fit(row: &CutRow, s: &StockDef, trim: f64) -> Result<Vec<(f64, f64, bool)>, U
     }
 }
 
+/// #49: the strips a solid part is glued up from on board `s`: full-width strips and one
+/// filler, when the part is wider than the board but no longer than it, with its grain
+/// along it. `None` when gluing cannot make it. The count is the least that covers the
+/// width: `n >= (W - J) / (w - J)` for a part `W` wide, a board `w` wide, joint loss `J`;
+/// the filler is what is left, `W + (n - 1) J - (n - 1) w`, wider than `J` and no wider
+/// than the board.
+fn glue_widths(row: &CutRow, s: &StockDef, trim: f64, joint: f64) -> Option<Vec<f64>> {
+    if s.kind != StockKind::Board || row.sheet || row.grain == Grain::Width {
+        return None;
+    }
+    let u = usable(s, trim);
+    let (w, l) = (row.size[1], row.size[2]);
+    if l > u.w + EPS || w <= u.h + EPS || u.h <= joint + EPS {
+        return None;
+    }
+    let n = (((w - joint) / (u.h - joint)) - 1e-9).ceil().max(2.0) as usize;
+    let full = (n - 1) as f64;
+    let mut v = vec![u.h; n - 1];
+    v.push(w + full * joint - full * u.h);
+    Some(v)
+}
+
 fn thickness_fits(s: &StockDef, t: f64) -> bool {
     match s.kind {
         StockKind::Sheet => (s.thickness - t).abs() <= SHEET_THICKNESS_SLACK + STOCK_EPSILON,
@@ -427,7 +484,7 @@ fn across(row: &CutRow) -> f64 {
 type Choice = Result<usize, (UnplacedReason, Option<usize>)>;
 
 /// The stock for each row: `Ok(index)` or `Err((reason, the stock meant))`.
-fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
+fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64, joint: f64) -> Vec<Choice> {
     let n = list.rows.len();
     let mut out: Vec<Option<Choice>> = vec![None; n];
     // Said: a stock named by the part, or the material's default.
@@ -566,12 +623,22 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64) -> Vec<Choice> {
                 .then(a.cmp(b))
         });
         let all_fit = |s: &StockDef| shared.iter().all(|&i| fit(&list.rows[i], s, trim).is_ok());
+        let mut shared_board = None;
         if let Some(&(k, _)) = wide.iter().find(|(_, s)| all_fit(s)).or(wide.first()) {
             for &i in &shared {
                 out[i] = Some(Ok(k));
             }
+            shared_board = (!shared.is_empty()).then_some(k);
         }
         for &i in &alone {
+            // #49: glued up from the board the rest of the material uses, so its strips
+            // nest with the other parts, when they can make it.
+            if let Some(k) = shared_board
+                && glue_widths(&list.rows[i], &lib.stocks[k], trim, joint).is_some()
+            {
+                out[i] = Some(Ok(k));
+                continue;
+            }
             // Each on its own best board: fitting first (then fitting across its grain),
             // thinnest, widest, longest, library order.
             let row = &list.rows[i];
@@ -1217,7 +1284,8 @@ fn trim_cuts(s: &StockDef, trim: f64, kerf: f64) -> Vec<Cut> {
 pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> Nesting {
     let kerf = settings.kerf;
     let trim = effective_trim(settings.trim, kerf);
-    let choice = choose_stock(list, lib, trim);
+    let choice = choose_stock(list, lib, trim, settings.joint_loss);
+    let mut glue_ups: Vec<GlueUp> = Vec::new();
     let mut needs: Vec<Need> = Vec::new();
     let mut unplaced: Vec<Unplaced> = Vec::new();
     // Groups by stock and material, in order of their first piece.
@@ -1234,10 +1302,12 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
             .filter(|o| !list.visible_only || o.visible)
             .collect();
         let many = counted.len() > 1;
-        let stocked = choice[ri].and_then(|k| {
-            fit(row, &lib.stocks[k], trim)
-                .map(|o| (k, o))
-                .map_err(|r| (r, Some(k)))
+        // Whole, with its orientations; or (#49) glued up from strips of these widths.
+        let stocked = choice[ri].and_then(|k| match fit(row, &lib.stocks[k], trim) {
+            Ok(o) => Ok((k, o, None)),
+            Err(r) => glue_widths(row, &lib.stocks[k], trim, settings.joint_loss)
+                .map(|v| (k, Vec::new(), Some(v)))
+                .ok_or((r, Some(k))),
         });
         for (ci, o) in counted.iter().enumerate() {
             let copy = ci + 1;
@@ -1247,25 +1317,53 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
                 (ri + 1).to_string()
             };
             match &stocked {
-                Ok((k, orients)) => {
-                    let need = needs.len();
-                    needs.push(Need {
-                        row: ri,
-                        copy,
-                        tag,
-                        item: o.item,
-                    });
+                Ok((k, orients, glued)) => {
+                    // A whole piece, or one need per strip, each the part's length along
+                    // the board and the strip's width across it.
+                    type Piece = (Option<Strip>, String, Vec<(f64, f64, bool)>);
+                    let strips: Vec<Piece> = match glued {
+                        None => vec![(None, tag.clone(), orients.clone())],
+                        Some(v) => {
+                            glue_ups.push(GlueUp {
+                                row: ri,
+                                copy,
+                                tag: tag.clone(),
+                                name: row.name.clone(),
+                                item: o.item,
+                                stock: lib.stocks[*k].name.clone(),
+                                widths: v.clone(),
+                            });
+                            v.iter()
+                                .enumerate()
+                                .map(|(si, &w)| {
+                                    let strip = Strip {
+                                        n: si + 1,
+                                        of: v.len(),
+                                    };
+                                    let t = format!("{tag}.{}", si + 1);
+                                    (Some(strip), t, vec![(row.size[2], w, false)])
+                                })
+                                .collect()
+                        }
+                    };
                     let key = (*k, row.material.clone());
-                    group_items
-                        .entry(key.clone())
-                        .or_insert_with(|| {
-                            group_order.push(key);
-                            Vec::new()
-                        })
-                        .push(Item2 {
-                            need,
-                            orients: orients.clone(),
+                    for (strip, tag, orients) in strips {
+                        let need = needs.len();
+                        needs.push(Need {
+                            row: ri,
+                            copy,
+                            tag,
+                            item: o.item,
+                            strip,
                         });
+                        group_items
+                            .entry(key.clone())
+                            .or_insert_with(|| {
+                                group_order.push(key.clone());
+                                Vec::new()
+                            })
+                            .push(Item2 { need, orients });
+                    }
                 }
                 Err((reason, k)) => unplaced.push(Unplaced {
                     row: ri,
@@ -1349,11 +1447,16 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
                         grain: row.grain,
                         size: row.size,
                         not_solid: row.not_solid,
+                        strip: n.strip,
                     }
                 })
                 .collect();
             let parts_area: f64 = placements.iter().map(|p| p.dx * p.dy).sum();
-            g.parts += placements.len();
+            // A glued part counts once, by its first strip.
+            g.parts += placements
+                .iter()
+                .filter(|p| p.strip.is_none_or(|s| s.n == 1))
+                .count();
             g.parts_area += parts_area;
             pieces.push(StockPiece {
                 index: pieces.len() + 1,
@@ -1402,7 +1505,11 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
             }),
         }
     }
-    let placed: usize = pieces.iter().map(|p| p.placements.len()).sum();
+    let placed: usize = pieces
+        .iter()
+        .flat_map(|p| &p.placements)
+        .filter(|p| p.strip.is_none_or(|s| s.n == 1))
+        .count();
     // Added up from 0.0: an f64 `sum` over nothing is -0.0, which a nesting with nothing
     // placed showed as -0.0 areas (lane 30).
     let parts_area: f64 = pieces.iter().fold(0.0, |s, p| s + p.parts_area);
@@ -1438,6 +1545,7 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
         library: lib.clone(),
         pieces,
         unplaced,
+        glue_ups,
         totals,
         hash: String::new(),
     };
@@ -1473,6 +1581,11 @@ impl Nesting {
                     h.len(v);
                 }
                 h.u64(u64::from(q.turned));
+                // #49: only on strips, so every layout without one hashes as before.
+                if let Some(s) = q.strip {
+                    h.usize(s.n);
+                    h.usize(s.of);
+                }
             }
             h.usize(p.cuts.len());
             for c in &p.cuts {
