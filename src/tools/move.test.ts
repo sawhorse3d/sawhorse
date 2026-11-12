@@ -523,3 +523,92 @@ runKernel("#7 through the kernel: a split shape is selected as its pieces", () =
     d.free();
   });
 });
+
+// Lane 43 (#7): a merge, through the real kernel. Each reads the selection the
+// tools' own steps make and checks every entity in it against the new view mesh: a region or
+// a curve the mesh does not draw names nothing.
+runKernel("#7 through the kernel: a shape moved onto an identical one", () => {
+  async function doc(): Promise<WasmDoc> {
+    const mod = (await import(/* @vite-ignore */ path.join(pkg, "sawhorse_wasm.js"))) as { initSync(o: { module: Buffer }): void; document_new(): WasmDoc };
+    mod.initSync({ module: readFileSync(path.join(pkg, "sawhorse_wasm_bg.wasm")) });
+    return mod.document_new();
+  }
+  function meshOf(d: WasmDoc): MeshData {
+    const m = d.get_scene_mesh();
+    const mesh: MeshData = {
+      positions: m.positions(),
+      indices: m.indices(),
+      faceIds: m.face_ids(),
+      edges: m.edges(),
+      edgeOwner: m.edge_owner(),
+      edgeOwners: JSON.parse(m.edge_owners_json()),
+      parts: JSON.parse(m.parts_json()),
+      edgeCurve: m.edge_curves(),
+      curves: JSON.parse(m.curves_json()),
+    };
+    m.free();
+    return mesh;
+  }
+  const apply = (d: WasmDoc, op: unknown): OpOutcome => {
+    const out = JSON.parse(d.apply_op(JSON.stringify(op)));
+    expect(out.error, JSON.stringify(out)).toBeUndefined();
+    return out;
+  };
+  const plane = (z: number) => ({ on: "plane", origin: [0, 0, z], normal: [0, 0, 1] });
+  /** A closed stroke at height `z`; the region it made (the last the kernel names). */
+  const draw = (d: WasmDoc, pts: [number, number][], z = 0): Entity => {
+    const out = apply(d, { op: "draw", target: plane(z), points: pts.map(([x, y]) => [x, y, z]), closed: true }) as Extract<OpOutcome, { kind: "drawn" }>;
+    expect(out.sketch).not.toBeNull();
+    return { kind: "region", sketch: out.sketch!, region: out.regions.at(-1)! };
+  };
+  const rect = (d: WasmDoc, x: number, y: number, w: number, h: number, z = 0) => draw(d, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], z);
+  /** Each region's area in the view mesh, keyed `sketch:region`. */
+  function areas(mesh: MeshData): Map<string, number> {
+    const out = new Map<string, number>();
+    for (let t = 0; t < mesh.faceIds.length; t++) {
+      const part = mesh.parts[mesh.faceIds[t]];
+      if (part.kind !== "region") continue;
+      const [a, b, c] = [0, 1, 2].map((k) => Array.from(mesh.positions.subarray(mesh.indices[t * 3 + k] * 3, mesh.indices[t * 3 + k] * 3 + 3)));
+      const area = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
+      const key = `${part.owner}:${part.index}`;
+      out.set(key, (out.get(key) ?? 0) + area);
+    }
+    return out;
+  }
+  const key = (e: Entity) => (e.kind === "region" ? `${e.sketch}:${e.region}` : e.kind === "curve" ? `c${e.owner.id}:${e.curve}` : JSON.stringify(e));
+  /** Run the gesture the tools run (outlines, subject, previews, the op, movedSelection) and
+   * check that everything it selects is drawn in the new mesh, each once. */
+  async function moved(d: WasmDoc, sel: Entity[], x: Xform, op: (s: Subject) => KernelOp) {
+    const outlines = await loadOutlines(async (t) => {
+      const [owner, index] = t.kind === "region" ? [t.sketch, t.region] : t.kind === "curve" ? [t.sketch, t.curve] : [0, 0];
+      return JSON.parse(d.outline(t.kind, owner, index));
+    }, sel);
+    const s = subjectOf(sel, null, outlines, JSON.parse(d.state_json()) as DocState) as Subject;
+    const pv = sketchPreviews(s, meshOf(d));
+    const kop = op(s);
+    const outcome = apply(d, kop);
+    const mesh = meshOf(d);
+    const next = movedSelection(sel, s, pv, x, outcome, mesh);
+    const all = areas(mesh);
+    const curves = new Set((mesh.curves ?? []).filter((c) => c.owner.kind === "sketch").map((c) => `c${c.owner.id}:${c.curve}`));
+    const keys = next.map(key);
+    for (const k of keys) expect(all.has(k) || curves.has(k), `${k} is drawn`).toBe(true);
+    expect(new Set(keys).size).toBe(keys.length);
+    return { next, keys, op: kop, outcome, mesh, all, curves, subject: s, area: keys.reduce((a, k) => a + (all.get(k) ?? 0), 0) };
+  }
+
+  it("a shape moved exactly onto an identical one is selected as the region there, never an id that names nothing", async () => {
+    const d = await doc();
+    const stays = rect(d, 0, 0, 1, 1);
+    const goes = rect(d, 3, 0, 1, 1);
+    const r = await moved(d, [goes], translation([-3, 0, 0]), (s) => moveOp(s, [-3, 0, 0], false));
+    // The two merge: one region of area 1 is left, and it is what is selected.
+    expect([...r.all.values()]).toHaveLength(1);
+    expect(r.keys).toEqual([...r.all.keys()]);
+    expect(r.area).toBeCloseTo(1, 6);
+    // The moved square's own id is gone (the region that stays keeps its id).
+    expect(r.all.has(key(goes))).toBe(false);
+    expect(r.all.has(key(stays))).toBe(true);
+    d.free();
+  });
+});

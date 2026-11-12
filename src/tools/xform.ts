@@ -552,7 +552,7 @@ export function isCopied(o: OpOutcome): boolean {
 /** #7: a point inside each region the mesh draws (the centroid of its largest triangle, so
  * not a sliver along its edge), with the region's in-plane axes, keyed `sketch:region`. One
  * pass over the triangles. */
-function regionSamples(mesh: MeshData): Map<string, { at: V3; u: V3; v: V3 }> {
+function regionSamples(mesh: MeshData): Map<string, RegionSample> {
   const best = new Map<number, { t: number; a: number }>();
   const pos = mesh.positions;
   const idx = mesh.indices;
@@ -566,7 +566,7 @@ function regionSamples(mesh: MeshData): Map<string, { at: V3; u: V3; v: V3 }> {
     const b = best.get(k);
     if (!b || a > b.a) best.set(k, { t, a });
   }
-  const out = new Map<string, { at: V3; u: V3; v: V3 }>();
+  const out = new Map<string, RegionSample>();
   for (const [k, { t }] of best) {
     const at: V3 = [0, 0, 0];
     for (let c = 0; c < 3; c++) {
@@ -576,9 +576,51 @@ function regionSamples(mesh: MeshData): Map<string, { at: V3; u: V3; v: V3 }> {
     const q = mesh.parts[k];
     const key = `${q.owner}:${q.index}`;
     // A region drawn as more than one part: the first, as the tools read it elsewhere.
-    if (!out.has(key)) out.set(key, { at, u: q.u, v: q.v });
+    if (!out.has(key)) out.set(key, { sketch: q.owner, region: q.index, at, u: q.u, v: q.v });
   }
   return out;
+}
+
+/** #7: a region's point and in-plane axes, as {@link regionSamples} reads them. */
+interface RegionSample {
+  sketch: number;
+  region: number;
+  at: V3;
+  u: V3;
+  v: V3;
+}
+
+/**
+ * #7: the regions of sketch `sketch` that lie inside `rings` (world points, where a moved
+ * shape is now), from the new view mesh's `samples`. Of the regions the kernel `listed` for
+ * that sketch, those with a point inside; when it listed none there (a shape moved exactly
+ * onto an identical one welds onto it, and the kernel names no region for that), every
+ * region the mesh draws in that sketch with a point inside, which may be none. `null` when
+ * the kernel listed regions there and none can be read or lies inside: the caller keeps
+ * what it had (lane 41).
+ */
+function regionsInside(sketch: number, rings: V3[][], listed: [number, number][], samples: Map<string, RegionSample>): Entity[] | null {
+  // Read in the regions' axes; one sketch's regions share them, so once as a rule.
+  let flat: { u: V3; v: V3; rings: FlatRing[] } | null = null;
+  const hit = (at: RegionSample) => {
+    if (!flat || flat.u.some((c, k) => c !== at.u[k]) || flat.v.some((c, k) => c !== at.v[k])) flat = { u: at.u, v: at.v, rings: flatRings(rings, at.u, at.v) };
+    return insideRings(at.at, flat.rings, at.u, at.v);
+  };
+  const mine = listed.filter(([s]) => s === sketch);
+  if (!mine.length) {
+    const out: Entity[] = [];
+    for (const at of samples.values()) if (at.sketch === sketch && hit(at)) out.push({ kind: "region", sketch, region: at.region });
+    return out;
+  }
+  const hits: Entity[] = [];
+  let read = 0;
+  for (const [s, r] of mine) {
+    const at = samples.get(`${s}:${r}`);
+    if (!at) continue;
+    read++;
+    if (hit(at)) hits.push({ kind: "region", sketch: s, region: r });
+  }
+  return read && hits.length ? hits : null;
 }
 
 /** #7: rings read in a plane's axes `u` and `v`, each with its bounds. */
@@ -627,8 +669,11 @@ function insideRings(p: V3, rings: FlatRing[], u: V3, v: V3): boolean {
  * With the new scene's `mesh`, the regions selected become the regions the kernel
  * says the moved edges bound that lie inside the moved rings: the pieces they became, not
  * their old ids (one of which may now be a different piece). Without a mesh, or when none
- * of those regions can be read or lies inside, they keep their ids as before (so a merge,
- * which the kernel reports with no regions, still leaves the old id selected).
+ * of those regions can be read or lies inside, they keep their ids as before.
+ *
+ * Lane 43 (#7): a shape moved exactly onto an identical one welds onto it, and the kernel
+ * names no region for it; the selection is then the regions the mesh draws inside the moved
+ * rings (the one it merged with), or nothing, never the old id, which names no region now.
  */
 export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
@@ -636,9 +681,10 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
   const parts = subject.sketches ?? [];
   const byId = new Map(parts.map((p, i) => [p.sketch, { p, i }]));
   const added = new Set<string>();
-  // #7: per sketch part, the regions inside its moved rings (null: keep the old ids).
+  // #7: per sketch part, the regions inside its moved rings in the sketch it is in now
+  // (null: keep what lane 22 selects).
   const within = new Map<number, Entity[] | null>();
-  let samples: Map<string, { at: V3; u: V3; v: V3 }> | null = null;
+  let samples: Map<string, RegionSample> | null = null;
   const regionsWithin = (i: number): Entity[] | null => {
     if (within.has(i)) return within.get(i)!;
     const p = parts[i];
@@ -646,20 +692,9 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
     let found: Entity[] | null = null;
     if (mesh && now && p.rings.length) {
       samples ??= regionSamples(mesh);
+      // Where the rings went, read in the plane's own axes.
       const rings = p.rings.map((ring) => ring.map((q) => applyX(x, q)));
-      // Read in the regions' axes; one sketch's regions share them, so once as a rule.
-      let flat: { u: V3; v: V3; rings: FlatRing[] } | null = null;
-      const hits: Entity[] = [];
-      let read = 0;
-      for (const [s, r] of now.regions) {
-        if (s !== p.sketch) continue;
-        const at = samples.get(`${s}:${r}`);
-        if (!at) continue;
-        read++;
-        if (!flat || flat.u.some((c, k) => c !== at.u[k]) || flat.v.some((c, k) => c !== at.v[k])) flat = { u: at.u, v: at.v, rings: flatRings(rings, at.u, at.v) };
-        if (insideRings(at.at, flat.rings, at.u, at.v)) hits.push({ kind: "region", sketch: s, region: r });
-      }
-      if (read && hits.length) found = hits;
+      found = regionsInside(now.sketch, rings, now.regions, samples);
     }
     within.set(i, found);
     return found;

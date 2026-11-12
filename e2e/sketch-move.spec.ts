@@ -247,6 +247,50 @@ test("Undo and Redo of a move that split a circle select what was there before a
   await expect(vp).toHaveAttribute("data-selection", "2");
 });
 
+// Lane 43 (#7): a circle moved exactly onto an identical one merges with it. The selection
+// kept the moved circle's id, which named no region: the hint counted one selected, nothing
+// was lit, and P with a typed distance was refused. It is now the circle that is there.
+test("a circle moved exactly onto an identical one is selected as the circle there, and P pushes it", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  // Two circles of 4 in radius, 24 segments each, centred at the origin and at (20, 0). The
+  // Circle tool stays on after the first (a second C would switch it to Polygon).
+  await page.keyboard.press("c");
+  for (const x of [0, 20]) {
+    await clickAt(page, [x, 0, 0], /grid|endpoint|axis/);
+    await point(page, [x + 4, 0, 0]);
+    await type(page, "4");
+    await expect(hint).toContainText("Circle r 4 in");
+    await page.keyboard.press("Escape");
+  }
+  await expect(vp).toHaveAttribute("data-parts", "2");
+  await page.keyboard.press("Space");
+  await selectAt(page, [20, 1, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  const moving = await selectedRegions(page);
+  // Moved 20 in along -red: centre onto centre, every point onto a point.
+  await page.keyboard.press("m");
+  await clickAt(page, [20, 0, 0], /center|centre|endpoint|on-face|grid/);
+  await page.keyboard.press("ArrowRight");
+  await point(page, [10, 0, 0]);
+  await type(page, "20");
+  await expect(hint).toContainText("Moved");
+  // One circle is left, and it is what is selected and lit, not the moved one's old id.
+  await expect.poll(async () => (await regions(page)).length).toBe(1);
+  const there = (await regions(page)).map((r) => `${r.sketch}:${r.region}`);
+  expect(there).not.toEqual(moving.selected);
+  await expect.poll(() => selectedRegions(page)).toEqual({ selected: there, lit: there });
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  // P and a typed distance push it: the 24-sided circle's area times 2 in.
+  await page.keyboard.press("p");
+  await type(page, "2");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  const s = await solids(page);
+  expect(s[0].volume).toBeCloseTo(2 * 12 * 16 * Math.sin(Math.PI / 12), 4);
+  near(s[0].min, [-4, -4, 0]);
+  near(s[0].max, [4, 4, 2]);
+});
+
 test("one corner of a rectangle moves: it stays flat, its edges follow; pushed, its volume is exact", async ({ page }) => {
   const vp = await ready(page);
   const hint = page.locator("#hint");
