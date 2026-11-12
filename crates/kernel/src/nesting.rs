@@ -444,27 +444,42 @@ fn fit(row: &CutRow, s: &StockDef, trim: f64) -> Result<Vec<(f64, f64, bool)>, U
 /// along it. `None` when gluing cannot make it. The count is the least that covers the
 /// width: `n >= (W - J) / (w - J)` for a part `W` wide, a board `w` wide, joint loss `J`;
 /// the filler is what is left, `W + (n - 1) J - (n - 1) w`, wider than `J` and no wider
-/// than the board. Lane 42: the count's slack is 1 nm of width (`EPS`), so the filler never
-/// runs past the board by more than that; a glue-up of more than `MAX_GLUE_STRIPS` strips,
-/// or with a filler narrower than the kerf or `MIN_GLUE_FILLER`, is refused, as before #49.
+/// than the board. Lane 42: the count's slack is 1 nm of width (`EPS`); a glue-up of more
+/// than `MAX_GLUE_STRIPS` strips, or with a filler narrower than the kerf or
+/// `MIN_GLUE_FILLER`, is refused, as before #49. The lane 42 fix pass settles the count on
+/// the filler itself, the least count whose filler the board holds (no wider than the board
+/// and 1 nm, the test the board layout makes), because the quotient and the filler can round
+/// apart by a hair: a part 12 in and 1 nm wide on 6 in boards with no joint loss counted 2
+/// strips with a filler a hair wider than 6 in and 1 nm, and the layout refused the strip.
+/// A part of no length (1 nm or less) is never glued: its strips would be of no length.
 fn glue_widths(row: &CutRow, s: &StockDef, trim: f64, joint: f64, kerf: f64) -> Option<Vec<f64>> {
     if s.kind != StockKind::Board || row.sheet || row.grain == Grain::Width {
         return None;
     }
     let u = usable(s, trim);
     let (w, l) = (row.size[1], row.size[2]);
-    if l > u.w + EPS || w <= u.h + EPS || u.h <= joint + EPS {
+    if l.is_nan() || l <= EPS || l > u.w + EPS || w <= u.h + EPS || u.h <= joint + EPS {
         return None;
     }
+    // The filler when the part takes `n` strips: what is left after `n - 1` full ones.
+    let filler_of = |n: f64| w + (n - 1.0) * joint - (n - 1.0) * u.h;
     // Counted in floating point and bounded before anything is allocated (`max` turns a
-    // NaN count into 2, and the filler check below refuses it).
-    let n = ((w - joint - EPS) / (u.h - joint)).ceil().max(2.0);
+    // NaN count into 2, and the filler checks below refuse it).
+    let mut n = ((w - joint - EPS) / (u.h - joint)).ceil().max(2.0);
+    if n > MAX_GLUE_STRIPS as f64 + 1.0 {
+        return None;
+    }
+    // Rounding moves the quotient off the filler by at most one strip either way.
+    if n > 2.0 && filler_of(n - 1.0) <= u.h + EPS {
+        n -= 1.0;
+    } else if filler_of(n) > u.h + EPS {
+        n += 1.0;
+    }
     if n > MAX_GLUE_STRIPS as f64 {
         return None;
     }
-    let full = n - 1.0;
-    let filler = w + full * joint - full * u.h;
-    if filler.is_nan() || filler < kerf.max(MIN_GLUE_FILLER) - EPS {
+    let filler = filler_of(n);
+    if filler.is_nan() || filler > u.h + EPS || filler < kerf.max(MIN_GLUE_FILLER) - EPS {
         return None;
     }
     let mut v = vec![u.h; n as usize - 1];
@@ -1192,7 +1207,10 @@ fn find_cut(reg: Rect, parts: &[Put], dir: CutDir, kerf: f64) -> Option<f64> {
     let mut iv: Vec<(f64, f64)> = parts.iter().map(span).collect();
     iv.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let lead = iv[0].0 - kerf;
-    if lead > r0 + EPS {
+    // A cut short of the region's far end, so the near side is smaller than the region. (A
+    // part of no size there, with no kerf, made the same cut over and over without end; a
+    // part with a size always starts before the far end.)
+    if lead > r0 + EPS && lead < r1 - EPS {
         return Some(lead);
     }
     let mut hi = iv[0].1;

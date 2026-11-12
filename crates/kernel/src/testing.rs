@@ -830,14 +830,18 @@ pub fn check_nesting_of(
             let joint = n.settings.joint_loss;
             // Lane 42: and only when the least count that covers it, found by trying each,
             // is at most MAX_GLUE_STRIPS with a filler no narrower than the kerf or 1 mm.
+            // The fix pass: a part of no length (1 nm or less) is never glued, and each
+            // count's filler is worked out as the kernel works it out, so the two agree to
+            // the last bit on a boundary.
             let gluable = s.kind == StockKind::Board
                 && !row.sheet
                 && row.grain != Grain::Width
+                && l > EPS
                 && l <= uw + EPS
                 && w > uh + EPS
                 && uh > joint + EPS
                 && (2..=MAX_GLUE_STRIPS)
-                    .map(|k| w - (k - 1) as f64 * (uh - joint))
+                    .map(|k| w + (k - 1) as f64 * joint - (k - 1) as f64 * uh)
                     .find(|&filler| filler <= uh + EPS)
                     .is_some_and(|filler| filler >= kerf.max(MIN_GLUE_FILLER) - EPS);
             let ok = !gluable

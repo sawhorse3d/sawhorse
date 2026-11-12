@@ -1106,6 +1106,150 @@ fn a_glue_up_has_a_bounded_number_of_strips() {
     assert!(too_large(&n), "{:#?}", n.glue_ups);
 }
 
+/// One part of the size given (metres, as the cut list row holds it: thickness, width,
+/// length) on a library of only 6 x 96 in boards of 3/4 in, no trim, the joint loss and
+/// kerf given (metres).
+fn on_six_inch_boards(size: [f64; 3], joint: f64, kerf: f64) -> (CutList, Nesting) {
+    let mut list = list_of(&[(0.75, 10.0, 20.0, 1, Grain::Length, false, 0)], 0);
+    list.rows[0].size = size;
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    lib.stocks = vec![StockDef {
+        name: "Six".into(),
+        kind: StockKind::Board,
+        length: 96.0 * IN,
+        width: 6.0 * IN,
+        thickness: 0.75 * IN,
+        nominal: None,
+        grain: StockGrain::Length,
+    }];
+    let st = NestSettings {
+        kerf,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+        joint_loss: joint,
+    };
+    let n = nest_list(&list, &lib, st);
+    (list, n)
+}
+
+/// Lane 42 fix pass: a part a hair wider than whole boards. The strip count came from a
+/// quotient and the filler from a sum, and the two can round apart: a part 12 in and 1 nm
+/// wide on 6 in boards with no joint loss was counted as 2 strips with a filler a hair wider
+/// than 6 in and 1 nm, which the board layout refused, a panic ("only fitting parts are laid
+/// out"). The count is now settled on the filler, so that part is reported too large, as
+/// before #49 (its third strip would be a 1 nm filler, narrower than the kerf). Every width
+/// a hundred floating point steps either side of each such boundary, for several strip
+/// counts, joint losses and kerfs, nests without a panic, keeps every invariant, and never
+/// puts a strip wider than its board.
+#[test]
+fn a_part_a_hair_wider_than_whole_boards_never_panics() {
+    let (list, n) = on_six_inch_boards([0.75 * IN, 0.304_800_001, 20.0 * IN], 0.0, IN / 8.0);
+    check_nesting_of(&list, &n).unwrap();
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    assert_eq!(n.unplaced.len(), 1, "{:#?}", n.unplaced);
+    assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
+    assert_eq!(n.unplaced[0].stock.as_deref(), Some("Six"));
+    let h = 6.0 * IN;
+    let (mut glued, mut too_large) = (0, 0);
+    for joint in [0.0, IN / 16.0, IN / 8.0, IN / 2.0] {
+        for kerf in [0.0, IN / 8.0] {
+            for strips in [2usize, 3, 5, 40] {
+                // The width at which `strips - 1` full strips leave a filler exactly as wide
+                // as the board and 1 nm: one strip more past it, the same count below it.
+                let edge = (strips - 1) as f64 * (h - joint) + h + 1e-9;
+                for step in -100i64..=100 {
+                    let w = f64::from_bits(edge.to_bits().wrapping_add_signed(step));
+                    let (list, n) = on_six_inch_boards([0.75 * IN, w, 20.0 * IN], joint, kerf);
+                    check_nesting_of(&list, &n)
+                        .unwrap_or_else(|e| panic!("{w} m, joint {joint}, kerf {kerf}: {e}"));
+                    for q in n.pieces.iter().flat_map(|p| &p.placements) {
+                        assert!(q.dy <= h + 1e-9, "{w} m: a strip {} m wide", q.dy);
+                    }
+                    glued += n.glue_ups.len();
+                    too_large += n.unplaced.len();
+                }
+            }
+        }
+    }
+    // Below each edge the part is glued; just past it, with no joint loss, the filler
+    // would be a hair and the part is too large.
+    assert!(
+        glued > 0 && too_large > 0,
+        "{glued} glued, {too_large} too large"
+    );
+}
+
+/// Lane 42 fix pass: a part of no length is never glued up, even when it is wider than
+/// every board; it is reported as before #49 (a 30 in part of no length would fit only
+/// turned, its 30 in along the board). A real model never makes one (the cut list sorts a
+/// part's sizes, so a part of no length has no thickness and is not counted), but the
+/// kernel took such a row and made strips of no length from it, and those beside a part of
+/// no width, with no kerf, sent the cut sequence round without end.
+#[test]
+fn a_part_of_no_length_is_never_glued() {
+    for l in [0.0, 1e-12, 1e-9] {
+        let (_, n) = on_six_inch_boards([0.75 * IN, 30.0 * IN, l], 0.0, 0.0);
+        assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+        assert_eq!(n.unplaced.len(), 1, "{:#?}", n.unplaced);
+        assert_eq!(n.unplaced[0].reason, UnplacedReason::Grain);
+    }
+    let mut list = list_of(
+        &[
+            (0.75, 1.0, 10.0, 1, Grain::Length, false, 0),
+            (0.75, 1.0, 10.0, 1, Grain::Length, false, 0),
+        ],
+        0,
+    );
+    list.rows[0].size = [0.75 * IN, 0.0, 10.0 * IN];
+    list.rows[1].size = [0.75 * IN, 30.0 * IN, 0.0];
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: 0.0,
+        ..NestSettings::default()
+    };
+    let n = nest_list(&list, &lib, st);
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    assert_eq!(n.totals.unplaced, 1, "{:#?}", n.unplaced);
+}
+
+/// Lane 42 fix pass: parts of no size end their cut sequence. With no kerf, a part of no
+/// length laid out after another (or of no width beside one) sits on the far end of the
+/// region the cut before it left, and the first cut found was "just before it", which left
+/// the same region with the same part, made over and over until memory ran out (1.9 GB
+/// asked for, then an abort). Older than #49 and not reached from a model, whose cut list
+/// never counts a part of no thickness; the kernel takes any list, so it must end on any.
+#[test]
+fn parts_of_no_size_end_their_cut_sequence() {
+    let cases: [&[([f64; 3], usize)]; 3] = [
+        &[([0.75, 0.0, 10.0], 1), ([0.75, 5.0, 0.0], 1)],
+        &[([0.75, 0.0, 10.0], 1), ([0.75, 8.0, 0.0], 1)],
+        &[([0.75, 0.0, 10.0], 3), ([0.75, 4.0, 0.0], 3)],
+    ];
+    for parts in cases {
+        let rows: Vec<_> = parts
+            .iter()
+            .map(|&(_, q)| (0.75, 1.0, 10.0, q, Grain::Length, false, 0u8))
+            .collect();
+        let mut list = list_of(&rows, 0);
+        for (row, &(size, _)) in list.rows.iter_mut().zip(parts) {
+            row.size = size.map(|s| s * IN);
+        }
+        let mut lib = StockLibrary::builtin();
+        lib.defaults.clear();
+        for kerf in [0.0, IN / 8.0] {
+            let st = NestSettings {
+                kerf,
+                ..NestSettings::default()
+            };
+            let n = nest_list(&list, &lib, st);
+            let placed: usize = n.pieces.iter().map(|p| p.placements.len()).sum();
+            let want: usize = parts.iter().map(|p| p.1).sum();
+            assert_eq!(placed + n.unplaced.len(), want, "{parts:?}, kerf {kerf}");
+        }
+    }
+}
 /// A part longer than every board is still too large: gluing only adds width.
 #[test]
 fn a_part_too_long_to_glue_is_still_too_large() {
