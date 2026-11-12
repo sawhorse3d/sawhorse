@@ -331,7 +331,7 @@ export class RotateTool extends Tool {
       this.last = { subject, centre, normal, angle, deg, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
       // Selected sketch geometry stays selected where it went (lane 22).
-      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome));
+      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome, r.scene?.mesh));
     }
   }
 

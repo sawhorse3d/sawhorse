@@ -113,6 +113,36 @@ describe("transform helpers", () => {
     expect(lifted).toEqual([{ kind: "region", sketch: 5, region: 9 }, { ...edge, owner: { kind: "sketch", id: 5 }, a: [0, 0, 1], b: [1, 0, 1] }]);
   });
 
+  it("#7: a region moved within its plane that splits is selected as the pieces it became, not its old id", () => {
+    // Region 1, a unit square, moved 2 to the right across a rectangle. The kernel says the
+    // moved edges now bound regions 4 and 5 (inside the moved square) and 2 (the rectangle's
+    // remainder, outside it). Region 1 itself no longer exists.
+    const sq: V3[] = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]];
+    const region: Entity = { kind: "region", sketch: 1, region: 1 };
+    const s = subjectOf([region], null, new Map([["r1:1", [sq]]])) as Subject;
+    const pv = sketchPreviews(s, null);
+    // One triangle per region, in the plane z = 0: 4 and 5 inside x 2..3, y 0..1; 2 outside.
+    const tri = (cx: number, cy: number) => [cx - 0.1, cy - 0.1, 0, cx + 0.1, cy - 0.1, 0, cx, cy + 0.1, 0];
+    const part = (index: number) => ({ kind: "region" as const, owner: 1, index, origin: [0, 0, 0] as V3, normal: [0, 0, 1] as V3, u: [1, 0, 0] as V3, v: [0, 1, 0] as V3 });
+    const mesh: MeshData = {
+      positions: new Float32Array([...tri(2.25, 0.5), ...tri(5, 0.5), ...tri(2.75, 0.5)]),
+      indices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8]),
+      faceIds: new Uint32Array([0, 1, 2]),
+      edges: new Float32Array(),
+      edgeOwner: new Uint32Array(),
+      edgeOwners: [],
+      parts: [part(4), part(2), part(5)],
+    };
+    const moved = movedSelection([region], s, pv, translation([2, 0, 0]), { kind: "sketch_moved", sketch: 1, regions: [[1, 2], [1, 4], [1, 5]] }, mesh);
+    expect(moved).toEqual([
+      { kind: "region", sketch: 1, region: 4 },
+      { kind: "region", sketch: 1, region: 5 },
+    ]);
+    // A move that splits nothing: the kernel reports the region itself, which stays selected.
+    const plainMesh: MeshData = { ...mesh, positions: new Float32Array(tri(2.5, 0.5)), indices: new Uint32Array([0, 1, 2]), faceIds: new Uint32Array([0]), parts: [part(1)] };
+    expect(movedSelection([region], s, pv, translation([2, 0, 0]), { kind: "sketch_moved", sketch: 1, regions: [[1, 1]] }, plainMesh)).toEqual([region]);
+  });
+
   it("the preview moves whole solids, or only the moving ends of part of one", () => {
     const mesh = boxMesh();
     const whole = previewSegments({ kind: "objects", objects: [1] }, [[[0, 0, 0], [0, 0, 1]]], translation([1, 0, 0]));

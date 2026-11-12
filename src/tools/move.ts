@@ -298,7 +298,7 @@ export class MoveTool extends Tool {
       this.last = { subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
       h.showValue(h.fmt(len(delta)));
       // Selected sketch geometry stays selected where it went (lane 22).
-      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, translation(delta), r.outcome));
+      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, translation(delta), r.outcome, r.scene?.mesh));
     }
   }
 

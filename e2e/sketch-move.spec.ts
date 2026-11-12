@@ -121,6 +121,46 @@ test("a circle moves by a typed distance and by inference, turns 45 degrees and 
   near((await centres(page))[0], [0, 0, 0]);
 });
 
+// #7: a circle moved across a rectangle's edge splits into two pieces (the part over the
+// rectangle and the part beyond it) and cuts the rectangle. The selection was the circle's
+// old region id, so the hint said one region selected and the wrong piece was lit; it is now
+// the two pieces the circle became, and the rectangle's remainder stays unselected.
+test("a circle moved across a rectangle is selected as the pieces it became", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  // A 24 x 12 in rectangle at the origin.
+  await page.keyboard.press("r");
+  await type(page, "24,12");
+  await expect(vp).toHaveAttribute("data-parts", "1");
+  await page.keyboard.press("Escape");
+  // A circle of 4 in radius centred at (40, 6), clear of it.
+  await page.keyboard.press("c");
+  await clickAt(page, [40, 6, 0], /grid|endpoint|axis/);
+  await point(page, [44, 6, 0]);
+  await type(page, "4");
+  await expect(hint).toContainText("Circle r 4 in");
+  await expect(vp).toHaveAttribute("data-parts", "2");
+  await page.keyboard.press("Space");
+  await selectAt(page, [40, 7, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  // Moved 16 in along -red: its centre lands on the rectangle's right edge at (24, 6).
+  await page.keyboard.press("m");
+  await clickAt(page, [40, 6, 0], /center|centre|endpoint|on-face|grid/);
+  await page.keyboard.press("ArrowRight");
+  await point(page, [30, 6, 0]);
+  await type(page, "16");
+  await expect(hint).toContainText("Moved");
+  // Three regions now: the rectangle's remainder, the circle's half over it and its half beyond.
+  await expect.poll(async () => (await regions(page)).length).toBe(3);
+  const halves = (await regions(page)).filter((r) => {
+    const c = centroid(r.rings[0]);
+    return Math.hypot(c[0] - 24, c[1] - 6) < 4;
+  });
+  expect(halves).toHaveLength(2);
+  // The selection is those two halves, not the circle's old id.
+  await expect(vp).toHaveAttribute("data-selection", "2");
+});
+
 test("one corner of a rectangle moves: it stays flat, its edges follow; pushed, its volume is exact", async ({ page }) => {
   const vp = await ready(page);
   const hint = page.locator("#hint");

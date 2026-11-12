@@ -422,7 +422,7 @@ export class ScaleTool extends Tool {
       if (t.subject.sketches?.length) {
         // Sketch geometry: the selection follows it and the grips come back around it.
         if (t.sel.length) {
-          h.setSelection(movedSelection(t.sel, t.subject, t.sk, x, r.outcome));
+          h.setSelection(movedSelection(t.sel, t.subject, t.sk, x, r.outcome, r.scene?.mesh));
           this.target = null;
           await this.refreshTarget(null);
         } else this.target = null;

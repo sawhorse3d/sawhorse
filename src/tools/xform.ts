@@ -549,17 +549,77 @@ export function isCopied(o: OpOutcome): boolean {
   return o.kind === "batch" && o.outcomes.some(isCopied);
 }
 
+/** #7: a point inside a region of the mesh (a triangle's centroid), with the region's
+ * in-plane axes; null when the mesh draws no triangle of it. */
+function regionSample(mesh: MeshData, sketch: number, region: number): { at: V3; u: V3; v: V3 } | null {
+  const k = mesh.parts.findIndex((q) => q.kind === "region" && q.owner === sketch && q.index === region);
+  if (k < 0) return null;
+  const t = mesh.faceIds.indexOf(k);
+  if (t < 0) return null;
+  const at: V3 = [0, 0, 0];
+  for (let c = 0; c < 3; c++) {
+    const i = mesh.indices[t * 3 + c] * 3;
+    for (let d = 0; d < 3; d++) at[d] += mesh.positions[i + d] / 3;
+  }
+  return { at, u: mesh.parts[k].u, v: mesh.parts[k].v };
+}
+
+/** #7: whether `p` is inside `rings` (even-odd, so a hole's ring takes its inside out),
+ * all in one plane, read in its axes `u` and `v`. */
+function insideRings(p: V3, rings: V3[][], u: V3, v: V3): boolean {
+  const px = dot(p, u);
+  const py = dot(p, v);
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = [dot(ring[i], u), dot(ring[i], v)];
+      const [xj, yj] = [dot(ring[j], u), dot(ring[j], v)];
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 /**
  * The selection after a move of `subject` by `x` (lane 22): its sketch points and edges
  * where they went, its regions kept (in their plane) or replaced by the regions they became
  * on the plane they were lifted to. Everything else stays selected as it was.
+ *
+ * #7: within the plane, a move can split a region (a circle moved across a rectangle) or
+ * merge it. With the new scene's `mesh`, the regions selected become the regions the kernel
+ * says the moved edges bound that lie inside the moved rings: the pieces they became, not
+ * their old ids (one of which may now be a different piece). Without a mesh, or when none
+ * of those regions can be read, they keep their ids as before.
  */
-export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome): Entity[] {
+export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
   const out: Entity[] = [];
   const parts = subject.sketches ?? [];
   const byId = new Map(parts.map((p, i) => [p.sketch, { p, i }]));
   const added = new Set<string>();
+  // #7: per sketch part, the regions inside its moved rings (null: keep the old ids).
+  const within = new Map<number, Entity[] | null>();
+  const regionsWithin = (i: number): Entity[] | null => {
+    if (within.has(i)) return within.get(i)!;
+    const p = parts[i];
+    const now = moves[i];
+    let found: Entity[] | null = null;
+    if (mesh && now && p.rings.length) {
+      const rings = p.rings.map((ring) => ring.map((q) => applyX(x, q)));
+      const hits: Entity[] = [];
+      let read = 0;
+      for (const [s, r] of now.regions) {
+        if (s !== p.sketch) continue;
+        const at = regionSample(mesh, s, r);
+        if (!at) continue;
+        read++;
+        if (insideRings(at.at, rings, at.u, at.v)) hits.push({ kind: "region", sketch: s, region: r });
+      }
+      if (read && hits.length) found = hits;
+    }
+    within.set(i, found);
+    return found;
+  };
   for (const e of sel) {
     if (!isSketchEntity(e)) {
       out.push(e);
@@ -582,8 +642,15 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
       const now2 = now?.curves?.[k];
       if (now2) out.push({ kind: "curve", owner: { kind: "sketch", id: now2[0] }, curve: now2[1] });
       else if (sketch === hit.p.sketch) out.push(e);
-    } else if (sketch === hit.p.sketch) out.push(e);
-    else if (now && !added.has(`${hit.i}`)) {
+    } else if (sketch === hit.p.sketch) {
+      // A region in its own plane: the pieces it became (#7), each once.
+      const pieces = e.kind === "region" ? regionsWithin(hit.i) : null;
+      if (!pieces) out.push(e);
+      else if (!added.has(`${hit.i}`)) {
+        added.add(`${hit.i}`);
+        out.push(...pieces);
+      }
+    } else if (now && !added.has(`${hit.i}`)) {
       added.add(`${hit.i}`);
       for (const [s, r] of now.regions) out.push({ kind: "region", sketch: s, region: r });
     }
