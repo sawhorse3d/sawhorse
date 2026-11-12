@@ -21,7 +21,7 @@ import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { curveOf } from "../lib/curves";
 
@@ -331,7 +331,12 @@ export class RotateTool extends Tool {
       this.last = { subject, centre, normal, angle, deg, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
       // Selected sketch geometry stays selected where it went (lane 22).
-      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome, r.scene?.mesh));
+      if (!copy && subject.sketches?.length && sel.length) {
+        const next = movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome, r.scene?.mesh);
+        h.setSelection(next);
+        // #7: Push/Pull's target follows a region the turn made into pieces.
+        h.setTarget(targetAfterMove(h.target(), sel, next));
+      }
     }
   }
 

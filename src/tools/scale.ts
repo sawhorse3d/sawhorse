@@ -21,7 +21,7 @@ import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, targetAfterMove, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { curveOf, curveView, lengthWithUnit } from "../lib/curves";
 
@@ -422,7 +422,10 @@ export class ScaleTool extends Tool {
       if (t.subject.sketches?.length) {
         // Sketch geometry: the selection follows it and the grips come back around it.
         if (t.sel.length) {
-          h.setSelection(movedSelection(t.sel, t.subject, t.sk, x, r.outcome, r.scene?.mesh));
+          const next = movedSelection(t.sel, t.subject, t.sk, x, r.outcome, r.scene?.mesh);
+          h.setSelection(next);
+          // #7: Push/Pull's target follows a region the scale made into pieces.
+          h.setTarget(targetAfterMove(h.target(), t.sel, next));
           this.target = null;
           await this.refreshTarget(null);
         } else this.target = null;

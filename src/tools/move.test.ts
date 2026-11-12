@@ -4,7 +4,7 @@ import { ev, fakeHost } from "./fakeHost";
 import { MoveTool, moveOp } from "./move";
 import { setNameSource } from "../lib/names";
 import type { DocState } from "../kernel/types";
-import { applyX, describeSubject, movedSelection, previewSegments, rotation, scaling, sketchPreviews, sketchSegments, subjectOf, translation, type Subject } from "./xform";
+import { applyX, describeSubject, movedSelection, previewSegments, rotation, scaling, sketchPreviews, sketchSegments, subjectOf, targetAfterMove, translation, type Subject } from "./xform";
 
 const IN = 0.0254;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -141,6 +141,23 @@ describe("transform helpers", () => {
     // A move that splits nothing: the kernel reports the region itself, which stays selected.
     const plainMesh: MeshData = { ...mesh, positions: new Float32Array(tri(2.5, 0.5)), indices: new Uint32Array([0, 1, 2]), faceIds: new Uint32Array([0]), parts: [part(1)] };
     expect(movedSelection([region], s, pv, translation([2, 0, 0]), { kind: "sketch_moved", sketch: 1, regions: [[1, 1]] }, plainMesh)).toEqual([region]);
+  });
+
+  it("#7: Push/Pull's next target follows a selected region a move turned into pieces: the one piece, or none", () => {
+    const r = (region: number): Entity => ({ kind: "region", sketch: 1, region });
+    const t = (region: number) => ({ kind: "region" as const, sketch: 1, region });
+    // Split into two pieces (the old id is one of them): no target, so P waits for a click
+    // instead of pushing the one piece the old id now names.
+    expect(targetAfterMove(t(1), [r(1)], [r(1), r(4)])).toBeNull();
+    expect(targetAfterMove(t(1), [r(1)], [r(4), r(5)])).toBeNull();
+    // One piece, under a new id: that piece.
+    expect(targetAfterMove(t(1), [r(1)], [r(4)])).toEqual(t(4));
+    // Nothing split: the target stays.
+    expect(targetAfterMove(t(1), [r(1)], [r(1)])).toEqual(t(1));
+    // A target that was not among what moved, or not a region, is left alone.
+    expect(targetAfterMove(t(2), [r(1)], [r(4), r(5)])).toEqual(t(2));
+    expect(targetAfterMove({ kind: "face", object: 3, face: 2 }, [r(1)], [r(4), r(5)])).toEqual({ kind: "face", object: 3, face: 2 });
+    expect(targetAfterMove(null, [r(1)], [r(4), r(5)])).toBeNull();
   });
 
   it("the preview moves whole solids, or only the moving ends of part of one", () => {

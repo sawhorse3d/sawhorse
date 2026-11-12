@@ -18,7 +18,7 @@ import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
 import { faceOf, regionName, regionOf, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { sectionById, sectionCorners } from "../lib/sections";
-import type { OutlineTarget } from "../lib/edit";
+import type { OutlineTarget, Target } from "../lib/edit";
 
 /** The message the kernel refuses a curve's point moved on its own with (lane 23). */
 export const CURVE_POINT_REFUSAL = "That point is on a curve: moving it alone would bend the curve. Select the whole curve, or use Edit > Explode Curve first.";
@@ -585,11 +585,12 @@ function insideRings(p: V3, rings: V3[][], u: V3, v: V3): boolean {
  * where they went, its regions kept (in their plane) or replaced by the regions they became
  * on the plane they were lifted to. Everything else stays selected as it was.
  *
- * #7: within the plane, a move can split a region (a circle moved across a rectangle) or
- * merge it. With the new scene's `mesh`, the regions selected become the regions the kernel
+ * #7: within the plane, a move can split a region (a circle moved across a rectangle).
+ * With the new scene's `mesh`, the regions selected become the regions the kernel
  * says the moved edges bound that lie inside the moved rings: the pieces they became, not
  * their old ids (one of which may now be a different piece). Without a mesh, or when none
- * of those regions can be read, they keep their ids as before.
+ * of those regions can be read or lies inside, they keep their ids as before (so a merge,
+ * which the kernel reports with no regions, still leaves the old id selected).
  */
 export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
@@ -656,6 +657,27 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
     }
   }
   return out;
+}
+
+/**
+ * #7: Push/Pull's next target after a move of `before` (the selection) to `after` (what
+ * {@link movedSelection} made of it). A selected region the move turned into pieces keeps
+ * no target unless it became exactly one piece (then that piece): its old id may now name
+ * one of several pieces, and P must not push that piece alone while the selection shows them
+ * all. A region the move left whole, a target that did not move, and a face stay as they are.
+ */
+export function targetAfterMove(target: Target | null, before: Entity[], after: Entity[]): Target | null {
+  if (!target || target.kind !== "region") return target;
+  const inSketch = (es: Entity[]) => es.filter((e): e is Extract<Entity, { kind: "region" }> => e.kind === "region" && e.sketch === target.sketch);
+  const was = inSketch(before);
+  if (!was.some((e) => e.region === target.region)) return target;
+  const now = inSketch(after);
+  // Nothing split or merged: the same regions, the target among them.
+  if (now.length === was.length && now.some((e) => e.region === target.region)) return target;
+  // The pieces it became: what is selected now that the other selected regions were not.
+  const others = new Set(was.filter((e) => e.region !== target.region).map((e) => e.region));
+  const mine = now.filter((e) => e.region === target.region || !others.has(e.region));
+  return mine.length === 1 ? { kind: "region", sketch: target.sketch, region: mine[0].region } : null;
 }
 
 /** World bounds (min, max) of points. */

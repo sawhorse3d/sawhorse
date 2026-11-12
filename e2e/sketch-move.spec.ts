@@ -159,6 +159,15 @@ test("a circle moved across a rectangle is selected as the pieces it became", as
   expect(halves).toHaveLength(2);
   // The selection is those two halves, not the circle's old id.
   await expect(vp).toHaveAttribute("data-selection", "2");
+  // Push/Pull's target follows: it is not the one half the old id now names, so P and a
+  // typed distance push nothing until a piece is clicked.
+  await page.keyboard.press("p");
+  await type(page, "2");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  // Clicking a half pushes that half alone.
+  await clickAt(page, [26, 6, 0], /on-face|grid|region|from-point/);
+  await type(page, "2");
+  await expect(vp).toHaveAttribute("data-objects", "1");
 });
 
 test("one corner of a rectangle moves: it stays flat, its edges follow; pushed, its volume is exact", async ({ page }) => {
