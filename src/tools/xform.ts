@@ -674,6 +674,8 @@ function insideRings(p: V3, rings: FlatRing[], u: V3, v: V3): boolean {
  * Lane 43 (#7): a shape moved exactly onto an identical one welds onto it, and the kernel
  * names no region for it; the selection is then the regions the mesh draws inside the moved
  * rings (the one it merged with), or nothing, never the old id, which names no region now.
+ * A shape lifted onto another sketch's plane is the regions there inside its lifted rings,
+ * not what is left of a shape it cut.
  */
 export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
@@ -692,7 +694,8 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
     let found: Entity[] | null = null;
     if (mesh && now && p.rings.length) {
       samples ??= regionSamples(mesh);
-      // Where the rings went, read in the plane's own axes.
+      // Where the rings went: in the plane, or (lane 43) on the plane they were lifted to
+      // (read in that plane's axes, so a move within the plane needs no projection).
       const rings = p.rings.map((ring) => ring.map((q) => applyX(x, q)));
       found = regionsInside(now.sketch, rings, now.regions, samples);
     }
@@ -731,7 +734,11 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
       }
     } else if (now && !added.has(`${hit.i}`)) {
       added.add(`${hit.i}`);
-      for (const [s, r] of now.regions) out.push({ kind: "region", sketch: s, region: r });
+      // Lifted to another plane: the regions there inside the lifted rings (lane 43, #7: not
+      // the rest of a shape it cut there); without a mesh to read, every region its edges bound.
+      const pieces = regionsWithin(hit.i);
+      if (pieces) out.push(...pieces);
+      else for (const [s, r] of now.regions) out.push({ kind: "region", sketch: s, region: r });
     }
   }
   return out;
@@ -743,19 +750,37 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
  * no target unless it became exactly one piece (then that piece): its old id may now name
  * one of several pieces, and P must not push that piece alone while the selection shows them
  * all. A region the move left whole, a target that did not move, and a face stay as they are.
+ *
+ * Lane 43 (#7): `target` is the one from before the edit, and `to` says which sketch each
+ * moved sketch is in now ({@link sketchesAfter}). A region lifted to another sketch's plane
+ * targets what it became there the same way: the one region selected there, or nothing when
+ * it is several (it cut a shape there, or more regions went with it). The target used to be
+ * the first region the lift's edges bound, which could be the rest of the shape it cut.
  */
-export function targetAfterMove(target: Target | null, before: Entity[], after: Entity[]): Target | null {
+export function targetAfterMove(target: Target | null, before: Entity[], after: Entity[], to?: Map<number, number>): Target | null {
   if (!target || target.kind !== "region") return target;
-  const inSketch = (es: Entity[]) => es.filter((e): e is Extract<Entity, { kind: "region" }> => e.kind === "region" && e.sketch === target.sketch);
-  const was = inSketch(before);
+  const regionsIn = (es: Entity[], sketch: number) => es.filter((e): e is Extract<Entity, { kind: "region" }> => e.kind === "region" && e.sketch === sketch);
+  const was = regionsIn(before, target.sketch);
   if (!was.some((e) => e.region === target.region)) return target;
-  const now = inSketch(after);
+  const dest = to?.get(target.sketch) ?? target.sketch;
+  if (dest !== target.sketch) {
+    const there = regionsIn(after, dest);
+    return there.length === 1 ? { kind: "region", sketch: dest, region: there[0].region } : null;
+  }
+  const now = regionsIn(after, target.sketch);
   // Nothing split or merged: the same regions, the target among them.
   if (now.length === was.length && now.some((e) => e.region === target.region)) return target;
   // The pieces it became: what is selected now that the other selected regions were not.
   const others = new Set(was.filter((e) => e.region !== target.region).map((e) => e.region));
   const mine = now.filter((e) => e.region === target.region || !others.has(e.region));
   return mine.length === 1 ? { kind: "region", sketch: target.sketch, region: mine[0].region } : null;
+}
+
+/** Lane 43 (#7): for each sketch `subject` moves geometry of, the sketch that geometry is in
+ * after the edit (another one where a whole shape was lifted to another plane). */
+export function sketchesAfter(subject: Subject, outcome: OpOutcome): Map<number, number> {
+  const moves = sketchMoves(outcome);
+  return new Map((subject.sketches ?? []).map((p, i) => [p.sketch, moves[i]?.sketch ?? p.sketch]));
 }
 
 /** World bounds (min, max) of points. */

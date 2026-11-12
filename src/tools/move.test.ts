@@ -7,8 +7,9 @@ import { MoveTool, moveOp } from "./move";
 import { rotateOp } from "./rotate";
 import { scaleOp } from "./scale";
 import { setNameSource } from "../lib/names";
+import { nextTarget } from "../lib/edit";
 import type { DocState } from "../kernel/types";
-import { applyX, describeSubject, loadOutlines, movedSelection, previewSegments, rotation, scaling, sketchPreviews, sketchSegments, subjectOf, targetAfterMove, translation, type Subject } from "./xform";
+import { applyX, describeSubject, loadOutlines, movedSelection, previewSegments, rotation, scaling, sketchesAfter, sketchPreviews, sketchSegments, subjectOf, targetAfterMove, translation, type Subject } from "./xform";
 
 const IN = 0.0254;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -162,6 +163,20 @@ describe("transform helpers", () => {
     expect(targetAfterMove(t(2), [r(1)], [r(4), r(5)])).toEqual(t(2));
     expect(targetAfterMove({ kind: "face", object: 3, face: 2 }, [r(1)], [r(4), r(5)])).toEqual({ kind: "face", object: 3, face: 2 });
     expect(targetAfterMove(null, [r(1)], [r(4), r(5)])).toBeNull();
+  });
+
+  it("#7 (lane 43): a region lifted to another sketch targets what it became there: the one region, or none", () => {
+    const r = (sketch: number, region: number): Entity => ({ kind: "region", sketch, region });
+    const t = (sketch: number, region: number) => ({ kind: "region" as const, sketch, region });
+    const lifted = new Map([[1, 5]]);
+    // Lifted whole onto an empty plane: the region it is there.
+    expect(targetAfterMove(t(1, 1), [r(1, 1)], [r(5, 9)], lifted)).toEqual(t(5, 9));
+    // Lifted across a shape there: two pieces, so nothing (not the cut shape's remainder).
+    expect(targetAfterMove(t(1, 1), [r(1, 1)], [r(5, 9), r(5, 10)], lifted)).toBeNull();
+    // A target that did not move stays, lifted or not.
+    expect(targetAfterMove(t(5, 2), [r(1, 1)], [r(5, 9)], lifted)).toEqual(t(5, 2));
+    // In its own plane the map changes nothing.
+    expect(targetAfterMove(t(1, 1), [r(1, 1)], [r(1, 1)], new Map([[1, 1]]))).toEqual(t(1, 1));
   });
 
   it("the preview moves whole solids, or only the moving ends of part of one", () => {
@@ -337,6 +352,46 @@ describe("Move tool", () => {
     close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [12 * IN, 0, 0]);
     expect(h.remembered).toHaveLength(2);
     expect(h.remembered[1].before).toEqual([region]);
+  });
+
+  it("#7 (lane 43): a region lifted across a shape on another plane leaves Push/Pull no target, not the cut shape's remainder", async () => {
+    // The kernel says the lifted square's edges bound regions 9 and 10 of sketch 5 there: two
+    // pieces (the app's nextTarget, run here as the app runs it, names the first).
+    const h = fakeHost({ outcome: { kind: "sketch_moved", sketch: 5, regions: [[5, 9], [5, 10]] } });
+    const apply = h.apply;
+    h.apply = async (op, describe) => {
+      const r = await apply(op, describe);
+      if (r) h._target = nextTarget(op, r.outcome, h._target);
+      return r;
+    };
+    const region: Entity = { kind: "region", sketch: 1, region: 1 };
+    h.sel = [region];
+    h._target = { kind: "region", sketch: 1, region: 1 };
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { snapKind: "endpoint" }));
+    await tick();
+    t.onEvent(ev("click", [0, 0, 0], { snapKind: "endpoint" }));
+    t.onEvent(ev("move", [0, 0, 0.3], { snapKind: "axis-z" }));
+    t.onValue("6");
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform_sketch", sketch: 1, regions: [1] });
+    expect(h.sel).toEqual([
+      { kind: "region", sketch: 5, region: 9 },
+      { kind: "region", sketch: 5, region: 10 },
+    ]);
+    expect(h._target).toBeNull();
+    // Lifted whole onto an empty plane (one region there): that region is the target.
+    h.outcome = { kind: "sketch_moved", sketch: 6, regions: [[6, 1]] };
+    h.sel = [region];
+    h._target = { kind: "region", sketch: 1, region: 1 };
+    const t2 = new MoveTool(h);
+    t2.onEvent(ev("down", [0, 0, 0], { snapKind: "endpoint" }));
+    await tick();
+    t2.onEvent(ev("click", [0, 0, 0], { snapKind: "endpoint" }));
+    t2.onEvent(ev("move", [0, 0, 0.3], { snapKind: "axis-z" }));
+    t2.onValue("6");
+    await tick();
+    expect(h._target).toEqual({ kind: "region", sketch: 6, region: 1 });
   });
 
   it("names regions of two sketches with their sketches, and of one sketch without (lane 27, #10)", async () => {
@@ -524,10 +579,10 @@ runKernel("#7 through the kernel: a split shape is selected as its pieces", () =
   });
 });
 
-// Lane 43 (#7): a merge, through the real kernel. Each reads the selection the
+// Lane 43 (#7): the cases lane 41 left, through the real kernel. Each reads the selection the
 // tools' own steps make and checks every entity in it against the new view mesh: a region or
 // a curve the mesh does not draw names nothing.
-runKernel("#7 through the kernel: a shape moved onto an identical one", () => {
+runKernel("#7 through the kernel: a merge and a lift", () => {
   async function doc(): Promise<WasmDoc> {
     const mod = (await import(/* @vite-ignore */ path.join(pkg, "sawhorse_wasm.js"))) as { initSync(o: { module: Buffer }): void; document_new(): WasmDoc };
     mod.initSync({ module: readFileSync(path.join(pkg, "sawhorse_wasm_bg.wasm")) });
@@ -609,6 +664,30 @@ runKernel("#7 through the kernel: a shape moved onto an identical one", () => {
     // The moved square's own id is gone (the region that stays keeps its id).
     expect(r.all.has(key(goes))).toBe(false);
     expect(r.all.has(key(stays))).toBe(true);
+    d.free();
+  });
+
+  it("a shape lifted onto another sketch's plane where it cuts a shape is selected as its own pieces only", async () => {
+    const d = await doc();
+    // A 2 x 2 square up at z = 1, and a 2 x 1 bar on the ground beside it.
+    const up = rect(d, 0, 0, 2, 2, 1);
+    const bar = rect(d, 3, 0.5, 2, 1);
+    expect(bar.kind === "region" && up.kind === "region" && bar.sketch !== up.sketch).toBe(true);
+    // Lifted 1 up and 2 to the left: half of it lands over the square's right edge.
+    const r = await moved(d, [bar], translation([-2, 0, 1]), (s) => moveOp(s, [-2, 0, 1], false));
+    const upSketch = (up as Extract<Entity, { kind: "region" }>).sketch;
+    expect(r.next.every((e) => e.kind === "region" && e.sketch === upSketch)).toBe(true);
+    // Its two halves (1 each), not the square's remainder (3).
+    expect(r.keys.map((k) => Math.round(r.all.get(k)!))).toEqual([1, 1]);
+    expect(r.area).toBeCloseTo(2, 6);
+    // Push/Pull's target (the bar, before the lift) follows: two pieces, so none. The target
+    // the app gave a lifted region (nextTarget: the first region its edges bound there) is
+    // the square's remainder here, and the tools used to keep it.
+    const b = bar as Extract<Entity, { kind: "region" }>;
+    const was = { kind: "region" as const, sketch: b.sketch, region: b.region };
+    const given = nextTarget(r.op, r.outcome, was);
+    expect(given?.kind === "region" && Math.round(r.all.get(`${given.sketch}:${given.region}`)!)).toBe(3);
+    expect(targetAfterMove(was, [bar], r.next, sketchesAfter(r.subject, r.outcome))).toBeNull();
     d.free();
   });
 });

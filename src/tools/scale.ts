@@ -21,7 +21,7 @@ import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, targetAfterMove, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { curveOf, curveView, lengthWithUnit } from "../lib/curves";
 
@@ -411,6 +411,8 @@ export class ScaleTool extends Tool {
     // Named before the edit (lane 22): a region lifted onto another plane is another one after it.
     const before = h.mesh();
     const what = describeSubject(t.subject, before);
+    // Lane 43 (#7): Push/Pull's target before the edit, which the target after it follows.
+    const pushed = h.target();
     const r = await h.apply(scaleOp(t.subject, c, f), (res: EditResult) => scaledWords(t.subject, what, f, aboutCentre, before, res, (m) => h.fmt(m), h.unitLabel()));
     if (r) {
       this.last = { target: t, grip, f, aboutCentre };
@@ -425,7 +427,7 @@ export class ScaleTool extends Tool {
           const next = movedSelection(t.sel, t.subject, t.sk, x, r.outcome, r.scene?.mesh);
           h.setSelection(next);
           // #7: Push/Pull's target follows a region the scale made into pieces.
-          h.setTarget(targetAfterMove(h.target(), t.sel, next));
+          h.setTarget(targetAfterMove(pushed, t.sel, next, sketchesAfter(t.subject, r.outcome)));
           // Lane 43 (#7): Undo and Redo of this step put back the selection before and after it.
           h.rememberSelection?.(t.sel);
           this.target = null;
