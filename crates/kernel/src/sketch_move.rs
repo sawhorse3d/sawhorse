@@ -82,9 +82,11 @@ struct Resolved {
 }
 
 /// A curve as a copy or a lift draws it again (lane 23): world points in order, whether it
-/// closes, its kind, its segment count and its world centre (round kinds).
+/// closes, its kind, its segment count and its world centre (round kinds), and (lane 43) the
+/// id of the curve it copies.
 #[derive(Debug, Clone)]
 struct CurveCopy {
+    from: u64,
     points: Vec<DVec3>,
     closed: bool,
     kind: CurveKind,
@@ -183,18 +185,25 @@ impl Model {
             // similarity in the plane.
             let scale = plane_scale(&a, &plane, &plane, true);
             let round = move |c: &Round| scale.map(|k| (anchor(c.centre), c.radius * k));
-            let (next, touched) = s.with_moved_vertices(&to, &anchor, &round)?;
+            let (next, touched, split) = s.with_moved_vertices(&to, &anchor, &round)?;
             let kept: Vec<[u64; 2]> = r
                 .curves
                 .iter()
                 .filter(|id| next.curve(**id).is_some())
                 .map(|&id| [to_public(r.sid), id])
                 .collect();
+            // Lane 43 (#7): the further pieces of the op's curves (not of a curve it cut).
+            let pieces: Vec<[u64; 3]> = split
+                .iter()
+                .filter(|(piece, from)| r.curves.contains(from) && next.curve(*piece).is_some())
+                .map(|&(piece, from)| [from, to_public(r.sid), piece])
+                .collect();
             self.sketches[r.sid] = next;
             return Ok(OpOutcome::SketchMoved {
                 sketch: to_public(r.sid),
                 regions: pairs(r.sid, &touched),
                 curves: kept,
+                pieces,
             });
         }
         // Off the plane, whole: the carried edges go to the sketch on the plane they land on.
@@ -216,15 +225,19 @@ impl Model {
         let dest = self.sketch_on(&lands);
         let touched = self.draw_segments(dest, &segs)?;
         let mut made = Vec::new();
+        let mut pieces = Vec::new();
         for c in &lifted {
-            if let Some(id) = self.redraw_curve(dest, c) {
+            if let Some((id, more)) = self.redraw_curve(dest, c) {
                 made.push([to_public(dest), id]);
+                // Lane 43 (#7): a curve that broke up where it landed is all its pieces.
+                pieces.extend(more.into_iter().map(|p| [c.from, to_public(dest), p]));
             }
         }
         Ok(OpOutcome::SketchMoved {
             sketch: to_public(dest),
             regions: pairs(dest, &touched),
             curves: made,
+            pieces,
         })
     }
 
@@ -256,6 +269,7 @@ impl Model {
                 .ok_or(TransformError::NoSuchSketchPoint)?;
             let round = c.round.filter(|_| scale.is_some());
             out.push(CurveCopy {
+                from: id,
                 points: pts
                     .iter()
                     .map(|&q| place(a.transform_point3(plane.to_world(q))))
@@ -278,13 +292,14 @@ impl Model {
     }
 
     /// Lane 23: a mapped curve made a curve again in sketch `sid`, where its edges were just
-    /// drawn. Returns its id (its first piece's), `None` when it did not land as one.
-    fn redraw_curve(&mut self, sid: SketchId, c: &CurveCopy) -> Option<u64> {
+    /// drawn. Returns its id (its first piece's) and (lane 43) the ids of its further pieces
+    /// where it broke up there; `None` when it did not land as one.
+    fn redraw_curve(&mut self, sid: SketchId, c: &CurveCopy) -> Option<(u64, Vec<u64>)> {
         let s = &mut self.sketches[sid];
         let plane = *s.plane();
         let local: Vec<DVec2> = c.points.iter().map(|&p| plane.to_local(p)).collect();
         let centre = c.centre.map(|w| plane.to_local(w));
-        s.add_curve(&local, c.closed, c.kind, centre, c.segments)
+        s.add_curve_traced(&local, c.closed, c.kind, centre, c.segments)
     }
 
     /// Copies (and arrays) of the carried edges: copy k mapped by the map applied k times,
@@ -355,7 +370,7 @@ impl Model {
             let touched = self.draw_segments(into, &segs)?;
             out.extend(pairs(into, &touched));
             for c in &curves {
-                if let Some(id) = self.redraw_curve(into, c) {
+                if let Some((id, _)) = self.redraw_curve(into, c) {
                     made.push([to_public(into), id]);
                 }
             }

@@ -170,8 +170,6 @@ Since lane 23 a circle, an arc or a polygon is one curve ([ADR-0013](adr/0013-cu
 
 Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). What is knowingly left:
 
-- **The selection after a move that splits or merges a shape** ([#7](https://github.com/sawhorse3d/sawhorse/issues/7)). A selected region moved, turned or scaled within its plane so that it splits is selected as the pieces it became, and Push/Pull waits for a click on one of them. Since lane 43 the same holds for a shape lifted onto another sketch's plane across a shape there, a shape moved exactly onto an identical one is selected as the one shape they make, and Undo of such a move selects what was selected before it and Redo what the move left. In one case the selection is still not what the move made until you click again, though the geometry is right:
-  - a circle's rim, selected on its own, moved across a rectangle's edge shrinks to the first arc it became (the kernel names only a split curve's first piece, `SketchMoved.curves`).
 - **A Move drag in a big sketch stutters**: each preview frame works out every edge of the sketch, not only the ones that move (about 16 ms at 1,000 edges, 50 ms at 2,000 and 210 ms at 4,000 on the development machine), so a drag keeps up only to about 1,500 to 2,000 sketch edges ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)).
 
 ## The view

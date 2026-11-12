@@ -1020,6 +1020,12 @@ pub enum OpOutcome {
         /// to; a curve the move broke up is its first piece, one that went is absent).
         #[serde(skip_serializing_if = "Vec::is_empty")]
         curves: Vec<[u64; 2]>,
+        /// Lane 43 (#7): the further pieces of each of the op's `curves` that the move broke
+        /// up, within its plane or on the plane it was lifted to, as (curve in the op, sketch,
+        /// piece) triples; with its first piece in `curves`, all it became. Empty when no
+        /// curve broke up.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        pieces: Vec<[u64; 3]>,
     },
     /// Sketch geometry was copied (or arrayed): the live regions the copies bound, as
     /// (sketch, region) public id pairs.

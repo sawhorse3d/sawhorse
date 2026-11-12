@@ -582,7 +582,7 @@ runKernel("#7 through the kernel: a split shape is selected as its pieces", () =
 // Lane 43 (#7): the cases lane 41 left, through the real kernel. Each reads the selection the
 // tools' own steps make and checks every entity in it against the new view mesh: a region or
 // a curve the mesh does not draw names nothing.
-runKernel("#7 through the kernel: a merge and a lift", () => {
+runKernel("#7 through the kernel: a rim that splits, a merge and a lift", () => {
   async function doc(): Promise<WasmDoc> {
     const mod = (await import(/* @vite-ignore */ path.join(pkg, "sawhorse_wasm.js"))) as { initSync(o: { module: Buffer }): void; document_new(): WasmDoc };
     mod.initSync({ module: readFileSync(path.join(pkg, "sawhorse_wasm_bg.wasm")) });
@@ -617,6 +617,13 @@ runKernel("#7 through the kernel: a merge and a lift", () => {
     return { kind: "region", sketch: out.sketch!, region: out.regions.at(-1)! };
   };
   const rect = (d: WasmDoc, x: number, y: number, w: number, h: number, z = 0) => draw(d, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], z);
+  /** A circle of 24 segments on the ground, as the Circle tool draws it: one curve. */
+  const circle = (d: WasmDoc, c: [number, number], r: number): Entity => {
+    const pts = Array.from({ length: 24 }, (_, k) => [c[0] + r * Math.cos((k * Math.PI) / 12), c[1] + r * Math.sin((k * Math.PI) / 12), 0]);
+    const out = apply(d, { op: "draw", target: plane(0), points: pts, closed: true, curve: { kind: "circle", centre: [c[0], c[1], 0] } }) as Extract<OpOutcome, { kind: "drawn" }>;
+    expect(out.curve).toBeDefined();
+    return { kind: "curve", owner: { kind: "sketch", id: out.sketch! }, curve: out.curve! };
+  };
   /** Each region's area in the view mesh, keyed `sketch:region`. */
   function areas(mesh: MeshData): Map<string, number> {
     const out = new Map<string, number>();
@@ -651,6 +658,51 @@ runKernel("#7 through the kernel: a merge and a lift", () => {
     expect(new Set(keys).size).toBe(keys.length);
     return { next, keys, op: kop, outcome, mesh, all, curves, subject: s, area: keys.reduce((a, k) => a + (all.get(k) ?? 0), 0) };
   }
+
+  it("a circle's rim selected on its own and moved across a rectangle's edge is every arc it became", async () => {
+    const d = await doc();
+    rect(d, 0, 0, 4, 2);
+    const rim = circle(d, [7, 1], 0.5);
+    // Its centre lands on the rectangle's right edge: the rim crosses it twice.
+    const r = await moved(d, [rim], translation([-3, 0, 0]), (s) => moveOp(s, [-3, 0, 0], false));
+    // The rim is two arcs now, and the selection is both of them.
+    expect([...r.curves]).toHaveLength(2);
+    expect(r.keys.sort()).toEqual([...r.curves].sort());
+    expect(r.next.every((e) => e.kind === "curve")).toBe(true);
+    d.free();
+  });
+
+  it("a circle's rim moved exactly onto an identical circle is never selected as an id that names nothing", async () => {
+    // The older of two curves on the same edges keeps them (ADR-0013): a newer rim moved onto
+    // an older circle goes, and nothing is selected for it; an older rim moved onto a newer
+    // circle keeps its id and stays selected.
+    const d = await doc();
+    circle(d, [1, 1], 0.5);
+    const newer = circle(d, [4, 1], 0.5);
+    const a = await moved(d, [newer], translation([-3, 0, 0]), (s) => moveOp(s, [-3, 0, 0], false));
+    expect([...a.curves]).toEqual(["c1:1"]);
+    expect(a.keys).toEqual([]);
+    d.free();
+    const e = await doc();
+    const older = circle(e, [4, 1], 0.5);
+    circle(e, [1, 1], 0.5);
+    const b = await moved(e, [older], translation([-3, 0, 0]), (s) => moveOp(s, [-3, 0, 0], false));
+    expect([...b.curves]).toEqual([key(older)]);
+    expect(b.keys).toEqual([key(older)]);
+    e.free();
+  });
+
+  it("a circle's rim lifted onto another plane across a rectangle's edge there is every arc it became there", async () => {
+    const d = await doc();
+    rect(d, 0, 0, 4, 2, 1);
+    const rim = circle(d, [7, 1], 0.5);
+    const r = await moved(d, [rim], translation([-3, 0, 1]), (s) => moveOp(s, [-3, 0, 1], false));
+    const up = (r.outcome as Extract<OpOutcome, { kind: "sketch_moved" }>).sketch;
+    expect([...r.curves].every((k) => k.startsWith(`c${up}:`))).toBe(true);
+    expect([...r.curves]).toHaveLength(2);
+    expect(r.keys.sort()).toEqual([...r.curves].sort());
+    d.free();
+  });
 
   it("a shape moved exactly onto an identical one is selected as the region there, never an id that names nothing", async () => {
     const d = await doc();

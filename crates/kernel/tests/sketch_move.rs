@@ -163,6 +163,7 @@ fn a_whole_rectangle_moves_and_keeps_its_region() {
             sketch: 1,
             regions: vec![[1, 1]],
             curves: vec![],
+            pieces: vec![],
         }
     );
     let m = d.model();
@@ -388,6 +389,7 @@ fn a_whole_shape_turned_upright_goes_to_the_sketch_on_its_new_plane() {
             sketch: up,
             regions: vec![[up, region_ids(m, up)[0]]],
             curves: vec![],
+            pieces: vec![],
         }
     );
     assert_eq!(

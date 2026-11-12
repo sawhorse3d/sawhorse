@@ -675,7 +675,8 @@ function insideRings(p: V3, rings: FlatRing[], u: V3, v: V3): boolean {
  * names no region for it; the selection is then the regions the mesh draws inside the moved
  * rings (the one it merged with), or nothing, never the old id, which names no region now.
  * A shape lifted onto another sketch's plane is the regions there inside its lifted rings,
- * not what is left of a shape it cut.
+ * not what is left of a shape it cut. A curve the move broke up is every piece of it
+ * (`SketchMoved.pieces`).
  */
 export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
@@ -721,9 +722,22 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
     else if (e.kind === "curve") {
       // Lane 23: the curve where it went: its id in the plane, its new id where it was lifted.
       const k = (hit.p.curves ?? []).indexOf(e.curve);
-      const now2 = now?.curves?.[k];
-      if (now2) out.push({ kind: "curve", owner: { kind: "sketch", id: now2[0] }, curve: now2[1] });
-      else if (sketch === hit.p.sketch) out.push(e);
+      if (now && sketch === hit.p.sketch) {
+        // In its plane a curve keeps its id (lane 43, #7: found by it, not by its place in the
+        // op, which shifts when one before it went). One the kernel no longer lists went: a
+        // rim moved exactly onto an identical circle gives its edges to the older one. It is
+        // dropped when the new mesh does not draw it, never kept as an id that names nothing.
+        const listed = (now.curves ?? []).some(([s, c]) => s === sketch && c === e.curve);
+        const drawn = !mesh?.curves || mesh.curves.some((c) => c.owner.kind === "sketch" && c.owner.id === sketch && c.curve === e.curve);
+        if (listed || drawn) out.push(e);
+      } else {
+        const now2 = now?.curves?.[k];
+        if (now2) out.push({ kind: "curve", owner: { kind: "sketch", id: now2[0] }, curve: now2[1] });
+        else if (sketch === hit.p.sketch) out.push(e);
+      }
+      // Lane 43 (#7): a curve the move broke up is all of its pieces, not only the first
+      // (which keeps its id in its plane, and is the id `curves` names where it was lifted).
+      for (const [from, s, c] of now?.pieces ?? []) if (from === e.curve) out.push({ kind: "curve", owner: { kind: "sketch", id: s }, curve: c });
     } else if (sketch === hit.p.sketch) {
       // A region in its own plane: the pieces it became (#7), each once.
       const pieces = e.kind === "region" ? regionsWithin(hit.i) : null;

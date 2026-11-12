@@ -106,6 +106,10 @@ pub struct RawRegion {
 /// Canonical boundary of a region (outer ring, sorted hole rings).
 pub type BoundaryKey = (Vec<SVertexId>, Vec<Vec<SVertexId>>);
 
+/// What [`Sketch::with_moved_vertices`] returns: the sketch, the live regions any redrawn
+/// edge bounds, and the further pieces of the curves the move broke up, as (piece, curve).
+pub(crate) type MovedSketch = (Sketch, Vec<RegionId>, Vec<(u64, u64)>);
+
 impl Region {
     pub fn boundary_key(&self) -> BoundaryKey {
         (self.outer.clone(), self.holes.clone())
@@ -1272,13 +1276,15 @@ impl Sketch {
     /// vertices they share. A vertex keeps its id while it lives, so a region whose rings
     /// only changed shape keeps its id; `anchor` maps the anchor of a region whose every
     /// vertex moved (a region moved whole keeps its id through a split). Returns the
-    /// sketch and the live regions bounded by any redrawn edge, sorted.
+    /// sketch, the live regions bounded by any redrawn edge, sorted, and (lane 43, #7) the
+    /// further pieces of every curve the move broke up, as (piece, curve) id pairs (a curve
+    /// keeps its id on its first piece).
     pub(crate) fn with_moved_vertices(
         &self,
         to: &BTreeMap<SVertexId, DVec2>,
         anchor: &dyn Fn(DVec2) -> DVec2,
         round: &dyn Fn(&Round) -> Option<(DVec2, f64)>,
-    ) -> Result<(Sketch, Vec<RegionId>), SketchError> {
+    ) -> Result<MovedSketch, SketchError> {
         for p in to.values() {
             if !(p.is_finite() && in_bounds(p.x) && in_bounds(p.y)) {
                 return Err(SketchError::OutOfBounds);
@@ -1327,10 +1333,10 @@ impl Sketch {
         next.remove_isolated_vertices();
         next.repair()?;
         made.retain(|&(a, b)| next.edge_between(a, b).is_some());
-        next.settle();
+        let split = next.settle_traced();
         next.debug_check("move");
         let touched = next.live_regions_touching(&made);
-        Ok((next, touched))
+        Ok((next, touched, split))
     }
 
     /// Draw segments (sketch frame) as one transaction with the insertion rules, skipping
@@ -1416,8 +1422,14 @@ impl Sketch {
 
     /// After an edit: regions re-detected, then curves settled against the graph.
     fn settle(&mut self) {
+        self.settle_traced();
+    }
+
+    /// [`Self::settle`], returning the pieces curves split into (see
+    /// [`Self::settle_curves`]).
+    fn settle_traced(&mut self) -> Vec<(u64, u64)> {
         self.recompute_regions();
-        self.settle_curves();
+        self.settle_curves()
     }
 
     /// The curves, by id.
@@ -1540,9 +1552,13 @@ impl Sketch {
     /// Settle every curve against the graph (see [`crate::curve`]): split segments taken in,
     /// curves split at junctions, curves that lost an edge broken into polyline pieces, each
     /// edge in one curve at most (the older curve keeps it), angles re-read from the points.
-    fn settle_curves(&mut self) {
+    /// A curve that splits keeps its id on its first piece; each further piece gets a new id.
+    /// Returns those further pieces as (piece, the curve it came from), in id order (lane
+    /// 43, #7: what a move reports a curve it broke up as); the list itself is kept nowhere.
+    fn settle_curves(&mut self) -> Vec<(u64, u64)> {
+        let mut split_from = Vec::new();
         if self.curves.is_empty() {
-            return;
+            return split_from;
         }
         let mut adj: BTreeMap<SVertexId, Vec<SVertexId>> = BTreeMap::new();
         for [a, b] in self.edges.values() {
@@ -1608,6 +1624,7 @@ impl Sketch {
                     id
                 } else {
                     next += 1;
+                    split_from.push((next - 1, id));
                     next - 1
                 };
                 out.insert(
@@ -1624,6 +1641,7 @@ impl Sketch {
         }
         self.curves = out;
         self.next_curve = next;
+        split_from
     }
 
     /// The pieces of curve `c` in the graph as it is now (chains, closed), and whether it
@@ -1759,6 +1777,20 @@ impl Sketch {
         centre: Option<DVec2>,
         segments: u32,
     ) -> Option<u64> {
+        self.add_curve_traced(pts, closed, kind, centre, segments)
+            .map(|(id, _)| id)
+    }
+
+    /// [`Self::add_curve`], also returning (lane 43, #7) the ids of the curve's further
+    /// pieces where it split as it settled, in id order (empty when it is one piece).
+    pub(crate) fn add_curve_traced(
+        &mut self,
+        pts: &[DVec2],
+        closed: bool,
+        kind: CurveKind,
+        centre: Option<DVec2>,
+        segments: u32,
+    ) -> Option<(u64, Vec<u64>)> {
         let mut chain: Vec<SVertexId> = Vec::with_capacity(pts.len());
         for &p in pts {
             let v = self.vertex_near(p, 2.0 * SKETCH_MERGE)?;
@@ -1801,7 +1833,7 @@ impl Sketch {
                 round,
             },
         );
-        self.settle_curves();
+        let split = self.settle_curves();
         // The new curve's pieces must fit their circle; a stroke that does not (points the
         // insertion moved too far) stays plain edges, never a curve that lies.
         let mine: Vec<u64> = self.curves.keys().copied().filter(|&k| k >= id).collect();
@@ -1817,7 +1849,13 @@ impl Sketch {
             self.next_curve = next_before;
             return None;
         }
-        mine.first().copied()
+        let first = mine.first().copied()?;
+        let more = split
+            .iter()
+            .filter(|&&(piece, from)| from == id && piece != first)
+            .map(|&(piece, _)| piece)
+            .collect();
+        Some((first, more))
     }
 
     /// Lane 23: erase a whole curve (the Eraser on any of its segments): every edge of it

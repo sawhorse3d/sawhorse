@@ -363,7 +363,15 @@ export type OpOutcome =
   | { kind: "copied"; objects: number[]; nodes?: number[] }
   | { kind: "geometry_moved"; faces: number[] }
   /** Lane 22: sketch geometry moved; the sketch it is in now and the (sketch, region) pairs its edges bound. */
-  | { kind: "sketch_moved"; sketch: number; regions: [number, number][]; /** Lane 23: the (sketch, curve) pairs the op's curves are now. */ curves?: [number, number][] }
+  | {
+      kind: "sketch_moved";
+      sketch: number;
+      regions: [number, number][];
+      /** Lane 23: the (sketch, curve) pairs the op's curves are now (a curve the move broke up: its first piece). */
+      curves?: [number, number][];
+      /** Lane 43 (#7): the further pieces of the op's curves that the move broke up (in their plane, or on the plane they were lifted to), as (curve in the op, sketch, piece). */
+      pieces?: [number, number, number][];
+    }
   | { kind: "sketch_copied"; regions: [number, number][]; /** Lane 23: the (sketch, curve) pairs the copies made. */ curves?: [number, number][] }
   /** Lane 23: a curve exploded into `edges` plain edges. */
   | { kind: "curve_exploded"; edges: number }

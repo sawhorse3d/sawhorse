@@ -476,6 +476,132 @@ fn a_circle_lifted_off_its_plane_is_a_circle_there() {
 }
 
 #[test]
+fn a_circle_moved_across_an_edge_reports_every_arc_it_became() {
+    // Lane 43 (#7): a 2 x 2 square, and a circle beside it moved so its centre lands on the
+    // square's right edge. The circle breaks into two arcs: `curves` names the first (it
+    // keeps the circle's id) and `pieces` the other, so the two together are all it became.
+    let mut d = Document::with_ground_sketch();
+    ok(
+        &mut d,
+        draw(
+            vec![
+                [0.0, -1.0, 0.0],
+                [2.0, -1.0, 0.0],
+                [2.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            true,
+            None,
+        ),
+    );
+    let id = drawn_curve(&ok(&mut d, circle([3.0, 0.0], 0.5, 24)));
+    let out = ok(
+        &mut d,
+        xform_op(id, Xform::translation(DVec3::new(-1.0, 0.0, 0.0)), false),
+    );
+    let OpOutcome::SketchMoved {
+        curves: c, pieces, ..
+    } = out
+    else {
+        panic!("{out:?}")
+    };
+    assert_eq!(c, vec![[1, id]]);
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    let [from, sketch, piece] = pieces[0];
+    assert_eq!((from, sketch), (id, 1));
+    let cs = curves(d.model());
+    assert_eq!(
+        cs.iter().map(|c| c.0).collect::<Vec<_>>(),
+        vec![id, piece],
+        "the two arcs are the sketch's only curves"
+    );
+    assert!(cs.iter().all(|c| c.1 == CurveKind::Arc && !c.2));
+}
+
+#[test]
+fn a_circle_lifted_across_an_edge_reports_every_arc_it_became_there() {
+    // Lane 43 (#7): a 2 x 2 square up at z = 1, and a circle on the ground lifted 1 up so its
+    // centre lands on the square's right edge. It breaks into two arcs up there: `curves`
+    // names the first, `pieces` the other.
+    let mut d = Document::with_ground_sketch();
+    ok(
+        &mut d,
+        Op::Draw {
+            target: DrawTarget::Plane {
+                origin: [0.0, 0.0, 1.0],
+                normal: [0.0, 0.0, 1.0],
+            },
+            points: vec![
+                [0.0, -1.0, 1.0],
+                [2.0, -1.0, 1.0],
+                [2.0, 1.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ],
+            closed: true,
+            curve: None,
+        },
+    );
+    let id = drawn_curve(&ok(&mut d, circle([3.0, 0.0], 0.5, 24)));
+    let out = ok(
+        &mut d,
+        xform_op(id, Xform::translation(DVec3::new(-1.0, 0.0, 1.0)), false),
+    );
+    let OpOutcome::SketchMoved {
+        sketch,
+        curves: c,
+        pieces,
+        ..
+    } = out
+    else {
+        panic!("{out:?}")
+    };
+    assert_ne!(sketch, 1, "it left the ground");
+    assert_eq!(c.len(), 1);
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    assert_eq!(pieces[0][..2], [id, sketch]);
+    let s = d.model().sketch(sketch).unwrap();
+    let up: Vec<u64> = s.curves().map(|(k, _)| k).collect();
+    assert_eq!(
+        up,
+        vec![c[0][1], pieces[0][2]],
+        "the two arcs are the curves up there"
+    );
+    assert!(
+        s.curves()
+            .all(|(_, k)| k.kind == CurveKind::Arc && !k.closed)
+    );
+    assert!(curves(d.model()).is_empty(), "it left the ground");
+}
+
+#[test]
+fn a_line_moved_across_a_circle_reports_no_pieces_of_the_circle_it_cut() {
+    // Lane 43 (#7): `pieces` is only of the op's own curves. A line moved across a circle
+    // splits the circle, which did not move: nothing is reported for it.
+    let mut d = Document::with_ground_sketch();
+    let id = drawn_curve(&ok(&mut d, circle([0.0, 0.0], 1.0, 24)));
+    ok(&mut d, line([3.0, -2.0], [3.0, 2.0]));
+    let out = ok(
+        &mut d,
+        Op::TransformSketch {
+            sketch: 1,
+            points: vec![],
+            edges: vec![[[3.0, -2.0, 0.0], [3.0, 2.0, 0.0]]],
+            regions: vec![],
+            curves: vec![],
+            xform: Xform::translation(DVec3::new(-3.0, 0.0, 0.0)),
+            copy: false,
+            count: 1,
+        },
+    );
+    assert!(
+        matches!(out, OpOutcome::SketchMoved { ref curves, ref pieces, .. } if curves.is_empty() && pieces.is_empty()),
+        "{out:?}"
+    );
+    assert_eq!(curves(d.model()).len(), 2, "the circle is two arcs now");
+    assert!(curves(d.model()).iter().any(|c| c.0 == id));
+}
+
+#[test]
 fn a_pushed_circle_has_rims_and_soft_walls() {
     let mut d = Document::with_ground_sketch();
     let out = ok(&mut d, circle([0.0, 0.0], 0.3, 24));
