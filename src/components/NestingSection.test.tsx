@@ -84,6 +84,41 @@ describe("Nesting section", () => {
     vi.useRealTimers();
   });
 
+  it("#49: the joint loss takes a typed length, 0 to 1/2 in, and keeps the other settings", () => {
+    const p = props();
+    render(<NestingSection {...p} />);
+    const joint = screen.getByLabelText("Joint loss") as HTMLInputElement;
+    // Absent from the document's settings: the 1/8 in default.
+    expect(joint.value).toBe("1/8 in");
+    fireEvent.change(joint, { target: { value: "1/16" } });
+    fireEvent.keyDown(joint, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", jointLoss: IN / 16 });
+    fireEvent.change(joint, { target: { value: "1 in" } });
+    fireEvent.keyDown(joint, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(joint.closest("label")!.getAttribute("title")).toContain("0 to 1/2 in");
+  });
+
+  it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
+    const n = smallNesting();
+    const piece = n.pieces[0];
+    // A 15 x 34 1/2 in shelf glued from the 12 in board: 12 + 3 1/8 (1/8 in joint loss).
+    const strip = (k: number, y: number, w: number) => ({ ...piece.placements[0], tag: `1a.${k}`, y: y * IN, dy: w * IN, size: [0.75 * IN, 15 * IN, 34.5 * IN] as [number, number, number], strip: { n: k, of: 2 } });
+    piece.placements = [strip(1, 0, 12), { ...strip(2, 0, 3.125), x: 34.625 * IN }, piece.placements[1]];
+    n.glue_ups = [{ row: 0, copy: 1, tag: "1a", name: "Shelf", item: piece.placements[0].item, stock: "4/4 x 12 x 96", widths: [12 * IN, 3.125 * IN] }];
+    const p = props({ nesting: n, lit: "1a" });
+    render(<NestingSection {...p} />);
+    expect(screen.getByTestId("nest-glued").textContent).toContain("1a Shelf: glued up from 2 strips of 4/4 x 12 x 96, 12 + 3 1/8 in");
+    const parts = within(screen.getAllByRole("figure")[0]).getAllByRole("listitem").map((li) => li.textContent);
+    expect(parts).toContain("1a.1 Shelf, strip 1 of 2 12 × 34 1/2");
+    expect(parts).toContain("1a.2 Shelf, strip 2 of 2 3 1/8 × 34 1/2");
+    // The model's part lights both strips, and not the other shelf.
+    const lit = [...document.querySelectorAll(".nest-diagram .part.on")].map((g) => g.getAttribute("data-tag"));
+    expect(lit.sort()).toEqual(["1a.1", "1a.2"]);
+    // The footer names the joint loss when something is glued up.
+    expect(screen.getByTestId("nest-note").textContent).toContain("joint loss 1/8 in");
+  });
+
   // Lane 30, from the #33 review: the field's 700 ms pause timer kept the value, the shown
   // text and the settings of the render it was set in.
   it("Enter commits a typed kerf once: the pause after the typing does not commit it again", () => {

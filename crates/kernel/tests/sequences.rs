@@ -1914,6 +1914,8 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 } else {
                     sawhorse_kernel::stock::NestAlgorithm::Guillotine
                 },
+                // #49: the joint loss from the same lengths (some past 1/2 in, refused).
+                joint_loss: NEST_LENGTHS[(*k as usize / 3 + *t as usize) % NEST_LENGTHS.len()],
             },
         },
         Fuzz::ResetStock => Op::ResetStockLibrary,

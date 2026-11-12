@@ -202,7 +202,7 @@ Example: `"part": { "grain": "width", "stock": "1/4 birch ply", "sheet": true }`
 
 ### Stock library (nesting)
 
-What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-in library (4 x 8 sheets at 3/4, 1/2 and 1/4 in; 5 x 5 Baltic birch at 3/4 and 1/2 in; 4 x 8 MDF; 4/4 boards 4, 6, 8 and 12 in wide; 5/4, 6/4, 8/4 and 12/4 boards 6 in wide; all 96 in long; kerf 1/8 in, no trim, guillotine). Writers leave it out when it equals the built-in library. Readers that do not know it lose nothing but the nesting's settings.
+What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-in library (4 x 8 sheets at 3/4, 1/2 and 1/4 in; 5 x 5 Baltic birch at 3/4 and 1/2 in; 4 x 8 MDF; 4/4 boards 4, 6, 8 and 12 in wide; 5/4, 6/4, 8/4 and 12/4 boards 6 in wide; all 96 in long; kerf 1/8 in, no trim, guillotine, joint loss 1/8 in). Writers leave it out when it equals the built-in library. Readers that do not know it lose nothing but the nesting's settings.
 
 ```json
 "stock": {
@@ -227,6 +227,7 @@ What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-
 | `settings.kerf` | number | Width of every cut, metres, 0 to 1/2 in (0.0127). Default 1/8 in. |
 | `settings.trim` | number | Taken off every edge of a sheet and both ends of a board first, metres, 0 to 4 in (0.1016). A trim narrower than the kerf takes a kerf. |
 | `settings.algorithm` | `"guillotine"` or `"maxrects"` | Straight cuts edge to edge (default), or the tightest rectangle packing. |
+| `settings.jointLoss` | number | Optional ([#49](https://github.com/sawhorse3d/sawhorse/issues/49)). The width each glue joint costs, metres, 0 to 1/2 in (0.0127): a solid part wider than every board is planned as strips edge-glued, and each joint loses this much to jointing. Default 1/8 in; writers leave it out at the default, so a file saved before it reads the same. |
 
 A reader refuses a library that breaks any rule above (as it refuses any invalid model). The nesting itself is not stored: it is worked out from the model and this library, and is the same everywhere.
 

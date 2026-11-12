@@ -6,7 +6,7 @@ import type { Nesting, StockPiece } from "../kernel/types";
 import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "../cutlist/pdf";
 import { NOT_SOLID_NOTE } from "../cutlist/format";
 import { diagram } from "./diagram";
-import { area, cutText, dims, len, nestNote, nestSummary, pct, pieceNumber, pieceTitle, pieceYield, reasonText, settingsText, sizeUnit, stockSize, type Units } from "./format";
+import { area, cutText, dims, glueText, len, nestNote, nestSummary, pct, pieceNumber, pieceTitle, pieceYield, placedSize, reasonText, settingsText, sizeUnit, stockSize, stripText, type Units } from "./format";
 
 const LANDSCAPE: [number, number] = [LETTER[1], LETTER[0]];
 
@@ -114,6 +114,22 @@ function summaryPages(doc: PdfDoc, n: Nesting, title: string, r: Units) {
     }
     y -= 10;
   }
+  // #49: the parts planned as glue-ups, with their strips.
+  if (n.glue_ups?.length) {
+    need(40);
+    p.text(left, y, "Glued up for width", 12, { bold: true });
+    y -= 16;
+    for (const g of n.glue_ups) {
+      const lines = wrap(glueText(g, r), 10, right - left);
+      need(lines.length * 13 + 4);
+      lines.forEach((l) => {
+        p.text(left, y, l, 10);
+        y -= 13;
+      });
+      y -= 2;
+    }
+    y -= 10;
+  }
   need(40);
   p.text(left, y, "Stock pieces", 12, { bold: true });
   y -= 16;
@@ -172,7 +188,7 @@ function piecePages(doc: PdfDoc, n: Nesting, piece: StockPiece, title: string, r
   // Two columns: parts, and the cut sequence.
   const colW = (right - left - 24) / 2;
   const startY = y;
-  const parts = piece.placements.map((q) => `${q.tag}  ${q.name}  ${dims(q.size[1], q.size[2], r)} ${sizeUnit(r)}${q.turned ? " (turned)" : ""}${q.not_solid ? ` · ${NOT_SOLID_NOTE}` : ""}`);
+  const parts = piece.placements.map((q) => `${q.tag}  ${q.name}${stripText(q)}  ${dims(...placedSize(q), r)} ${sizeUnit(r)}${q.turned ? " (turned)" : ""}${q.not_solid ? ` · ${NOT_SOLID_NOTE}` : ""}`);
   const cuts = piece.cuts.map((c) => `${c.n}. ${cutText(c, r)}`);
   const lineH = 11.5;
   const bottom = 40;

@@ -1,7 +1,7 @@
 // How the nesting reads (lane 9): lengths in the cut list's rounding, the cut sequence in
 // shop words, why a part is not on any stock, and the totals tiles. The pane, the SVG and
 // DXF files and the PDF booklet all say exactly the same thing.
-import type { NestAlgorithm, NestCut, Nesting, Rounding, StockDef, StockPiece, Unplaced } from "../kernel/types";
+import type { GlueUp, NestAlgorithm, NestCut, Nesting, Placement, Rounding, StockDef, StockPiece, Unplaced } from "../kernel/types";
 import { formatArea, formatSteps, sizeUnit as unitOf, type SizeStyle } from "../cutlist/format";
 
 /** How lengths are written: a rounding (fractions for inches, mm for metric), or a rounding
@@ -22,6 +22,9 @@ export function sizeUnit(u: Units): string {
 }
 
 export const M_PER_IN = 0.0254;
+
+/** #49: the kernel's default joint loss, 1/8 in (a document stores none until it is changed). */
+export const JOINT_LOSS_DEFAULT = M_PER_IN / 8;
 
 /** One rounding step, metres. */
 export function stepOf(r: Rounding): number {
@@ -63,6 +66,22 @@ export function fineU(m: number, u: Units): string {
 /** "11 1/4 × 34 1/2" (width × length of a placed part, or of a stock). */
 export function dims(a: number, b: number, r: Units): string {
   return `${len(a, r)} × ${len(b, r)}`;
+}
+
+/** #49: what a placed piece is cut to, width and length: the part's size, or for a strip of
+ * a glue-up the strip's width and the part's length. */
+export function placedSize(q: Placement): [number, number] {
+  return q.strip ? [q.dy, q.size[2]] : [q.size[1], q.size[2]];
+}
+
+/** #49: ", strip 2 of 3" for a strip of a glue-up, "" otherwise. */
+export function stripText(q: Placement): string {
+  return q.strip ? `, strip ${q.strip.n} of ${q.strip.of}` : "";
+}
+
+/** #49: "4a Side: glued up from 3 strips of 4/4 x 6 x 96, 6 + 6 + 5 1/4 in". */
+export function glueText(g: GlueUp, r: Units): string {
+  return `${g.tag} ${g.name}: glued up from ${g.widths.length} strips of ${g.stock}, ${g.widths.map((w) => len(w, r)).join(" + ")} ${sizeUnit(r)}`;
 }
 
 /** A fraction 0..1 as a percentage with one decimal: "62.4%". */
@@ -122,7 +141,10 @@ export function reasonText(u: Unplaced): string {
     case "thickness":
       return `${u.stock} is not its thickness`;
     case "too_large":
-      return `larger than ${u.stock ?? "any stock"}; glue it up or add larger stock`;
+      // #49: a board part only too wide is glued up; one still too large cannot be: too
+      // long for the board, its grain across, the board no wider than the joint loss, or
+      // (lane 42) a last strip narrower than the kerf or 1 mm, or more than 100 strips.
+      return u.sheet ? `larger than ${u.stock ?? "any stock"}; glue it up or add larger stock` : `larger than ${u.stock ?? "any board"} and cannot be glued up for width (too long for it, its grain across, the board no wider than the joint loss, a last strip narrower than the kerf or 1 mm, or more than 100 strips); add larger stock`;
     case "grain":
       return `fits ${u.stock} only with its grain across; turn its grain or pick other stock`;
     case "flat":
@@ -169,7 +191,9 @@ export function nestSummary(n: Nesting, r: Units): NestSummary {
 /** The settings in one line: "Kerf 1/8 in · trim 0 · table saw". */
 export function settingsText(n: Nesting, r: Units): string {
   const alg = n.algorithm === "guillotine" ? "table saw" : "tightest layout (CNC)";
-  return `Kerf ${fineU(n.settings.kerf, r)} · trim ${n.settings.trim > 0 ? `${fineU(n.settings.trim, r)} per edge` : "none"} · ${alg}`;
+  // #49: the joint loss only when something is glued up, so every other footer reads as before.
+  const joint = n.glue_ups?.length ? ` · joint loss ${fineU(n.settings.jointLoss ?? JOINT_LOSS_DEFAULT, r)}` : "";
+  return `Kerf ${fineU(n.settings.kerf, r)} · trim ${n.settings.trim > 0 ? `${fineU(n.settings.trim, r)} per edge` : "none"}${joint} · ${alg}`;
 }
 
 /** The footer every nesting output carries. */

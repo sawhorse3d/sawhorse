@@ -296,3 +296,49 @@ test("narrow rails share a board's width: one board in the panel, two sections o
   // ripped from the first, Rail 3 and Rail 4 from the second.
   await expect(section.locator("figure.nest-piece ul.nest-parts li")).toHaveText([/^1 Rail 1 /, /^2 Rail 2 /, /^3 Rail 3 /, /^4 Rail 4 /]);
 });
+
+// #49: a 15 x 3/4 x 40 in panel is wider than the widest built-in board (4/4 x 12 x 96).
+// Before, it was on no stock ("larger than"); now it is glued up from a 12 in strip and a
+// 3 1/8 in filler (15 + 1/8 in joint loss - 12), both on one board, tagged 1.1 and 1.2,
+// and listed as a glue-up. Typing a joint loss of 1/16 in re-plans the filler to 3 1/16.
+test("a panel wider than every board is glued up from strips, and the joint loss re-plans it", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 15 * IN, 0], [0, 15 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Panel" });
+  });
+  await openShz(page, shz, 1, "panel.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  await expect(section).toBeVisible();
+  await expect(section.getByTestId("nest-unplaced")).toHaveCount(0);
+  await expect(section.getByTestId("nest-glued")).toContainText("1 Panel: glued up from 2 strips of 4/4 x 12 x 96, 12 + 3 1/8 in");
+  const n = await nest(page);
+  expect([n.totals.boards, n.totals.placed, n.totals.unplaced]).toEqual([1, 1, 0]);
+  checkLayout(n);
+  const [p] = n.pieces;
+  expect(p.stock).toBe("4/4 x 12 x 96");
+  expect(p.placements.map((q) => [q.tag, Math.round((q.dy / IN) * 1e6) / 1e6, Math.round((q.dx / IN) * 1e6) / 1e6]).sort()).toEqual([
+    ["1.1", 12, 40],
+    ["1.2", 3.125, 40],
+  ]);
+  // Both strips drawn and tagged on the board, and listed at their own widths.
+  const tagsDrawn = await section.locator("figure.nest-piece svg.nest-diagram g.part").evaluateAll((gs) => gs.map((g) => g.getAttribute("data-tag")).sort());
+  expect(tagsDrawn).toEqual(["1.1", "1.2"]);
+  await section.locator("figure.nest-piece details summary").first().click({ position: { x: 4, y: 4 } });
+  const listed = section.locator("figure.nest-piece ul.nest-parts li");
+  await expect(listed).toHaveCount(2);
+  await expect(listed.filter({ hasText: "1.1 Panel, strip 1 of 2 12 × 40" })).toHaveCount(1);
+  await expect(listed.filter({ hasText: "1.2 Panel, strip 2 of 2 3 1/8 × 40" })).toHaveCount(1);
+  await expect(section.getByTestId("nest-note")).toContainText("joint loss 1/8 in");
+  // A thinner joint: the filler narrows to 3 1/16 in.
+  const joint = section.getByLabel("Joint loss");
+  await expect(joint).toHaveValue("1/8 in");
+  await joint.fill("1/16");
+  await joint.press("Enter");
+  await expect(section.getByTestId("nest-glued")).toContainText("12 + 3 1/16 in");
+  await expect(joint).toHaveValue("1/16 in");
+});

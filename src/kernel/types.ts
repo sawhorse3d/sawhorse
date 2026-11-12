@@ -1153,6 +1153,8 @@ export interface NestSettings {
   /** Taken off each edge of a sheet, each end of a board (metres). */
   trim: number;
   algorithm: NestAlgorithm;
+  /** #49: the width each glue joint costs (metres); absent at the default, 1/8 in. */
+  jointLoss?: number;
 }
 
 export interface StockLibrary {
@@ -1196,6 +1198,20 @@ export interface Placement {
   size: V3;
   /** Lane 15: its part is not a solid (the rectangle is the box around its faces). */
   not_solid?: boolean;
+  /** #49: strip `n` of `of` of a part glued up for width; `dy` is the strip's width, `size` the part's. */
+  strip?: { n: number; of: number };
+}
+
+/** #49: a solid part wider than every board, glued up from strips of one board. */
+export interface GlueUp {
+  row: number;
+  copy: number;
+  tag: string;
+  name: string;
+  item: Item;
+  stock: string;
+  /** Each strip's width, in strip order (metres). */
+  widths: number[];
 }
 
 export interface StockPiece {
@@ -1262,6 +1278,8 @@ export interface Nesting {
   library: StockLibrary;
   pieces: StockPiece[];
   unplaced: Unplaced[];
+  /** #49: the parts planned as glue-ups (absent from results older than #49). */
+  glue_ups?: GlueUp[];
   totals: {
     sheets: number;
     boards: number;
