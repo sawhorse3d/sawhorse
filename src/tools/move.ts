@@ -30,7 +30,7 @@ import { LockState } from "./lock";
 import { scopeEntity } from "../lib/scope";
 import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
+import { curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
@@ -298,7 +298,12 @@ export class MoveTool extends Tool {
       this.last = { subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
       h.showValue(h.fmt(len(delta)));
       // Selected sketch geometry stays selected where it went (lane 22).
-      if (!copy && subject.sketches?.length && sel.length) h.setSelection(movedSelection(sel, subject, sk, translation(delta), r.outcome));
+      if (!copy && subject.sketches?.length && sel.length) {
+        const next = movedSelection(sel, subject, sk, translation(delta), r.outcome, r.scene?.mesh);
+        h.setSelection(next);
+        // #7: Push/Pull's target follows a region the move turned into pieces.
+        h.setTarget(targetAfterMove(h.target(), sel, next));
+      }
     }
   }
 

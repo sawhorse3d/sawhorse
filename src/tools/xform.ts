@@ -18,7 +18,7 @@ import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
 import { faceOf, regionName, regionOf, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { sectionById, sectionCorners } from "../lib/sections";
-import type { OutlineTarget } from "../lib/edit";
+import type { OutlineTarget, Target } from "../lib/edit";
 
 /** The message the kernel refuses a curve's point moved on its own with (lane 23). */
 export const CURVE_POINT_REFUSAL = "That point is on a curve: moving it alone would bend the curve. Select the whole curve, or use Edit > Explode Curve first.";
@@ -549,17 +549,121 @@ export function isCopied(o: OpOutcome): boolean {
   return o.kind === "batch" && o.outcomes.some(isCopied);
 }
 
+/** #7: a point inside each region the mesh draws (the centroid of its largest triangle, so
+ * not a sliver along its edge), with the region's in-plane axes, keyed `sketch:region`. One
+ * pass over the triangles. */
+function regionSamples(mesh: MeshData): Map<string, { at: V3; u: V3; v: V3 }> {
+  const best = new Map<number, { t: number; a: number }>();
+  const pos = mesh.positions;
+  const idx = mesh.indices;
+  for (let t = 0; t < mesh.faceIds.length; t++) {
+    const k = mesh.faceIds[t];
+    if (mesh.parts[k]?.kind !== "region") continue;
+    const [i, j, l] = [idx[t * 3] * 3, idx[t * 3 + 1] * 3, idx[t * 3 + 2] * 3];
+    const e: V3 = [pos[j] - pos[i], pos[j + 1] - pos[i + 1], pos[j + 2] - pos[i + 2]];
+    const f: V3 = [pos[l] - pos[i], pos[l + 1] - pos[i + 1], pos[l + 2] - pos[i + 2]];
+    const a = (e[1] * f[2] - e[2] * f[1]) ** 2 + (e[2] * f[0] - e[0] * f[2]) ** 2 + (e[0] * f[1] - e[1] * f[0]) ** 2;
+    const b = best.get(k);
+    if (!b || a > b.a) best.set(k, { t, a });
+  }
+  const out = new Map<string, { at: V3; u: V3; v: V3 }>();
+  for (const [k, { t }] of best) {
+    const at: V3 = [0, 0, 0];
+    for (let c = 0; c < 3; c++) {
+      const i = idx[t * 3 + c] * 3;
+      for (let d = 0; d < 3; d++) at[d] += pos[i + d] / 3;
+    }
+    const q = mesh.parts[k];
+    const key = `${q.owner}:${q.index}`;
+    // A region drawn as more than one part: the first, as the tools read it elsewhere.
+    if (!out.has(key)) out.set(key, { at, u: q.u, v: q.v });
+  }
+  return out;
+}
+
+/** #7: rings read in a plane's axes `u` and `v`, each with its bounds. */
+interface FlatRing {
+  x: number[];
+  y: number[];
+  lo: [number, number];
+  hi: [number, number];
+}
+
+function flatRings(rings: V3[][], u: V3, v: V3): FlatRing[] {
+  return rings.map((ring) => {
+    const r: FlatRing = { x: [], y: [], lo: [Infinity, Infinity], hi: [-Infinity, -Infinity] };
+    for (const q of ring) {
+      const [px, py] = [dot(q, u), dot(q, v)];
+      r.x.push(px);
+      r.y.push(py);
+      r.lo = [Math.min(r.lo[0], px), Math.min(r.lo[1], py)];
+      r.hi = [Math.max(r.hi[0], px), Math.max(r.hi[1], py)];
+    }
+    return r;
+  });
+}
+
+/** #7: whether `p` is inside `rings` (even-odd, so a hole's ring takes its inside out), all
+ * in one plane. A ring whose bounds leave `p` out cannot hold it, so it is not walked. */
+function insideRings(p: V3, rings: FlatRing[], u: V3, v: V3): boolean {
+  const px = dot(p, u);
+  const py = dot(p, v);
+  let inside = false;
+  for (const { x, y, lo, hi } of rings) {
+    if (px < lo[0] || px > hi[0] || py < lo[1] || py > hi[1]) continue;
+    for (let i = 0, j = x.length - 1; i < x.length; j = i++) {
+      if (y[i] > py !== y[j] > py && px < ((x[j] - x[i]) * (py - y[i])) / (y[j] - y[i]) + x[i]) inside = !inside;
+    }
+  }
+  return inside;
+}
+
 /**
  * The selection after a move of `subject` by `x` (lane 22): its sketch points and edges
  * where they went, its regions kept (in their plane) or replaced by the regions they became
  * on the plane they were lifted to. Everything else stays selected as it was.
+ *
+ * #7: within the plane, a move can split a region (a circle moved across a rectangle).
+ * With the new scene's `mesh`, the regions selected become the regions the kernel
+ * says the moved edges bound that lie inside the moved rings: the pieces they became, not
+ * their old ids (one of which may now be a different piece). Without a mesh, or when none
+ * of those regions can be read or lies inside, they keep their ids as before (so a merge,
+ * which the kernel reports with no regions, still leaves the old id selected).
  */
-export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome): Entity[] {
+export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
   const out: Entity[] = [];
   const parts = subject.sketches ?? [];
   const byId = new Map(parts.map((p, i) => [p.sketch, { p, i }]));
   const added = new Set<string>();
+  // #7: per sketch part, the regions inside its moved rings (null: keep the old ids).
+  const within = new Map<number, Entity[] | null>();
+  let samples: Map<string, { at: V3; u: V3; v: V3 }> | null = null;
+  const regionsWithin = (i: number): Entity[] | null => {
+    if (within.has(i)) return within.get(i)!;
+    const p = parts[i];
+    const now = moves[i];
+    let found: Entity[] | null = null;
+    if (mesh && now && p.rings.length) {
+      samples ??= regionSamples(mesh);
+      const rings = p.rings.map((ring) => ring.map((q) => applyX(x, q)));
+      // Read in the regions' axes; one sketch's regions share them, so once as a rule.
+      let flat: { u: V3; v: V3; rings: FlatRing[] } | null = null;
+      const hits: Entity[] = [];
+      let read = 0;
+      for (const [s, r] of now.regions) {
+        if (s !== p.sketch) continue;
+        const at = samples.get(`${s}:${r}`);
+        if (!at) continue;
+        read++;
+        if (!flat || flat.u.some((c, k) => c !== at.u[k]) || flat.v.some((c, k) => c !== at.v[k])) flat = { u: at.u, v: at.v, rings: flatRings(rings, at.u, at.v) };
+        if (insideRings(at.at, flat.rings, at.u, at.v)) hits.push({ kind: "region", sketch: s, region: r });
+      }
+      if (read && hits.length) found = hits;
+    }
+    within.set(i, found);
+    return found;
+  };
   for (const e of sel) {
     if (!isSketchEntity(e)) {
       out.push(e);
@@ -582,13 +686,41 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
       const now2 = now?.curves?.[k];
       if (now2) out.push({ kind: "curve", owner: { kind: "sketch", id: now2[0] }, curve: now2[1] });
       else if (sketch === hit.p.sketch) out.push(e);
-    } else if (sketch === hit.p.sketch) out.push(e);
-    else if (now && !added.has(`${hit.i}`)) {
+    } else if (sketch === hit.p.sketch) {
+      // A region in its own plane: the pieces it became (#7), each once.
+      const pieces = e.kind === "region" ? regionsWithin(hit.i) : null;
+      if (!pieces) out.push(e);
+      else if (!added.has(`${hit.i}`)) {
+        added.add(`${hit.i}`);
+        out.push(...pieces);
+      }
+    } else if (now && !added.has(`${hit.i}`)) {
       added.add(`${hit.i}`);
       for (const [s, r] of now.regions) out.push({ kind: "region", sketch: s, region: r });
     }
   }
   return out;
+}
+
+/**
+ * #7: Push/Pull's next target after a move of `before` (the selection) to `after` (what
+ * {@link movedSelection} made of it). A selected region the move turned into pieces keeps
+ * no target unless it became exactly one piece (then that piece): its old id may now name
+ * one of several pieces, and P must not push that piece alone while the selection shows them
+ * all. A region the move left whole, a target that did not move, and a face stay as they are.
+ */
+export function targetAfterMove(target: Target | null, before: Entity[], after: Entity[]): Target | null {
+  if (!target || target.kind !== "region") return target;
+  const inSketch = (es: Entity[]) => es.filter((e): e is Extract<Entity, { kind: "region" }> => e.kind === "region" && e.sketch === target.sketch);
+  const was = inSketch(before);
+  if (!was.some((e) => e.region === target.region)) return target;
+  const now = inSketch(after);
+  // Nothing split or merged: the same regions, the target among them.
+  if (now.length === was.length && now.some((e) => e.region === target.region)) return target;
+  // The pieces it became: what is selected now that the other selected regions were not.
+  const others = new Set(was.filter((e) => e.region !== target.region).map((e) => e.region));
+  const mine = now.filter((e) => e.region === target.region || !others.has(e.region));
+  return mine.length === 1 ? { kind: "region", sketch: target.sketch, region: mine[0].region } : null;
 }
 
 /** World bounds (min, max) of points. */
