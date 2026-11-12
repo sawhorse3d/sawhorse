@@ -141,8 +141,9 @@ export function reasonText(u: Unplaced): string {
     case "thickness":
       return `${u.stock} is not its thickness`;
     case "too_large":
-      // #49: a board part too wide is glued up; one still too large is too long for it.
-      return u.sheet ? `larger than ${u.stock ?? "any stock"}; glue it up or add larger stock` : `larger than ${u.stock ?? "any board"} along its length; gluing up adds only width, so add longer stock`;
+      // #49: a board part only too wide is glued up; one still too large cannot be: too
+      // long for the board, its grain across, or the board no wider than the joint loss.
+      return u.sheet ? `larger than ${u.stock ?? "any stock"}; glue it up or add larger stock` : `larger than ${u.stock ?? "any board"} and cannot be glued up for width (too long for it, its grain across, or the board no wider than the joint loss); add larger stock`;
     case "grain":
       return `fits ${u.stock} only with its grain across; turn its grain or pick other stock`;
     case "flat":

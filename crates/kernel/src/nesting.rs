@@ -632,9 +632,16 @@ fn choose_stock(list: &CutList, lib: &StockLibrary, trim: f64, joint: f64) -> Ve
         }
         for &i in &alone {
             // #49: glued up from the board the rest of the material uses, so its strips
-            // nest with the other parts, when they can make it.
-            if let Some(k) = shared_board
-                && glue_widths(&list.rows[i], &lib.stocks[k], trim, joint).is_some()
+            // nest with the other parts, when they can make it; but never when some board
+            // thick enough makes it in one piece (a thicker, wider one, say), which the
+            // choice below then takes as before.
+            let row = &list.rows[i];
+            let whole_somewhere = boards
+                .iter()
+                .any(|(_, s)| thickness_fits(s, row.size[0]) && fit(row, s, trim).is_ok());
+            if !whole_somewhere
+                && let Some(k) = shared_board
+                && glue_widths(row, &lib.stocks[k], trim, joint).is_some()
             {
                 out[i] = Some(Ok(k));
                 continue;

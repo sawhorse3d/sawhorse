@@ -84,8 +84,6 @@ describe("Nesting section", () => {
     vi.useRealTimers();
   });
 
-  // Lane 30, from the #33 review: the field's 700 ms pause timer kept the value, the shown
-  // text and the settings of the render it was set in.
   it("#49: the joint loss takes a typed length, 0 to 1/2 in, and keeps the other settings", () => {
     const p = props();
     render(<NestingSection {...p} />);
@@ -121,6 +119,8 @@ describe("Nesting section", () => {
     expect(screen.getByTestId("nest-note").textContent).toContain("joint loss 1/8 in");
   });
 
+  // Lane 30, from the #33 review: the field's 700 ms pause timer kept the value, the shown
+  // text and the settings of the render it was set in.
   it("Enter commits a typed kerf once: the pause after the typing does not commit it again", () => {
     vi.useFakeTimers();
     const p = props();

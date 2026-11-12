@@ -987,6 +987,41 @@ fn a_side_glued_from_the_boards_the_rest_of_the_oak_uses() {
     );
 }
 
+/// A part some listed board makes in one piece is never glued, even when that board is
+/// thicker than its class and the rest of the oak shares a narrower one (from the #49
+/// verification): a 14 in part beside two 3 in parts goes whole on a 5/4 x 16 board, not
+/// glued from the 4 in board the 3 in parts use.
+#[test]
+fn a_wider_thicker_board_that_makes_it_whole_wins_over_gluing() {
+    let list = list_of(
+        &[
+            (0.75, 14.0, 30.0, 1, Grain::Length, false, 0),
+            (0.75, 3.0, 30.0, 2, Grain::Length, false, 0),
+        ],
+        0,
+    );
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    lib.stocks.push(StockDef {
+        name: "5/4 x 16 x 96".into(),
+        kind: StockKind::Board,
+        length: 96.0 * IN,
+        width: 16.0 * IN,
+        thickness: 1.0625 * IN,
+        nominal: None,
+        grain: StockGrain::Length,
+    });
+    let n = nest_list(&list, &lib, NestSettings::default());
+    check_nesting_of(&list, &n).unwrap();
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    let whole = n
+        .pieces
+        .iter()
+        .find(|p| p.placements.iter().any(|q| q.row == 0))
+        .unwrap();
+    assert_eq!(whole.stock, "5/4 x 16 x 96");
+}
+
 /// No joint loss: a 24 in panel is exactly two 12 in boards edge to edge.
 #[test]
 fn no_joint_loss_glues_whole_boards() {
