@@ -170,6 +170,83 @@ test("a circle moved across a rectangle is selected as the pieces it became", as
   await expect(vp).toHaveAttribute("data-objects", "1");
 });
 
+// Lane 43 (#7): what is selected and lit, read from the app (window.__sawhorse.selected()).
+type Selected = { entities: { kind: string; sketch?: number; region?: number }[]; lit: { regions: [number, number][]; faces: [number, number][]; meshes: number[]; edges: number; points: number } };
+const selected = (page: Page) => page.evaluate(() => (window as unknown as { __sawhorse: { selected(): Selected } }).__sawhorse.selected());
+/** The selected regions and the lit ones, as sorted `sketch:region` keys. */
+async function selectedRegions(page: Page): Promise<{ selected: string[]; lit: string[] }> {
+  const s = await selected(page);
+  return {
+    selected: s.entities.map((e) => (e.kind === "region" ? `${e.sketch}:${e.region}` : e.kind)).sort(),
+    lit: s.lit.regions.map(([k, r]) => `${k}:${r}`).sort(),
+  };
+}
+
+// Lane 43 (#7): Undo of a move that split a circle selects the circle again, and Redo selects
+// the two pieces the move left. Redo replayed the edit without the tool, so the circle's old
+// id stayed selected and named one of its pieces again.
+test("Undo and Redo of a move that split a circle select what was there before and after it", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  await page.keyboard.press("r");
+  await type(page, "24,12");
+  await expect(vp).toHaveAttribute("data-parts", "1");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("c");
+  await clickAt(page, [40, 6, 0], /grid|endpoint|axis/);
+  await point(page, [44, 6, 0]);
+  await type(page, "4");
+  await expect(hint).toContainText("Circle r 4 in");
+  await page.keyboard.press("Space");
+  await selectAt(page, [40, 7, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  const circle = await selectedRegions(page);
+  expect(circle.selected).toHaveLength(1);
+  expect(circle.lit).toEqual(circle.selected);
+  await page.keyboard.press("m");
+  await clickAt(page, [40, 6, 0], /center|centre|endpoint|on-face|grid/);
+  await page.keyboard.press("ArrowRight");
+  await point(page, [30, 6, 0]);
+  await type(page, "16");
+  await expect(hint).toContainText("Moved");
+  await expect.poll(async () => (await regions(page)).length).toBe(3);
+  // The two halves, by their ids in the kernel.
+  const halves = (await regions(page))
+    .filter((r) => Math.hypot(centroid(r.rings[0])[0] - 24, centroid(r.rings[0])[1] - 6) < 4)
+    .map((r) => `${r.sketch}:${r.region}`)
+    .sort();
+  expect(halves).toHaveLength(2);
+  await expect.poll(() => selectedRegions(page)).toEqual({ selected: halves, lit: halves });
+
+  // Undo: the circle, selected and lit as it was.
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await regions(page)).length).toBe(2);
+  await expect.poll(() => selectedRegions(page)).toEqual(circle);
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  // Redo: the two halves again, not the circle's old id on one of them.
+  await page.keyboard.press("Control+y");
+  await expect.poll(async () => (await regions(page)).length).toBe(3);
+  await expect.poll(() => selectedRegions(page)).toEqual({ selected: halves, lit: halves });
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  // And again: Undo and Redo keep doing it.
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => selectedRegions(page)).toEqual(circle);
+  await page.keyboard.press("Control+y");
+  await expect.poll(() => selectedRegions(page)).toEqual({ selected: halves, lit: halves });
+
+  // The hook only reads: what it returns is a copy, and changing it changes nothing.
+  const again = await page.evaluate(() => {
+    const hook = (window as unknown as { __sawhorse: { selected(): Selected } }).__sawhorse;
+    const s = hook.selected();
+    s.entities.length = 0;
+    s.lit.regions.push([99, 99]);
+    return hook.selected();
+  });
+  expect(again.entities).toHaveLength(2);
+  expect(again.lit.regions).toHaveLength(2);
+  await expect(vp).toHaveAttribute("data-selection", "2");
+});
+
 test("one corner of a rectangle moves: it stays flat, its edges follow; pushed, its volume is exact", async ({ page }) => {
   const vp = await ready(page);
   const hint = page.locator("#hint");

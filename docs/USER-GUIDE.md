@@ -172,7 +172,7 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 - **An edge two shapes share** moves both of them.
 - **What it lands on** joins it the way drawing there would: dropped against another shape, the touching edges become one edge; dropped across one, both are split where they cross into separate faces. A move that would twist a face into a bow-tie splits it into two faces instead.
 - Moved or copied shapes push/pull like any other: the solid has exactly the shape's area times the distance.
-- What you moved stays selected where it went, so you can move it again, or press P and type a distance. When a shape lands across another and splits (a circle dropped over a rectangle's edge), what stays selected is the pieces it became, and P waits for you to click the piece to push.
+- What you moved stays selected where it went, so you can move it again, or press P and type a distance. When a shape lands across another and splits (a circle dropped over a rectangle's edge), what stays selected is the pieces it became, and P waits for you to click the piece to push. Undo of a move, turn or scale selects what was selected before it, and Redo selects what it left.
 - The status line names what moved ("Moved region 1 24 in along +red"). Shapes from more than one sketch each name their sketch, numbered in the order the sketches were made: "Moved region 1 of sketch 1 and region 1 of sketch 2 24 in along +red." Rotate and Scale say it the same way.
 - A circle, arc or polygon is one curve: click its rim (or inside it, for its face) and it moves whole. Moving one of its points on its own is refused; Edit > Explode Curve makes its edges plain first ([Curves](#circles-arcs-and-polygons-are-curves)).
 

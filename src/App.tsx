@@ -25,7 +25,7 @@ import { ValueBar, type StatusMessage } from "./components/ValueBar";
 import { createKernel, KernelUnavailableError, type EditResult, type EmptySkp, type KernelClient, type RestartInfo } from "./kernel/client";
 import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
-import type { Entity, KernelOp, SceneData, V3 } from "./kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, SceneData, V3 } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
@@ -289,6 +289,29 @@ function partNames(rows: CutRow[]): string {
 
 type Message = StatusMessage | null;
 
+/** Lane 43 (#7): a document state as undo and redo find it again: its undo depth and model
+ * hash (as the named plugin steps are known). */
+function stepKey(st: DocState | null | undefined): string {
+  return st ? `${st.undo_depth}:${st.stats.hash}` : "";
+}
+
+/** Lane 43 (#7): a selection and Push/Pull target to keep through an undo or a redo. */
+interface KeptSelection {
+  selection: Entity[];
+  target: Target | null;
+}
+
+/** Lane 43 (#7): what a tool left selected after a step and what was selected before it,
+ * between the states the step went `from` and `to`. */
+interface RememberedStep {
+  from: string;
+  to: string;
+  before: Entity[];
+  beforeTarget: Target | null;
+  after: Entity[];
+  afterTarget: Target | null;
+}
+
 export function App() {
   const [toolId, setToolId] = useState<ToolId>("select");
   const tool = toolById(toolId);
@@ -307,6 +330,11 @@ export function App() {
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
+  /** Lane 43 (#7): where the last op that landed went from and to ({@link stepKey}), and
+   * Push/Pull's target before it, for the tool host's rememberSelection. */
+  const lastStep = useRef<{ from: string; to: string; target: Target | null } | null>(null);
+  /** Lane 43 (#7): the selections tools remembered around their steps, newest last, at most 200. */
+  const stepSelections = useRef<RememberedStep[]>([]);
   const [toolView, setToolView] = useState<ToolView>(EMPTY_VIEW);
   // The open document: its name, where it lives (for Save), the log length when last saved.
   const [docName, setDocName] = useState<string | null>(null);
@@ -459,15 +487,22 @@ export function App() {
     }, 300);
   }, []);
 
-  /** Run one kernel request (an op, undo or redo); the scene and push target follow. */
+  /** Run one kernel request (an op, undo or redo); the scene and push target follow.
+   * `restore` (lane 43, #7: undo and redo of a step a tool remembered) may name the selection
+   * and target to keep instead of the ones in place, still only where they exist. */
   const run = useCallback(
-    (request: (k: KernelClient) => Promise<EditResult>, op: KernelOp | null, describe?: (r: EditResult) => string): Promise<EditResult | null> => {
+    (request: (k: KernelClient) => Promise<EditResult>, op: KernelOp | null, describe?: (r: EditResult) => string, restore?: (r: EditResult) => KeptSelection | null): Promise<EditResult | null> => {
       editsPending.current++;
       const next = queue.current.then(async () => {
         const kernel = kernelRef.current;
         if (!kernel) return null;
         try {
+          const fromKey = stepKey(live.current.scene?.state);
+          const fromTarget = live.current.target;
           const r = await request(kernel);
+          // Lane 43 (#7): where the last op went from and to, for rememberSelection.
+          lastStep.current = op ? { from: fromKey, to: stepKey(r.scene.state), target: fromTarget } : null;
+          const keep = restore?.(r) ?? null;
           // Tools read the host synchronously right after this resolves (a key waiting on
           // the edit), so the live copy is updated here, not on the next render.
           live.current.scene = r.scene;
@@ -477,7 +512,7 @@ export function App() {
           const parts = r.scene.mesh.parts;
           const exists = (t: Target | null) =>
             !!t && parts.some((p) => (t.kind === "face" ? p.kind === "face" && p.owner === t.object && p.index === t.face : p.kind === "region" && p.owner === t.sketch && p.index === t.region));
-          const prev = live.current.target;
+          const prev = keep ? keep.target : live.current.target;
           const t = op ? nextTarget(op, r.outcome, prev) : exists(prev) ? prev : null;
           live.current.target = t;
           setTarget(t);
@@ -486,7 +521,7 @@ export function App() {
           // longer drawn (hidden, by the eye, a tag or a scene): Delete must never erase what
           // nobody can see.
           const g = r.scene.state.graph;
-          const sel = live.current.selection.filter((e) => {
+          const sel = (keep ? keep.selection : live.current.selection).filter((e) => {
             if (!entityShown(e, r.scene.state)) return false;
             if (e.kind === "node") {
               if (!g || !graphIndex(g).node.has(e.node)) return false;
@@ -524,11 +559,28 @@ export function App() {
   // model hash right after it, so a name is only shown for exactly that state.
   const namedSteps = useRef<{ depth: number; hash: string; name: string }[]>([]);
   const stepName = (depth: number | undefined, hash: string | undefined) => namedSteps.current.find((n) => n.depth === depth && n.hash === hash)?.name ?? null;
+  /** Lane 43 (#7): the step a remembered selection belongs to (`from` and `to`, by
+   * {@link stepKey}): Undo from `to` to `from` selects `before`; Redo from `from` to `to`
+   * selects `after`. */
+  const remembered = (from: string, to: string) => {
+    const all = stepSelections.current;
+    for (let i = all.length - 1; i >= 0; i--) if (all[i].from === from && all[i].to === to) return all[i];
+    return null;
+  };
   const undo = useCallback(
     () => {
       const before = live.current.scene?.state;
       const name = stepName(before?.undo_depth, before?.stats.hash);
-      return run((k) => k.undo(), null, (r) => `Undone${name ? `: ${name}` : ""}. ${r.scene.state.undo_depth} more step(s) to undo.`).then((r) => {
+      const at = stepKey(before);
+      return run(
+        (k) => k.undo(),
+        null,
+        (r) => `Undone${name ? `: ${name}` : ""}. ${r.scene.state.undo_depth} more step(s) to undo.`,
+        (r) => {
+          const s = remembered(stepKey(r.scene.state), at);
+          return s && { selection: s.before, target: s.beforeTarget };
+        },
+      ).then((r) => {
         if (r) afterHistoryRef.current();
         return r;
       });
@@ -537,14 +589,24 @@ export function App() {
     [run],
   );
   const redo = useCallback(
-    () =>
-      run((k) => k.redo(), null, (r) => {
-        const name = stepName(r.scene.state.undo_depth, r.scene.state.stats.hash);
-        return `Redone${name ? `: ${name}` : ""}. ${r.scene.state.redo_depth} more step(s) to redo.`;
-      }).then((r) => {
+    () => {
+      const at = stepKey(live.current.scene?.state);
+      return run(
+        (k) => k.redo(),
+        null,
+        (r) => {
+          const name = stepName(r.scene.state.undo_depth, r.scene.state.stats.hash);
+          return `Redone${name ? `: ${name}` : ""}. ${r.scene.state.redo_depth} more step(s) to redo.`;
+        },
+        (r) => {
+          const s = remembered(at, stepKey(r.scene.state));
+          return s && { selection: s.after, target: s.afterTarget };
+        },
+      ).then((r) => {
         if (r) afterHistoryRef.current();
         return r;
-      }),
+      });
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [run],
   );
@@ -1212,6 +1274,14 @@ export function App() {
       },
       toScreen: (p) => engineRef.current?.worldToScreen(p) ?? [0, 0],
       target: () => live.current.target,
+      rememberSelection: (before) => {
+        // Lane 43 (#7): only for the op that just landed (nothing has changed the model since).
+        const last = lastStep.current;
+        const to = stepKey(live.current.scene?.state);
+        if (!last || last.to !== to || !to) return;
+        const step: RememberedStep = { from: last.from, to, before, beforeTarget: last.target, after: live.current.selection, afterTarget: live.current.target };
+        stepSelections.current = [...stepSelections.current.filter((s) => s.from !== step.from || s.to !== step.to).slice(-199), step];
+      },
       outline: async (t) => {
         const k = kernelRef.current;
         if (!k) return [];
@@ -2586,6 +2656,39 @@ export function App() {
   // pointer moving only adds what is under it (lane 16).
   const selectedHighlight = useMemo(() => selectionHighlight(highlightEntities, scene?.mesh ?? null, scene?.state.graph ?? null), [highlightEntities, scene]);
   const highlight = useMemo(() => withHover(selectedHighlight, highlightEntities, nestHover ?? hover, scene?.mesh ?? null, scene?.state.graph ?? null), [selectedHighlight, highlightEntities, nestHover, hover, scene]);
+  // Lane 43 (#7): the selection's highlight as the view last got it, with the mesh it names.
+  const litRef = useRef<{ h: typeof selectedHighlight; mesh: MeshData | null } | null>(null);
+  useEffect(() => {
+    litRef.current = { h: selectedHighlight, mesh: scene?.mesh ?? null };
+  }, [selectedHighlight, scene]);
+  // Lane 43 (#7): a read-only hook for tests: what is selected (each entity, its kind and ids)
+  // and what the view lights as selected (the regions, faces and imported meshes by id, and
+  // how many edge segments and points). With the Push/Pull tool and nothing selected, the lit
+  // part is its target. A copy each call: changing it changes nothing in the page.
+  useEffect(() => {
+    const w = window as unknown as { __sawhorse?: Record<string, unknown> };
+    w.__sawhorse = {
+      ...(w.__sawhorse ?? {}),
+      selected: () => {
+        const lit = litRef.current;
+        const parts = lit?.mesh?.parts ?? [];
+        const seen = new Set<string>();
+        const regions: [number, number][] = [];
+        const faces: [number, number][] = [];
+        const meshes: number[] = [];
+        for (const i of lit?.h.selectedParts ?? []) {
+          const p = parts[i];
+          if (!p || seen.has(`${p.kind}:${p.owner}:${p.index}`)) continue;
+          seen.add(`${p.kind}:${p.owner}:${p.index}`);
+          if (p.kind === "region") regions.push([p.owner, p.index]);
+          else if (p.kind === "face") faces.push([p.owner, p.index]);
+          else if (!meshes.includes(p.owner)) meshes.push(p.owner);
+        }
+        const out = { entities: live.current.selection, lit: { regions, faces, meshes, edges: lit?.h.selectedEdges.length ?? 0, points: lit?.h.selectedPoints.length ?? 0 } };
+        return JSON.parse(JSON.stringify(out)) as typeof out;
+      },
+    };
+  }, []);
 
   // Guides and dimensions draw under the tool's own overlay.
   const annotations = useMemo(() => annotationView(st ?? null, fmt, selection), [st, fmt, selection]);

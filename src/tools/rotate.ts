@@ -336,6 +336,8 @@ export class RotateTool extends Tool {
         h.setSelection(next);
         // #7: Push/Pull's target follows a region the turn made into pieces.
         h.setTarget(targetAfterMove(h.target(), sel, next));
+        // Lane 43 (#7): Undo and Redo of this step put back the selection before and after it.
+        h.rememberSelection?.(sel);
       }
     }
   }

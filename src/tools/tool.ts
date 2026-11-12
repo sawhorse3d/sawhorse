@@ -118,6 +118,15 @@ export interface ToolHost {
    */
   target(): Target | null;
   setTarget(t: Target | null): void;
+  /**
+   * Lane 43 (#7): after a tool's edit has landed and it set the selection (and Push/Pull's
+   * target) it leaves: `before` is what was selected when the edit started. Undo of that one
+   * step selects `before` again and Redo of it selects what the tool left, each where it
+   * still exists, instead of whatever was selected at the time (a split region's old id
+   * names one of its pieces again after a Redo). Optional: a host without it keeps the
+   * selection through undo and redo as before.
+   */
+  rememberSelection?(before: Entity[]): void;
   /** World rings of a face or region, or (lane 23) a curve's points as one ring (empty when
    * it is gone). */
   outline(t: OutlineTarget): Promise<V3[][]>;

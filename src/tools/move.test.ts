@@ -327,11 +327,16 @@ describe("Move tool", () => {
     close((op.xform as { translation: V3 }).translation, [36 * IN, 0, 0]);
     expect(h.statuses.at(-1)?.text).toMatch(/^Moved .* 36 in along \+red/);
     expect(h.sel).toEqual([region]);
+    // Lane 43 (#7): the host is told what was selected before the step and what after it,
+    // so Undo and Redo of it select those again.
+    expect(h.remembered).toEqual([{ before: [region], after: [region], target: null }]);
     // Typed again after the move: undo and move again from where it was.
     t.onValue("12");
     await tick();
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform_sketch", regions: [1] }]);
     close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [12 * IN, 0, 0]);
+    expect(h.remembered).toHaveLength(2);
+    expect(h.remembered[1].before).toEqual([region]);
   });
 
   it("names regions of two sketches with their sketches, and of one sketch without (lane 27, #10)", async () => {

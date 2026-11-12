@@ -170,11 +170,10 @@ Since lane 23 a circle, an arc or a polygon is one curve ([ADR-0013](adr/0013-cu
 
 Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). What is knowingly left:
 
-- **The selection after a move that splits or merges a shape** ([#7](https://github.com/sawhorse3d/sawhorse/issues/7)). A selected region moved, turned or scaled within its plane so that it splits is selected as the pieces it became, and Push/Pull waits for a click on one of them. In four cases the selection is still not what the move made until you click again; the geometry itself is right in each:
+- **The selection after a move that splits or merges a shape** ([#7](https://github.com/sawhorse3d/sawhorse/issues/7)). A selected region moved, turned or scaled within its plane so that it splits is selected as the pieces it became, and Push/Pull waits for a click on one of them; since lane 43, Undo of such a move selects what was selected before it and Redo selects what the move left. In three cases the selection is still not what the move made until you click again; the geometry itself is right in each:
   - a circle's rim, selected on its own, moved across a rectangle's edge shrinks to the first arc it became (the kernel names only a split curve's first piece, `SketchMoved.curves`);
   - a shape moved exactly onto an identical one, so the two merge (the kernel reports no regions for it): the hint bar counts one selected but nothing is lit, since that id names no region now, and P with a typed distance is refused;
-  - a shape lifted onto another sketch's plane where it cuts a shape already there selects that shape's remainder too;
-  - Redo of a move that split a shape: Redo replays the edit without the tool, so what Undo left selected stays selected, usually the shape's old id, which then names one of its pieces again.
+  - a shape lifted onto another sketch's plane where it cuts a shape already there selects that shape's remainder too.
 - **A Move drag in a big sketch stutters**: each preview frame works out every edge of the sketch, not only the ones that move (about 16 ms at 1,000 edges, 50 ms at 2,000 and 210 ms at 4,000 on the development machine), so a drag keeps up only to about 1,500 to 2,000 sketch edges ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)).
 
 ## The view

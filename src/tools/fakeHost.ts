@@ -17,6 +17,8 @@ export interface FakeHost extends ToolHost {
   _units: UnitSystem;
   _mesh: MeshData | null;
   _state: DocState | null;
+  /** Lane 43: each `rememberSelection` call, with the selection and target it saw. */
+  remembered: { before: Entity[]; after: Entity[]; target: Target | null }[];
 }
 
 export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
@@ -31,6 +33,7 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
     _units: "frac-in",
     _mesh: null,
     _state: null,
+    remembered: [],
     units: () => h._units,
     fmt: (m) => formatLength(m, h._units),
     unitLabel: () => unitInfo(h._units).short,
@@ -73,6 +76,9 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
     ],
     setTarget: (t) => {
       h._target = t;
+    },
+    rememberSelection: (before) => {
+      h.remembered.push({ before, after: h.sel, target: h._target });
     },
     offsetPreview: async (_source, distance) =>
       distance < -0.45
