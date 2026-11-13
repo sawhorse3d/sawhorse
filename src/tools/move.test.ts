@@ -200,28 +200,42 @@ describe("transform helpers", () => {
     return { mesh, subject };
   }
 
-  /** The fastest of five runs of `f`, milliseconds. */
-  function fastest(f: () => void): number {
-    let best = Infinity;
-    for (let k = 0; k < 5; k++) {
-      const t = performance.now();
-      f();
-      best = Math.min(best, performance.now() - t);
+  /** How much longer `big` takes than `small`: one warm-up of each, then the fastest of
+   * nine runs of each, taken in turn so a burst of load from elsewhere hits both. */
+  function slower(small: () => void, big: () => void): number {
+    small();
+    big();
+    let [s, b] = [Infinity, Infinity];
+    for (let k = 0; k < 9; k++) {
+      let t = performance.now();
+      small();
+      s = Math.min(s, performance.now() - t);
+      t = performance.now();
+      big();
+      b = Math.min(b, performance.now() - t);
     }
-    return best;
+    return b / Math.max(0.05, s);
   }
 
   it("#8: the Move preview's cost grows in step with the sketch's edges, not with edges times moving points", () => {
     const small = squares(1000);
-    const big = squares(4000);
+    const big = squares(8000);
     const pvSmall = sketchPreviews(small.subject, small.mesh);
     const pvBig = sketchPreviews(big.subject, big.mesh);
-    // Four times the edges: about four times the work in step, sixteen times when every
-    // edge is checked against every moving point (as before #8: 21 ms then 356 ms a frame).
-    const frame = fastest(() => sketchSegments(pvBig, translation([1, 0, 0]))) / Math.max(0.05, fastest(() => sketchSegments(pvSmall, translation([1, 0, 0]))));
-    const start = fastest(() => sketchPreviews(big.subject, big.mesh)) / Math.max(0.05, fastest(() => sketchPreviews(small.subject, small.mesh)));
-    expect(frame, "each frame").toBeLessThan(8);
-    expect(start, "the start of the drag").toBeLessThan(8);
+    // Eight times the edges: about eight times the work in step, sixty-four times when every
+    // edge is checked against every moving point (as before #8: 21 ms a frame at 1,000 edges,
+    // 356 ms at 4,000). The bound sits well between the two, so load on the machine does not
+    // make it fail (the #8 verifier saw a 4,000 vs 1,000 bound of 8 fail once under load).
+    const frame = slower(
+      () => sketchSegments(pvSmall, translation([1, 0, 0])),
+      () => sketchSegments(pvBig, translation([1, 0, 0])),
+    );
+    const start = slower(
+      () => sketchPreviews(small.subject, small.mesh),
+      () => sketchPreviews(big.subject, big.mesh),
+    );
+    expect(frame, "each frame").toBeLessThan(24);
+    expect(start, "the start of the drag").toBeLessThan(24);
   });
 
   it("#8: the preview is the same edges, with the same ends moved, as checking each end against every moving point", () => {
