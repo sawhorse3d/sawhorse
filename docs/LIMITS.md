@@ -168,9 +168,7 @@ Since lane 23 a circle, an arc or a polygon is one curve ([ADR-0013](adr/0013-cu
 
 ## Moving sketch geometry
 
-Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). What is knowingly left:
-
-- **A Move drag in a big sketch stutters**: each preview frame works out every edge of the sketch, not only the ones that move (about 16 ms at 1,000 edges, 50 ms at 2,000 and 210 ms at 4,000 on the development machine), so a drag keeps up only to about 1,500 to 2,000 sketch edges ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)).
+Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). Nothing is knowingly left here. The drag preview that stuttered in a big sketch ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)) now costs about 1 ms a frame with 4,000 moving edges.
 
 ## The view
 

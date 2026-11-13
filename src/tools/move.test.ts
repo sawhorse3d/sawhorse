@@ -179,6 +179,78 @@ describe("transform helpers", () => {
     expect(targetAfterMove(t(1, 1), [r(1, 1)], [r(1, 1)], new Map([[1, 1]]))).toEqual(t(1, 1));
   });
 
+  /** #8: `n` edges of a sketch as separate unit squares in a row, every point moving. */
+  function squares(n: number, moving: (p: V3) => boolean = () => true): { mesh: MeshData; subject: Subject } {
+    const flat: number[] = [];
+    const segs: [V3, V3][] = [];
+    const pts: V3[] = [];
+    for (let i = 0; i < n / 4; i++) {
+      const x = i * 2;
+      const sq: V3[] = [[x, 0, 0], [x + 1, 0, 0], [x + 1, 1, 0], [x, 1, 0]];
+      for (let k = 0; k < 4; k++) {
+        const a = sq[k];
+        const b = sq[(k + 1) % 4];
+        flat.push(...a, ...b);
+        segs.push([a, b]);
+      }
+      pts.push(...sq);
+    }
+    const mesh = { positions: new Float32Array(), indices: new Uint32Array(), faceIds: new Uint32Array(), edges: new Float32Array(flat), edgeOwner: new Uint32Array(segs.length), edgeOwners: [{ kind: "sketch", id: 1 }], parts: [] } as MeshData;
+    const subject: Subject = { kind: "objects", objects: [], sketches: [{ sketch: 1, points: pts.filter(moving), edges: [], regions: [], rings: [], origin: [0, 0, 0], normal: [0, 0, 1], moving: pts.filter(moving) }] };
+    return { mesh, subject };
+  }
+
+  /** The fastest of five runs of `f`, milliseconds. */
+  function fastest(f: () => void): number {
+    let best = Infinity;
+    for (let k = 0; k < 5; k++) {
+      const t = performance.now();
+      f();
+      best = Math.min(best, performance.now() - t);
+    }
+    return best;
+  }
+
+  it("#8: the Move preview's cost grows in step with the sketch's edges, not with edges times moving points", () => {
+    const small = squares(1000);
+    const big = squares(4000);
+    const pvSmall = sketchPreviews(small.subject, small.mesh);
+    const pvBig = sketchPreviews(big.subject, big.mesh);
+    // Four times the edges: about four times the work in step, sixteen times when every
+    // edge is checked against every moving point (as before #8: 21 ms then 356 ms a frame).
+    const frame = fastest(() => sketchSegments(pvBig, translation([1, 0, 0]))) / Math.max(0.05, fastest(() => sketchSegments(pvSmall, translation([1, 0, 0]))));
+    const start = fastest(() => sketchPreviews(big.subject, big.mesh)) / Math.max(0.05, fastest(() => sketchPreviews(small.subject, small.mesh)));
+    expect(frame, "each frame").toBeLessThan(8);
+    expect(start, "the start of the drag").toBeLessThan(8);
+  });
+
+  it("#8: the preview is the same edges, with the same ends moved, as checking each end against every moving point", () => {
+    // Every third point moves: some edges move whole, some at one end, some not at all.
+    let k = 0;
+    const { mesh, subject } = squares(400, () => k++ % 3 === 0);
+    const part = subject.sketches![0];
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 1e-6;
+    const moves = (p: V3) => part.moving.some((q) => near(p, q));
+    const d: V3 = [0.25, 0.5, 0];
+    const want: V3[] = [];
+    const wantCopy: V3[] = [];
+    for (let i = 0; i < mesh.edges.length; i += 6) {
+      const a: V3 = [mesh.edges[i], mesh.edges[i + 1], mesh.edges[i + 2]];
+      const b: V3 = [mesh.edges[i + 3], mesh.edges[i + 4], mesh.edges[i + 5]];
+      if (!moves(a) && !moves(b)) continue;
+      const go = (p: V3): V3 => (moves(p) ? [p[0] + d[0], p[1] + d[1], p[2] + d[2]] : p);
+      want.push(go(a), go(b));
+      if (moves(a) && moves(b)) wantCopy.push(go(a), go(b));
+    }
+    const pv = sketchPreviews(subject, mesh);
+    const got = sketchSegments(pv, translation(d));
+    expect(got.length).toBe(want.length);
+    got.forEach((p, i) => close(p, want[i]));
+    const copied = sketchSegments(pv, translation(d), true);
+    expect(copied.length).toBe(wantCopy.length);
+    copied.forEach((p, i) => close(p, wantCopy[i]));
+  });
+
   it("the preview moves whole solids, or only the moving ends of part of one", () => {
     const mesh = boxMesh();
     const whole = previewSegments({ kind: "objects", objects: [1] }, [[[0, 0, 0], [0, 0, 1]]], translation([1, 0, 0]));
