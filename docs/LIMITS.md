@@ -168,9 +168,9 @@ Since lane 23 a circle, an arc or a polygon is one curve ([ADR-0013](adr/0013-cu
 
 ## Moving sketch geometry
 
-Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). What is knowingly left:
+Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled into a solid ([ADR-0012](adr/0012-moving-sketch-geometry.md), [USER-GUIDE](USER-GUIDE.md#moving-turning-and-scaling)). The drag preview that stuttered in a big sketch ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)) keeps up since #59: about 0.5 ms a frame with 4,000 moving edges. What is knowingly left:
 
-- **A Move drag in a big sketch stutters**: each preview frame works out every edge of the sketch, not only the ones that move (about 16 ms at 1,000 edges, 50 ms at 2,000 and 210 ms at 4,000 on the development machine), so a drag keeps up only to about 1,500 to 2,000 sketch edges ([#8](https://github.com/sawhorse3d/sawhorse/issues/8)).
+- **Starting a Move, Rotate or Scale of a big sketch selection pauses once**: gathering the selected shapes' points checks each one against those already gathered, so the pause grows with the square of the points: about 0.1 s for 4,000 sketch edges and 0.4 s for 8,000, measured in Node on the development machine, and a Move drag of 4,000 edges in a headless Edge paused about 0.2 s as it started ([#11](https://github.com/sawhorse3d/sawhorse/issues/11)).
 
 ## The view
 

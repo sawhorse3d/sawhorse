@@ -9,7 +9,7 @@ import { scaleOp } from "./scale";
 import { setNameSource } from "../lib/names";
 import { nextTarget } from "../lib/edit";
 import type { DocState } from "../kernel/types";
-import { applyX, describeSubject, loadOutlines, movedSelection, previewSegments, rotation, scaling, sketchesAfter, sketchPreviews, sketchSegments, subjectOf, targetAfterMove, translation, type Subject } from "./xform";
+import { applyX, describeSubject, loadOutlines, movedSelection, previewSegments, rotation, scaling, sketchesAfter, sketchPointMap, sketchPreviews, sketchSegments, subjectOf, targetAfterMove, translation, type Subject } from "./xform";
 
 const IN = 0.0254;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -177,6 +177,210 @@ describe("transform helpers", () => {
     expect(targetAfterMove(t(5, 2), [r(1, 1)], [r(5, 9)], lifted)).toEqual(t(5, 2));
     // In its own plane the map changes nothing.
     expect(targetAfterMove(t(1, 1), [r(1, 1)], [r(1, 1)], new Map([[1, 1]]))).toEqual(t(1, 1));
+  });
+
+  /** #8: `n` edges of a sketch as separate unit squares in a row, every point moving. */
+  function squares(n: number, moving: (p: V3) => boolean = () => true): { mesh: MeshData; subject: Subject } {
+    const flat: number[] = [];
+    const segs: [V3, V3][] = [];
+    const pts: V3[] = [];
+    for (let i = 0; i < n / 4; i++) {
+      const x = i * 2;
+      const sq: V3[] = [[x, 0, 0], [x + 1, 0, 0], [x + 1, 1, 0], [x, 1, 0]];
+      for (let k = 0; k < 4; k++) {
+        const a = sq[k];
+        const b = sq[(k + 1) % 4];
+        flat.push(...a, ...b);
+        segs.push([a, b]);
+      }
+      pts.push(...sq);
+    }
+    const mesh = { positions: new Float32Array(), indices: new Uint32Array(), faceIds: new Uint32Array(), edges: new Float32Array(flat), edgeOwner: new Uint32Array(segs.length), edgeOwners: [{ kind: "sketch", id: 1 }], parts: [] } as MeshData;
+    const subject: Subject = { kind: "objects", objects: [], sketches: [{ sketch: 1, points: pts.filter(moving), edges: [], regions: [], rings: [], origin: [0, 0, 0], normal: [0, 0, 1], moving: pts.filter(moving) }] };
+    return { mesh, subject };
+  }
+
+  /** How much longer `big` takes than `small`: one warm-up of each, then the fastest of
+   * nine runs of each, taken in turn so a burst of load from elsewhere hits both. */
+  function slower(small: () => void, big: () => void): number {
+    small();
+    big();
+    let [s, b] = [Infinity, Infinity];
+    for (let k = 0; k < 9; k++) {
+      let t = performance.now();
+      small();
+      s = Math.min(s, performance.now() - t);
+      t = performance.now();
+      big();
+      b = Math.min(b, performance.now() - t);
+    }
+    return b / Math.max(0.05, s);
+  }
+
+  it("#8: the Move preview's cost grows in step with the sketch's edges, not with edges times moving points", () => {
+    const small = squares(1000);
+    const big = squares(8000);
+    const pvSmall = sketchPreviews(small.subject, small.mesh);
+    const pvBig = sketchPreviews(big.subject, big.mesh);
+    // Eight times the edges: about eight times the work in step, sixty-four times when every
+    // edge is checked against every moving point (as before #8: 21 ms a frame at 1,000 edges,
+    // 356 ms at 4,000). The bound sits well between the two, so load on the machine does not
+    // make it fail (the #8 verifier saw a 4,000 vs 1,000 bound of 8 fail once under load).
+    const frame = slower(
+      () => sketchSegments(pvSmall, translation([1, 0, 0])),
+      () => sketchSegments(pvBig, translation([1, 0, 0])),
+    );
+    const start = slower(
+      () => sketchPreviews(small.subject, small.mesh),
+      () => sketchPreviews(big.subject, big.mesh),
+    );
+    expect(frame, "each frame").toBeLessThan(24);
+    expect(start, "the start of the drag").toBeLessThan(24);
+  });
+
+  it("#8: the preview is the same edges, with the same ends moved, as checking each end against every moving point", () => {
+    // Every third point moves: some edges move whole, some at one end, some not at all.
+    let k = 0;
+    const { mesh, subject } = squares(400, () => k++ % 3 === 0);
+    const part = subject.sketches![0];
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 1e-6;
+    const moves = (p: V3) => part.moving.some((q) => near(p, q));
+    const d: V3 = [0.25, 0.5, 0];
+    const want: V3[] = [];
+    const wantCopy: V3[] = [];
+    for (let i = 0; i < mesh.edges.length; i += 6) {
+      const a: V3 = [mesh.edges[i], mesh.edges[i + 1], mesh.edges[i + 2]];
+      const b: V3 = [mesh.edges[i + 3], mesh.edges[i + 4], mesh.edges[i + 5]];
+      if (!moves(a) && !moves(b)) continue;
+      const go = (p: V3): V3 => (moves(p) ? [p[0] + d[0], p[1] + d[1], p[2] + d[2]] : p);
+      want.push(go(a), go(b));
+      if (moves(a) && moves(b)) wantCopy.push(go(a), go(b));
+    }
+    const pv = sketchPreviews(subject, mesh);
+    const got = sketchSegments(pv, translation(d));
+    expect(got.length).toBe(want.length);
+    got.forEach((p, i) => close(p, want[i]));
+    const copied = sketchSegments(pv, translation(d), true);
+    expect(copied.length).toBe(wantCopy.length);
+    copied.forEach((p, i) => close(p, wantCopy[i]));
+  });
+
+  it("#8: each moving point keeps its own tolerance in the lookup, and one that is not finite is checked as before", () => {
+    // A point 10 km out has a tolerance of about 4 mm, so the lookup's cells are about 8 mm
+    // wide; a point at a quarter metre has about 2 micrometres, and keeps it.
+    const far: V3 = [1e4, 0, 0];
+    const small: V3 = [0.25, 0.25, 0];
+    const f = (x: number, y: number): V3 => [Math.fround(x), Math.fround(y), 0];
+    const ends: [V3, V3][] = [
+      [f(0.25 + 3e-6, 0.25), f(0.5, 0.5)], // 3 micrometres from the small point: stays
+      [f(0.25 + 1.5e-6, 0.25), f(0.5, 0.6)], // 1.5 micrometres: moves
+      [f(1e4 + 3e-3, 0), f(1e4 + 1, 1)], // 2.9 mm from the far point, inside its 4 mm: moves
+      [f(1e4 + 5e-3, 0), f(1e4 + 1, 2)], // 4.9 mm: stays
+    ];
+    const mesh = { positions: new Float32Array(), indices: new Uint32Array(), faceIds: new Uint32Array(), edges: new Float32Array(ends.flatMap(([a, b]) => [...a, ...b])), edgeOwner: new Uint32Array(ends.length), edgeOwners: [{ kind: "sketch", id: 1 }], parts: [] } as MeshData;
+    const subject = (moving: V3[]): Subject => ({ kind: "objects", objects: [], sketches: [{ sketch: 1, points: moving, edges: [], regions: [], rings: [], origin: [0, 0, 0], normal: [0, 0, 1], moving }] });
+    const d: V3 = [0, 0.5, 0];
+    const pv = sketchPreviews(subject([far, small]), mesh);
+    expect(pv[0].edges).toEqual([ends[1], ends[2]]);
+    expect(pv[0].moves).toEqual([
+      [true, false],
+      [true, false],
+    ]);
+    // A moving point with an infinite or undefined coordinate gives the same preview as
+    // checking every moving point (an infinite one is near everything, as it was).
+    const scanMoves = (moving: V3[]) => (p: V3) => moving.some((q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 2e-6 + 4e-7 * Math.max(Math.abs(q[0]), Math.abs(q[1]), Math.abs(q[2])));
+    for (const odd of [[Infinity, 0, 0], [0, NaN, 0], [-Infinity, -Infinity, 0]] as V3[]) {
+      const moving = [far, small, odd];
+      const moves = scanMoves(moving);
+      const want = ends.filter(([a, b]) => moves(a) || moves(b));
+      const got = sketchPreviews(subject(moving), mesh);
+      expect(got[0].edges, String(odd)).toEqual(want);
+      const segs = sketchSegments(got, translation(d));
+      expect(segs, String(odd)).toEqual(want.flatMap(([a, b]) => [a, b].map((p) => (moves(p) ? applyX(translation(d), p) : p))));
+    }
+  });
+
+  it("#8: over 400 seeded random sketches, the preview is what checking every point gives", () => {
+    // The lookup against the scan it replaced, written out here. Sketches from 1 mm to 10 km
+    // across, a third with a point 10 km out (so the points' tolerances differ a thousandfold
+    // and the cells are far wider than most of them), points off the plane and below zero,
+    // ends at fractions and multiples of a point's tolerance in every direction, rings,
+    // carried edges either way round, and points selected on their own.
+    const tol = (q: V3) => 2e-6 + 4e-7 * Math.max(Math.abs(q[0]), Math.abs(q[1]), Math.abs(q[2]));
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= tol(q);
+    let seed = 12345;
+    const rnd = () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(a: T[]): T => a[Math.floor(rnd() * a.length)];
+    const f32 = (p: V3): V3 => [Math.fround(p[0]), Math.fround(p[1]), Math.fround(p[2])];
+    // A copy of `p`, or one moved by a fraction or a multiple of its tolerance in a random direction.
+    const nudge = (p: V3): V3 => {
+      if (rnd() < 0.3) return [p[0], p[1], p[2]];
+      const d: V3 = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
+      const f = pick([0, 0.25, 0.5, 0.999, 1, 1.0001, 1.5, 2, 3]) * tol(p) / (Math.hypot(...d) || 1);
+      return [p[0] + d[0] * f, p[1] + d[1] * f, p[2] + d[2] * f];
+    };
+    const seen = { edges: 0, oneEnd: 0, lift: 0, stay: 0, lone: 0 };
+    const maps = [translation([0.5, 0, 0]), translation([0, 0, 0.25]), rotation([0, 0, 0], [0, 0, 1], 0.7), rotation([0, 0, 0], [1, 0, 0], Math.PI / 2, 90), scaling([0, 0, 0], [2, 2, 2])];
+    for (let c = 0; c < 400; c++) {
+      const step = pick([1e-3, 1, 10, 1e4]) / 5;
+      const base: V3[] = Array.from({ length: 2 + Math.floor(rnd() * 14) }, () => [Math.floor(rnd() * 5 - 2) * step, Math.floor(rnd() * 5 - 2) * step, rnd() < 0.5 ? 0 : Math.floor(rnd() * 5 - 2) * step]);
+      if (rnd() < 0.3) base.push(pick<V3>([[1e4, 0, 0], [-1e4, 0, 0], [0, -1e4, 0], [0, 0, 1e4]]));
+      const all: [V3, V3][] = Array.from({ length: 1 + Math.floor(rnd() * 20) }, () => [f32(nudge(pick(base))), f32(nudge(pick(base)))]);
+      const mesh = { positions: new Float32Array(), indices: new Uint32Array(), faceIds: new Uint32Array(), edges: new Float32Array(all.flatMap(([a, b]) => [...a, ...b])), edgeOwner: new Uint32Array(all.length), edgeOwners: [{ kind: "sketch", id: 1 }], parts: [] } as MeshData;
+      const anyEnd = () => pick(pick(all));
+      const moving: V3[] = Array.from({ length: 1 + Math.floor(rnd() * 12) }, () => nudge(anyEnd()));
+      const rings: V3[][] = rnd() < 0.5 ? [Array.from({ length: 3 + Math.floor(rnd() * 3) }, () => nudge(anyEnd()))] : [];
+      // A few of the edges selected, or (a quarter of the time) every one of them.
+      const chosen = rnd() < 0.25 ? all : Array.from({ length: Math.floor(rnd() * 4) }, () => pick(all));
+      const carried = chosen.map((e): [V3, V3] => {
+        const [a, b] = e.map(nudge);
+        return rnd() < 0.5 ? [a, b] : [b, a];
+      });
+      const points = rnd() < 0.4 ? moving.filter(() => rnd() < 0.3) : [];
+      const part = { sketch: 1, points, edges: carried, regions: rings.length ? [1] : [], rings, origin: [0, 0, 0] as V3, normal: [0, 0, 1] as V3, moving };
+      const subject: Subject = { kind: "objects", objects: [], sketches: [part] };
+      // The scan: both ends of every edge against every moving point, each with its own tolerance.
+      const mv = (p: V3) => moving.some((q) => near(p, q));
+      const keep = all.filter(([a, b]) => mv(a) || mv(b));
+      const ends = keep.map(([a, b]): [boolean, boolean] => [mv(a), mv(b)]);
+      const ringPts = rings.flat();
+      const ringEdges = rings.flatMap((r) => r.map((p, i): [V3, V3] => [p, r[(i + 1) % r.length]]));
+      const same = ([a, b]: [V3, V3], [x, y]: [V3, V3]) => (near(a, x) && near(b, y)) || (near(a, y) && near(b, x));
+      const isCarried = (e: [V3, V3]) => [...carried, ...ringEdges].some((x) => same(e, x));
+      const onRing = (p: V3) => ringPts.some((q) => near(p, q));
+      const lone = points.some((p) => ![...carried.flat(), ...ringPts].some((q) => near(p, q)));
+      const lift = !lone && (carried.length > 0 || part.regions.length > 0) && keep.every((e, i) => isCarried(e) || e.every((p, k) => !ends[i][k] || onRing(p)));
+      const [pv] = sketchPreviews(subject, mesh);
+      expect(pv.edges, `case ${c}: edges`).toEqual(keep);
+      expect(pv.moves, `case ${c}: ends`).toEqual(ends);
+      expect(pv.liftable, `case ${c}: liftable`).toBe(lift);
+      for (const x of maps) {
+        const map = sketchPointMap(part, lift, x);
+        const plain = keep.flatMap(([a, b], i) => [ends[i][0] ? map(a) : a, ends[i][1] ? map(b) : b]);
+        const copy = keep.flatMap(([a, b], i) => (ends[i][0] && ends[i][1] ? [map(a), map(b)] : []));
+        expect(sketchSegments([pv], x), `case ${c}`).toEqual(plain);
+        expect(sketchSegments([pv], x, true), `case ${c}: copy`).toEqual(copy);
+        // A preview made without the recorded ends works them out the same way.
+        expect(sketchSegments([{ ...pv, moves: undefined }], x), `case ${c}: by hand`).toEqual(plain);
+      }
+      seen.edges += keep.length;
+      seen.oneEnd += ends.filter(([a, b]) => a !== b).length;
+      seen[lift ? "lift" : "stay"]++;
+      if (lone) seen.lone++;
+    }
+    // Every kind of case came up often enough to count (2,170 edges kept, 1,496 with one end
+    // moving, 55 sketches that may leave their plane, 345 that may not, 115 with a lone point).
+    expect(seen.edges).toBeGreaterThan(2000);
+    expect(seen.oneEnd).toBeGreaterThan(300);
+    expect(seen.lift).toBeGreaterThan(40);
+    expect(seen.stay).toBeGreaterThan(40);
+    expect(seen.lone).toBeGreaterThan(10);
   });
 
   it("the preview moves whole solids, or only the moving ends of part of one", () => {
