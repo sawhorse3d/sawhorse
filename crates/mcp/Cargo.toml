@@ -1,0 +1,29 @@
+[package]
+name = "sawhorse-mcp"
+description = "A Model Context Protocol server on the Sawhorse kernel: an agent builds and reads .shz models over stdin/stdout (issue #14)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sawhorse-mcp"
+path = "src/main.rs"
+
+[dependencies]
+sawhorse-kernel.workspace = true
+sawhorse-shz.workspace = true
+# The material library (named woods and sheet goods) that add_board's materials come from.
+sawhorse-export.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The bookshelf test reads the saved file back through the command-line tool.
+sawhorse-cli = { path = "../cli" }
+
+[lints]
+workspace = true

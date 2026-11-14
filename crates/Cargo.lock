@@ -620,6 +620,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sawhorse-mcp"
+version = "0.1.0-alpha.6"
+dependencies = [
+ "sawhorse-cli",
+ "sawhorse-export",
+ "sawhorse-kernel",
+ "sawhorse-shz",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sawhorse-shz"
 version = "0.1.0-alpha.6"
 dependencies = [
