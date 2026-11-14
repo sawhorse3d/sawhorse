@@ -1629,83 +1629,18 @@ impl Sketch {
         if self.curves.is_empty() {
             return split_from;
         }
-        let mut adj: BTreeMap<SVertexId, Vec<SVertexId>> = BTreeMap::new();
-        for [a, b] in self.edges.values() {
-            adj.entry(*a).or_default().push(*b);
-            adj.entry(*b).or_default().push(*a);
-        }
+        let adj = self.adjacency();
         let mut claimed: BTreeSet<(SVertexId, SVertexId)> = BTreeSet::new();
+        let none = BTreeSet::new();
         let old = std::mem::take(&mut self.curves);
         let mut next = self.next_curve;
         let mut out: BTreeMap<u64, Curve> = BTreeMap::new();
         for (id, c) in old {
-            let (pieces, lost) = self.curve_pieces(&c, &adj, &mut claimed);
-            let split = !(pieces.len() == 1 && pieces[0].1 == c.closed);
-            let mut first = true;
-            for (chain, closed) in pieces {
-                let edges = if closed { chain.len() } else { chain.len() - 1 };
-                let (kind, mut round, segments) = if lost {
-                    (CurveKind::Polyline, None, edges as u32)
-                } else if !split {
-                    (c.kind, c.round, c.segments)
-                } else {
-                    match (c.kind, closed) {
-                        (CurveKind::Circle | CurveKind::Arc, false) => {
-                            (CurveKind::Arc, c.round, edges as u32)
-                        }
-                        _ => (CurveKind::Polyline, None, edges as u32),
-                    }
-                };
-                let mut kind = kind;
-                if let Some(r) = round.as_mut() {
-                    let pts: Vec<DVec2> = chain.iter().map(|&v| self.vertices[v]).collect();
-                    // A piece whose points no longer fit its circle (a repair bent it, say a
-                    // vertex snapped onto one of its chords zigzags it) is a polyline: the
-                    // validator's rules hold for every curve settling leaves.
-                    let fits = match fit_angles(r.centre, &pts, closed) {
-                        Some((start, sweep)) => {
-                            r.start = start;
-                            r.sweep = sweep;
-                            check_round(r, &pts, closed).is_ok()
-                        }
-                        None => false,
-                    };
-                    if !fits {
-                        kind = CurveKind::Polyline;
-                        round = None;
-                    }
+            for (key, piece) in self.settle_curve(id, &c, &adj, &none, &mut claimed, &mut next) {
+                if key != id {
+                    split_from.push((key, id));
                 }
-                let segments = if kind == CurveKind::Polyline {
-                    edges as u32
-                } else {
-                    segments
-                };
-                let min = match (kind, closed) {
-                    (_, true) => 3,
-                    (CurveKind::Polyline, false) => 2,
-                    _ => 1,
-                };
-                if edges < min {
-                    continue;
-                }
-                let key = if first {
-                    first = false;
-                    id
-                } else {
-                    next += 1;
-                    split_from.push((next - 1, id));
-                    next - 1
-                };
-                out.insert(
-                    key,
-                    Curve {
-                        kind,
-                        chain,
-                        closed,
-                        segments,
-                        round,
-                    },
-                );
+                out.insert(key, piece);
             }
         }
         self.curves = out;
@@ -1713,12 +1648,107 @@ impl Sketch {
         split_from
     }
 
+    /// Each vertex's neighbours along edges.
+    fn adjacency(&self) -> BTreeMap<SVertexId, Vec<SVertexId>> {
+        let mut adj: BTreeMap<SVertexId, Vec<SVertexId>> = BTreeMap::new();
+        for [a, b] in self.edges.values() {
+            adj.entry(*a).or_default().push(*b);
+            adj.entry(*b).or_default().push(*a);
+        }
+        adj
+    }
+
+    /// One curve of [`Self::settle_curves`], `id`: its pieces, keyed by id (the first keeps
+    /// `id`, each further one takes `next`, which moves on). An edge in `held` or `claimed`
+    /// is an older curve's; the edges this curve takes go into `claimed`.
+    fn settle_curve(
+        &self,
+        id: u64,
+        c: &Curve,
+        adj: &BTreeMap<SVertexId, Vec<SVertexId>>,
+        held: &BTreeSet<(SVertexId, SVertexId)>,
+        claimed: &mut BTreeSet<(SVertexId, SVertexId)>,
+        next: &mut u64,
+    ) -> Vec<(u64, Curve)> {
+        let mut out = Vec::new();
+        let (pieces, lost) = self.curve_pieces(c, adj, held, claimed);
+        let split = !(pieces.len() == 1 && pieces[0].1 == c.closed);
+        let mut first = true;
+        for (chain, closed) in pieces {
+            let edges = if closed { chain.len() } else { chain.len() - 1 };
+            let (kind, mut round, segments) = if lost {
+                (CurveKind::Polyline, None, edges as u32)
+            } else if !split {
+                (c.kind, c.round, c.segments)
+            } else {
+                match (c.kind, closed) {
+                    (CurveKind::Circle | CurveKind::Arc, false) => {
+                        (CurveKind::Arc, c.round, edges as u32)
+                    }
+                    _ => (CurveKind::Polyline, None, edges as u32),
+                }
+            };
+            let mut kind = kind;
+            if let Some(r) = round.as_mut() {
+                let pts: Vec<DVec2> = chain.iter().map(|&v| self.vertices[v]).collect();
+                // A piece whose points no longer fit its circle (a repair bent it, say a
+                // vertex snapped onto one of its chords zigzags it) is a polyline: the
+                // validator's rules hold for every curve settling leaves.
+                let fits = match fit_angles(r.centre, &pts, closed) {
+                    Some((start, sweep)) => {
+                        r.start = start;
+                        r.sweep = sweep;
+                        check_round(r, &pts, closed).is_ok()
+                    }
+                    None => false,
+                };
+                if !fits {
+                    kind = CurveKind::Polyline;
+                    round = None;
+                }
+            }
+            let segments = if kind == CurveKind::Polyline {
+                edges as u32
+            } else {
+                segments
+            };
+            let min = match (kind, closed) {
+                (_, true) => 3,
+                (CurveKind::Polyline, false) => 2,
+                _ => 1,
+            };
+            if edges < min {
+                continue;
+            }
+            let key = if first {
+                first = false;
+                id
+            } else {
+                *next += 1;
+                *next - 1
+            };
+            out.push((
+                key,
+                Curve {
+                    kind,
+                    chain,
+                    closed,
+                    segments,
+                    round,
+                },
+            ));
+        }
+        out
+    }
+
     /// The pieces of curve `c` in the graph as it is now (chains, closed), and whether it
-    /// lost an edge or a point. Claims the edges it keeps.
+    /// lost an edge or a point. Claims the edges it keeps; an edge in `held` or already
+    /// claimed is another curve's.
     fn curve_pieces(
         &self,
         c: &Curve,
         adj: &BTreeMap<SVertexId, Vec<SVertexId>>,
+        held: &BTreeSet<(SVertexId, SVertexId)>,
         claimed: &mut BTreeSet<(SVertexId, SVertexId)>,
     ) -> (Vec<(Vec<SVertexId>, bool)>, bool) {
         let n = c.chain.len();
@@ -1736,7 +1766,7 @@ impl Sketch {
                 p.iter().all(|&x| {
                     let k = key(prev, x);
                     prev = x;
-                    !claimed.contains(&k) && mine.insert(k)
+                    !held.contains(&k) && !claimed.contains(&k) && mine.insert(k)
                 })
             });
             match path {
@@ -1872,7 +1902,7 @@ impl Sketch {
         // The new curve's pieces must fit their circle; a stroke that does not (points the
         // insertion moved too far) stays plain edges, never a curve that lies.
         let mine: Vec<u64> = self.curves.keys().copied().filter(|&k| k >= id).collect();
-        let fits = mine.iter().all(|&k| self.curve_fits(k));
+        let fits = mine.iter().all(|k| self.round_fits(&self.curves[k]));
         if !fits {
             self.curves = before;
             self.next_curve = next_before;
@@ -1935,70 +1965,59 @@ impl Sketch {
         })
     }
 
-    /// Whether curve `id`'s points fit its circle (a curve that is not round fits).
-    fn curve_fits(&self, id: u64) -> bool {
-        let c = &self.curves[&id];
+    /// Whether a curve's points fit its circle (a curve that is not round fits).
+    fn round_fits(&self, c: &Curve) -> bool {
         c.round.is_none_or(|r| {
             let at: Vec<DVec2> = c.chain.iter().map(|&v| self.vertices[v]).collect();
             check_round(&r, &at, c.closed).is_ok()
         })
     }
 
-    /// #11: [`Self::add_curve`] for each of `curves` in order (an import's curves): the
-    /// same ids returned and the same sketch left as adding them one at a time. One at a
-    /// time costs a scan of every vertex per point and a settle of every curve per curve,
-    /// so a file of n circles took time in n squared; together it is one vertex grid and
-    /// one settle, and one at a time is kept for the imports it would not leave the same.
+    /// #11: [`Self::add_curve`] for each of `curves` in order (an import's curves), leaving
+    /// the same sketch and returning the same ids. One at a time scanned every vertex for
+    /// each point and settled every curve in the sketch for each curve, so a file of n
+    /// curves took time in n squared. Here the points are found through one grid of the
+    /// vertices, and only the new curve is settled: the graph does not change as curves are
+    /// added, a settled curve settles again to itself, and an older curve never loses an
+    /// edge to a newer one, so what settling every curve did to the older ones was nothing.
+    /// The new curve is settled as the last of them, against the edges the others hold
+    /// once settled (its own pieces' edges, after it, never the edges of a piece it
+    /// dropped), its further pieces numbered as one at a time numbers them.
     pub(crate) fn add_curves(&mut self, curves: &[NewCurve]) -> Vec<Option<u64>> {
-        if let Some(ids) = self.add_curves_together(curves) {
-            return ids;
-        }
-        curves
-            .iter()
-            .map(|c| self.add_curve(&c.pts, c.closed, c.kind, c.centre, c.segments))
-            .collect()
-    }
-
-    /// [`Self::add_curves`] all at once, or `None` (the sketch left as it was) where that
-    /// would not leave what one at a time leaves. The graph does not change as curves are
-    /// added, and the settle keeps each edge for the older curve, so a settled curve settles
-    /// again to itself and a newer one never takes from an older: settling once after them
-    /// all is settling after each, except where (a) a curve splits, whose further pieces
-    /// one at a time numbers before the next curve's id, or (b) a curve does not fit its
-    /// circle, which one at a time drops, handing its id to the next curve.
-    fn add_curves_together(&mut self, curves: &[NewCurve]) -> Option<Vec<Option<u64>>> {
-        let reach = 2.0 * SKETCH_MERGE;
-        let grid = VertexGrid::new(self, reach);
-        let (before, next_before) = (self.curves.clone(), self.next_curve);
+        let grid = VertexGrid::new(self, 2.0 * SKETCH_MERGE);
+        let adj = self.adjacency();
+        let key = |(a, b): (SVertexId, SVertexId)| (a.min(b), a.max(b));
+        let mut held: BTreeSet<(SVertexId, SVertexId)> = self
+            .curves
+            .values()
+            .flat_map(|c| c.pairs().map(key))
+            .collect();
         let mut ids = Vec::with_capacity(curves.len());
         for c in curves {
-            let made = self.new_curve(&c.pts, c.closed, c.kind, c.centre, c.segments, |p| {
+            let Some(curve) = self.new_curve(&c.pts, c.closed, c.kind, c.centre, c.segments, |p| {
                 grid.near(self, p)
-            });
-            ids.push(made.map(|curve| {
-                let id = self.next_curve;
-                self.next_curve += 1;
-                self.curves.insert(id, curve);
-                id
-            }));
+            }) else {
+                ids.push(None);
+                continue;
+            };
+            let id = self.next_curve;
+            let mut next = id + 1;
+            let mut taken = BTreeSet::new();
+            let pieces = self.settle_curve(id, &curve, &adj, &held, &mut taken, &mut next);
+            // As one at a time: a piece off its circle leaves the stroke plain edges and the
+            // id unspent; a curve that kept no edge spends its id.
+            if !pieces.iter().all(|(_, p)| self.round_fits(p)) {
+                ids.push(None);
+                continue;
+            }
+            self.next_curve = next;
+            ids.push(pieces.first().map(|(k, _)| *k));
+            for (k, p) in pieces {
+                held.extend(p.pairs().map(key));
+                self.curves.insert(k, p);
+            }
         }
-        let split = self.settle_curves();
-        let fits = ids
-            .iter()
-            .flatten()
-            .all(|&id| !self.curves.contains_key(&id) || self.curve_fits(id));
-        if !split.is_empty() || !fits {
-            self.curves = before;
-            self.next_curve = next_before;
-            return None;
-        }
-        // A curve that kept no edge (an older one holds them all) is gone, its id spent, as
-        // one at a time leaves it.
-        Some(
-            ids.into_iter()
-                .map(|id| id.filter(|k| self.curves.contains_key(k)))
-                .collect(),
-        )
+        ids
     }
 
     /// Lane 23: erase a whole curve (the Eraser on any of its segments): every edge of it
@@ -3052,8 +3071,15 @@ mod tests {
     /// One stroke of a random import: its points and, when it is one, its curve.
     fn random_stroke(r: &mut Mix, made: &[NewCurve], spread: f64) -> NewCurve {
         let grid = |r: &mut Mix| v(r.below(9) as f64 * spread, r.below(9) as f64 * spread);
-        let radii = [0.02, 0.05, 0.1, 0.25];
-        match r.below(7) {
+        let radii = [0.003, 0.02, 0.05, 0.1, 0.25];
+        let plain = |pts: Vec<DVec2>| NewCurve {
+            pts,
+            closed: false,
+            kind: CurveKind::Polyline,
+            centre: None,
+            segments: 0,
+        };
+        match r.below(10) {
             // Again, exactly or within the merge distance: the second one loses its edges
             // to the first, or lands on the same points.
             0 if !made.is_empty() => {
@@ -3062,29 +3088,35 @@ mod tests {
                 c.pts.iter_mut().for_each(|p| p.x += d);
                 c
             }
-            // A circle (sometimes about a centre a little off, so it does not fit).
+            // A circle or a polygon, sometimes square to the axes, sometimes about a centre
+            // a little off (so it does not fit).
             0..=2 => {
                 let c = grid(r);
-                let rad = radii[r.below(4) as usize];
-                let n = 3 + r.below(30) as usize;
-                let a0 = r.unit() * TAU;
+                let rad = radii[r.below(5) as usize];
+                let n = [3, 4, 5, 6, 8, 12, 24, 33][r.below(8) as usize];
+                let a0 = [0.0, TAU / 8.0, r.unit() * TAU][r.below(3) as usize];
                 let pts = (0..n)
                     .map(|k| c + rad * DVec2::from_angle(a0 + TAU * k as f64 / n as f64))
                     .collect();
                 let off = [0.0, 0.0, 1e-5, 3e-5, 1e-3][r.below(5) as usize];
+                let kind = if r.below(3) == 0 {
+                    CurveKind::Polygon
+                } else {
+                    CurveKind::Circle
+                };
                 NewCurve {
                     pts,
                     closed: true,
-                    kind: CurveKind::Circle,
+                    kind,
                     centre: Some(c + v(off, 0.0)),
                     segments: n as u32,
                 }
             }
-            // An arc either way round.
+            // An arc either way round, of one segment or more.
             3 => {
                 let c = grid(r);
-                let rad = radii[r.below(4) as usize];
-                let n = 1 + r.below(16) as usize;
+                let rad = radii[r.below(5) as usize];
+                let n = [1, 1, 2, 3, 6, 16][r.below(6) as usize];
                 let a0 = r.unit() * TAU;
                 let sweep = (0.1 + r.unit() * 6.0) * if r.below(2) == 0 { 1.0 } else { -1.0 };
                 let pts = (0..=n)
@@ -3098,12 +3130,19 @@ mod tests {
                     segments: n as u32,
                 }
             }
-            // A polyline curve, open or closed, on the grid.
+            // A polyline curve on the grid: open, closed, P-shaped (back to its second
+            // point) or doubled back on its last edge.
             4 => {
                 let n = 2 + r.below(4) as usize;
-                let closed = n > 2 && r.below(2) == 0;
-                let pts: Vec<DVec2> = (0..n).map(|_| grid(r)).collect();
-                let segments = if closed { n } else { n - 1 } as u32;
+                let mut pts: Vec<DVec2> = (0..n).map(|_| grid(r)).collect();
+                let shape = r.below(4);
+                if shape == 0 && n >= 4 {
+                    pts.push(pts[1]);
+                } else if shape == 1 {
+                    pts.push(pts[n - 2]);
+                }
+                let closed = shape == 2 && n > 2;
+                let segments = if closed { pts.len() } else { pts.len() - 1 } as u32;
                 NewCurve {
                     pts,
                     closed,
@@ -3112,14 +3151,35 @@ mod tests {
                     segments,
                 }
             }
+            // An arc of one or two segments over a chord of an earlier circle or polygon.
+            5 => {
+                let round: Vec<&NewCurve> = made
+                    .iter()
+                    .filter(|c| c.closed && c.centre.is_some())
+                    .collect();
+                if round.is_empty() {
+                    return plain(vec![grid(r), grid(r)]);
+                }
+                let c = round[r.below(round.len() as u64) as usize];
+                let n = c.pts.len();
+                let i = r.below(n as u64) as usize;
+                let take = 1 + r.below(2) as usize;
+                NewCurve {
+                    pts: (0..=take).map(|j| c.pts[(i + j) % n]).collect(),
+                    closed: false,
+                    kind: CurveKind::Arc,
+                    centre: c.centre,
+                    segments: take as u32,
+                }
+            }
+            // A spur from a point of an earlier stroke (a junction on it).
+            6 if !made.is_empty() => {
+                let c = &made[r.below(made.len() as u64) as usize];
+                let p = c.pts[r.below(c.pts.len() as u64) as usize];
+                plain(vec![p, grid(r) + v(0.013, 0.007) * spread])
+            }
             // A plain line across whatever is there (no curve: segments 0).
-            _ => NewCurve {
-                pts: vec![grid(r), grid(r)],
-                closed: false,
-                kind: CurveKind::Polyline,
-                centre: None,
-                segments: 0,
-            },
+            _ => plain(vec![grid(r), grid(r)]),
         }
     }
 
@@ -3152,16 +3212,16 @@ mod tests {
 
     /// #11: adding an import's curves together leaves exactly what adding them one at a
     /// time left (the same curves, ids, points and angles, the same next id, the same model
-    /// hash) and returns the same ids, over 400 random imports into sketches that may hold
-    /// curves already: circles, arcs and polylines, crossing, touching, repeated (exactly
-    /// or within the merge distance), about centres a little off, crowded or spread out.
-    /// Both ways of adding
-    /// them must be taken: all together, and one at a time where a curve splits or does
-    /// not fit.
+    /// hash) and returns the same ids, over 1,000 random imports into sketches that may
+    /// hold curves already: circles, polygons, arcs (of one segment too, and over another
+    /// curve's chord) and polylines (P-shaped and doubled back too), crossing, touching,
+    /// with spurs at their points, repeated (exactly or within the merge distance), about
+    /// centres a little off, crowded or spread out. Each kind of outcome must turn up:
+    /// curves that split, curves that stay plain edges, and imports where neither happens.
     #[test]
     fn curves_added_together_match_curves_added_one_at_a_time() {
-        let (mut together, mut fell_back, mut refused) = (0, 0, 0);
-        for seed in 0..400u64 {
+        let (mut split, mut refused, mut clean) = (0, 0, 0);
+        for seed in 0..1000u64 {
             let mut r = Mix(seed);
             // Strokes crowded on a 0.1 grid (most cross), or spread out on a 1.0 one.
             let spread = if seed % 2 == 0 { 0.1 } else { 1.0 };
@@ -3185,19 +3245,12 @@ mod tests {
             let curves = insert_like_an_import(&mut s, &strokes);
             let mut a = s.clone();
             let want = one_at_a_time(&mut a, &curves);
-            refused += want.iter().filter(|x| x.is_none()).count();
-            let mut b = s.clone();
-            match b.add_curves_together(&curves) {
-                Some(_) => together += 1,
-                None => {
-                    fell_back += 1;
-                    assert_eq!(
-                        crate::hash::sketch_hash(&b),
-                        crate::hash::sketch_hash(&s),
-                        "seed {seed}: a batch that falls back leaves the sketch as it was"
-                    );
-                }
-            }
+            let made_ids = want.iter().flatten().count();
+            let none = want.len() - made_ids;
+            let pieces = a.curve_count() - s.curve_count();
+            refused += usize::from(none > 0);
+            split += usize::from(pieces > made_ids);
+            clean += usize::from(none == 0 && pieces == made_ids && made_ids > 0);
             let mut b = s.clone();
             let got = b.add_curves(&curves);
             assert_eq!(got, want, "seed {seed}: the ids returned");
@@ -3213,10 +3266,10 @@ mod tests {
                 "seed {seed}"
             );
         }
-        eprintln!("together {together}, fell back {fell_back}, plain edges {refused}");
-        assert!(together > 60, "together {together}");
-        assert!(fell_back > 20, "fell back {fell_back}");
-        assert!(refused > 20, "curves that stay plain edges {refused}");
+        eprintln!("imports with a curve split {split}, with plain edges {refused}, clean {clean}");
+        assert!(split > 100, "split {split}");
+        assert!(refused > 100, "plain edges {refused}");
+        assert!(clean > 50, "clean {clean}");
     }
 
     /// #11: the vertex grid finds what the scan finds, ties to the smaller id included,

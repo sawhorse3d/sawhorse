@@ -825,26 +825,109 @@ fn an_imports_curves_leave_what_adding_them_one_at_a_time_left() {
     assert_eq!(d.hash(), ACROSS_HASH, "{:#x}", d.hash());
 }
 
-/// #11: an import of 1,000 small circles as curves takes no more than twice as long as the
-/// same strokes plain (the fastest of three runs each, taken in turn, so a busy machine
-/// slows both). Adding the curves one at a time scanned every vertex for each point and
-/// settled every curve for each curve: 4.6 times as long (3.8 s against 0.8 s in the test
-/// profile); together, about as long.
+fn curve_stroke(points: Vec<[f64; 3]>, closed: bool, kind: CurveKind) -> ImportStroke {
+    ImportStroke {
+        points,
+        closed,
+        curve: Some(CurveSpec {
+            kind,
+            centre: kind.is_round().then_some([0.0, 0.0, 0.0]),
+        }),
+    }
+}
+
+/// #11, the verifier's two cases: an older curve of the import splits, and a piece of it
+/// too short to be a curve is dropped; the edge that piece ran along is then free for a
+/// newer curve of the same import, as it was when the curves were added one at a time.
+/// Adding them all and settling once had left that edge with the older curve, so the newer
+/// one lost it. The hashes and notes were taken on `main` before the change.
+#[test]
+fn an_edge_an_older_curve_drops_goes_to_a_newer_one() {
+    // A square polygon on a circle of 0.1 about the origin, a spur at two neighbouring
+    // corners (it splits there, and its one-edge piece between them is dropped), and an
+    // arc of one segment along that side.
+    let p = |k: f64| {
+        let a = TAU / 8.0 + k * TAU / 4.0;
+        [0.1 * a.cos(), 0.1 * a.sin(), 0.0]
+    };
+    let (p0, p1) = (p(0.0), p(1.0));
+    let mut d = Document::new();
+    let out = ok(
+        &mut d,
+        strokes_op(vec![
+            curve_stroke(vec![p0, p1, p(2.0), p(3.0)], true, CurveKind::Polygon),
+            ImportStroke {
+                points: vec![p0, [p0[0] + 0.1, p0[1] + 0.1, 0.0]],
+                closed: false,
+                curve: None,
+            },
+            ImportStroke {
+                points: vec![p1, [p1[0] - 0.1, p1[1] + 0.1, 0.0]],
+                closed: false,
+                curve: None,
+            },
+            curve_stroke(vec![p0, p1], false, CurveKind::Arc),
+        ]),
+    );
+    check_model(d.model()).unwrap();
+    assert_eq!(
+        notes_of(&out),
+        vec!["2 curves came in as curves (1 arc, 1 polygon)".to_string()]
+    );
+    assert_eq!(d.hash(), 0x47d2_4ae2_1f76_33cc, "{:#x}", d.hash());
+
+    // A P-shaped polyline (back to its second point, so its tail is a piece of one edge,
+    // dropped), then a polyline along that tail.
+    let (a, b) = ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+    let mut d = Document::new();
+    let out = ok(
+        &mut d,
+        strokes_op(vec![
+            curve_stroke(
+                vec![a, b, [1.5, 0.5, 0.0], [1.0, 1.0, 0.0], b],
+                false,
+                CurveKind::Polyline,
+            ),
+            curve_stroke(vec![[0.0, -1.0, 0.0], a, b], false, CurveKind::Polyline),
+        ]),
+    );
+    check_model(d.model()).unwrap();
+    assert_eq!(
+        notes_of(&out),
+        vec!["2 curves came in as curves".to_string()]
+    );
+    assert_eq!(d.hash(), 0xceaf_dc27_8297_e308, "{:#x}", d.hash());
+}
+
+/// #11: an import of 1,000 small circles as curves, every other one with a line across it
+/// (so it splits into two arcs), takes no more than twice as long as the same strokes
+/// plain (the fastest of three runs each, taken in turn, so a busy machine slows both).
+/// Adding the curves one at a time scanned every vertex for each point and settled every
+/// curve in the sketch for each curve: 4.0 times as long (5.1 s against 1.3 s in the test
+/// profile); now about as long.
 #[test]
 fn an_imports_curves_cost_about_what_its_strokes_cost() {
     let op = |curves: bool| {
-        strokes_op(
-            (0..1000)
-                .map(|i| {
-                    let c = [f64::from(i % 40) * 0.3, f64::from(i / 40) * 0.3];
-                    let mut s = round_stroke(c, R, 8, 0.0, TAU, 0.0);
-                    if !curves {
-                        s.curve = None;
-                    }
-                    s
-                })
-                .collect(),
-        )
+        let mut strokes = Vec::new();
+        for i in 0..1000 {
+            let c = [f64::from(i % 40) * 0.3, f64::from(i / 40) * 0.3];
+            let mut s = round_stroke(c, R, 8, 0.1, TAU, 0.0);
+            if !curves {
+                s.curve = None;
+            }
+            strokes.push(s);
+            if i % 2 == 0 {
+                strokes.push(ImportStroke {
+                    points: vec![
+                        [c[0] - 0.1, c[1] + 0.01, 0.0],
+                        [c[0] + 0.1, c[1] + 0.01, 0.0],
+                    ],
+                    closed: false,
+                    curve: None,
+                });
+            }
+        }
+        strokes_op(strokes)
     };
     let mut best = [f64::MAX; 2];
     for _ in 0..3 {
@@ -859,11 +942,18 @@ fn an_imports_curves_cost_about_what_its_strokes_cost() {
                     notes_of(&out),
                     vec!["1000 curves came in as curves".to_string()]
                 );
+                let arcs = d
+                    .model()
+                    .sketches()
+                    .into_iter()
+                    .map(|(_, s)| s.curves().filter(|(_, c)| c.kind == CurveKind::Arc).count())
+                    .sum::<usize>();
+                assert_eq!(arcs, 1000, "500 crossed circles, two arcs each");
             }
         }
     }
     eprintln!(
-        "1,000 circles: {:.3} s as curves, {:.3} s plain",
+        "1,000 circles, 500 crossed: {:.3} s as curves, {:.3} s plain",
         best[0], best[1]
     );
     assert!(best[0] <= 2.0 * best[1], "{best:?}");
