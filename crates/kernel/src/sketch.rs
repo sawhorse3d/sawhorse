@@ -2004,8 +2004,8 @@ impl Sketch {
             let mut next = id + 1;
             let mut taken = BTreeSet::new();
             let pieces = self.settle_curve(id, &curve, &adj, &held, &mut taken, &mut next);
-            // As one at a time: a piece off its circle leaves the stroke plain edges and the
-            // id unspent; a curve that kept no edge spends its id.
+            // The check `add_curve` makes, kept the same (a settle already makes a piece off
+            // its circle a polyline, so it holds today); a curve that kept no edge spends its id.
             if !pieces.iter().all(|(_, p)| self.round_fits(p)) {
                 ids.push(None);
                 continue;
