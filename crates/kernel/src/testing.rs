@@ -556,7 +556,7 @@ pub fn check_nesting_of(
 ) -> Result<(), String> {
     use crate::cutlist::Grain;
     use crate::nesting::{
-        CutDir, EPS, MAX_GLUE_STRIPS, MIN_GLUE_FILLER, UnplacedReason, effective_trim,
+        CutDir, EPS, MAX_GLUE_STRIPS, MIN_GLUE_FILLER, UnplacedReason, effective_trim, glue_minimum,
     };
     use crate::stock::{
         NestAlgorithm, SHEET_THICKNESS_SLACK, STOCK_EPSILON, StockGrain, StockKind,
@@ -711,7 +711,9 @@ pub fn check_nesting_of(
     }
     // #49: every glued part is strips 1..=of, each once, all off one stock: full-width
     // strips of that board and one filler no wider, their widths the part's width plus a
-    // joint loss per joint; and listed among the glue-ups with exactly those widths.
+    // joint loss per joint; and listed among the glue-ups with exactly those widths. #56: a
+    // filler under the minimum (the smaller of 1 1/2 in and a quarter of the board) and the
+    // full strip before it are two equal strips instead, so no strip is under the minimum.
     let joint = n.settings.joint_loss;
     for (&(row_i, copy), v) in &mut strips {
         let row = &list.rows[row_i];
@@ -735,14 +737,24 @@ pub fn check_nesting_of(
             .find(&v[0].3)
             .ok_or_else(|| format!("part {} {copy}: strips name a missing stock", row_i + 1))?
             .1;
-        let full = v[..of - 1].iter().all(|s| close(s.2, board.width));
-        let filler = v[of - 1].2;
+        let filler = row.size[1] + (of - 1) as f64 * joint - (of - 1) as f64 * board.width;
+        let min = glue_minimum(board.width);
+        let mut want = vec![board.width; of - 1];
+        want.push(filler);
+        if filler < min {
+            let half = 0.5 * (board.width + filler);
+            want[of - 2] = half;
+            want[of - 1] = half;
+        }
+        let as_planned = v.iter().zip(&want).all(|(s, w)| close(s.2, *w));
+        let narrowest = v.iter().map(|s| s.2).fold(f64::INFINITY, f64::min);
         let total: f64 = v.iter().map(|s| s.2).sum();
-        // Lane 42: never more than MAX_GLUE_STRIPS strips, never a filler narrower than the
-        // kerf or MIN_GLUE_FILLER.
-        if !full
+        // Lane 42: never more than MAX_GLUE_STRIPS strips, never a strip narrower than the
+        // kerf or MIN_GLUE_FILLER; #56: nor than the minimum.
+        if !as_planned
             || !(filler > joint - EPS && filler <= board.width + EPS)
-            || filler < kerf.max(MIN_GLUE_FILLER) - EPS
+            || narrowest < kerf.max(MIN_GLUE_FILLER) - EPS
+            || narrowest < min - EPS
             || of > MAX_GLUE_STRIPS
             || !close(total, row.size[1] + (of - 1) as f64 * joint)
             || row.size[1] <= board.width + EPS
@@ -832,18 +844,41 @@ pub fn check_nesting_of(
             // is at most MAX_GLUE_STRIPS with a filler no narrower than the kerf or 1 mm.
             // The fix pass: a part of no length (1 nm or less) is never glued, and each
             // count's filler is worked out as the kernel works it out, so the two agree to
-            // the last bit on a boundary.
-            let gluable = s.kind == StockKind::Board
-                && !row.sheet
-                && row.grain != Grain::Width
-                && l > EPS
-                && l <= uw + EPS
-                && w > uh + EPS
-                && uh > joint + EPS
-                && (2..=MAX_GLUE_STRIPS)
-                    .map(|k| w + (k - 1) as f64 * joint - (k - 1) as f64 * uh)
-                    .find(|&filler| filler <= uh + EPS)
-                    .is_some_and(|filler| filler >= kerf.max(MIN_GLUE_FILLER) - EPS);
+            // the last bit on a boundary. #56: the refusals are on the narrowest strip, after
+            // a filler under the minimum is made equal with the strip before it.
+            let glues_on = |b: &crate::stock::StockDef| {
+                let (bl, bh) = (b.length - 2.0 * trim, b.width);
+                b.kind == StockKind::Board
+                    && !row.sheet
+                    && row.grain != Grain::Width
+                    && l > EPS
+                    && l <= bl + EPS
+                    && w > bh + EPS
+                    && bh > joint + EPS
+                    && (2..=MAX_GLUE_STRIPS)
+                        .map(|k| w + (k - 1) as f64 * joint - (k - 1) as f64 * bh)
+                        .find(|&filler| filler <= bh + EPS)
+                        .is_some_and(|filler| {
+                            let narrowest = if filler < glue_minimum(bh) {
+                                0.5 * (bh + filler)
+                            } else {
+                                filler
+                            };
+                            narrowest >= kerf.max(MIN_GLUE_FILLER) - EPS
+                        })
+            };
+            // #56: a part whose stock is not said (by the part or its material's default) is
+            // too large only when no board of that thickness glues it.
+            let said = row.stock_set
+                || row
+                    .material
+                    .as_deref()
+                    .is_some_and(|m| n.library.default_for(m).is_some());
+            let gluable = glues_on(s)
+                || (!said
+                    && n.library.stocks.iter().any(|b| {
+                        b.kind == StockKind::Board && b.thickness == s.thickness && glues_on(b)
+                    }));
             let ok = !gluable
                 && match u.reason {
                     UnplacedReason::TooLarge => !fits_any,

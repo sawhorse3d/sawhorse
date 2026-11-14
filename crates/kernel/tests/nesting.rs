@@ -924,8 +924,10 @@ fn near_in(a: f64, b: f64) -> bool {
 
 /// #49: a solid part wider than every board is glued up from full-width strips and one
 /// filler instead of being reported too large. A 15 x 40 in panel is wider than the widest
-/// built-in 4/4 board (12 in): one 12 in strip and a 3 1/8 in filler (15 + 1/8 joint loss
-/// - 12), on one board, tagged 1.1 and 1.2.
+/// built-in 4/4 board (12 in). #56: 4/4 x 8 and 4/4 x 12 both glue it from two strips, and
+/// with nothing else of that oak library order decides, 4/4 x 8: one 8 in strip and a
+/// 7 1/8 in filler (15 + 1/8 joint loss - 8), on one board, tagged 1.1 and 1.2 (#53 took
+/// the widest board, 12 + 3 1/8 in).
 #[test]
 fn a_part_wider_than_every_board_is_glued_up() {
     let n = oak(&[(0.75, 15.0, 40.0, 1)], 0.125);
@@ -934,8 +936,8 @@ fn a_part_wider_than_every_board_is_glued_up() {
     assert_eq!(n.totals.boards, 1);
     let s = strips_of(&n, 0);
     assert_eq!(s.len(), 2);
-    assert!(s.iter().all(|(stock, _)| stock == "4/4 x 12 x 96"));
-    assert!(near_in(s[0].1, 12.0) && near_in(s[1].1, 3.125), "{s:?}");
+    assert!(s.iter().all(|(stock, _)| stock == "4/4 x 8 x 96"));
+    assert!(near_in(s[0].1, 8.0) && near_in(s[1].1, 7.125), "{s:?}");
     let tags: Vec<&str> = n.pieces[0]
         .placements
         .iter()
@@ -950,24 +952,22 @@ fn a_part_wider_than_every_board_is_glued_up() {
     );
     assert_eq!(n.glue_ups.len(), 1);
     assert_eq!(n.glue_ups[0].tag, "1");
-    assert_eq!(n.glue_ups[0].stock, "4/4 x 12 x 96");
+    assert_eq!(n.glue_ups[0].stock, "4/4 x 8 x 96");
 }
 
-/// #49's example: a 17 in cabinet side from 6 in stock is three strips, two full width and
-/// a filler (17 + 2 x 1/8 - 12 = 5 1/4 in). The strips come off the board the rest of the
-/// oak uses (two 5 in shelves put it on 4/4 x 6). A part a listed board makes in one piece
-/// is never glued: a 10 in part fits 4/4 x 12, so it is one piece.
+/// #49's example: a 17 in cabinet side beside two 5 in shelves, which put the rest of the
+/// oak on 4/4 x 6. #56: it is glued from the board that takes the fewest strips, 4/4 x 12:
+/// a 12 in strip and a 5 1/8 in filler (17 + 1/8 - 12), one joint, where the shelves' 6 in
+/// board took three strips, two joints (#53 glued it 6 + 6 + 5 1/4 in). A part a listed
+/// board makes in one piece is never glued: a 10 in part fits 4/4 x 12, so it is one piece.
 #[test]
-fn a_side_glued_from_the_boards_the_rest_of_the_oak_uses() {
+fn a_side_glued_from_the_board_that_takes_the_fewest_strips() {
     let n = oak(&[(0.75, 5.0, 30.0, 2), (0.75, 17.0, 30.0, 1)], 0.125);
     assert_eq!(n.totals.unplaced, 0, "{:#?}", n.unplaced);
     let s = strips_of(&n, 1);
-    assert_eq!(s.len(), 3, "{s:?}");
-    assert!(s.iter().all(|(stock, _)| stock == "4/4 x 6 x 96"), "{s:?}");
-    assert!(
-        near_in(s[0].1, 6.0) && near_in(s[1].1, 6.0) && near_in(s[2].1, 5.25),
-        "{s:?}"
-    );
+    assert_eq!(s.len(), 2, "{s:?}");
+    assert!(s.iter().all(|(stock, _)| stock == "4/4 x 12 x 96"), "{s:?}");
+    assert!(near_in(s[0].1, 12.0) && near_in(s[1].1, 5.125), "{s:?}");
     // The shelves are whole pieces.
     assert!(
         n.pieces
@@ -1031,21 +1031,61 @@ fn no_joint_loss_glues_whole_boards() {
     assert!(near_in(s[0].1, 12.0) && near_in(s[1].1, 12.0), "{s:?}");
 }
 
-/// Lane 42: a glue-up never plans a filler narrower than the kerf. With no joint loss and a
-/// 1/8 in kerf, a 12 1/16 in panel would be a 12 in strip and a 1/16 in sliver, so it is
-/// reported too large with its board, as before #49; with a 1/16 in joint loss its filler
-/// is 1/8 in, the kerf itself, and it is glued.
+/// Lane 42: a glue-up never plans a strip narrower than the kerf. #56: nor a last strip
+/// under the minimum, the smaller of 1 1/2 in and a quarter of the board: it and the strip
+/// before it are made equal. With no joint loss and a 1/8 in kerf, a 6 1/16 in panel on
+/// 6 in boards would be a 6 in strip and a 1/16 in sliver, reported too large (#53); now it
+/// is 3 1/32 + 3 1/32 in. With a 1/16 in joint loss it was 6 + 1/8 in; now
+/// 3 1/16 + 3 1/16 in. #53's 12 1/16 in oak panel, refused then, is now one joint on
+/// 4/4 x 8 (8 + 4 1/16 in), the first of the boards that glue it from two strips.
 #[test]
-fn a_filler_narrower_than_the_kerf_is_never_planned() {
+fn a_filler_under_the_minimum_is_made_equal_with_the_strip_before_it() {
+    for (joint, each) in [(0.0, 3.03125), (0.0625, 3.0625)] {
+        let (list, n) =
+            on_six_inch_boards([0.75 * IN, 6.0625 * IN, 40.0 * IN], joint * IN, IN / 8.0);
+        check_nesting_of(&list, &n).unwrap();
+        assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+        let s = strips_of(&n, 0);
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(near_in(s[0].1, each) && near_in(s[1].1, each), "{s:?}");
+    }
     let n = oak(&[(0.75, 12.0625, 40.0, 1)], 0.0);
-    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
-    assert_eq!(n.unplaced.len(), 1, "{:#?}", n.unplaced);
-    assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
-    assert_eq!(n.unplaced[0].stock.as_deref(), Some("4/4 x 12 x 96"));
-    let n = oak(&[(0.75, 12.0625, 40.0, 1)], 0.0625);
+    let s = strips_of(&n, 0);
+    assert!(s.iter().all(|(stock, _)| stock == "4/4 x 8 x 96"), "{s:?}");
+    assert!(near_in(s[0].1, 8.0) && near_in(s[1].1, 4.0625), "{s:?}");
+    // #56's example: a 6.003 in part on 6 in boards, with a 1/8 in joint loss, would be
+    // 6 + 0.128 in; the minimum on a 6 in board is 1 1/2 in, so it is 3.064 + 3.064 in.
+    let (list, n) = on_six_inch_boards([0.75 * IN, 6.003 * IN, 20.0 * IN], IN / 8.0, IN / 8.0);
+    check_nesting_of(&list, &n).unwrap();
     let s = strips_of(&n, 0);
     assert_eq!(s.len(), 2, "{s:?}");
-    assert!(near_in(s[0].1, 12.0) && near_in(s[1].1, 0.125), "{s:?}");
+    assert!(near_in(s[0].1, 3.064) && near_in(s[1].1, 3.064), "{s:?}");
+    // A filler at the minimum or wider stays: 7 1/2 in on 6 in boards with no joint loss is
+    // 6 + 1 1/2 in.
+    let (list, n) = on_six_inch_boards([0.75 * IN, 7.5 * IN, 20.0 * IN], 0.0, IN / 8.0);
+    check_nesting_of(&list, &n).unwrap();
+    let s = strips_of(&n, 0);
+    assert!(near_in(s[0].1, 6.0) && near_in(s[1].1, 1.5), "{s:?}");
+    // A quarter of the board when that is less: on 4 in boards the minimum is 1 in, so
+    // 5.1 in is 4 + 1.1 in, and 4.9 in is 4 + 0.9 in made equal, 2.45 + 2.45 in.
+    let on_four = |w: f64| {
+        let list = list_of(&[(0.75, w, 30.0, 1, Grain::Length, false, 0)], 0);
+        let mut lib = StockLibrary::builtin();
+        lib.defaults.clear();
+        lib.stocks
+            .retain(|s| s.kind == StockKind::Sheet || s.name == "4/4 x 4 x 96");
+        let st = NestSettings {
+            joint_loss: 0.0,
+            ..NestSettings::default()
+        };
+        let n = nest_list(&list, &lib, st);
+        check_nesting_of(&list, &n).unwrap();
+        strips_of(&n, 0)
+    };
+    let s = on_four(5.1);
+    assert!(near_in(s[0].1, 4.0) && near_in(s[1].1, 1.1), "{s:?}");
+    let s = on_four(4.9);
+    assert!(near_in(s[0].1, 2.45) && near_in(s[1].1, 2.45), "{s:?}");
 }
 
 /// Lane 42: a glue-up has a bounded number of strips. A 1/2 in board with a 0.49 in joint
@@ -1101,9 +1141,17 @@ fn a_glue_up_has_a_bounded_number_of_strips() {
     assert!(s.iter().all(|(_, w)| near_in(*w, 1.0)));
     assert!(too_large(&nest_on(1.0, 120.0, (100.5, 110.0), 0.0)));
     // 4 m boards (the library takes up to 10 m): 8 m and 2 nm is two whole boards and a
-    // 2 nm filler, refused; never one strip 2 nm wider than its board.
+    // 2 nm filler; never one strip 2 nm wider than its board. #56: the filler and the board
+    // before it are made two equal strips, 2 m and 1 nm each (#53 refused it).
     let n = nest_on(4.0 / IN, 10.0 / IN, ((8.0 + 2e-9) / IN, 9.0 / IN), 0.0);
-    assert!(too_large(&n), "{:#?}", n.glue_ups);
+    let s = strips_of(&n, 0);
+    assert_eq!(s.len(), 3, "{s:?}");
+    assert!(
+        (s[0].1 * IN - 4.0).abs() < 1e-12
+            && (s[1].1 * IN - (2.0 + 1e-9)).abs() < 1e-12
+            && (s[2].1 * IN - (2.0 + 1e-9)).abs() < 1e-12,
+        "{s:?}"
+    );
 }
 
 /// One part of the size given (metres, as the cut list row holds it: thickness, width,
@@ -1137,21 +1185,26 @@ fn on_six_inch_boards(size: [f64; 3], joint: f64, kerf: f64) -> (CutList, Nestin
 /// quotient and the filler from a sum, and the two can round apart: a part 12 in and 1 nm
 /// wide on 6 in boards with no joint loss was counted as 2 strips with a filler a hair wider
 /// than 6 in and 1 nm, which the board layout refused, a panic ("only fitting parts are laid
-/// out"). The count is now settled on the filler, so that part is reported too large, as
-/// before #49 (its third strip would be a 1 nm filler, narrower than the kerf). Every width
-/// a hundred floating point steps either side of each such boundary, for several strip
-/// counts, joint losses and kerfs, nests without a panic, keeps every invariant, and never
-/// puts a strip wider than its board.
+/// out"). The count is settled on the filler, so that part is three strips; #56 makes its
+/// 1 nm filler and the board before it two equal strips, 6 + 3 + 3 in and a hair (#53
+/// reported it too large). Every width a hundred floating point steps either side of each
+/// such boundary, for several strip counts, joint losses and kerfs, nests without a panic,
+/// keeps every invariant, never puts a strip wider than its board, and never one narrower
+/// than the minimum.
 #[test]
 fn a_part_a_hair_wider_than_whole_boards_never_panics() {
     let (list, n) = on_six_inch_boards([0.75 * IN, 0.304_800_001, 20.0 * IN], 0.0, IN / 8.0);
     check_nesting_of(&list, &n).unwrap();
-    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
-    assert_eq!(n.unplaced.len(), 1, "{:#?}", n.unplaced);
-    assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
-    assert_eq!(n.unplaced[0].stock.as_deref(), Some("Six"));
+    assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+    let s = strips_of(&n, 0);
+    assert_eq!(s.len(), 3, "{s:?}");
+    assert!(
+        near_in(s[0].1, 6.0) && (s[1].1 - 3.0).abs() < 1e-6 && s[1].1 == s[2].1,
+        "{s:?}"
+    );
     let h = 6.0 * IN;
-    let (mut glued, mut too_large) = (0, 0);
+    let min = sawhorse_kernel::nesting::glue_minimum(h);
+    let (mut glued, mut made_equal) = (0, 0);
     for joint in [0.0, IN / 16.0, IN / 8.0, IN / 2.0] {
         for kerf in [0.0, IN / 8.0] {
             for strips in [2usize, 3, 5, 40] {
@@ -1165,18 +1218,29 @@ fn a_part_a_hair_wider_than_whole_boards_never_panics() {
                         .unwrap_or_else(|e| panic!("{w} m, joint {joint}, kerf {kerf}: {e}"));
                     for q in n.pieces.iter().flat_map(|p| &p.placements) {
                         assert!(q.dy <= h + 1e-9, "{w} m: a strip {} m wide", q.dy);
+                        assert!(q.dy >= min - 1e-9, "{w} m: a strip {} m wide", q.dy);
                     }
+                    assert!(n.unplaced.is_empty(), "{w} m: {:#?}", n.unplaced);
                     glued += n.glue_ups.len();
-                    too_large += n.unplaced.len();
+                    made_equal += n
+                        .glue_ups
+                        .iter()
+                        .filter(|g| {
+                            g.widths[g.widths.len() - 1] < h - 1e-9 && {
+                                let k = g.widths.len();
+                                g.widths[k - 1] == g.widths[k - 2]
+                            }
+                        })
+                        .count();
                 }
             }
         }
     }
-    // Below each edge the part is glued; just past it, with no joint loss, the filler
-    // would be a hair and the part is too large.
+    // Below each edge the filler is a whole board or nearly; just past it, it would be a
+    // hair and is made equal with the board before it.
     assert!(
-        glued > 0 && too_large > 0,
-        "{glued} glued, {too_large} too large"
+        glued > 0 && made_equal > 0,
+        "{glued} glued, {made_equal} made equal"
     );
 }
 
@@ -1250,6 +1314,77 @@ fn parts_of_no_size_end_their_cut_sequence() {
         }
     }
 }
+/// #56: ties. A 13 in part on 4/4 is two strips on 4/4 x 8 (8 + 5 1/8) and on 4/4 x 12
+/// (12 + 1 1/8, made 6 9/16 + 6 9/16), so the board the rest of the oak uses decides: 9 in
+/// parts put it on 4/4 x 12. With nothing else of that oak, or the rest on 4/4 x 4 (which
+/// takes four strips), library order decides: 4/4 x 8 comes before 4/4 x 12.
+#[test]
+fn a_tie_goes_to_the_board_the_rest_uses_then_to_library_order() {
+    let stock = |n: &Nesting, row: usize| {
+        let s = strips_of(n, row);
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s.iter().all(|(st, _)| *st == s[0].0), "{s:?}");
+        s
+    };
+    let n = oak(&[(0.75, 9.0, 30.0, 1), (0.75, 13.0, 30.0, 1)], 0.125);
+    let s = stock(&n, 1);
+    assert_eq!(s[0].0, "4/4 x 12 x 96");
+    assert!(near_in(s[0].1, 6.5625) && near_in(s[1].1, 6.5625), "{s:?}");
+    let n = oak(&[(0.75, 13.0, 30.0, 1)], 0.125);
+    let s = stock(&n, 0);
+    assert_eq!(s[0].0, "4/4 x 8 x 96");
+    assert!(near_in(s[0].1, 8.0) && near_in(s[1].1, 5.125), "{s:?}");
+    let n = oak(&[(0.75, 3.0, 30.0, 2), (0.75, 13.0, 30.0, 1)], 0.125);
+    assert_eq!(stock(&n, 1)[0].0, "4/4 x 8 x 96");
+}
+
+/// #56's example: with 4/4 x 12 x 96 and 4/4 x 6 x 120 in the library, a 15 x 100 in top
+/// is too long for the wider board, and #53 reported it too large for it; the longer,
+/// narrower board glues it, 6 + 6 + 3 1/4 in. Too large only when no board of its
+/// thickness long enough can glue it: at 130 in it is.
+#[test]
+fn a_board_too_short_for_the_part_is_passed_over_for_one_long_enough() {
+    let nest = |len: f64| {
+        let list = list_of(&[(0.75, 15.0, len, 1, Grain::Length, false, 0)], 0);
+        let mut lib = StockLibrary::builtin();
+        lib.defaults.clear();
+        lib.stocks.retain(|s| s.kind == StockKind::Sheet);
+        for (w, l) in [(12.0, 96.0), (6.0, 120.0)] {
+            lib.stocks.push(StockDef {
+                name: format!("4/4 x {w} x {l}"),
+                kind: StockKind::Board,
+                length: l * IN,
+                width: w * IN,
+                thickness: 0.75 * IN,
+                nominal: None,
+                grain: StockGrain::Length,
+            });
+        }
+        let st = NestSettings {
+            kerf: IN / 8.0,
+            trim: 0.0,
+            algorithm: NestAlgorithm::Guillotine,
+            joint_loss: IN / 8.0,
+        };
+        let n = nest_list(&list, &lib, st);
+        check_nesting_of(&list, &n).unwrap();
+        n
+    };
+    let n = nest(100.0);
+    assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+    let s = strips_of(&n, 0);
+    assert_eq!(s.len(), 3, "{s:?}");
+    assert!(s.iter().all(|(st, _)| st == "4/4 x 6 x 120"), "{s:?}");
+    assert!(
+        near_in(s[0].1, 6.0) && near_in(s[1].1, 6.0) && near_in(s[2].1, 3.25),
+        "{s:?}"
+    );
+    let n = nest(130.0);
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    assert_eq!(n.unplaced.len(), 1);
+    assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
+}
+
 /// A part longer than every board is still too large: gluing only adds width.
 #[test]
 fn a_part_too_long_to_glue_is_still_too_large() {

@@ -70,6 +70,13 @@ pub const MAX_GLUE_STRIPS: usize = 100;
 /// Lane 42 (#49): the narrowest filler a glue-up plans, besides the kerf: 1 mm, the
 /// narrowest stock the library takes.
 pub const MIN_GLUE_FILLER: f64 = crate::stock::MIN_STOCK;
+
+/// #56: the narrowest a glue-up's last strip is left on a board `board_width` wide: the
+/// smaller of 1 1/2 in and a quarter of the board. A last strip narrower than that and the
+/// full strip before it are made two equal strips.
+pub fn glue_minimum(board_width: f64) -> f64 {
+    (1.5 * crate::cutlist::M_PER_IN).min(0.25 * board_width)
+}
 /// Nodes the board lookahead may visit for one board, and in all.
 const LOOKAHEAD_PER_BOARD: usize = 20_000;
 const LOOKAHEAD_TOTAL: usize = 400_000;
@@ -479,11 +486,23 @@ fn glue_widths(row: &CutRow, s: &StockDef, trim: f64, joint: f64, kerf: f64) -> 
         return None;
     }
     let filler = filler_of(n);
-    if filler.is_nan() || filler > u.h + EPS || filler < kerf.max(MIN_GLUE_FILLER) - EPS {
+    if filler.is_nan() || filler > u.h + EPS {
         return None;
     }
     let mut v = vec![u.h; n as usize - 1];
     v.push(filler);
+    // #56: a filler under the minimum and the full strip before it become two equal strips,
+    // each half of the two (at least half the board, so never under the minimum).
+    if filler < glue_minimum(u.h) {
+        let half = 0.5 * (u.h + filler);
+        let k = v.len();
+        v[k - 2] = half;
+        v[k - 1] = half;
+    }
+    // Lane 42's refusals, on the narrowest strip planned.
+    if v[v.len() - 1] < kerf.max(MIN_GLUE_FILLER) - EPS {
+        return None;
+    }
     Some(v)
 }
 
@@ -669,18 +688,24 @@ fn choose_stock(
             shared_board = (!shared.is_empty()).then_some(k);
         }
         for &i in &alone {
-            // #49: glued up from the board the rest of the material uses, so its strips
-            // nest with the other parts, when they can make it; but never when some board
-            // thick enough makes it in one piece (a thicker, wider one, say), which the
-            // choice below then takes as before.
+            // #49: glued up, but never when some board thick enough makes it in one piece
+            // (a thicker, wider one, say), which the choice below then takes as before. #56:
+            // from the board of the class that glues it with the fewest strips (a board
+            // shorter than the part glues nothing), then the board the rest of the material
+            // uses, so its strips nest with the other parts, then library order.
             let row = &list.rows[i];
             let whole_somewhere = boards
                 .iter()
                 .any(|(_, s)| thickness_fits(s, row.size[0]) && fit(row, s, trim).is_ok());
-            if !whole_somewhere
-                && let Some(k) = shared_board
-                && glue_widths(row, &lib.stocks[k], trim, joint, kerf).is_some()
-            {
+            let glued = boards
+                .iter()
+                .filter(|(_, s)| s.thickness == class)
+                .filter_map(|&(k, s)| {
+                    let strips = glue_widths(row, s, trim, joint, kerf)?.len();
+                    Some((strips, Some(k) != shared_board, k))
+                })
+                .min();
+            if !whole_somewhere && let Some((_, _, k)) = glued {
                 out[i] = Some(Ok(k));
                 continue;
             }
