@@ -1,6 +1,6 @@
 [package]
 name = "sawhorse-close-guard"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 description = "Sawhorse desktop: the question before the window closes over unsaved changes, decided so the window can never be held open."
 authors = ["Sawhorse contributors"]
 license = "MIT OR Apache-2.0"

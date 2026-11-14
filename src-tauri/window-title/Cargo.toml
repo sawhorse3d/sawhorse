@@ -1,6 +1,6 @@
 [package]
 name = "sawhorse-window-title"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 description = "Sawhorse desktop: the text the window's title bar shows, made safe from the page's title."
 authors = ["Sawhorse contributors"]
 license = "MIT OR Apache-2.0"
