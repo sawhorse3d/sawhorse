@@ -13,7 +13,11 @@ import { events, model, storage, ui, units } from "sawhorse";
 const IN = 0.0254;
 const MM = 0.001;
 
-/** @typedef {{ width: number, height: number, depth: number, thickness: number, shelves: number, back: boolean, toeKick: number }} Sizes */
+/**
+ * backThickness is left out until someone types one: until then the back is the thin sheet
+ * the document's units suggest (backThickness() below), as it was before the field existed.
+ * @typedef {{ width: number, height: number, depth: number, thickness: number, shelves: number, back: boolean, backThickness?: number, toeKick: number }} Sizes
+ */
 
 /** Sensible first sizes in the document's units (a base cabinet). @returns {Sizes} */
 function defaults() {
@@ -23,8 +27,10 @@ function defaults() {
     : { width: 24 * IN, height: 34.5 * IN, depth: 24 * IN, thickness: 0.75 * IN, shelves: 1, back: true, toeKick: 4 * IN };
 }
 
-/** The back panel is thin sheet stock, a quarter inch or 6 mm. */
+/** The back panel starts as thin sheet stock, a quarter inch or 6 mm. */
 const backThickness = () => (["mm", "cm", "m"].includes(units.system()) ? 6 * MM : 0.25 * IN);
+/** The back's thickness: the one typed, or the thin sheet. @param {Sizes} s */
+const backOf = (s) => (typeof s.backThickness === "number" ? s.backThickness : backThickness());
 /** How far the toe kick board sits back from the front. */
 const toeSetback = () => (["mm", "cm", "m"].includes(units.system()) ? 75 * MM : 3 * IN);
 
@@ -33,7 +39,9 @@ function problem(s) {
   const f = units.format;
   if (!(s.thickness > 0)) return "The stock needs a thickness.";
   if (!(s.width > 2 * s.thickness)) return `The width must be more than two thicknesses (${f(2 * s.thickness)}).`;
-  if (!(s.depth > s.thickness + (s.back ? backThickness() : 0))) return "The cabinet is not deep enough for its back.";
+  const b = s.back ? backOf(s) : 0;
+  if (s.back && !(b > 0)) return "The back needs a thickness.";
+  if (!(s.depth > s.thickness + b)) return s.back ? `The depth must be more than the stock and the back together (${f(s.thickness + b)}).` : `The depth must be more than the stock (${f(s.thickness)}).`;
   if (!(s.toeKick >= 0)) return "The toe kick cannot be negative.";
   if (!Number.isInteger(s.shelves) || s.shelves < 0 || s.shelves > 20) return "Shelves: a whole number from 0 to 20.";
   const inside = s.height - s.toeKick - 2 * s.thickness - s.shelves * s.thickness;
@@ -48,7 +56,7 @@ function problem(s) {
  */
 export function parts(s) {
   const t = s.thickness;
-  const b = s.back ? backThickness() : 0;
+  const b = s.back ? backOf(s) : 0;
   const innerW = s.width - 2 * t;
   const innerD = s.depth - b;
   /** @type {import("sawhorse").PartSpec[]} */
@@ -86,6 +94,17 @@ let sizes = defaults();
 const saved = /** @type {Partial<Sizes> | null} */ (await storage.app.get("sizes"));
 if (saved && typeof saved === "object") sizes = { ...sizes, ...saved };
 
+/**
+ * Take the panel's values. The back's thickness is taken only when it is the field that
+ * changed, so a back nobody typed keeps following the document's units.
+ * @param {string} id @param {import("sawhorse").Values} values
+ */
+function take(id, values) {
+  const { backThickness: typed, ...rest } = /** @type {Partial<Sizes>} */ (values);
+  sizes = { ...sizes, ...rest };
+  if (id === "backThickness" && typeof typed === "number") sizes = { ...sizes, backThickness: typed };
+}
+
 /** The cabinet this plugin made last in this document, if it is the selection. */
 async function selectedOwnCabinet() {
   const mine = /** @type {number | null} */ (await storage.document.get("cabinet"));
@@ -103,20 +122,21 @@ const panel = await ui.registerPanel({
     { type: "number", id: "height", label: "Height", unit: "length", value: sizes.height, min: 0 },
     { type: "number", id: "depth", label: "Depth", unit: "length", value: sizes.depth, min: 0 },
     { type: "number", id: "thickness", label: "Stock", unit: "length", value: sizes.thickness, min: 0 },
+    { type: "number", id: "backThickness", label: "Back thickness", unit: "length", value: backOf(sizes), min: 0, disabled: !sizes.back },
     { type: "number", id: "shelves", label: "Shelves", unit: "count", value: sizes.shelves, min: 0, max: 20 },
     { type: "checkbox", id: "back", label: "Back panel", value: sizes.back },
     { type: "number", id: "toeKick", label: "Toe kick", unit: "length", value: sizes.toeKick, min: 0 },
     { type: "button", id: "generate", label: "Generate cabinet", primary: true },
     { type: "note", id: "status", text: "" },
   ],
-  onChange: (_id, values) => {
-    sizes = { ...sizes, .../** @type {Partial<Sizes>} */ (values) };
+  onChange: (id, values) => {
+    take(id, values);
     void storage.app.set("sizes", sizes);
     return explain();
   },
   onAction: (id, values) => {
     if (id !== "generate") return;
-    sizes = { ...sizes, .../** @type {Partial<Sizes>} */ (values) };
+    take(id, values);
     return generate();
   },
 });
@@ -126,12 +146,15 @@ async function explain() {
   const wrong = problem(sizes);
   const own = await selectedOwnCabinet();
   const f = units.format;
-  const what = `${f(sizes.width)} x ${f(sizes.height)} x ${f(sizes.depth)}, ${sizes.shelves} ${sizes.shelves === 1 ? "shelf" : "shelves"}${sizes.back ? ", back" : ""}${sizes.toeKick > 0 ? `, ${f(sizes.toeKick)} toe kick` : ""}`;
+  const what = `${f(sizes.width)} x ${f(sizes.height)} x ${f(sizes.depth)}, ${sizes.shelves} ${sizes.shelves === 1 ? "shelf" : "shelves"}${sizes.back ? `, ${f(backOf(sizes))} back` : ""}${sizes.toeKick > 0 ? `, ${f(sizes.toeKick)} toe kick` : ""}`;
   await panel.update({
     fields: {
+      backThickness: { disabled: !sizes.back },
       generate: { label: own ? "Update selected cabinet" : "Generate cabinet", disabled: !!wrong },
       status: wrong ? { text: wrong, tone: "warning" } : { text: own ? `Replaces the selected cabinet with ${what}.` : `Adds a cabinet: ${what}.`, tone: "info" },
     },
+    // The back's thickness in the document's units; one nobody typed follows them.
+    values: { backThickness: backOf(sizes) },
   });
 }
 
@@ -171,4 +194,5 @@ async function generate() {
 await ui.registerCommand({ id: "generate", run: generate });
 events.on("selectionChanged", () => explain());
 events.on("documentOpened", () => explain());
+events.on("unitsChanged", () => explain());
 await explain();

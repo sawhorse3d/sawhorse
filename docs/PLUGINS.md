@@ -475,7 +475,7 @@ In this repository:
 ```bash
 npm run plugin:check                         # every plugin under plugins/: manifest, sources, type check against index.d.ts
 npm run plugin:check -- path/to/my-plugin    # one folder anywhere: the same, with its // @ts-check files type-checked
-npm run plugin:pack -- plugins/cabinet-generator   # -> dist-plugins/com.sawhorse3d.cabinet-generator-1.0.0.zip
+npm run plugin:pack -- plugins/cabinet-generator   # -> dist-plugins/com.sawhorse3d.cabinet-generator-1.1.0.zip
 npm run plugin:pack -- my-plugin --out my-plugin.zip
 ```
 

@@ -112,5 +112,8 @@ export default defineConfig(({ command, mode }) => ({
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}", "packages/**/*.test.ts"],
     setupFiles: ["src/test-setup.ts"],
+    // A sample plugin imported by a unit test (src/plugins/cabinet.test.ts) gets the
+    // "sawhorse" module as the sandbox gives it: the shim, reading the API the test set up.
+    alias: { sawhorse: `${root}/packages/plugin-api/sawhorse.js` },
   },
 }));

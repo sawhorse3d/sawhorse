@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { box, hover, at, IN, solids, type V3 } from "./helpers";
+import { box, hover, at, IN, solids, setUnits, type V3 } from "./helpers";
 
 // The three sample plugins (plugins/), driven through the UI as a person would (lane 11):
 // enabled from the Plugins pane after the permission dialog, the cabinet generator's panel,
@@ -70,7 +70,7 @@ test("cabinet generator: a 30 x 72 x 12 in cabinet with 3 shelves; the Outliner 
   await field(page, panel, "height", "72");
   await field(page, panel, "depth", "12");
   await field(page, panel, "shelves", "3");
-  await expect(page.locator(`[data-panel="${panel}"] [data-note="status"]`)).toContainText("Adds a cabinet: 30 x 72 x 12, 3 shelves, back, 4 toe kick");
+  await expect(page.locator(`[data-panel="${panel}"] [data-note="status"]`)).toContainText("Adds a cabinet: 30 x 72 x 12, 3 shelves, 1/4 back, 4 toe kick");
   await page.locator(`[data-panel="${panel}"] [data-action="generate"]`).click();
   await expect(page.locator("#hint")).toContainText("Made a cabinet: Side x 2, Top, Bottom, Shelf x 3, Back, Toe kick");
 
@@ -122,6 +122,109 @@ test("cabinet generator: Update replaces the selected cabinet in place", async (
   // Same place: the same overall box.
   const box = (ss: typeof first) => [0, 1, 2].map((k) => [Math.min(...ss.map((x) => x.min[k])), Math.max(...ss.map((x) => x.max[k]))]);
   expect(box(second)).toEqual(box(first));
+});
+
+/** The Cut list tab's rows by part name: Qty, T, W, L as shown. */
+async function cutRows(page: Page): Promise<Record<string, string[]>> {
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  const rows = await page.locator(".cutlist table tbody tr").evaluateAll((trs) => trs.map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => ((td.querySelector(".name") ?? td).textContent ?? "").trim())));
+  return Object.fromEntries(rows.map((r) => [r[0], r.slice(1, 5)]));
+}
+
+type NestPiece = { kind: string; stock: string; placements: { name: string }[] };
+/** Which stock each part name was nested on (the Nesting section's layout). */
+async function nestedOn(page: Page): Promise<Record<string, string[]>> {
+  const n = (await page.evaluate(async () => (window as unknown as { __sawhorse: { nest(): Promise<unknown> } }).__sawhorse.nest())) as { pieces: NestPiece[]; unplaced: unknown[] };
+  expect(n.unplaced).toEqual([]);
+  const out: Record<string, string[]> = {};
+  for (const p of n.pieces) for (const q of p.placements) (out[q.name] ??= []).includes(`${p.kind} ${p.stock}`) || out[q.name].push(`${p.kind} ${p.stock}`);
+  return out;
+}
+
+// Issue #60: the back's thickness is a field beside Stock, 6 mm in a metric document and
+// 1/4 in otherwise to start, so a 16 or 18 mm back is one number to type.
+test("cabinet generator: an 18 mm back typed beside Stock is the Back on the cut list, nested like the sides, and kept (#60)", async ({ page }) => {
+  await start(page);
+  await setUnits(page, "mm");
+  await enable(page, CABINET, "Cabinet generator", ["model.read", "model.write", "ui", "storage"]);
+  const panel = page.locator(`[data-panel="${CABINET}/cabinet"]`);
+  const back = panel.locator('[data-field="backThickness"]');
+  // Right after Stock, labelled, in millimetres, starting at 6.
+  const labels = await panel.locator(".pf-field > span, .pf-check > span").allTextContents();
+  expect(labels.slice(3, 7)).toEqual(["Stock", "Back thickness", "Shelves", "Back panel"]);
+  await expect(back).toHaveValue("6");
+  // Greyed out while there is no back.
+  await panel.locator('[data-field="back"]').click();
+  await expect(panel.locator('[data-field="back"]')).not.toBeChecked();
+  await expect(back).toBeDisabled();
+  await expect(panel.locator('[data-note="status"]')).toHaveText("Adds a cabinet: 600 x 720 x 560, 1 shelf, 100 toe kick.");
+  await panel.locator('[data-field="back"]').click();
+  await expect(panel.locator('[data-field="back"]')).toBeChecked();
+  await expect(back).toBeEnabled();
+  // No thickness is refused in the panel's words; the button waits.
+  await field(page, `${CABINET}/cabinet`, "backThickness", "0");
+  await expect(panel.locator('[data-note="status"]')).toHaveText("The back needs a thickness.");
+  await expect(panel.locator('[data-action="generate"]')).toBeDisabled();
+  await field(page, `${CABINET}/cabinet`, "backThickness", "18");
+  await expect(panel.locator('[data-note="status"]')).toHaveText("Adds a cabinet: 600 x 720 x 560, 1 shelf, 18 back, 100 toe kick.");
+  await panel.locator('[data-action="generate"]').click();
+  await expect(page.locator("#hint")).toContainText("Made a cabinet: Side x 2, Top, Bottom, Shelf, Back, Toe kick");
+
+  // The model: the back 18 mm deep at the rear, between the sides, from the toe kick up.
+  const s = await solids(page);
+  expect(s).toHaveLength(7);
+  const mm = (v: number) => Math.round(v * 25.4 * 1000) / 1000;
+  const rear = s.filter((x) => mm(x.min[1]) === 542);
+  expect(rear).toHaveLength(1);
+  expect([...rear[0].min, ...rear[0].max].map(mm)).toEqual([18, 542, 100, 582, 560, 720]);
+
+  // The Cut list: Back 18 x 564 x 620, the sides 18 x 560 x 720, the top 542 deep.
+  const rows = await cutRows(page);
+  expect(rows["Back"]).toEqual(["1", "18", "564", "620"]);
+  expect(rows["Side"]).toEqual(["2", "18", "560", "720"]);
+  for (const name of ["Top", "Bottom", "Shelf"]) expect(rows[name]).toEqual(["1", "18", "542", "564"]);
+  // Nesting, with the built-in stock library: a back over 1/4 in with no material is solid
+  // stock, so it goes on the boards the sides go on (both glued up, being wider than 12 in).
+  const nest = await nestedOn(page);
+  expect(nest["Side"]).toEqual(["board 4/4 x 12 x 96"]);
+  expect(nest["Back"]).toEqual(nest["Side"]);
+
+  // Saved, opened again: the field still says 18.
+  await saveAndReopen(page);
+  await page.getByRole("tab", { name: "Plugins" }).click();
+  await expect(back).toHaveValue("18");
+});
+
+test("cabinet generator: a 1/2 in back in an inch document, on the cut list, and still there after a reload (#60)", async ({ page }) => {
+  await start(page);
+  await enable(page, CABINET, "Cabinet generator", ["model.read", "model.write", "ui", "storage"]);
+  const panel = `${CABINET}/cabinet`;
+  const back = page.locator(`[data-panel="${panel}"] [data-field="backThickness"]`);
+  await expect(back).toHaveValue("1/4");
+  await field(page, panel, "width", "30");
+  await field(page, panel, "height", "72");
+  await field(page, panel, "depth", "12");
+  await field(page, panel, "shelves", "3");
+  await field(page, panel, "backThickness", "1/2");
+  await expect(page.locator(`[data-panel="${panel}"] [data-note="status"]`)).toHaveText("Adds a cabinet: 30 x 72 x 12, 3 shelves, 1/2 back, 4 toe kick.");
+  await page.locator(`[data-panel="${panel}"] [data-action="generate"]`).click();
+  await expect(page.locator("#hint")).toContainText("Made a cabinet: Side x 2, Top, Bottom, Shelf x 3, Back, Toe kick");
+  const rows = await cutRows(page);
+  expect(rows["Back"]).toEqual(["1", "1/2", "28 1/2", "68"]);
+  expect(rows["Side"]).toEqual(["2", "3/4", "12", "72"]);
+  for (const [name, qty] of [["Top", "1"], ["Bottom", "1"], ["Shelf", "3"]]) expect(rows[name]).toEqual([qty, "3/4", "11 1/2", "28 1/2"]);
+  expect(rows["Toe kick"]).toEqual(["1", "3/4", "4", "28 1/2"]);
+  // Thicker than 1/4 in, so solid stock: on the 4/4 boards with the sides.
+  const nest = await nestedOn(page);
+  expect(nest["Back"]).toEqual(["board 4/4 x 12 x 96"]);
+  expect(nest["Side"]).toEqual(nest["Back"]);
+  // The plugin keeps it for next time: after a reload the field still says 1/2.
+  await page.reload();
+  await expect(page.locator("main.vp")).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
+  await page.getByRole("tab", { name: "Plugins" }).click();
+  await expect(row(page, CABINET)).toHaveAttribute("data-status", "running", { timeout: 10_000 });
+  await expect(back).toHaveValue("1/2");
 });
 
 // Lane 28 (#34, #21): Generate pressed again with the cabinet selected ("Update selected
