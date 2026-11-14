@@ -681,13 +681,21 @@ fn choose_stock(
         });
         let all_fit = |s: &StockDef| shared.iter().all(|&i| fit(&list.rows[i], s, trim).is_ok());
         let mut shared_board = None;
-        if let Some(&(k, _)) = wide.iter().find(|(_, s)| all_fit(s)).or(wide.first()) {
+        // #56: a part the shared board cannot hold at all (too long for it) goes on as a
+        // part no board is wide enough for, so a longer board can glue it or hold it whole;
+        // if none can, it keeps the shared board, as before.
+        let mut too_long = Vec::new();
+        if let Some(&(k, s)) = wide.iter().find(|(_, s)| all_fit(s)).or(wide.first()) {
             for &i in &shared {
                 out[i] = Some(Ok(k));
+                if matches!(fit(&list.rows[i], s, trim), Err(UnplacedReason::TooLarge)) {
+                    too_long.push(i);
+                }
             }
             shared_board = (!shared.is_empty()).then_some(k);
         }
-        for &i in &alone {
+        let alone = alone.iter().map(|&i| (i, false));
+        for (i, kept) in alone.chain(too_long.iter().map(|&i| (i, true))) {
             // #49: glued up, but never when some board thick enough makes it in one piece
             // (a thicker, wider one, say), which the choice below then takes as before. #56:
             // from the board of the class that glues it with the fewest strips (a board
@@ -707,6 +715,9 @@ fn choose_stock(
                 .min();
             if !whole_somewhere && let Some((_, _, k)) = glued {
                 out[i] = Some(Ok(k));
+                continue;
+            }
+            if kept && !whole_somewhere {
                 continue;
             }
             // Each on its own best board: fitting first (then fitting across its grain),

@@ -857,8 +857,24 @@ fn settings() -> impl Strategy<Value = NestSettings> {
 }
 
 fn library() -> impl Strategy<Value = StockLibrary> {
-    (any::<bool>(), any::<bool>()).prop_map(|(grainless, small)| {
+    (any::<bool>(), any::<bool>(), any::<bool>()).prop_map(|(grainless, small, long)| {
         let mut l = StockLibrary::builtin();
+        // #56: longer, narrower boards beside the built-in 96 in ones, so a part too long for
+        // the board the rest shares can go to one long enough (the verifier's case).
+        if long {
+            let boards: Vec<StockDef> = l
+                .stocks
+                .iter()
+                .filter(|s| s.kind == StockKind::Board)
+                .cloned()
+                .collect();
+            for mut s in boards {
+                s.name = format!("{} long", s.name);
+                s.length = 120.0 * IN;
+                s.width *= 0.5;
+                l.stocks.push(s);
+            }
+        }
         if grainless {
             for s in &mut l.stocks {
                 s.grain = StockGrain::None;
@@ -1383,6 +1399,63 @@ fn a_board_too_short_for_the_part_is_passed_over_for_one_long_enough() {
     assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
     assert_eq!(n.unplaced.len(), 1);
     assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
+}
+
+/// #56: a part no wider than the widest board but longer than it goes to a board long
+/// enough too: glued from it when no board makes it whole, or whole on it when one does.
+/// The independent verifier found the 10 x 100 in part reported too large. A part no
+/// board holds or glues keeps the board the rest uses, as before.
+#[test]
+fn a_part_too_long_for_the_shared_board_goes_to_one_long_enough() {
+    let nest = |parts: &[(f64, f64)]| {
+        let rows: Vec<_> = parts
+            .iter()
+            .map(|&(w, l)| (0.75, w, l, 1, Grain::Length, false, 0))
+            .collect();
+        let list = list_of(&rows, 0);
+        let mut lib = StockLibrary::builtin();
+        lib.defaults.clear();
+        lib.stocks.retain(|s| s.kind == StockKind::Sheet);
+        for (w, l) in [(12.0, 96.0), (6.0, 120.0)] {
+            lib.stocks.push(StockDef {
+                name: format!("4/4 x {w} x {l}"),
+                kind: StockKind::Board,
+                length: l * IN,
+                width: w * IN,
+                thickness: 0.75 * IN,
+                nominal: None,
+                grain: StockGrain::Length,
+            });
+        }
+        let st = NestSettings {
+            kerf: IN / 8.0,
+            trim: 0.0,
+            algorithm: NestAlgorithm::Guillotine,
+            joint_loss: IN / 8.0,
+        };
+        let n = nest_list(&list, &lib, st);
+        check_nesting_of(&list, &n).unwrap();
+        n
+    };
+    // Glued: 6 + 4 1/8 in from the longer board, alone and beside a 15 x 100 in part.
+    for parts in [&[(10.0, 100.0)][..], &[(10.0, 100.0), (15.0, 100.0)][..]] {
+        let n = nest(parts);
+        assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+        let s = strips_of(&n, 0);
+        assert!(s.iter().all(|(st, _)| st == "4/4 x 6 x 120"), "{s:?}");
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(near_in(s[0].1, 6.0) && near_in(s[1].1, 4.125), "{s:?}");
+    }
+    // Whole: a 5 x 100 in part beside a 10 x 50 in one fits the longer board in one piece.
+    let n = nest(&[(5.0, 100.0), (10.0, 50.0)]);
+    assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    // Neither: 10 x 130 in is too large, reported on the board the rest would share.
+    let n = nest(&[(10.0, 130.0)]);
+    assert!(n.glue_ups.is_empty(), "{:#?}", n.glue_ups);
+    assert_eq!(n.unplaced.len(), 1);
+    assert_eq!(n.unplaced[0].reason, UnplacedReason::TooLarge);
+    assert_eq!(n.unplaced[0].stock.as_deref(), Some("4/4 x 12 x 96"));
 }
 
 /// A part longer than every board is still too large: gluing only adds width.
