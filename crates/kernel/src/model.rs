@@ -30,7 +30,7 @@ use crate::nodes::{Definition, Dirty, Item, Node, NodeKind, Thing};
 use crate::object::{Object, Provenance, PushOutcome};
 use crate::offset::OffsetSource;
 use crate::plane::Plane;
-use crate::sketch::Sketch;
+use crate::sketch::{NewCurve, Sketch};
 use crate::sweep::Profile;
 use crate::tolerance::PLANARITY;
 use crate::transform::Xform;
@@ -3434,14 +3434,32 @@ impl Model {
                 self.sketch_order.retain(|&k| k != sid);
             }
         }
-        // Lane 23: the file's curves, as curves (those whose points landed as drawn).
+        // Lane 23: the file's curves, as curves (those whose points landed as drawn); #11:
+        // each sketch's together, in the file's order.
+        let mut curves_by_sketch: Vec<(SketchId, Vec<NewCurve>)> = Vec::new();
         for (sid, pts, closed, c) in &curved {
-            if self.sketches.contains_key(*sid)
-                && let Ok(Some(_)) = self.stroke_to_curve(*sid, pts, *closed, c)
-            {
-                curve_tally.made_one(c.kind);
-            } else {
+            let Some(nc) = self
+                .sketches
+                .contains_key(*sid)
+                .then(|| self.curve_input(*sid, pts, *closed, c).ok())
+                .flatten()
+            else {
                 curve_tally.not_landed += 1;
+                continue;
+            };
+            match curves_by_sketch.iter_mut().find(|(k, _)| k == sid) {
+                Some((_, list)) => list.push(nc),
+                None => curves_by_sketch.push((*sid, vec![nc])),
+            }
+        }
+        for (sid, list) in curves_by_sketch {
+            let made = self.sketches[sid].add_curves(&list);
+            for (nc, id) in list.iter().zip(made) {
+                if id.is_some() {
+                    curve_tally.made_one(nc.kind);
+                } else {
+                    curve_tally.not_landed += 1;
+                }
             }
         }
         // Lane 25: one count for the strokes' curves and the items' rims together.
@@ -3833,8 +3851,20 @@ impl Model {
         closed: bool,
         c: &StrokeCurve,
     ) -> Result<Option<u64>, KernelError> {
-        let s = &mut self.sketches[sid];
-        let plane = *s.plane();
+        let n = self.curve_input(sid, pts, closed, c)?;
+        Ok(self.sketches[sid].add_curve(&n.pts, n.closed, n.kind, n.centre, n.segments))
+    }
+
+    /// [`Self::stroke_to_curve`]'s curve in sketch `sid`'s frame, refused when its centre is
+    /// off the sketch's plane.
+    fn curve_input(
+        &self,
+        sid: SketchId,
+        pts: &[DVec3],
+        closed: bool,
+        c: &StrokeCurve,
+    ) -> Result<NewCurve, KernelError> {
+        let plane = *self.sketches[sid].plane();
         let centre = match c.centre {
             Some(w) => {
                 if plane.signed_distance(w).abs() > PLANARITY {
@@ -3848,8 +3878,13 @@ impl Model {
             }
             None => None,
         };
-        let local: Vec<DVec2> = pts.iter().map(|&p| plane.to_local(p)).collect();
-        Ok(s.add_curve(&local, closed, c.kind, centre, c.segments))
+        Ok(NewCurve {
+            pts: pts.iter().map(|&p| plane.to_local(p)).collect(),
+            closed,
+            kind: c.kind,
+            centre,
+            segments: c.segments,
+        })
     }
 
     /// A sketch that may be edited: it exists and belongs to the open context.
