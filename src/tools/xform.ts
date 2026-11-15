@@ -143,6 +143,58 @@ function sketchOf(e: Entity): number {
 
 const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 1e-9;
 
+/**
+ * #11: a growing set of items with a point each, answering whether some item (that `ok`
+ * accepts, when given) is `near` a point: the same answer as checking every item, found
+ * through a grid of cells three times `near`'s 1 nm. A point's 1 nm reaches into at most
+ * the next cell along each axis, on the side of the cell it is nearer, so a lookup checks
+ * those 8 cells.
+ * An item whose point has no cell (not finite, or too far out for a cell number to be
+ * exact) is checked on every lookup, and a point with no cell is checked against every
+ * item, as before.
+ */
+function nearSet<T>(at: (t: T) => V3): { has: (p: V3, ok?: (t: T) => boolean) => boolean; add: (t: T) => void } {
+  const cell = 3e-9;
+  const all: T[] = [];
+  const odd: T[] = [];
+  const grid = new Map<string, T[]>();
+  /** The point in cell units, or null when it has no cell. */
+  const scaled = (q: V3): V3 | null => {
+    const c: V3 = [q[0] / cell, q[1] / cell, q[2] / cell];
+    return c.every((x) => Number.isFinite(x) && Math.abs(x) < 2 ** 52) ? c : null;
+  };
+  const hit = (p: V3, ok?: (t: T) => boolean) => (t: T) => near(at(t), p) && (!ok || ok(t));
+  return {
+    has(p, ok) {
+      const c = scaled(p);
+      if (!c) return all.some(hit(p, ok));
+      if (odd.length && odd.some(hit(p, ok))) return true;
+      const base = c.map(Math.floor);
+      const side = c.map((x, i) => (x - base[i] < 0.5 ? -1 : 1));
+      const test = hit(p, ok);
+      for (const a of [0, side[0]])
+        for (const b of [0, side[1]])
+          for (const k of [0, side[2]]) {
+            const list = grid.get(`${base[0] + a},${base[1] + b},${base[2] + k}`);
+            if (list?.some(test)) return true;
+          }
+      return false;
+    },
+    add(t) {
+      all.push(t);
+      const c = scaled(at(t));
+      if (!c) {
+        odd.push(t);
+        return;
+      }
+      const key = `${Math.floor(c[0])},${Math.floor(c[1])},${Math.floor(c[2])}`;
+      const list = grid.get(key);
+      if (list) list.push(t);
+      else grid.set(key, [t]);
+    },
+  };
+}
+
 /** "region 2", "a sketch edge", "3 sketch points": what of one sketch moves. */
 /** A name in a status line and how many things it stands for ("3 circles" is three). */
 interface Named {
@@ -294,23 +346,43 @@ export function facesToOutline(selection: Entity[]): { object: number; face: num
  * from `outlines` (key `r<sketch>:<region>`). */
 export function sketchParts(es: Entity[], outlines: Map<string, V3[][]>, state?: DocState | null): SketchPart[] {
   const by = new Map<number, SketchPart>();
+  // #11: each sketch's points, edges (by either end) and moving points so far, looked up
+  // rather than scanned, so a big selection gathers in step with its size.
+  type Seen = { points: ReturnType<typeof nearSet<V3>>; ends: ReturnType<typeof nearSet<{ at: V3; other: V3 }>>; moving: ReturnType<typeof nearSet<V3>> };
+  const seen = new Map<number, Seen>();
   for (const e of es) {
     if (!isSketchEntity(e)) continue;
     const id = sketchOf(e);
     let p = by.get(id);
-    if (!p) {
+    let s = seen.get(id);
+    if (!p || !s) {
       const info = state?.sketches?.find((s) => s.id === id);
       p = { sketch: id, points: [], edges: [], regions: [], rings: [], origin: info?.origin ?? [0, 0, 0], normal: info?.normal ?? [0, 0, 1], moving: [] };
       by.set(id, p);
+      s = { points: nearSet((q) => q), ends: nearSet((x) => x.at), moving: nearSet((q) => q) };
+      seen.set(id, s);
     }
+    const part = p;
+    const have = s;
     const mv = (q: V3) => {
-      if (!p.moving.some((r) => near(r, q))) p.moving.push(q);
+      if (!have.moving.has(q)) {
+        part.moving.push(q);
+        have.moving.add(q);
+      }
     };
     if (e.kind === "vertex") {
-      if (!p.points.some((q) => near(q, e.at))) p.points.push(e.at);
+      if (!have.points.has(e.at)) {
+        p.points.push(e.at);
+        have.points.add(e.at);
+      }
       mv(e.at);
     } else if (e.kind === "edge") {
-      if (!p.edges.some(([a, b]) => (near(a, e.a) && near(b, e.b)) || (near(a, e.b) && near(b, e.a)))) p.edges.push([e.a, e.b]);
+      // The same edge either way round: one with an end near `a` whose other end is near `b`.
+      if (!have.ends.has(e.a, (x) => near(x.other, e.b))) {
+        p.edges.push([e.a, e.b]);
+        have.ends.add({ at: e.a, other: e.b });
+        have.ends.add({ at: e.b, other: e.a });
+      }
       mv(e.a);
       mv(e.b);
     } else if (e.kind === "region" && !p.regions.includes(e.region)) {
