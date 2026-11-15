@@ -5,7 +5,7 @@
 // the generic families.
 import type { Nesting, StockPiece } from "../kernel/types";
 import { diagram, fitSize } from "./diagram";
-import { cutText, dims, lenU, pieceTitle, pieceYield, settingsText, sizeUnit, type Units } from "./format";
+import { cutText, dims, lenU, pieceCount, pieceTitle, pieceYield, settingsText, sizeUnit, type Units } from "./format";
 
 export const SVG_TYPE = { description: "SVG drawing", mime: "image/svg+xml", extensions: [".svg"] };
 
@@ -38,7 +38,7 @@ export function pieceSvg(n: Nesting, piece: StockPiece, o: PieceSvgOptions): str
   const margin = font * 4;
   const ox = margin;
   const oy = margin + font * 2.4;
-  const lines = [pieceTitle(piece), `${pieceYield(piece, r)} · ${piece.placements.length} part${piece.placements.length === 1 ? "" : "s"} · ${settingsText(n, r)}`];
+  const lines = [pieceTitle(piece), `${pieceYield(piece, r)} · ${pieceCount(piece)} · ${settingsText(n, r)}`];
   const seq = piece.cuts.map((c) => `${c.n}. ${cutText(c, r)}`);
   if (!piece.guillotine) seq.push("Not every part comes free in straight cuts from edge to edge: finish with a track saw, a jigsaw or a CNC.");
   const listTop = oy + H + font * 4;

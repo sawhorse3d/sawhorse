@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { smallNesting } from "../nesting/fixture";
+import { gluedNesting, smallNesting } from "../nesting/fixture";
 import { NestingSection, type NestingSectionProps } from "./NestingSection";
 import { StockDialog, type StockDialogProps } from "./StockDialog";
 import { CutListPane, type CutListPaneProps } from "./CutListPane";
@@ -319,5 +319,31 @@ describe("Cut list pane with nesting", () => {
     rerender(<CutListPane {...cprops({ onNest, nestOpen: true, nesting: <NestingSection {...props()} /> })} />);
     expect(screen.getByRole("button", { name: "Nesting ‹" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("nesting")).toBeTruthy();
+  });
+
+  it("#56: a glued row says what it is glued from while the nesting is there, and reads as before without it", () => {
+    // The bookshelf's shelves (row 1), all four glued from the 12 in board.
+    const list = bookshelf();
+    const nodes = [3, 4, 5, 6];
+    list.rows[1].occurrences = nodes.map((node) => ({ item: { node }, visible: true, handed: false }) as never);
+    const n = smallNesting();
+    n.glue_ups = nodes.map((node, k) => ({ row: 1, copy: k + 1, tag: `2${"abcd"[k]}`, name: "Shelf", item: { node }, stock: "4/4 x 12 x 96", widths: [12 * IN, 3.125 * IN] }));
+    const notes = () => screen.getByRole("row", { name: /^Shelf/ }).querySelector("td.part")!.textContent;
+    const { rerender } = render(<CutListPane {...cprops({ list, nestOpen: true, nested: n })} />);
+    expect(notes()).toContain("glued from 2 (4/4 x 12 x 96)");
+    // The other rows have no such note.
+    expect(screen.getByRole("row", { name: /^Side/ }).textContent).not.toContain("glued");
+    // Without the nesting (its section closed), the row reads as before.
+    rerender(<CutListPane {...cprops({ list, nestOpen: false, nested: null })} />);
+    expect(notes()).not.toContain("glued");
+  });
+
+  it("#56: a board's caption and label count a glued part once, with its strips", () => {
+    render(<NestingSection {...props({ nesting: gluedNesting() })} />);
+    const fig = screen.getAllByRole("figure")[0];
+    expect(fig.querySelector("summary")!.textContent).toContain("4 cuts, 2 parts in 3 pieces");
+    expect(within(fig).getByRole("img").getAttribute("aria-label")).toContain(": 2 parts in 3 pieces, ");
+    // The sheet, with no strips, reads as before.
+    expect(screen.getAllByRole("figure")[1].querySelector("summary")!.textContent).toContain("2 cuts, 1 part");
   });
 });

@@ -345,6 +345,37 @@ test("a panel wider than every board is glued up from strips, and the joint loss
   await expect(joint).toHaveValue("1/16 in");
 });
 
+// #56 point 4: the same 15 in panel. While the Nesting section is open the cut list row says
+// what it is glued from, and the board's caption counts the panel once, in its two strips.
+// Closed, the row reads as before.
+test("a glued part's cut list row says what it is glued from, and its board counts it once", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 15 * IN, 0], [0, 15 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Panel" });
+  });
+  await openShz(page, shz, 1, "panel.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const row = page.locator('.cutlist tr[data-part="Panel"]');
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText("glued");
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  await expect(section.getByTestId("nest-glued")).toContainText("1 Panel: glued up from 2 strips of 4/4 x 8 x 96");
+  await expect(row.locator("td.part")).toContainText("glued from 2 (4/4 x 8 x 96)");
+  const piece = section.locator("figure.nest-piece").first();
+  await expect(piece.locator("details summary")).toContainText("1 part in 2 strips");
+  await expect(piece.locator("svg.nest-diagram")).toHaveAttribute("aria-label", /: 1 part in 2 strips, /);
+  // The SVG file's title says the same.
+  const [svg] = await downloads(page, 1, () => piece.getByRole("button", { name: /SVG/ }).click());
+  expect(svg.bytes.toString("utf8")).toContain("1 part in 2 strips");
+  // Closed, the row reads as before.
+  await page.getByRole("button", { name: "Nesting ‹" }).click();
+  await expect(section).toHaveCount(0);
+  await expect(row).not.toContainText("glued");
+});
+
 // #56: a 24 1/4 x 3/4 x 40 in panel takes three strips of 4/4 x 12 (four of 4/4 x 8). Two
 // full strips would leave a 1/2 in filler (24 1/4 + 2 x 1/8 - 24), under the minimum (the
 // smaller of 1 1/2 in and a quarter of the board), so the last two strips are made equal:

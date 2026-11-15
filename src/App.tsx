@@ -3087,6 +3087,9 @@ export function App() {
           onLabels: () => void saveCut((l) => labelsPdf(l, cutTitle), "labels.pdf", PDF_TYPE, `${plural(cutList?.rows.length ?? 0, "label")} on Avery 5160-size sheets`),
           nestOpen,
           onNest: toggleNest,
+          // #56: the glue-up notes only from a nesting of the model as it is now (not one
+          // being worked out again after an edit) and of the same parts as the list.
+          nested: nestShown && !nestBusy && !nestProblem && nesting?.visible_only === cutList?.visible_only ? nesting : null,
           nesting: nestShown ? (
             <NestingSection
               nesting={nesting}

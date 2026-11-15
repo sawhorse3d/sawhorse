@@ -8,9 +8,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Nesting, WasmDoc } from "../kernel/types";
+import type { CutList, Nesting, WasmDoc } from "../kernel/types";
 import { checkDxf, checkPdf, checkSvg } from "./checks";
 import { nestingDxf } from "./dxf";
+import { glueNote } from "./format";
 
 const pkg = path.resolve(__dirname, "../wasm/pkg");
 const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
@@ -55,6 +56,30 @@ describe.skipIf(!built)("nesting through the WASM kernel", () => {
       expect(st.stats.regions).toBeGreaterThanOrEqual(placed);
     });
   }
+
+  it("#56: each glue-up's row is the cut list's row for that part, at every rounding and with Visible only", async () => {
+    const mod = await kernel();
+    const d = mod.document_replay(JSON.stringify(golden("cutlist-mixed").ops));
+    for (const visible_only of [false, true]) {
+      const n = JSON.parse(d.nest(JSON.stringify({ visible_only }))) as Nesting;
+      expect(n.glue_ups?.length).toBeGreaterThan(0);
+      for (const rounding of ["sixteenth", "thirty_second", "half_mm"]) {
+        const list = JSON.parse(d.cut_list(JSON.stringify({ rounding, visible_only }))) as CutList;
+        const glued = new Set(n.glue_ups!.map((g) => g.row));
+        list.rows.forEach((row, i) => {
+          const note = glueNote(row, i, n);
+          if (!glued.has(i)) return expect(note, row.name).toBeNull();
+          const gs = n.glue_ups!.filter((g) => g.row === i);
+          expect(gs.every((g) => g.name === row.name)).toBe(true);
+          expect(note).toBe(`glued from ${gs[0].widths.length} (${gs[0].stock})`);
+        });
+      }
+      // The 16 in top beside narrow oak (#56 points 1 to 3): one joint, from the 12 in board.
+      const list = JSON.parse(d.cut_list("{}")) as CutList;
+      const top = n.glue_ups!.find((g) => list.rows[g.row].size[1] > 15 * 0.0254)!;
+      expect(glueNote(list.rows[top.row], top.row, n)).toBe("glued from 2 (4/4 x 12 x 96)");
+    }
+  });
 
   it("the default bookshelf: oak on five 4/4 x 12 boards, the back on one 1/4 in sheet", async () => {
     const mod = await kernel();

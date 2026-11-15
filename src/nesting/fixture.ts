@@ -78,6 +78,18 @@ export function sheetPiece(): StockPiece {
   };
 }
 
+/** #56: `smallNesting` with shelf 1a 15 in wide, glued from the 12 in board as 12 + 3 1/8 in
+ * (1/8 in joint loss); its two strips share the board with shelf 1b, made whole. */
+export function gluedNesting(): Nesting {
+  const n = smallNesting();
+  const piece = n.pieces[0];
+  const strip = (k: number, x: number, w: number): Placement => ({ ...place(`1a.${k}`, "Shelf", x, 0, w, 34.5, 3, 0, 1), size: [0.75 * IN, 15 * IN, 34.5 * IN], strip: { n: k, of: 2 } });
+  piece.placements = [strip(1, 0, 12), strip(2, 34.625, 3.125), { ...piece.placements[1], x: 69.25 * IN }];
+  n.glue_ups = [{ row: 0, copy: 1, tag: "1a", name: "Shelf", item: { node: 3 }, stock: "4/4 x 12 x 96", widths: [12 * IN, 3.125 * IN] }];
+  n.settings.jointLoss = IN / 8;
+  return n;
+}
+
 export function smallNesting(): Nesting {
   const pieces = [boardPiece(), sheetPiece()];
   const parts = pieces.reduce((s, p) => s + p.parts_area, 0);

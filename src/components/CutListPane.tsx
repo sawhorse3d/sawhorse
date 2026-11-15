@@ -7,7 +7,8 @@
 // stock of the row, or of every picked row at once. The Nesting button opens the Nesting
 // section under the list (lane 9: cutting diagrams; `NestingSection.tsx`).
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import type { CutList, CutRow, Grain, Rounding } from "../kernel/types";
+import type { CutList, CutRow, Grain, Nesting, Rounding } from "../kernel/types";
+import { glueNote } from "../nesting/format";
 import { BOARD_FEET_NOTE, formatSteps, geometryNote, listStyle, materialText, nominalText, rowNotes, ROUNDINGS, scopeNote, sizeUnit, summary, UNCOUNTED_NOTES, type RoundingChoice } from "../cutlist/format";
 import { nameRuns, sizeChars, sizePieces } from "../cutlist/wrap";
 
@@ -50,6 +51,9 @@ export interface CutListPaneProps {
   onNest?: () => void;
   /** The Nesting section itself, drawn under the cut list while open. */
   nesting?: ReactNode;
+  /** #56: the nesting worked out for this list, while its section is open: a glued row's
+   * notes say what it is glued from. The exports don't carry the note. */
+  nested?: Nesting | null;
   /** Lane 20: the panel is in its wide mode (more room for names, notes and reasons). */
   wide?: boolean;
   /** Lane 20: switch the panel's wide mode (the Wide button); none hides the button. */
@@ -445,7 +449,7 @@ export function CutListPane(p: CutListPaneProps) {
                 </tr>
               </thead>
               <tbody role="rowgroup">
-                {list.rows.slice(0, shown).map((row) => {
+                {list.rows.slice(0, shown).map((row, index) => {
                   const k = rowKey(row);
                   // Lane 20: the reason a part counts nowhere is written in full on a line of
                   // its own under the row, the table's whole width (not only in a tooltip);
@@ -453,6 +457,8 @@ export function CutListPane(p: CutListPaneProps) {
                   const why = row.uncounted ? UNCOUNTED_NOTES[row.uncounted] : null;
                   const notes = rowNotes(row).map((x) => (x === why ? "not counted" : x));
                   if (row.sheet) notes.unshift("sheet");
+                  const glued = glueNote(row, index, p.nested);
+                  if (glued) notes.push(glued);
                   const sel = p.selected.has(k);
                   const mark = (axis: 1 | 2) => (row.grain === (axis === 2 ? "length" : "width") ? <i className="grain" title={`Grain runs along ${axis === 2 ? "the length" : "the width"}`} aria-label="grain" /> : null);
                   const rowClass = `${sel ? "sel" : ""}${row.hidden === row.total && row.total ? " dim" : ""}${row.included === false || row.uncounted ? " out" : ""}${menuKeys.has(k) ? " menu" : ""}`;

@@ -6,7 +6,7 @@ import type { Nesting, StockPiece } from "../kernel/types";
 import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "../cutlist/pdf";
 import { NOT_SOLID_NOTE } from "../cutlist/format";
 import { diagram } from "./diagram";
-import { area, cutText, dims, glueText, len, nestNote, nestSummary, pct, pieceNumber, pieceTitle, pieceYield, placedSize, reasonText, settingsText, sizeUnit, stockSize, stripText, type Units } from "./format";
+import { area, cutText, dims, glueText, len, nestNote, nestSummary, pct, pieceCount, pieceNumber, pieceTitle, pieceYield, placedSize, reasonText, settingsText, sizeUnit, stockSize, stripText, type Units } from "./format";
 
 const LANDSCAPE: [number, number] = [LETTER[1], LETTER[0]];
 
@@ -136,8 +136,15 @@ function summaryPages(doc: PdfDoc, n: Nesting, title: string, r: Units) {
   for (const piece of n.pieces) {
     need(14);
     p.text(left, y, fit(`${piece.index}. ${pieceTitle(piece)}`, 10, 330), 10);
-    p.text(left + 340, y, `${piece.placements.length} part${piece.placements.length === 1 ? "" : "s"}`, 10);
-    p.text(right, y, pieceYield(piece, r), 10, { align: "right" });
+    // #56: "2 parts in 3 pieces" can run into the yield; then the yield takes a line of its own.
+    const count = pieceCount(piece);
+    const yieldText = pieceYield(piece, r);
+    p.text(left + 340, y, count, 10);
+    if (left + 340 + textWidth(count, 10) + 8 > right - textWidth(yieldText, 10)) {
+      y -= 14;
+      need(14);
+    }
+    p.text(right, y, yieldText, 10, { align: "right" });
     y -= 14;
   }
   y -= 12;
