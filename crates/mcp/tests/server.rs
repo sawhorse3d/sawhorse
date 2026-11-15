@@ -2,94 +2,18 @@
 //! on stdout, the tools, and the holds from the issue: files only under the start folder,
 //! saved through the kernel's writer and read back, untrusted input answered with an
 //! error and never a crash or a hang, and parts by name with shared names reported.
+mod common;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use common::{
+    Session, answers, board, folder, greeting, hash_of, names, near, run_binary, temporary_files,
+    tool_call,
+};
 use sawhorse_mcp::{MAX_MESSAGE, PROTOCOL_VERSION, Server, serve};
 use serde_json::{Value, json};
-
-/// A fresh folder for one test, under the target dir's temp space.
-fn folder(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join("sawhorse-mcp-tests")
-        .join(format!("{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-struct Session {
-    server: Server,
-    next: u64,
-}
-
-impl Session {
-    fn new(root: &Path) -> Session {
-        let mut s = Session {
-            server: Server::new(root).unwrap(),
-            next: 1,
-        };
-        let r = s.request("initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}));
-        assert!(r.get("result").is_some(), "{r}");
-        assert!(
-            s.line(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string())
-                .is_none()
-        );
-        s
-    }
-
-    fn line(&mut self, text: &str) -> Option<Value> {
-        self.server.handle_line(text.as_bytes())
-    }
-
-    fn request(&mut self, method: &str, params: Value) -> Value {
-        let id = self.next;
-        self.next += 1;
-        let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let r = self
-            .line(&msg.to_string())
-            .expect("a request gets an answer");
-        assert_eq!(r["jsonrpc"], "2.0");
-        assert_eq!(r["id"], id);
-        r
-    }
-
-    /// A tool's structured result, and whether the tool said it failed.
-    fn call(&mut self, tool: &str, args: Value) -> (bool, Value) {
-        let r = self.request("tools/call", json!({"name": tool, "arguments": args}));
-        let result = r.get("result").unwrap_or_else(|| panic!("{tool}: {r}"));
-        let error = result["isError"].as_bool().unwrap_or(false);
-        // The structured result and the text block say the same thing.
-        let text = result["content"][0]["text"].as_str().unwrap();
-        let structured = result["structuredContent"].clone();
-        assert_eq!(serde_json::from_str::<Value>(text).unwrap(), structured);
-        (error, structured)
-    }
-
-    fn ok(&mut self, tool: &str, args: Value) -> Value {
-        let (error, v) = self.call(tool, args.clone());
-        assert!(!error, "{tool} {args}: {v}");
-        v
-    }
-
-    fn refused(&mut self, tool: &str, args: Value) -> String {
-        let (error, v) = self.call(tool, args.clone());
-        assert!(error, "{tool} {args} should be refused: {v}");
-        v["error"].as_str().unwrap().to_string()
-    }
-
-    fn hash(&mut self) -> String {
-        self.ok("summary", json!({}))["model_hash"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    }
-}
-
-fn near(a: f64, b: f64) -> bool {
-    (a - b).abs() < 1e-9
-}
 
 #[test]
 fn initialize_names_the_protocol_and_lists_the_tools() {
@@ -967,4 +891,215 @@ fn first_run_finds_stay_fixed() {
         .unwrap();
     let d = apply["description"].as_str().unwrap();
     assert!(d.contains("copy") && d.contains("array"), "{d}");
+}
+
+/// Requests ending in CRLF, as a client on Windows may send them, are read as the same
+/// requests, and every answer ends in a bare newline.
+#[test]
+fn the_binary_reads_requests_that_end_in_crlf() {
+    let root = folder("crlf");
+    let [hello, ready] = greeting();
+    let requests = [
+        hello,
+        ready,
+        tool_call(1, "new_model", json!({"units": "mm"})),
+        tool_call(2, "add_board", board("Shelf", 0.0)),
+        tool_call(3, "save_model", json!({"path": "Shelf.shz"})),
+        tool_call(4, "cut_list", json!({})),
+    ];
+    // A blank line after each request gets no answer.
+    let (status, out) = run_binary(&root, &root, &requests, "\r\n\r\n");
+    assert!(status.success());
+    assert!(!out.contains(&b'\r'), "{}", String::from_utf8_lossy(&out));
+    let lines = answers(&out);
+    assert_eq!(lines.len(), 5, "{lines:?}");
+    assert_eq!(lines[0]["result"]["protocolVersion"], PROTOCOL_VERSION);
+    for (a, id) in lines[1..].iter().zip(1..) {
+        assert_eq!(a["id"], id, "{a}");
+        assert_eq!(a["result"]["isError"], false, "{a}");
+    }
+    let rows = &lines[4]["result"]["structuredContent"]["rows"];
+    assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+    assert_eq!(rows[0]["name"], "Shelf");
+    assert_eq!(names(&root), ["Shelf.shz"]);
+}
+
+/// The start folder may be given relative to where the binary starts, and with a separator
+/// or a "." at its end; each names the same folder.
+#[test]
+fn the_binary_takes_a_relative_start_folder_and_one_ending_in_a_separator() {
+    let base = folder("relative");
+    let root = base.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut given = vec!["root", "root/", "./root", "root/."];
+    // On Windows "\" separates folders too.
+    if cfg!(windows) {
+        given.extend(["root\\", ".\\root", "root\\.", ".\\root/"]);
+    }
+    for (n, arg) in given.iter().enumerate() {
+        let name = format!("rel-{n}.shz");
+        let [hello, ready] = greeting();
+        let requests = [
+            hello,
+            ready,
+            tool_call(1, "add_board", board("Shelf", 0.0)),
+            tool_call(2, "save_model", json!({"path": name})),
+        ];
+        let (status, out) = run_binary(&base, arg, &requests, "\n");
+        assert!(status.success(), "{arg}");
+        let lines = answers(&out);
+        assert_eq!(lines.len(), 3, "{arg}: {lines:?}");
+        let saved = &lines[2]["result"]["structuredContent"];
+        assert_eq!(saved["path"], name.as_str(), "{arg}: {saved}");
+        let file = PathBuf::from(saved["file"].as_str().unwrap());
+        eprintln!("start folder {arg:?}: saved as {}", file.display());
+        assert!(file.is_absolute(), "{arg}: {saved}");
+        assert_eq!(
+            std::fs::canonicalize(&file).unwrap(),
+            std::fs::canonicalize(root.join(&name)).unwrap(),
+            "{arg}"
+        );
+    }
+    // Nothing was saved beside the folder, only in it.
+    assert_eq!(names(&base), ["root"]);
+    assert_eq!(names(&root).len(), given.len());
+}
+
+/// A save over a read-only file either replaces it (Linux and macOS let a file be renamed
+/// over one) or is refused (Windows may refuse); either way the file there is whole, the
+/// old one or the new one, and no temporary file is left.
+#[test]
+fn a_save_over_a_read_only_file_leaves_the_old_file_or_the_new_one_whole() {
+    /// Puts a file's permissions back as they were, also when the test fails.
+    struct Restore<'a>(&'a Path, std::fs::Permissions);
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, self.1.clone());
+        }
+    }
+    let root = folder("read-only");
+    let target = root.join("ro.shz");
+    let mut s = Session::new(&root);
+    s.ok("add_board", board("Shelf", 0.0));
+    s.ok("save_model", json!({"path": "ro.shz"}));
+    let old = std::fs::read(&target).unwrap();
+    let writable = std::fs::metadata(&target).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&target, read_only).unwrap();
+    let restore = Restore(&target, writable);
+    s.ok("add_board", board("Top", 400.0));
+    let new = s.hash();
+    let (failed, answer) = s.call("save_model", json!({"path": "ro.shz"}));
+    let now = std::fs::read(&target).unwrap();
+    eprintln!(
+        "save over a read-only file: {} ({answer})",
+        if failed { "refused" } else { "done" }
+    );
+    if failed {
+        assert_eq!(now, old, "a refused save left the old file as it was");
+    } else {
+        assert_eq!(hash_of(&now), new, "a save reported done left the new file");
+        assert_eq!(answer["model_hash"], new.as_str());
+    }
+    assert!(temporary_files(&root).is_empty(), "{:?}", names(&root));
+    assert_eq!(names(&root), ["ro.shz"]);
+    // The server goes on: a save under another name is done.
+    s.ok("save_model", json!({"path": "other.shz"}));
+    drop(restore);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A name differing only in case from a file that is there: where the volume ignores case
+/// (Windows, and macOS by default) it opens that file, and a save over it leaves one file
+/// with the new model; where it does not (Linux), it is another file, and the first keeps
+/// its bytes. Which name the one file keeps is printed.
+#[test]
+fn a_name_differing_only_in_case_names_one_file_where_the_volume_ignores_case() {
+    let root = folder("case");
+    let mut s = Session::new(&root);
+    s.ok("add_board", board("Shelf", 0.0));
+    s.ok("save_model", json!({"path": "Keep.shz"}));
+    let first = std::fs::read(root.join("Keep.shz")).unwrap();
+    let first_hash = s.hash();
+    let ignores_case = root.join("KEEP.SHZ").exists();
+    eprintln!("this volume ignores case: {ignores_case}");
+    let (failed, opened) = s.call("open_model", json!({"path": "keep.shz"}));
+    if ignores_case {
+        assert!(!failed, "{opened}");
+        assert_eq!(opened["path"], "keep.shz");
+        assert_eq!(opened["model_hash"], first_hash.as_str());
+    } else {
+        assert!(failed, "{opened}");
+        let e = opened["error"].as_str().unwrap();
+        assert!(e.contains("no such file"), "{e}");
+    }
+    s.ok("add_board", board("Top", 400.0));
+    let new = s.hash();
+    assert_ne!(new, first_hash);
+    let saved = s.ok("save_model", json!({"path": "keep.shz"}));
+    assert_eq!(saved["path"], "keep.shz");
+    let like: Vec<String> = names(&root)
+        .into_iter()
+        .filter(|n| n.eq_ignore_ascii_case("keep.shz"))
+        .collect();
+    eprintln!("after the save: {like:?}");
+    if ignores_case {
+        assert_eq!(like.len(), 1, "{like:?}");
+        assert_eq!(hash_of(&std::fs::read(root.join(&like[0])).unwrap()), new);
+    } else {
+        assert_eq!(like, ["Keep.shz", "keep.shz"]);
+        assert_eq!(std::fs::read(root.join("Keep.shz")).unwrap(), first);
+        assert_eq!(hash_of(&std::fs::read(root.join("keep.shz")).unwrap()), new);
+    }
+    // Nothing else is there: no temporary file.
+    assert_eq!(names(&root), like);
+}
+
+/// A start folder given through a link works, and files go where the link points. On
+/// macOS the system's temporary folder is itself behind one (/var is a link to
+/// /private/var), so every test's start folder there is given by a path not yet resolved;
+/// this prints whether it is.
+#[cfg(unix)]
+#[test]
+fn a_start_folder_given_through_a_link_saves_where_it_points() {
+    let temp = std::env::temp_dir();
+    let resolved = std::fs::canonicalize(&temp).unwrap();
+    eprintln!(
+        "the temporary folder {} resolves to {}",
+        temp.display(),
+        resolved.display()
+    );
+    let base = folder("start-link");
+    let real = base.join("real");
+    std::fs::create_dir_all(real.join("sub")).unwrap();
+    let alias = base.join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let mut s = Session::new(&alias);
+    s.ok("add_board", board("Shelf", 0.0));
+    let saved = s.ok("save_model", json!({"path": "sub/a.shz"}));
+    assert_eq!(saved["path"], "sub/a.shz");
+    let file = PathBuf::from(saved["file"].as_str().unwrap());
+    let real_resolved = std::fs::canonicalize(&real).unwrap();
+    assert_eq!(file, real_resolved.join("sub").join("a.shz"), "{saved}");
+    assert!(file.starts_with(&resolved), "{saved}");
+    let hash = s.hash();
+    assert_eq!(
+        hash_of(&std::fs::read(real.join("sub/a.shz")).unwrap()),
+        hash
+    );
+    // The folder the link is in is still outside.
+    for path in ["../a.shz", "../alias/a.shz"] {
+        let e = s.refused("save_model", json!({"path": path}));
+        assert!(e.contains(".."), "{path}: {e}");
+    }
+    assert_eq!(names(&base), ["alias", "real"]);
+    // Given with a separator at its end, the link names the same folder.
+    let mut s = Session::new(&base.join("alias/"));
+    assert_eq!(
+        s.ok("open_model", json!({"path": "sub/a.shz"}))["model_hash"],
+        hash.as_str()
+    );
+    std::fs::remove_file(&alias).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
 }

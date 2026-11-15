@@ -57,6 +57,88 @@ jobs:
           path: crates/kernel/tests/repro/pending/*.json
           if-no-files-found: ignore
 
+  # The MCP server (crates/mcp) is started by a program that writes its own requests, on
+  # someone's own disk, and its start folder is its only fence: this lints and tests it, and
+  # runs the built binary once, on the two systems the Linux jobs never see.
+  mcp:
+    name: MCP server (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          # The Intel macOS runner, as in release.yml: this repository's arm64 macOS jobs
+          # keep getting no runner (release.yml's comment on its matrix has the detail).
+          - name: macOS
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: crates
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - name: "clippy (sawhorse-mcp: this system's own cfg code included)"
+        run: cargo clippy -p sawhorse-mcp --all-targets -- -D warnings
+      # --no-fail-fast: every test file runs even when an earlier one fails, so one
+      # run shows everything this system does.
+      - name: "test (sawhorse-mcp; each test prints what this system did)"
+        run: cargo test -p sawhorse-mcp --no-fail-fast -- --nocapture
+      - name: release build
+        run: cargo build --release -p sawhorse-mcp
+      - name: one real run of the binary on a fresh folder
+        run: |
+          set -euo pipefail
+          bin=target/release/sawhorse-mcp
+          dir="$(mktemp -d)"
+          work="$(mktemp -d)"
+          arg="$dir"
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then
+            bin="$bin.exe"
+            arg="$(cygpath -w "$dir")"
+          fi
+          cat > "$work/requests.jsonl" <<'EOF'
+          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}
+          {"jsonrpc":"2.0","method":"notifications/initialized"}
+          {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"new_model","arguments":{"units":"mm"}}}
+          {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_board","arguments":{"name":"Shelf","thickness":19,"width":250,"length":600,"material":"Pine"}}}
+          {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"save_model","arguments":{"path":"Shelf.shz"}}}
+          {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"cut_list","arguments":{}}}
+          EOF
+          "$bin" "$arg" < "$work/requests.jsonl" > "$work/answers.jsonl"
+          cat "$work/answers.jsonl"
+          # Each answer is one line of compact JSON with its keys in alphabetical order.
+          expect() {
+            local n="$1" line want
+            shift
+            line="$(sed -n "${n}p" "$work/answers.jsonl")"
+            for want in "$@"; do
+              case "$line" in
+                *"$want"*) ;;
+                *) echo "answer $n does not hold $want"; exit 1 ;;
+              esac
+            done
+          }
+          [ "$(wc -l < "$work/answers.jsonl" | tr -d ' ')" = 5 ] || { echo "not five answers"; exit 1; }
+          expect 1 '"id":1,"jsonrpc":"2.0","result"' '"protocolVersion":"2025-11-25"' '"name":"sawhorse-mcp"'
+          for n in 2 3 4 5; do
+            expect "$n" "\"id\":$n,\"jsonrpc\":\"2.0\",\"result\"" '"isError":false'
+          done
+          expect 3 '"name":"Shelf"' '"material":"Pine"'
+          expect 4 '"path":"Shelf.shz"'
+          expect 5 '"name":"Shelf"'
+          # The saved file is in the folder, and nothing else is.
+          [ -s "$dir/Shelf.shz" ] || { echo "no Shelf.shz in the folder"; exit 1; }
+          [ "$(ls -A "$dir")" = "Shelf.shz" ] || { echo "the folder holds: $(ls -A "$dir")"; exit 1; }
+          echo "the binary answered all five requests and saved Shelf.shz ($(wc -c < "$dir/Shelf.shz" | tr -d ' ') bytes)"
+
   web:
     name: Web (wasm-pack, build, vitest, golden, boolean diff, corpus, e2e)
     runs-on: ubuntu-24.04
