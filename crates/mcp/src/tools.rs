@@ -183,6 +183,7 @@ impl Server {
         self.display_units = opened.scene.units.display;
         Ok(json!({
             "path": place.shown,
+            "file": file_shown(&place.full),
             "model_hash": self.hash(),
             "parts": self.doc.model().cut_list(&CutOptions::default()).rows.len(),
             "notes": opened.notes,
@@ -218,7 +219,9 @@ impl Server {
         }
         self.path = Some(place.shown.clone());
         self.saved = model.hash();
-        Ok(json!({"path": place.shown, "model_hash": self.hash(), "bytes": bytes.len()}))
+        Ok(
+            json!({"path": place.shown, "file": file_shown(&place.full), "model_hash": self.hash(), "bytes": bytes.len()}),
+        )
     }
 
     fn summary(&self) -> Value {
@@ -349,8 +352,8 @@ impl Server {
             "object": made,
             "name": name,
             "material": material,
-            "min_mm": lo.to_array().map(|c| c * 1000.0),
-            "max_mm": hi.to_array().map(|c| c * 1000.0),
+            "min_mm": lo.to_array().map(mm),
+            "max_mm": hi.to_array().map(mm),
         });
         let list = model.cut_list(&CutOptions::default());
         let others: Vec<Value> = list
@@ -396,7 +399,7 @@ fn row(r: &CutRow) -> Value {
     json!({
         "name": r.name,
         "qty": r.qty,
-        "size_mm": r.size.map(|s| s * 1000.0),
+        "size_mm": r.size.map(mm),
         "material": r.material,
         "grain": r.grain,
         "target": r.target,
@@ -438,6 +441,17 @@ fn changes(before: &BTreeMap<String, Vec<Value>>, after: &BTreeMap<String, Vec<V
 
 fn hex(h: u64) -> String {
     format!("{h:016x}")
+}
+
+/// Metres as millimetres to the nearest 0.1 mm, for answers (finer is not a size in wood,
+/// and the conversion leaves noise like 19.000000000000018). `-0.0` comes out as `0.0`.
+fn mm(m: f64) -> f64 {
+    (m * 10_000.0).round() / 10.0 + 0.0
+}
+
+/// Where a file is on this machine, as the server sees it.
+fn file_shown(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
 }
 
 fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, String> {
@@ -617,7 +631,7 @@ pub fn list() -> Value {
              "units": {"type": "string", "enum": ["mm", "cm", "m", "in"]},
              "material": {"type": "string"}}}},
         {"name": "apply_ops", "title": "Apply ops",
-         "description": "Apply kernel ops as one undo step, all or nothing: the same named batch a plugin sends (docs/PLUGINS.md), lengths in metres, with {\"$ref\": i, \"path\": ...} placeholders for what an earlier op of the batch made. Undo, redo, batches and restores are not allowed. Answers each op's outcome and the cut list changes; a refusal says which op and why, and changes nothing.",
+         "description": "Apply kernel ops as one undo step, all or nothing: the same named batch a plugin sends (docs/PLUGINS.md), lengths in metres, with {\"$ref\": i, \"path\": ...} placeholders for what an earlier op of the batch made. To repeat parts, copy them (op copy: objects, xform) or array them (op array: objects, xform, count) by the ids summary gives, rather than adding each again. Undo, redo, batches and restores are not allowed. Answers each op's outcome and the cut list changes; a refusal says which op and why, and changes nothing.",
          "inputSchema": {"type": "object", "additionalProperties": false, "required": ["name", "ops"], "properties": {
              "name": {"type": "string", "description": "Names the undo step"},
              "ops": {"type": "array", "items": {"type": "object"}}}}},

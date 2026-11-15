@@ -37,16 +37,16 @@ Other clients take the same command and argument in their server list.
 
 ## Tools
 
-Lengths in tool answers are millimetres where the field says `_mm`. The `cut_list` and `nest` answers and `apply_ops`' ops are the kernel's own, in metres.
+Lengths in tool answers are millimetres, to 0.1 mm, where the field says `_mm` (3/4 in reads 19.0). The `cut_list` and `nest` answers and `apply_ops`' ops are the kernel's own, in metres, exact.
 
 | Tool | Takes | Does |
 |---|---|---|
 | `new_model` | `units`: `mm` or `in` (optional) | Starts a new empty model, dropping the one held. `units` is the unit system saved with the file. |
-| `open_model` | `path` | Opens a `.shz`, replacing the model held. Answers its `model_hash`, its part count and the reader's `notes` (what it had to repair). |
-| `save_model` | `path` (optional) | Saves the model. Without a path, where it was opened from or last saved. |
+| `open_model` | `path` | Opens a `.shz`, replacing the model held. Answers `file` (where it is on this machine, as the server sees it), its `model_hash`, its part count and the reader's `notes` (what it had to repair). |
+| `save_model` | `path` (optional) | Saves the model. Without a path, where it was opened from or last saved. Answers `path`, and `file`: where it is on this machine, as the server sees it (under WSL, a `/mnt/c/...` path). |
 | `summary` | nothing | Every part (one per cut list row): `name`, `qty`, `size_mm` (thickness, width, length), `material`, `grain`, `target` and `items` (the ids `apply_ops` names). Also `path`, `unsaved`, `model_hash`, `display_units`, `materials` and `shared_names`. |
 | `add_board` | `name`, `thickness`, `width`, `length`; optional `position` (the corner nearest the origin, default `[0, 0, 0]`), `length_axis` (`x`, `y` or `z`, default `x`), `thickness_axis` (default `z`: lying flat), `units` (`mm`, the default, `cm`, `m` or `in`), `material` | Adds one solid board, named. `material` is one in the model, or one from the app's material library by name (Pine, Red oak, Walnut, Baltic birch ply, MDF and the rest), which is added with it. Answers `board` (its `object` id, `min_mm` and `max_mm`), `changes` and `shares_name_with`. |
-| `apply_ops` | `name` (names the undo step), `ops` | Applies kernel ops as one step: the named batch a plugin sends ([PLUGINS.md](PLUGINS.md)), with `{"$ref": i, "path": "..."}` placeholders for what an earlier op made. Undo, redo, batches, restores and opening a group are not allowed, and a batch holds at most 20,000 points in all (a sketch's edge limit; a longer stroke would be slow to refuse). Answers each op's `outcome` and `changes`; a refusal names the op and why. |
+| `apply_ops` | `name` (names the undo step), `ops` | Applies kernel ops as one step: the named batch a plugin sends ([PLUGINS.md](PLUGINS.md)), with `{"$ref": i, "path": "..."}` placeholders for what an earlier op made. To repeat parts, `copy` or `array` them by the ids `summary` gives rather than adding each again. Undo, redo, batches, restores and opening a group are not allowed, and a batch holds at most 20,000 points in all (a sketch's edge limit; a longer stroke would be slow to refuse). Answers each op's `outcome` and `changes`; a refusal names the op and why. |
 | `cut_list` | `rounding` (`sixteenth`, `thirty_second` or `half_mm`), `visible_only` | The cut list, the same JSON as `sawhorse-cli cutlist`. |
 | `nest` | `algorithm` (`guillotine` or `maxrects`), `visible_only` | The nesting, the same JSON as `sawhorse-cli nest`. |
 | `undo`, `redo` | nothing | Undo or redo the last change. Answers `changes`. |

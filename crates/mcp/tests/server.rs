@@ -277,8 +277,21 @@ fn a_board_lands_where_it_is_asked_on_every_axis() {
         json!({"name": "Inch", "thickness": 0.75, "width": 12.0, "length": 36.0, "units": "in"}),
     );
     let hi = out["board"]["max_mm"].as_array().unwrap();
-    assert!(near(hi[0].as_f64().unwrap(), 36.0 * 25.4), "{out}");
-    assert!(near(hi[2].as_f64().unwrap(), 0.75 * 25.4), "{out}");
+    // Answers are to 0.1 mm: 36 in is 914.4 mm, and 3/4 in (19.05 mm) reads 19.0. The
+    // cut list keeps the exact sizes.
+    assert_eq!(hi[0].as_f64().unwrap(), 914.4, "{out}");
+    assert_eq!(hi[2].as_f64().unwrap(), 19.0, "{out}");
+    let rows = s.ok("cut_list", json!({}))["rows"].clone();
+    let inch = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "Inch")
+        .unwrap();
+    assert!(
+        near(inch["size"][0].as_f64().unwrap(), 0.75 * 0.0254),
+        "{inch}"
+    );
 }
 
 /// Every change is one undo step and says what it changed in the cut list.
@@ -742,4 +755,64 @@ fn verifier_finds_stay_fixed() {
         let r = server.handle_line(msg.to_string().as_bytes()).unwrap();
         assert_eq!(r["result"]["protocolVersion"], got);
     }
+}
+
+/// What the first real run asked for: where the file went, sizes without float noise, and
+/// a pointer to copy and array.
+#[test]
+fn first_run_finds_stay_fixed() {
+    let root = folder("first-run");
+    let mut s = Session::new(&root);
+    // The second side and the shelves came back as 19.000000000000018 and 212.66999999999996.
+    s.ok(
+        "add_board",
+        json!({"name": "Side", "thickness": 19, "width": 300, "length": 600, "length_axis": "z", "thickness_axis": "x"}),
+    );
+    let side = s.ok(
+        "add_board",
+        json!({"name": "Side", "thickness": 19, "width": 300, "length": 600, "position": [881, 0, 0], "length_axis": "z", "thickness_axis": "x"}),
+    );
+    let shelf = s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19, "width": 300, "length": 862, "position": [19, 0, 193.67]}),
+    );
+    let tenths = |v: &Value| {
+        for x in v.as_array().unwrap() {
+            let x = x.as_f64().unwrap();
+            assert_eq!(x, (x * 10.0).round() / 10.0, "{v}");
+        }
+    };
+    for out in [&side, &shelf] {
+        tenths(&out["board"]["min_mm"]);
+        tenths(&out["board"]["max_mm"]);
+        tenths(&out["changes"]["added"][0]["size_mm"]);
+    }
+    assert_eq!(
+        shelf["board"]["max_mm"],
+        json!([881.0, 300.0, 212.7]),
+        "{shelf}"
+    );
+    for p in s.ok("summary", json!({}))["parts"].as_array().unwrap() {
+        tenths(&p["size_mm"]);
+    }
+    // The answer says where the file is, not only its name in the folder.
+    let saved = s.ok("save_model", json!({"path": "Bookcase.shz"}));
+    let file = std::path::PathBuf::from(saved["file"].as_str().unwrap());
+    assert!(file.is_absolute(), "{saved}");
+    assert_eq!(
+        std::fs::canonicalize(&file).unwrap(),
+        std::fs::canonicalize(root.join("Bookcase.shz")).unwrap()
+    );
+    let opened = s.ok("open_model", json!({"path": "Bookcase.shz"}));
+    assert_eq!(opened["file"], saved["file"]);
+    // apply_ops points to the ops that copy and repeat parts.
+    let r = s.request("tools/list", json!({}));
+    let apply = r["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "apply_ops")
+        .unwrap();
+    let d = apply["description"].as_str().unwrap();
+    assert!(d.contains("copy") && d.contains("array"), "{d}");
 }
