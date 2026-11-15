@@ -1103,3 +1103,71 @@ fn a_start_folder_given_through_a_link_saves_where_it_points() {
     std::fs::remove_file(&alias).unwrap();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Lane 51: an absolute path is refused as absolute on every system, for each tool that
+/// takes a path, and nothing is made or changed outside the folder or in it. Removing the
+/// absolute check in paths.rs (a root or a drive read as nothing) makes "/probe.shz" save
+/// inside the folder and a real absolute path fail only because its folders are not there;
+/// either way the message here is the one that says why.
+#[test]
+fn an_absolute_path_is_refused_as_absolute_everywhere() {
+    let base = folder("absolute");
+    let root = base.join("root");
+    let away = base.join("away");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&away).unwrap();
+    let mut s = Session::new(&root);
+    s.ok("add_board", board("Shelf", 0.0));
+    s.ok("save_model", json!({"path": "keep.shz"}));
+    let kept = std::fs::read(root.join("keep.shz")).unwrap();
+    std::fs::write(away.join("far.shz"), &kept).unwrap();
+    let far = std::fs::canonicalize(away.join("far.shz")).unwrap();
+    assert!(far.is_absolute());
+    let new_far = std::fs::canonicalize(&away).unwrap().join("new.shz");
+    let probe = Path::new("/probe.shz");
+    let probe_there = probe.exists();
+    let hash = s.hash();
+    for path in [
+        "/probe.shz".to_string(),
+        far.to_str().unwrap().to_string(),
+        new_far.to_str().unwrap().to_string(),
+    ] {
+        for tool in ["save_model", "open_model"] {
+            let e = s.refused(tool, json!({"path": path}));
+            assert!(
+                e.contains("paths are relative to the server's folder, not absolute"),
+                "{tool} {path}: {e}"
+            );
+        }
+        // new_model takes no path at all: one given is refused and the model kept.
+        let e = s.refused("new_model", json!({"path": path}));
+        assert!(e.contains("path"), "new_model {path}: {e}");
+        assert_eq!(s.hash(), hash);
+    }
+    assert_eq!(names(&root), ["keep.shz"]);
+    assert_eq!(names(&away), ["far.shz"]);
+    assert_eq!(std::fs::read(&far).unwrap(), kept);
+    assert_eq!(probe.exists(), probe_there);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane 51: spaces around a path are trimmed on every system: " a.shz " and "a.shz " save
+/// to "a.shz", answer "a.shz", and open it, and nothing else is made. Without the trim in
+/// paths.rs the space at the end is a name Windows trims, refused.
+#[test]
+fn spaces_around_a_path_are_trimmed() {
+    let root = folder("trimmed");
+    let mut s = Session::new(&root);
+    s.ok("add_board", board("Shelf", 0.0));
+    for path in [" a.shz ", "a.shz ", "  a.shz"] {
+        let saved = s.ok("save_model", json!({"path": path}));
+        assert_eq!(saved["path"], "a.shz", "{path:?}: {saved}");
+        assert_eq!(names(&root), ["a.shz"], "{path:?}");
+        let opened = s.ok("open_model", json!({"path": path}));
+        assert_eq!(opened["path"], "a.shz", "{path:?}: {opened}");
+        assert_eq!(s.ok("summary", json!({}))["path"], "a.shz");
+    }
+    let hash = s.hash();
+    assert_eq!(hash_of(&std::fs::read(root.join("a.shz")).unwrap()), hash);
+    let _ = std::fs::remove_dir_all(&root);
+}

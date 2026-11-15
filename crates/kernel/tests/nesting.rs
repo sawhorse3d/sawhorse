@@ -13,7 +13,9 @@ use sawhorse_kernel::cutlist::{
     Rounding,
 };
 use sawhorse_kernel::model::{DrawTarget, Op, OpOutcome};
-use sawhorse_kernel::nesting::{CutDir, NestOptions, Nesting, UnplacedReason, nest_list};
+use sawhorse_kernel::nesting::{
+    CutDir, NestOptions, Nesting, StockPiece, UnplacedReason, nest_list, up_to_stock,
+};
 use sawhorse_kernel::nodes::Item;
 use sawhorse_kernel::stock::{
     NestAlgorithm, NestSettings, StockDef, StockGrain, StockKind, StockLibrary,
@@ -1943,3 +1945,166 @@ fn the_nesting_golden_is_this_bookshelf() {
         );
     }
 }
+
+// ---- lane 51: a filled sheet or board shows no waste ------------------------------------
+
+/// Plain parts nested with no kerf and no trim (inches), the library with no defaults.
+fn filled(parts: &[(f64, f64, f64, usize, bool)]) -> Nesting {
+    let rows: Vec<_> = parts
+        .iter()
+        .map(|&(t, w, l, q, sheet)| (t, w, l, q, Grain::Length, sheet, 0u8))
+        .collect();
+    let list = list_of(&rows, 0);
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    let st = NestSettings {
+        kerf: 0.0,
+        trim: 0.0,
+        algorithm: NestAlgorithm::Guillotine,
+        ..NestSettings::default()
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap();
+    n
+}
+
+/// The parts' areas on a piece added up as the nesting adds them, before lane 51.
+fn raw_parts(p: &StockPiece) -> f64 {
+    p.placements.iter().map(|q| q.dx * q.dy).sum()
+}
+
+/// Every piece, group and the totals of a nesting whose stock is all filled: exactly no
+/// waste, with a positive sign, and an efficiency of exactly 1.
+fn all_full(n: &Nesting) {
+    for p in &n.pieces {
+        assert_eq!(p.parts_area, p.stock_area, "piece {}", p.index);
+        assert_eq!(
+            p.waste_area.to_bits(),
+            0.0f64.to_bits(),
+            "piece {}",
+            p.index
+        );
+        assert_eq!(p.efficiency, 1.0, "piece {}", p.index);
+    }
+    for g in &n.totals.groups {
+        assert_eq!(g.parts_area, g.stock_area, "group {}", g.stock);
+        assert_eq!(g.efficiency, 1.0, "group {}", g.stock);
+    }
+    let t = &n.totals;
+    assert_eq!(t.parts_area, t.stock_area);
+    assert_eq!((t.stock_area - t.parts_area).to_bits(), 0.0f64.to_bits());
+    assert_eq!(t.efficiency, 1.0);
+}
+
+/// Nine 16 x 32 in parts fill a 4 x 8 sheet, and three 4 x 32 in parts a 4/4 x 4 x 96
+/// board, with no kerf and no trim; added up, their areas came to a hair more than the
+/// stock's (4.4e-16 m² and 2.8e-17 m²), which the Nesting panel showed as "-0.00 sq ft
+/// waste". Now each reads exactly no waste and 100%.
+#[test]
+fn parts_that_fill_a_sheet_or_a_board_leave_exactly_no_waste() {
+    let sheet = filled(&[(23.0 / 32.0, 16.0, 32.0, 9, true)]);
+    let board = filled(&[(0.75, 4.0, 32.0, 3, false)]);
+    for (n, stock, parts) in [(&sheet, "4 x 8 sheet, 3/4", 9), (&board, "4/4 x 4 x 96", 3)] {
+        assert_eq!((n.totals.unplaced, n.pieces.len()), (0, 1), "{stock}");
+        let p = &n.pieces[0];
+        assert_eq!((p.stock.as_str(), p.placements.len()), (stock, parts));
+        // The case is the one rounding put over: the plain sum is more than the stock.
+        assert!(raw_parts(p) > p.stock_area, "{stock}: {:e}", raw_parts(p));
+        all_full(n);
+    }
+}
+
+/// A part exactly a 5 x 5 Baltic birch sheet, ten of them: each sheet's area is its own,
+/// but ten sheets' areas added one by one came to more than the sheet's area times ten,
+/// so the group read a hair over 100%. Now the group and the totals read exactly 1.
+#[test]
+fn ten_parts_each_a_whole_sheet_fill_their_group_exactly() {
+    let n = filled(&[(18.0 / 25.4, 60.0, 60.0, 10, true)]);
+    assert_eq!(n.totals.unplaced, 0);
+    assert_eq!(n.totals.groups.len(), 1);
+    let g = &n.totals.groups[0];
+    assert_eq!((g.stock.as_str(), g.count), ("5 x 5 Baltic birch, 3/4", 10));
+    let one = n.pieces[0].stock_area;
+    let added = n.pieces.iter().fold(0.0, |s, p| s + raw_parts(p));
+    assert!(added > one * 10.0, "{added:e} {:e}", one * 10.0);
+    all_full(&n);
+}
+
+/// What is more than rounding can make still shows: a part half a nanometre larger than the
+/// 5 x 5 sheet each way (inside the fits' 1 nm slack) comes to about 1.5e-9 m² more than
+/// the sheet, so its waste is below zero and its efficiency over 1.
+#[test]
+fn parts_truly_larger_than_their_stock_still_show() {
+    let over = 0.5e-9 / IN;
+    let n = filled(&[(18.0 / 25.4, 60.0 + over, 60.0 + over, 1, true)]);
+    assert_eq!((n.totals.unplaced, n.pieces.len()), (0, 1));
+    let p = &n.pieces[0];
+    assert_eq!(p.parts_area, raw_parts(p));
+    assert!(p.waste_area < -1e-9, "{:e}", p.waste_area);
+    assert!(p.efficiency > 1.0);
+    assert!(n.totals.groups[0].efficiency > 1.0);
+    assert!(n.totals.efficiency > 1.0);
+    // The rule itself, at and past its slack.
+    let slack = |terms: usize| (terms as f64 + 2.0) * f64::EPSILON;
+    assert_eq!(up_to_stock(1.0 + slack(9), 1.0, 9), 1.0);
+    assert_eq!(
+        up_to_stock(1.0 + 2.0 * slack(9), 1.0, 9),
+        1.0 + 2.0 * slack(9)
+    );
+    assert_eq!(up_to_stock(0.5, 1.0, 9), 0.5);
+    assert_eq!(up_to_stock(-0.0f64, 1.0, 0).to_bits(), (-0.0f64).to_bits());
+}
+
+/// Stock the parts do not fill reads bit for bit as before lane 51: every piece's, group's
+/// and total's numbers equal the sums and quotients the nesting worked them out with.
+#[test]
+fn stock_not_filled_reads_bit_for_bit_as_before() {
+    let (mut d, s) = bookshelf();
+    let mut nestings = vec![nest(&d)];
+    plywood(&mut d, &s);
+    nestings.push(nest(&d));
+    nestings.push(filled(&[(23.0 / 32.0, 16.0, 31.0, 9, true)]));
+    nestings.push(rails(1.5, 40.0, 4));
+    for n in &nestings {
+        let mut groups: Vec<(f64, f64)> = vec![(0.0, 0.0); n.totals.groups.len()];
+        for p in &n.pieces {
+            let parts = raw_parts(p);
+            let stock = p.length * p.width;
+            assert!(parts < stock);
+            assert_eq!(p.parts_area.to_bits(), parts.to_bits());
+            assert_eq!(p.stock_area.to_bits(), stock.to_bits());
+            assert_eq!(p.waste_area.to_bits(), (stock - parts).to_bits());
+            assert_eq!(p.efficiency.to_bits(), (parts / stock).to_bits());
+            groups[p.group].0 += parts;
+            groups[p.group].1 = stock * p.count as f64;
+        }
+        for (g, (parts, stock)) in n.totals.groups.iter().zip(&groups) {
+            assert_eq!(g.parts_area.to_bits(), parts.to_bits());
+            assert_eq!(g.stock_area.to_bits(), stock.to_bits());
+            assert_eq!(g.efficiency.to_bits(), (parts / stock).to_bits());
+        }
+        let parts = n.pieces.iter().fold(0.0, |s, p| s + raw_parts(p));
+        let stock = n.pieces.iter().fold(0.0, |s, p| s + p.length * p.width);
+        let t = &n.totals;
+        assert_eq!(t.parts_area.to_bits(), parts.to_bits());
+        assert_eq!(t.stock_area.to_bits(), stock.to_bits());
+        assert_eq!(t.efficiency.to_bits(), (parts / stock).to_bits());
+    }
+    // And the bookshelf's totals as they were (6,105 and 10,368 in²), to the bit.
+    let t = &nestings[0].totals;
+    assert_eq!(
+        (
+            t.parts_area.to_bits(),
+            t.stock_area.to_bits(),
+            t.efficiency.to_bits()
+        ),
+        (BOOKSHELF_BITS[0], BOOKSHELF_BITS[1], BOOKSHELF_BITS[2])
+    );
+}
+
+/// The bookshelf's total parts area, stock area and efficiency before lane 51 (f64 bits).
+const BOOKSHELF_BITS: [u64; 3] = [
+    4616051586779419158,
+    4619217184161248456,
+    4603478937856444795,
+];

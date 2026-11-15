@@ -5,7 +5,8 @@
 // kernel output in `nesting.test.ts`.
 import { describe, expect, it } from "vitest";
 import { checkDxf, checkPdf, checkSvg } from "./checks";
-import { cutText, fineU, len, lenU, nestSummary, pct, pieceTitle, reasonText, settingsText } from "./format";
+import { formatArea } from "../cutlist/format";
+import { cutText, fineU, len, lenU, nestSummary, pct, pieceTitle, pieceYield, reasonText, settingsText } from "./format";
 import { smallNesting } from "./fixture";
 import { pieceFileName } from "./svg";
 
@@ -41,6 +42,29 @@ describe("nesting in shop words", () => {
     expect(settingsText(n, "sixteenth")).toBe("Kerf 1/8 in · trim none · table saw");
     expect(pieceTitle(n.pieces[0])).toBe("Board 1 of 1 · 4/4 x 12 x 96 · Oak");
     expect(pieceFileName("Bookshelf", n.pieces[1])).toBe("Bookshelf 02 sheet 1 of 1, 4 x 8 sheet, 1-4.svg");
+  });
+
+  // Lane 51: nine 16 x 32 in parts fill a 4 x 8 sheet with no kerf; before the kernel
+  // reported such a sheet as exactly full, its waste came to -4.44e-16 m² and its efficiency
+  // to 1.0000000000000002, which the panel wrote as "-0.00 sq ft waste".
+  it("a waste that rounds to zero is never written with a minus, and a real one keeps it", () => {
+    for (const r of ["sixteenth", "thirty_second", "half_mm"] as const) {
+      const unit = r === "half_mm" ? "m²" : "sq ft";
+      for (const m2 of [-4.440892098500626e-16, -0, 0, 1e-17, -1e-9, -0.0004]) expect(formatArea(m2, r)).toBe(`0.00 ${unit}`);
+      expect(formatArea(-0.0929, r)).toBe(r === "half_mm" ? "-0.09 m²" : "-1.00 sq ft");
+      expect(formatArea(-0.02, r)).toBe(r === "half_mm" ? "-0.02 m²" : "-0.22 sq ft");
+      expect(formatArea(2.9728972799999993, r)).toBe(r === "half_mm" ? "2.97 m²" : "32.00 sq ft");
+    }
+    const n = smallNesting();
+    const sheet = n.pieces[1];
+    const full = { ...sheet, parts_area: 2.9728972799999998, stock_area: 2.9728972799999993, waste_area: -4.440892098500626e-16, efficiency: 1.0000000000000002 };
+    expect(pieceYield(full, "sixteenth")).toBe("100.0% used · 0.00 sq ft waste");
+    expect(pieceYield(full, "half_mm")).toBe("100.0% used · 0.00 m² waste");
+    // As the kernel reports it now: exactly full.
+    expect(pieceYield({ ...full, parts_area: full.stock_area, waste_area: 0, efficiency: 1 }, "sixteenth")).toBe("100.0% used · 0.00 sq ft waste");
+    const totals = { ...n.totals, parts_area: full.parts_area, stock_area: full.stock_area, efficiency: full.efficiency };
+    expect(nestSummary({ ...n, pieces: [full], totals }, "sixteenth").yieldLabel).toBe("yield · 3 of 4 parts placed · 0.00 sq ft waste");
+    expect(nestSummary({ ...n, pieces: [full], totals }, "sixteenth").yieldText).toBe("100.0%");
   });
 
   it("the SVG of each piece holds every part where the kernel put it", () => checkSvg(smallNesting(), "Bookshelf"));

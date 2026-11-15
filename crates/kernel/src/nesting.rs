@@ -50,6 +50,10 @@
 //! **Numbers.** Areas and efficiency come from the exact sizes. Only `+ - * /`, `min`, `max`
 //! and comparisons are used, nothing is random, every tie is broken by input order: the
 //! same model gives the same layout, natively and in WASM, and [`Nesting::hash`] says so.
+//! Parts that fill their stock can add up to a hair more than it by rounding alone (nine
+//! 16 x 32 in parts on a 4 x 8 sheet came to 4.4e-16 m² over it); such a sum is reported as
+//! the stock's area ([`up_to_stock`]), so a full sheet shows no waste and 100%, never a hair
+//! under none. Anything more than rounding can make is left as it is.
 
 use std::collections::BTreeMap;
 
@@ -64,6 +68,28 @@ use crate::stock::{
 
 /// Geometric slack in fits and gaps (1 nm): floating-point noise only.
 pub const EPS: f64 = 1e-9;
+
+/// Lane 51: an area of parts as reported against the `stock` area it was cut from: `stock`
+/// when the parts come to more than it by no more than rounding can add, else the parts'
+/// own sum, so a filled sheet or board shows exactly no waste and an efficiency of exactly
+/// 1, and parts truly larger than their stock still show.
+///
+/// `parts` is a sum of `terms` values (areas of parts, each a product of two sizes, or areas
+/// of pieces already within their stock). With u = `f64::EPSILON` / 2, each product, each
+/// addition and the stock's own product `length * width` are off by at most u of what they
+/// stand for, and a size of a part one rounding over its exact share of the stock (a third
+/// of a width) adds at most 2u to its area. So when the parts truly fit, `parts` is at most
+/// about `stock * (1 + (terms + 5) u)`, under the slack `(terms + 2) * f64::EPSILON * stock`
+/// for any `terms` of 1 or more. On a 4 x 8 sheet with 100 parts the slack is about 7e-14
+/// m², far less than a part one nanometre (the fits' [`EPS`]) too long could add.
+pub fn up_to_stock(parts: f64, stock: f64, terms: usize) -> f64 {
+    let slack = (terms as f64 + 2.0) * f64::EPSILON * stock;
+    if parts > stock && parts - stock <= slack {
+        stock
+    } else {
+        parts
+    }
+}
 /// Lane 42 (#49): the most strips a glue-up is planned from. A part that would take more
 /// (a board barely wider than the joint loss) is reported too large instead.
 pub const MAX_GLUE_STRIPS: usize = 100;
@@ -1491,6 +1517,9 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
             efficiency: 0.0,
             board_feet: s.board_feet() * count as f64,
         };
+        // Lane 51: every piece's parts within its stock, so the group's sum may be brought
+        // back to the group's stock as well; a piece over it keeps the group over it too.
+        let mut fits = true;
         for (seq, puts) in layout.into_iter().enumerate() {
             // Placements in reading order: on a sheet along the length, then across; on a
             // board section by section along it, then across a section, the order its cuts
@@ -1535,7 +1564,12 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
                     }
                 })
                 .collect();
-            let parts_area: f64 = placements.iter().map(|p| p.dx * p.dy).sum();
+            let parts_area = up_to_stock(
+                placements.iter().map(|p| p.dx * p.dy).sum(),
+                stock_area,
+                placements.len(),
+            );
+            fits &= parts_area <= stock_area;
             // A glued part counts once, by its first strip.
             g.parts += placements
                 .iter()
@@ -1567,6 +1601,9 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
                 efficiency: parts_area / stock_area,
             });
         }
+        if fits {
+            g.parts_area = up_to_stock(g.parts_area, g.stock_area, count);
+        }
         g.efficiency = if g.stock_area > 0.0 {
             g.parts_area / g.stock_area
         } else {
@@ -1596,6 +1633,9 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
         .count();
     // Added up from 0.0: an f64 `sum` over nothing is -0.0, which a nesting with nothing
     // placed showed as -0.0 areas (lane 30).
+    // Lane 51: both are added up piece by piece in the same order, and a rounded addition
+    // never makes a smaller sum of larger terms, so with every piece's parts within its stock
+    // (`up_to_stock`) the total parts are within the total stock without a slack of their own.
     let parts_area: f64 = pieces.iter().fold(0.0, |s, p| s + p.parts_area);
     let stock_area: f64 = pieces.iter().fold(0.0, |s, p| s + p.stock_area);
     let totals = NestTotals {

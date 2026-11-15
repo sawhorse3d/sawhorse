@@ -104,7 +104,15 @@ export const SQ_FT = 0.09290304;
 
 /** Area for the totals: square feet in inches, square metres in metric. */
 export function formatArea(m2: number, r: Rounding): string {
-  return isMetric(r) ? `${m2.toFixed(2)} m²` : `${(m2 / SQ_FT).toFixed(2)} sq ft`;
+  return isMetric(r) ? `${hundredths(m2)} m²` : `${hundredths(m2 / SQ_FT)} sq ft`;
+}
+
+/** Lane 51: a number to two decimals, where one that rounds to zero is "0.00", never "-0.00"
+ * (`toFixed` writes a minus for any value just below zero, as a hair of rounding under a
+ * filled sheet's waste was). A value that reads as -0.01 or less keeps its minus. */
+function hundredths(x: number): string {
+  const s = x.toFixed(2);
+  return s === "-0.00" ? "0.00" : s;
 }
 
 export function formatBoardFeet(bf: number): string {

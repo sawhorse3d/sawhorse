@@ -172,6 +172,49 @@ describe("#11: gathering a big selection's sketch geometry", () => {
     expect(seen.apart).toBeGreaterThan(300);
   });
 
+  it("a point exactly half way up its cell looks in the cell above, far out where cell numbers are quantised", () => {
+    // Lane 51. The lookup's cells are 3 nm; near x = -3.4e6 m a cell number is about 2^50,
+    // where doubles are a quarter apart, so a point's place in its cell is 0, 1/4, 1/2 or
+    // 3/4 of the way. A point exactly half way (in x here) is 1.5 nm from either side,
+    // yet one two doubles away (0.93 nm) can be in the cell above: the lookup must look
+    // there, on the side `x - base < 0.5` picks, as the scan finds it. (y = 4.5e-9 m is
+    // also exactly half way up its cell, and z = 6e-9 m on a cell's edge.)
+    const cell = 3e-9;
+    const frac = (v: number) => v / cell - Math.floor(v / cell);
+    expect(frac(4.5e-9)).toBe(0.5);
+    expect(frac(6e-9)).toBe(0);
+    const f64 = new Float64Array(1);
+    const bits = new BigInt64Array(f64.buffer);
+    const hop = (x: number, k: number) => {
+      f64[0] = x;
+      bits[0] += BigInt(k);
+      return f64[0];
+    };
+    const sk = { kind: "sketch" as const, id: 1 };
+    const none = new Map<string, V3[][]>();
+    const r: V3 = [1, 1, 1];
+    let halfway = 0;
+    for (let i = -40; i <= 40; i++) {
+      const x = hop(-3399999.99999999, i);
+      for (let k = 0; k <= 3; k++) {
+        for (const [p, q] of [
+          [[x, 4.5e-9, 6e-9], [hop(x, k), 4.5e-9, 6e-9]],
+          [[hop(x, k), 4.5e-9, 6e-9], [x, 4.5e-9, 6e-9]],
+        ] as [V3, V3][]) {
+          // The second point is looked up against the first: count the cases this is about.
+          if (frac(q[0]) === 0.5 && near(p, q) && Math.floor(p[0] / cell) === Math.floor(q[0] / cell) + 1) halfway++;
+          for (const es of [
+            [{ kind: "vertex", owner: sk, at: p }, { kind: "vertex", owner: sk, at: q }],
+            [{ kind: "edge", owner: sk, a: p, b: r, drawn: true }, { kind: "edge", owner: sk, a: r, b: q, drawn: true }],
+            [{ kind: "edge", owner: sk, a: q, b: p, drawn: true }, { kind: "edge", owner: sk, a: p, b: q, drawn: true }],
+          ] as Entity[][])
+            expect(strip(sketchParts(es, none)), JSON.stringify([p, q])).toEqual(scan(es, none));
+        }
+      }
+    }
+    expect(halfway).toBeGreaterThan(3);
+  });
+
   /** `n` sketch edges as separate unit squares in a row, selected one by one. */
   function squares(n: number): Entity[] {
     const es: Entity[] = [];
