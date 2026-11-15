@@ -118,25 +118,44 @@ export function pieceYield(p: StockPiece, r: Units): string {
   return `${pct(p.efficiency)} used · ${area(p.waste_area, r)} waste`;
 }
 
-/** #56: what a sheet or board holds. "2 parts" when nothing on it is a strip, as before; a
- * glued part counts once however many of its strips are here, and the pieces of wood are
- * counted too: "1 part in 2 strips" when all are strips, "2 parts in 3 pieces" when some are
- * whole parts. */
+/** #56: what a sheet or board holds. "2 parts" when nothing on it is a strip, as before. A
+ * glued part with all its strips here counts once, and the pieces of wood are counted too:
+ * "1 part in 2 strips" when all are strips, "2 parts in 3 pieces" when some are whole parts.
+ * A glued part with only some of its strips here (strips too long to share a board) is not a
+ * part of this board, since the totals count it once, on the board of its first strip: it is
+ * named instead, "1 part, 1 strip of 1a", or "1 strip of 1a" alone. */
 export function pieceCount(p: StockPiece): string {
   const s = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
-  const n = p.placements.length;
-  const strips = p.placements.filter((q) => q.strip).length;
-  if (!strips) return s(n, "part");
-  const parts = new Set(p.placements.map((q) => (q.strip ? q.tag.slice(0, q.tag.lastIndexOf(".")) : q.tag))).size;
-  return `${s(parts, "part")} in ${strips === n ? s(n, "strip") : s(n, "piece")}`;
+  const strips = new Map<string, { here: number; of: number }>();
+  let whole = 0;
+  for (const q of p.placements) {
+    if (!q.strip) {
+      whole++;
+      continue;
+    }
+    const tag = q.tag.slice(0, q.tag.lastIndexOf("."));
+    const g = strips.get(tag) ?? { here: 0, of: q.strip.of };
+    g.here++;
+    strips.set(tag, g);
+  }
+  if (!strips.size) return s(whole, "part");
+  const all = [...strips].filter(([, g]) => g.here === g.of);
+  const some = [...strips].filter(([, g]) => g.here < g.of);
+  const parts = whole + all.length;
+  const inAll = all.reduce((t, [, g]) => t + g.here, 0);
+  const bits: string[] = [];
+  if (parts) bits.push(all.length ? `${s(parts, "part")} in ${whole ? s(whole + inAll, "piece") : s(inAll, "strip")}` : s(parts, "part"));
+  for (const [tag, g] of some) bits.push(`${s(g.here, "strip")} of ${tag}`);
+  return bits.join(", ");
 }
 
 /** #56: the note on a glued part's cut list row, from the nesting's glue-ups: "glued from 2
- * (4/4 x 12 x 96)" when every copy is glued alike; "1 glued from 2 (...)" when only some
- * are; "2 glued from 2 (...), 1 from 3 (...)" when copies come from different boards or in
- * different strip counts. Null without a nesting, or when none of the row's copies is glued.
- * A glue-up counts for the row only when its item is one of the row's, so a nesting of an
- * older model (worked out a moment before the last edit) never labels a row it was not about. */
+ * (4/4 x 12 x 96)". The kernel plans every copy of a row alike today; should copies ever
+ * differ, they are counted apart ("1 glued from 2 (...)", "2 glued from 2 (...), 1 from 3
+ * (...)") rather than any being misnamed. Null without a nesting, or when none of the row's
+ * copies is glued. A glue-up counts for the row only when its item is one of the row's, a
+ * guard against a row that now holds other parts; that the nesting is of the model as it is
+ * now is the caller's to check (App passes one only for the scene it was worked out for). */
 export function glueNote(row: CutRow, index: number, n: Nesting | null | undefined): string | null {
   const key = (i: Item) => ("object" in i ? `o${i.object}` : `n${i.node}`);
   const mine = new Set(row.occurrences.map((o) => key(o.item)));

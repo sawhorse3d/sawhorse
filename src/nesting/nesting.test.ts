@@ -13,6 +13,7 @@ import { checkDxf, checkPdf, checkSvg } from "./checks";
 import { nestingDxf } from "./dxf";
 import { glueNote } from "./format";
 
+const IN = 0.0254;
 const pkg = path.resolve(__dirname, "../wasm/pkg");
 const built = existsSync(path.join(pkg, "sawhorse_wasm_bg.wasm"));
 if (!built && process.env.REQUIRE_KERNEL === "1") throw new Error("REQUIRE_KERNEL=1 but src/wasm/pkg is missing: run npm run wasm");
@@ -59,10 +60,30 @@ describe.skipIf(!built)("nesting through the WASM kernel", () => {
 
   it("#56: each glue-up's row is the cut list's row for that part, at every rounding and with Visible only", async () => {
     const mod = await kernel();
-    const d = mod.document_replay(JSON.stringify(golden("cutlist-mixed").ops));
+    // The golden: its glued 16 in top, at every rounding.
+    check(mod.document_replay(JSON.stringify(golden("cutlist-mixed").ops)), false);
+    // A 3 in rail drawn first and hidden, then a 15 in panel: with Visible only the rail's row
+    // drops out and the panel's moves up one, and the glue-up must follow it.
+    const d = mod.document_new();
+    const board = (w: number, y: number) => {
+      const drawn = JSON.parse(d.apply_op(JSON.stringify({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, y * IN, 0], [40 * IN, y * IN, 0], [40 * IN, (y + w) * IN, 0], [0, (y + w) * IN, 0]], closed: true })));
+      return JSON.parse(d.apply_op(JSON.stringify({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN }))).object as number;
+    };
+    const rail = board(3, 0);
+    board(15, 10);
+    d.apply_op(JSON.stringify({ op: "set_hidden", items: [{ object: rail }], hidden: true }));
+    const rows = (visible_only: boolean) => (JSON.parse(d.nest(JSON.stringify({ visible_only }))) as Nesting).glue_ups!.map((g) => g.row);
+    expect([rows(false), rows(true)]).toEqual([[1], [0]]);
+    check(d, true);
+  });
+
+  /** Every glue-up's row is the cut list's row for its part at every rounding, Visible only
+   * on and off, and every other row has no note. */
+  function check(d: WasmDoc, hidden: boolean) {
     for (const visible_only of [false, true]) {
       const n = JSON.parse(d.nest(JSON.stringify({ visible_only }))) as Nesting;
       expect(n.glue_ups?.length).toBeGreaterThan(0);
+      if (hidden) expect((JSON.parse(d.cut_list(JSON.stringify({ visible_only }))) as CutList).rows.length).toBe(visible_only ? 1 : 2);
       for (const rounding of ["sixteenth", "thirty_second", "half_mm"]) {
         const list = JSON.parse(d.cut_list(JSON.stringify({ rounding, visible_only }))) as CutList;
         const glued = new Set(n.glue_ups!.map((g) => g.row));
@@ -74,12 +95,13 @@ describe.skipIf(!built)("nesting through the WASM kernel", () => {
           expect(note).toBe(`glued from ${gs[0].widths.length} (${gs[0].stock})`);
         });
       }
-      // The 16 in top beside narrow oak (#56 points 1 to 3): one joint, from the 12 in board.
-      const list = JSON.parse(d.cut_list("{}")) as CutList;
-      const top = n.glue_ups!.find((g) => list.rows[g.row].size[1] > 15 * 0.0254)!;
-      expect(glueNote(list.rows[top.row], top.row, n)).toBe("glued from 2 (4/4 x 12 x 96)");
+      // The golden's 16 in top beside narrow oak (#56 points 1 to 3): one joint, from the 12 in
+      // board; the lone 15 in panel: one joint, from 4/4 x 8 (library order on the tie).
+      const list = JSON.parse(d.cut_list(JSON.stringify({ visible_only }))) as CutList;
+      const wide = n.glue_ups!.find((g) => list.rows[g.row].size[1] > 14.9 * IN)!;
+      expect(glueNote(list.rows[wide.row], wide.row, n)).toBe(hidden ? "glued from 2 (4/4 x 8 x 96)" : "glued from 2 (4/4 x 12 x 96)");
     }
-  });
+  }
 
   it("the default bookshelf: oak on five 4/4 x 12 boards, the back on one 1/4 in sheet", async () => {
     const mod = await kernel();

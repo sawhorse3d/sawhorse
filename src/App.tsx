@@ -392,6 +392,10 @@ export function App() {
   const [nestOpen, setNestOpen] = useState<boolean>(loadNestOpen);
   const nestShown = cutOpen && nestOpen;
   const [nesting, setNesting] = useState<Nesting | null>(null);
+  /** #56: the scene `nesting` was worked out for, so the cut list's glue-up notes come only
+   * from a nesting of the model as it is (not one kept from before an edit, or from before
+   * the section was closed and opened again). */
+  const [nestScene, setNestScene] = useState<unknown>(null);
   const [nestProblem, setNestProblem] = useState<string | null>(null);
   const [nestBusy, setNestBusy] = useState(false);
   const [nestHover, setNestHover] = useState<Entity | null>(null);
@@ -1175,6 +1179,7 @@ export function App() {
         .then((n) => {
           if (stale) return;
           setNesting(n);
+          setNestScene(scene);
           setNestProblem(null);
           setNestBusy(false);
         })
@@ -3087,9 +3092,9 @@ export function App() {
           onLabels: () => void saveCut((l) => labelsPdf(l, cutTitle), "labels.pdf", PDF_TYPE, `${plural(cutList?.rows.length ?? 0, "label")} on Avery 5160-size sheets`),
           nestOpen,
           onNest: toggleNest,
-          // #56: the glue-up notes only from a nesting of the model as it is now (not one
-          // being worked out again after an edit) and of the same parts as the list.
-          nested: nestShown && !nestBusy && !nestProblem && nesting?.visible_only === cutList?.visible_only ? nesting : null,
+          // #56: the glue-up notes only from a nesting of the model as it is now and of the
+          // same parts as the list.
+          nested: nestShown && !nestProblem && nestScene === scene && nesting?.visible_only === cutList?.visible_only ? nesting : null,
           nesting: nestShown ? (
             <NestingSection
               nesting={nesting}

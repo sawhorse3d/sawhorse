@@ -134,16 +134,15 @@ function summaryPages(doc: PdfDoc, n: Nesting, title: string, r: Units) {
   p.text(left, y, "Stock pieces", 12, { bold: true });
   y -= 16;
   for (const piece of n.pieces) {
-    need(14);
-    p.text(left, y, fit(`${piece.index}. ${pieceTitle(piece)}`, 10, 330), 10);
-    // #56: "2 parts in 3 pieces" can run into the yield; then the yield takes a line of its own.
-    const count = pieceCount(piece);
+    // #56: "2 parts in 3 pieces" can run into the yield; then the yield takes a line of its
+    // own, kept on the page with the title and count above it (both lines reserved at once).
+    const count = fit(pieceCount(piece), 10, right - left - 340);
     const yieldText = pieceYield(piece, r);
+    const runs = left + 340 + textWidth(count, 10) + 8 > right - textWidth(yieldText, 10);
+    need(runs ? 28 : 14);
+    p.text(left, y, fit(`${piece.index}. ${pieceTitle(piece)}`, 10, 330), 10);
     p.text(left + 340, y, count, 10);
-    if (left + 340 + textWidth(count, 10) + 8 > right - textWidth(yieldText, 10)) {
-      y -= 14;
-      need(14);
-    }
+    if (runs) y -= 14;
     p.text(right, y, yieldText, 10, { align: "right" });
     y -= 14;
   }

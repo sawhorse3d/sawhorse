@@ -42,11 +42,42 @@ describe("#56: the count of parts on a board", () => {
     // Only the strips of one part.
     const strips = { ...n.pieces[0], placements: n.pieces[0].placements.slice(0, 2) };
     expect(pieceCount(strips)).toBe("1 part in 2 strips");
-    // One strip of a part whose other strips are on another board.
-    expect(pieceCount({ ...strips, placements: strips.placements.slice(1) })).toBe("1 part in 1 strip");
     // Strips of two parts.
     const two = { ...strips, placements: [...strips.placements, ...strips.placements.map((q) => ({ ...q, tag: q.tag.replace("1a", "1c") }))] };
     expect(pieceCount(two)).toBe("2 parts in 4 strips");
+  });
+
+  it("names the part a board holds only some strips of, and never counts it as a part there", () => {
+    // A part's strips can land on different boards (each too long to share one): the kernel
+    // counts the part once, on the board with its first strip, so no board may call it a part.
+    const n = gluedNesting();
+    const [s1, s2, whole] = n.pieces[0].placements;
+    const on = (...placements: typeof s1[]) => pieceCount({ ...n.pieces[0], placements });
+    expect(on(s1)).toBe("1 strip of 1a");
+    expect(on(s2, whole)).toBe("1 part, 1 strip of 1a");
+    // Two of a part's three strips, beside a part glued whole on this board.
+    const three = [s1, s2].map((q) => ({ ...q, tag: q.tag.replace("1a", "1c"), strip: { n: q.strip!.n, of: 3 } }));
+    expect(on(s1, s2, ...three)).toBe("1 part in 2 strips, 2 strips of 1c");
+  });
+
+  it("keeps each board's yield on the page of its title and count, at any page break", () => {
+    // Sixty glued boards, each count running into its yield, with yields that differ, so a
+    // yield pushed alone onto the next page would be found there.
+    // Where a row falls against the foot of the page depends on what is above the list, so
+    // lengthen the glue-up list above it a line at a time.
+    for (let glued = 1; glued <= 14; glued++) {
+      const count = 60;
+      const n = gluedNesting();
+      n.glue_ups = Array.from({ length: glued }, (_, k) => ({ ...n.glue_ups![0], tag: `1${"abcdefghijklmn"[k]}` }));
+      const base = n.pieces[0];
+      n.pieces = Array.from({ length: count }, (_, k) => ({ ...base, index: k + 1, seq: k + 1, count, efficiency: (k + 10) / 100 }));
+      const pages = readPdf(nestingPdf(n, "Bookshelf", "sixteenth")).text.map((t) => t.join("\n"));
+      for (const p of n.pieces) {
+        const page = pages.find((t) => t.includes(`${p.index}. Board ${p.seq} of ${count}`));
+        expect(page, `${count} boards: board ${p.index}`).toBeTruthy();
+        expect(page, `${count} boards: board ${p.index}'s yield`).toContain(`${(p.efficiency * 100).toFixed(1)}% used`);
+      }
+    }
   });
 
   it("is what the booklet's Stock pieces list and the SVG's title say", () => {
