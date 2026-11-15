@@ -149,26 +149,26 @@ const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
  * through a grid of cells three times `near`'s 1 nm. A point's 1 nm reaches into at most
  * the next cell along each axis, on the side of the cell it is nearer, so a lookup checks
  * those 8 cells.
- * An item whose point has no cell (not finite, or too far out for a cell number to be
- * exact) is checked on every lookup, and a point with no cell is checked against every
- * item, as before.
+ * A point with no cell is checked against every item, as before. #59's `nearIndex` is
+ * built once, for points of the mesh's wider tolerance; this one grows as the selection
+ * is gathered, at 1 nm.
  */
 function nearSet<T>(at: (t: T) => V3): { has: (p: V3, ok?: (t: T) => boolean) => boolean; add: (t: T) => void } {
   const cell = 3e-9;
   const all: T[] = [];
-  const odd: T[] = [];
   const grid = new Map<string, T[]>();
-  /** The point in cell units, or null when it has no cell. */
+  /** The point in cell units, or null when it has none: a coordinate that is not finite,
+   * or so far out (beyond about 5e299 m) that its cell number is not. Such a point is near
+   * only another point with no cell, so an item with none needs no cell of its own. */
   const scaled = (q: V3): V3 | null => {
     const c: V3 = [q[0] / cell, q[1] / cell, q[2] / cell];
-    return c.every((x) => Number.isFinite(x) && Math.abs(x) < 2 ** 52) ? c : null;
+    return c.every(Number.isFinite) ? c : null;
   };
   const hit = (p: V3, ok?: (t: T) => boolean) => (t: T) => near(at(t), p) && (!ok || ok(t));
   return {
     has(p, ok) {
       const c = scaled(p);
       if (!c) return all.some(hit(p, ok));
-      if (odd.length && odd.some(hit(p, ok))) return true;
       const base = c.map(Math.floor);
       const side = c.map((x, i) => (x - base[i] < 0.5 ? -1 : 1));
       const test = hit(p, ok);
@@ -183,10 +183,7 @@ function nearSet<T>(at: (t: T) => V3): { has: (p: V3, ok?: (t: T) => boolean) =>
     add(t) {
       all.push(t);
       const c = scaled(at(t));
-      if (!c) {
-        odd.push(t);
-        return;
-      }
+      if (!c) return;
       const key = `${Math.floor(c[0])},${Math.floor(c[1])},${Math.floor(c[2])}`;
       const list = grid.get(key);
       if (list) list.push(t);

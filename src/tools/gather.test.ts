@@ -114,6 +114,25 @@ describe("#11: gathering a big selection's sketch geometry", () => {
     expect(seen.dropped).toBeGreaterThan(300);
   });
 
+  it("a point too far out for a cell is still gathered once, and one that is not finite each time, as before", () => {
+    // 1e300 m and the largest double are finite but beyond a cell number; NaN and Infinity
+    // are near nothing, themselves included, so the scan kept every one.
+    const v = (at: V3): Entity => ({ kind: "vertex", owner: { kind: "sketch", id: 1 }, at });
+    const e = (a: V3, b: V3): Entity => ({ kind: "edge", owner: { kind: "sketch", id: 1 }, a, b, drawn: true });
+    const far: V3 = [1e300, 0, 0];
+    const max: V3 = [0, -Number.MAX_VALUE, 0];
+    const nan: V3 = [NaN, 0, 0];
+    const inf: V3 = [0, 0, Infinity];
+    const es = [v(far), v([1e300, 0, 0]), v(max), v([0, -Number.MAX_VALUE, 0]), v(nan), v(nan), v(inf), v(inf), e(far, max), e(max, far), e(nan, far), e(nan, far), v([0, 0, 0])];
+    const none = new Map<string, V3[][]>();
+    const got = strip(sketchParts(es, none));
+    expect(got).toEqual(scan(es, none));
+    expect(got[0].points).toHaveLength(7);
+    expect(got[0].edges).toHaveLength(3);
+    // The 7 points, and the two NaN ends of the last two edges, each its own.
+    expect(got[0].moving).toHaveLength(9);
+  });
+
   /** `n` sketch edges as separate unit squares in a row, selected one by one. */
   function squares(n: number): Entity[] {
     const es: Entity[] = [];
