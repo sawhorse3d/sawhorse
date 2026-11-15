@@ -345,6 +345,138 @@ test("a panel wider than every board is glued up from strips, and the joint loss
   await expect(joint).toHaveValue("1/16 in");
 });
 
+// #56 point 4: the same 15 in panel. While the Nesting section is open the cut list row says
+// what it is glued from, and the board's caption counts the panel once, in its two strips.
+// Closed, the row reads as before.
+test("a glued part's cut list row says what it is glued from, and its board counts it once", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 15 * IN, 0], [0, 15 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Panel" });
+  });
+  await openShz(page, shz, 1, "panel.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const row = page.locator('.cutlist tr[data-part="Panel"]');
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText("glued");
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  await expect(section.getByTestId("nest-glued")).toContainText("1 Panel: glued up from 2 strips of 4/4 x 8 x 96");
+  await expect(row.locator("td.part")).toContainText("glued from 2 (4/4 x 8 x 96)");
+  const piece = section.locator("figure.nest-piece").first();
+  await expect(piece.locator("details summary")).toContainText("1 part in 2 strips");
+  await expect(piece.locator("svg.nest-diagram")).toHaveAttribute("aria-label", /: 1 part in 2 strips, /);
+  // The SVG file's title says the same.
+  const [svg] = await downloads(page, 1, () => piece.getByRole("button", { name: /SVG/ }).click());
+  expect(svg.bytes.toString("utf8")).toContain("1 part in 2 strips");
+  // Closed, the row reads as before.
+  await page.getByRole("button", { name: "Nesting ‹" }).click();
+  await expect(section).toHaveCount(0);
+  await expect(row).not.toContainText("glued");
+});
+
+// #56 point 4: the note is never one worked out before the last change. Three 15 in panels,
+// one hidden. Every change to the row is recorded as it is made, with the status line beside
+// it: Visible only (the list then counts two copies, a nesting from before still three, which
+// would read "3 glued from 2"), the panel's stock set to 4/4 x 12 (the nesting from before
+// says 4/4 x 8), and Undo (the nesting from before says 4/4 x 12). The nesting is asked again
+// 200 ms after each, so a note kept from before would be there for that long.
+test("a glued row's note is never one from before the last change", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 15 * IN, 0], [0, 15 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    const comp = apply({ op: "make_component", items: [{ object: made.object }], name: "Panel" }) as { instance: number };
+    const copies = apply({ op: "array", objects: [], nodes: [comp.instance], xform: { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [0, 0, 2 * IN] }, count: 2 }) as { nodes: number[] };
+    apply({ op: "set_hidden", items: [{ node: copies.nodes[1] }], hidden: true });
+  });
+  await openShz(page, shz, 3, "panels.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const note = page.locator('.cutlist tr[data-part="Panel"] td.part');
+  await expect(note).toContainText("glued from 2 (4/4 x 8 x 96)");
+  await page.evaluate(() => {
+    const w = window as unknown as { __seen: string[] };
+    w.__seen = [];
+    const record = () => {
+      const td = document.querySelector('.cutlist tr[data-part="Panel"] td.part');
+      const m = /(\d+ )?glued from \d+ \([^)]*\)/.exec(td?.textContent ?? "");
+      const s = `${m ? m[0] : "-"} | ${document.getElementById("hint")?.textContent ?? ""}`;
+      if (w.__seen[w.__seen.length - 1] !== s) w.__seen.push(s);
+    };
+    new MutationObserver(record).observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  const seen = () => page.evaluate(() => (window as unknown as { __seen: string[] }).__seen.splice(0));
+  await page.getByLabel("Visible only").check();
+  await expect(page.locator(".cutlist tr[data-part='Panel'] td.n").first()).toHaveText("2");
+  await expect(note).toContainText("glued from 2 (4/4 x 8 x 96)");
+  const vo = await seen();
+  expect(vo.filter((s) => /^\d+ glued/.test(s))).toEqual([]);
+  await page.locator('.cutlist tr[data-part="Panel"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Stock/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Stock for Panel" });
+  await dialog.getByRole("textbox").fill("4/4 x 12 x 96");
+  await dialog.getByRole("button", { name: "Set stock" }).click();
+  await expect(note).toContainText("glued from 2 (4/4 x 12 x 96)");
+  const set = await seen();
+  expect(set.some((s) => /cut from 4\/4 x 12 x 96/.test(s))).toBe(true);
+  expect(set.filter((s) => /4\/4 x 8 x 96\) \|.*cut from 4\/4 x 12 x 96/.test(s))).toEqual([]);
+  await page.getByLabel("Round sizes to").focus();
+  await page.keyboard.press("Control+z");
+  await expect(note).toContainText("glued from 2 (4/4 x 8 x 96)");
+  const undone = await seen();
+  expect(undone.some((s) => /Undone/.test(s))).toBe(true);
+  expect(undone.filter((s) => /4\/4 x 12 x 96\) \|.*Undone/.test(s))).toEqual([]);
+});
+
+// #56 point 4: the note is the pane's only. The 15 in panel's cut list CSV, PDF and labels
+// are saved, and its printed report drawn, with the Nesting section closed, then again with
+// it open and the note showing in the row: the same bytes each time (the cut list PDFs carry
+// no date), and no note in the CSV.
+test("a glued row's note stays out of the cut list's CSV, PDF, labels and print", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 15 * IN, 0], [0, 15 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Panel" });
+  });
+  await openShz(page, shz, 1, "panel.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const note = page.locator('.cutlist tr[data-part="Panel"] td.part');
+  await expect(note).toBeVisible();
+  // The cut list's own buttons (the Nesting section has a row of its own below them).
+  const buttons = page.locator(".cutlist .btnrow").first();
+  const saved = async (name: string) => (await downloads(page, 1, () => buttons.getByRole("button", { name, exact: true }).click()))[0].bytes;
+  const printed = async () => {
+    await page.evaluate(() => {
+      (window as unknown as { print: () => void }).print = () => {};
+    });
+    await buttons.getByRole("button", { name: "Print", exact: true }).click();
+    await page.emulateMedia({ media: "print" });
+    const report = page.getByTestId("print-report");
+    await expect(report).toBeVisible();
+    const html = await report.evaluate((e) => e.outerHTML);
+    await page.emulateMedia({ media: "screen" });
+    await page.evaluate(() => document.body.classList.remove("print-cutlist"));
+    return html;
+  };
+  const all = async () => ({ csv: await saved("CSV"), pdf: await saved("PDF"), labels: await saved("Labels"), print: await printed() });
+  await expect(note).not.toContainText("glued");
+  const closed = await all();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  await expect(note).toContainText("glued from 2 (4/4 x 8 x 96)");
+  const open = await all();
+  // Still noted after the saves, so every file above was made with the note on screen.
+  await expect(note).toContainText("glued from 2 (4/4 x 8 x 96)");
+  expect(open.csv.equals(closed.csv), "CSV").toBe(true);
+  expect(open.pdf.equals(closed.pdf), "PDF").toBe(true);
+  expect(open.labels.equals(closed.labels), "labels").toBe(true);
+  expect(open.print).toBe(closed.print);
+  expect(open.csv.toString("utf8")).not.toContain("glued from");
+  expect(open.print).not.toContain("glued from");
+});
+
 // #56: a 24 1/4 x 3/4 x 40 in panel takes three strips of 4/4 x 12 (four of 4/4 x 8). Two
 // full strips would leave a 1/2 in filler (24 1/4 + 2 x 1/8 - 24), under the minimum (the
 // smaller of 1 1/2 in and a quarter of the board), so the last two strips are made equal:

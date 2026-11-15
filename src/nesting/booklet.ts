@@ -6,7 +6,7 @@ import type { Nesting, StockPiece } from "../kernel/types";
 import { fit, LETTER, PdfDoc, textWidth, type PdfPage } from "../cutlist/pdf";
 import { NOT_SOLID_NOTE } from "../cutlist/format";
 import { diagram } from "./diagram";
-import { area, cutText, dims, glueText, len, nestNote, nestSummary, pct, pieceNumber, pieceTitle, pieceYield, placedSize, reasonText, settingsText, sizeUnit, stockSize, stripText, type Units } from "./format";
+import { area, cutText, dims, glueText, len, nestNote, nestSummary, pct, pieceCount, pieceNumber, pieceTitle, pieceYield, placedSize, reasonText, settingsText, sizeUnit, stockSize, stripText, type Units } from "./format";
 
 const LANDSCAPE: [number, number] = [LETTER[1], LETTER[0]];
 
@@ -22,6 +22,22 @@ function wrap(s: string, size: number, width: number): string[] {
     } else line = next;
   }
   if (line) out.push(line);
+  return out;
+}
+
+/** #56: a list ("1 part in 2 strips, 1 strip of 3f") in lines that break only after its
+ * commas, so "1 strip of 3f" stays together; an item too wide alone is cut to fit. */
+function wrapList(s: string, size: number, width: number): string[] {
+  const out: string[] = [];
+  for (const item of s.split(", ")) {
+    const next = out.length ? `${out[out.length - 1]}, ${item}` : item;
+    // Room is kept for the comma a line ends with when the list goes on.
+    if (out.length && textWidth(`${next},`, size) <= width) out[out.length - 1] = next;
+    else {
+      if (out.length) out[out.length - 1] += ",";
+      out.push(fit(item, size, width));
+    }
+  }
   return out;
 }
 
@@ -134,10 +150,23 @@ function summaryPages(doc: PdfDoc, n: Nesting, title: string, r: Units) {
   p.text(left, y, "Stock pieces", 12, { bold: true });
   y -= 16;
   for (const piece of n.pieces) {
-    need(14);
+    // #56: "2 parts in 3 pieces" can run into the yield; then the yield takes a line of its
+    // own, kept on the page with the title and count above it (all the lines reserved at
+    // once). A count naming the strips of several parts wraps rather than being cut short. A
+    // piece with no strips reads "13 parts" on one line as before, so a booklet with no
+    // glue-up is the same as it was.
+    const yieldText = pieceYield(piece, r);
+    const strips = piece.placements.some((q) => q.strip);
+    const counts = strips ? wrapList(pieceCount(piece), 10, right - left - 340) : [fit(pieceCount(piece), 10, right - left - 340)];
+    const runs = strips && (counts.length > 1 || left + 340 + textWidth(counts[0], 10) + 8 > right - textWidth(yieldText, 10));
+    need(14 * (counts.length + (runs ? 1 : 0)));
     p.text(left, y, fit(`${piece.index}. ${pieceTitle(piece)}`, 10, 330), 10);
-    p.text(left + 340, y, `${piece.placements.length} part${piece.placements.length === 1 ? "" : "s"}`, 10);
-    p.text(right, y, pieceYield(piece, r), 10, { align: "right" });
+    counts.forEach((c, k) => {
+      if (k) y -= 14;
+      p.text(left + 340, y, c, 10);
+    });
+    if (runs) y -= 14;
+    p.text(right, y, yieldText, 10, { align: "right" });
     y -= 14;
   }
   y -= 12;

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { NestAlgorithm, Nesting, NestSettings, Placement, StockPiece } from "../kernel/types";
 import { parseLength, type UnitSystem } from "../lib/units";
 import { diagram } from "../nesting/diagram";
-import { ALGORITHMS, cutText, dims, fineU, glueText, JOINT_LOSS_DEFAULT, type Units, nestNote, nestSummary, pieceNumber, pieceYield, placedSize, reasonText, stripText } from "../nesting/format";
+import { ALGORITHMS, cutText, dims, fineU, glueText, JOINT_LOSS_DEFAULT, type Units, nestNote, nestSummary, pieceCount, pieceNumber, pieceYield, placedSize, reasonText, stripText } from "../nesting/format";
 
 export interface NestingSectionProps {
   nesting: Nesting | null;
@@ -108,7 +108,7 @@ function PieceDiagram({ piece, rounding, lit, onHover, onSelect }: { piece: Stoc
       className="nest-diagram"
       viewBox={`0 0 ${d.width * S} ${d.height * S}`}
       role="img"
-      aria-label={`${pieceNumber(piece)}: ${piece.placements.length} part${piece.placements.length === 1 ? "" : "s"}, ${pieceYield(piece, rounding)}`}
+      aria-label={`${pieceNumber(piece)}: ${pieceCount(piece)}, ${pieceYield(piece, rounding)}`}
       onMouseLeave={() => {
         setOver(null);
         onHover(null);
@@ -238,7 +238,7 @@ export function NestingSection(p: NestingSectionProps) {
               <PieceDiagram piece={piece} rounding={r} lit={p.lit} onHover={p.onHover} onSelect={p.onSelect} />
               <details>
                 <summary>
-                  {piece.cuts.length} cut{piece.cuts.length === 1 ? "" : "s"}, {piece.placements.length} part{piece.placements.length === 1 ? "" : "s"}
+                  {piece.cuts.length} cut{piece.cuts.length === 1 ? "" : "s"}, {pieceCount(piece)}
                   {p.onSvg ? (
                     <button
                       type="button"

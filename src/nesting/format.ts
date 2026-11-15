@@ -1,7 +1,7 @@
 // How the nesting reads (lane 9): lengths in the cut list's rounding, the cut sequence in
 // shop words, why a part is not on any stock, and the totals tiles. The pane, the SVG and
 // DXF files and the PDF booklet all say exactly the same thing.
-import type { GlueUp, NestAlgorithm, NestCut, Nesting, Placement, Rounding, StockDef, StockPiece, Unplaced } from "../kernel/types";
+import type { CutRow, GlueUp, Item, NestAlgorithm, NestCut, Nesting, Placement, Rounding, StockDef, StockPiece, Unplaced } from "../kernel/types";
 import { formatArea, formatSteps, sizeUnit as unitOf, type SizeStyle } from "../cutlist/format";
 
 /** How lengths are written: a rounding (fractions for inches, mm for metric), or a rounding
@@ -116,6 +116,60 @@ export function pieceTitle(p: StockPiece): string {
 /** "62.4% used · 12.71 sq ft waste". */
 export function pieceYield(p: StockPiece, r: Units): string {
   return `${pct(p.efficiency)} used · ${area(p.waste_area, r)} waste`;
+}
+
+/** #56: what a sheet or board holds. "2 parts" when nothing on it is a strip, as before. A
+ * glued part with all its strips here counts once, and the pieces of wood are counted too:
+ * "1 part in 2 strips" when all are strips, "2 parts in 3 pieces" when some are whole parts.
+ * A glued part with only some of its strips here (strips too long to share a board) is not a
+ * part of this board, since the totals count it once, on the board of its first strip: it is
+ * named instead, "1 part, 1 strip of 1a", or "1 strip of 1a" alone. */
+export function pieceCount(p: StockPiece): string {
+  const s = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  const strips = new Map<string, { here: number; of: number }>();
+  let whole = 0;
+  for (const q of p.placements) {
+    if (!q.strip) {
+      whole++;
+      continue;
+    }
+    const tag = q.tag.slice(0, q.tag.lastIndexOf("."));
+    const g = strips.get(tag) ?? { here: 0, of: q.strip.of };
+    g.here++;
+    strips.set(tag, g);
+  }
+  if (!strips.size) return s(whole, "part");
+  const all = [...strips].filter(([, g]) => g.here === g.of);
+  const some = [...strips].filter(([, g]) => g.here < g.of);
+  const parts = whole + all.length;
+  const inAll = all.reduce((t, [, g]) => t + g.here, 0);
+  const bits: string[] = [];
+  if (parts) bits.push(all.length ? `${s(parts, "part")} in ${whole ? s(whole + inAll, "piece") : s(inAll, "strip")}` : s(parts, "part"));
+  for (const [tag, g] of some) bits.push(`${s(g.here, "strip")} of ${tag}`);
+  return bits.join(", ");
+}
+
+/** #56: the note on a glued part's cut list row, from the nesting's glue-ups: "glued from 2
+ * (4/4 x 12 x 96)". The kernel plans every copy of a row alike today; should copies ever
+ * differ, they are counted apart ("1 glued from 2 (...)", "2 glued from 2 (...), 1 from 3
+ * (...)") rather than any being misnamed. Null without a nesting, or when none of the row's
+ * copies is glued. A glue-up counts for the row only when its item is one of the row's, a
+ * guard against a row that now holds other parts; that the nesting is of the model as it is
+ * now is the caller's to check (App passes one only for the scene it was worked out for). */
+export function glueNote(row: CutRow, index: number, n: Nesting | null | undefined): string | null {
+  const key = (i: Item) => ("object" in i ? `o${i.object}` : `n${i.node}`);
+  const mine = new Set(row.occurrences.map((o) => key(o.item)));
+  const ways: { strips: number; stock: string; copies: number }[] = [];
+  for (const g of n?.glue_ups ?? []) {
+    if (g.row !== index || !mine.has(key(g.item))) continue;
+    const way = ways.find((w) => w.strips === g.widths.length && w.stock === g.stock);
+    if (way) way.copies++;
+    else ways.push({ strips: g.widths.length, stock: g.stock, copies: 1 });
+  }
+  if (!ways.length) return null;
+  const glued = ways.reduce((t, w) => t + w.copies, 0);
+  if (ways.length === 1 && glued === row.qty) return `glued from ${ways[0].strips} (${ways[0].stock})`;
+  return ways.map((w, k) => `${w.copies} ${k ? "" : "glued "}from ${w.strips} (${w.stock})`).join(", ");
 }
 
 /** A stock's size as a shop writes it: "48 × 96 × 23/32 in" (width × length × thickness).
