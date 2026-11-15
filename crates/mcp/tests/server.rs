@@ -661,3 +661,85 @@ fn the_worked_example_in_the_docs_runs() {
     );
     assert!(root.join("Shelf.shz").exists());
 }
+
+/// The verifier's finds on the first version.
+#[test]
+fn verifier_finds_stay_fixed() {
+    let root = folder("finds");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let mut s = Session::new(&root);
+    s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19.0, "width": 300.0, "length": 600.0}),
+    );
+    let before = s.hash();
+
+    // A draw of more points than a sketch may hold edges is refused before any work: the
+    // kernel would take seconds to minutes and then refuse it anyway.
+    let n = sawhorse_kernel::limits::MAX_SKETCH_EDGES + 1;
+    let points: Vec<[f64; 3]> = (0..n)
+        .map(|k| {
+            let a = std::f64::consts::TAU * k as f64 / n as f64;
+            [a.cos(), a.sin(), 0.0]
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Big", "ops": [{"op": "draw", "target": {"on": "plane", "origin": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}, "points": points, "closed": true}]}),
+    );
+    assert!(started.elapsed().as_secs_f64() < 1.0, "{e}");
+    assert!(e.contains("points"), "{e}");
+    assert_eq!(s.hash(), before);
+
+    // A file of the temporary file's name, left by someone else, is neither in the way of a
+    // save nor deleted by it.
+    let stray = root.join(".t.shz.sawhorse-mcp-tmp");
+    std::fs::write(&stray, b"mine").unwrap();
+    s.ok("save_model", json!({"path": "t.shz"}));
+    assert_eq!(std::fs::read(&stray).unwrap(), b"mine");
+    let leftovers: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.contains("sawhorse-mcp") && n != ".t.shz.sawhorse-mcp-tmp")
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+
+    // ".." is refused as such, even where it would stay inside the folder.
+    s.ok("save_model", json!({"path": "a.shz"}));
+    let e = s.refused("open_model", json!({"path": "sub/../a.shz"}));
+    assert!(e.contains(".."), "{e}");
+
+    // A name the kernel would refuse is refused by add_board, saying so.
+    let e = s.refused(
+        "add_board",
+        json!({"name": "x".repeat(65), "thickness": 19.0, "width": 300.0, "length": 600.0}),
+    );
+    assert!(e.contains("1 to 64"), "{e}");
+    assert!(!e.contains("batch"), "{e}");
+    s.ok(
+        "add_board",
+        json!({"name": "y".repeat(64), "thickness": 19.0, "width": 300.0, "length": 600.0}),
+    );
+
+    // cut_list and nest refuse arguments they do not take, as the other tools do.
+    s.refused("cut_list", json!({"pad": 1}));
+    s.refused("nest", json!({"pad": 1}));
+    s.ok(
+        "cut_list",
+        json!({"rounding": "half_mm", "visible_only": true}),
+    );
+    s.ok("nest", json!({"algorithm": "maxrects"}));
+
+    // 2025-03-26 takes JSON-RPC batches, which this server does not: it answers in its own
+    // revision. 2025-06-18 is echoed.
+    let mut server = Server::new(&root).unwrap();
+    for (asked, got) in [
+        ("2025-03-26", PROTOCOL_VERSION),
+        ("2025-06-18", "2025-06-18"),
+    ] {
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": asked, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}});
+        let r = server.handle_line(msg.to_string().as_bytes()).unwrap();
+        assert_eq!(r["result"]["protocolVersion"], got);
+    }
+}

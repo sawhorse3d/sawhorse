@@ -44,8 +44,14 @@ when two share a name, summary lists the name under shared_names.";
 /// Largest `.shz` opened, bytes (the reader's own limit on what a file may hold).
 const MAX_FILE: u64 = sawhorse_shz::MAX_TOTAL;
 
-/// Longest part name.
-const MAX_NAME: usize = 200;
+/// Longest part name: the kernel's own limit on a name.
+const MAX_NAME: usize = 64;
+
+/// Most points one `apply_ops` batch may hold, all its ops together. A stroke longer than a
+/// sketch may hold edges is refused by the kernel only after the work of inserting it,
+/// which grows faster than its length (32,000 points: about 10 s, then refused), so it is
+/// refused here before any work.
+pub const MAX_BATCH_POINTS: usize = sawhorse_kernel::limits::MAX_SKETCH_EDGES;
 
 /// The server: the folder it works in and the document it holds.
 pub struct Server {
@@ -74,7 +80,7 @@ impl Server {
     }
 
     /// Run one tool. `Err`: the tool failed, and the model is as it was.
-    pub fn call(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+    pub fn call(&mut self, name: &str, args: Value) -> Result<Value, String> {
         match name {
             "new_model" => self.new_model(parse(args)?),
             "open_model" => self.open_model(parse(args)?),
@@ -86,6 +92,12 @@ impl Server {
             "add_board" => self.add_board(parse(args)?),
             "apply_ops" => {
                 let batch: NamedBatch = parse(args)?;
+                let points: usize = batch.ops.iter().map(points_in).sum();
+                if points > MAX_BATCH_POINTS {
+                    return Err(format!(
+                        "a batch may hold at most {MAX_BATCH_POINTS} points in all (this one holds {points}); split it into smaller batches"
+                    ));
+                }
                 self.change(|doc| {
                     refbatch::apply(doc, &batch)
                         .map(|(out, _)| json!({"outcome": out}))
@@ -93,11 +105,19 @@ impl Server {
                 })
             }
             "cut_list" => {
-                let opts: CutOptions = parse(args)?;
+                let a: CutArgs = parse(args)?;
+                let opts = CutOptions {
+                    rounding: a.rounding.unwrap_or_default(),
+                    visible_only: a.visible_only,
+                };
                 to_value(&self.doc.model().cut_list(&opts))
             }
             "nest" => {
-                let opts: NestOptions = parse(args)?;
+                let a: NestArgs = parse(args)?;
+                let opts = NestOptions {
+                    visible_only: a.visible_only,
+                    algorithm: a.algorithm,
+                };
                 to_value(&self.doc.model().nest(&opts))
             }
             "undo" => {
@@ -188,19 +208,11 @@ impl Server {
         .map_err(|e| format!("could not write the model: {e}"))?;
         // Written beside the file, read back and checked, then moved over it: a save that
         // fails leaves the old file as it was.
-        let name = place.full.file_name().unwrap_or_default().to_string_lossy();
-        let tmp = place
-            .full
-            .with_file_name(format!(".{name}.sawhorse-mcp-tmp"));
-        let written = write_new(&tmp, &bytes).and_then(|()| {
-            let back = std::fs::read(&tmp).map_err(|e| format!("reading it back: {e}"))?;
-            let opened = sawhorse_shz::read(&back).map_err(|e| format!("reading it back: {e}"))?;
-            if opened.document.model().hash() != model.hash() {
-                return Err("the file read back is not the model (nothing was saved)".to_string());
-            }
-            std::fs::rename(&tmp, &place.full).map_err(|e| e.to_string())
-        });
-        if let Err(e) = written {
+        // The temporary file is one this save made (never one that was there before), and
+        // only that one is removed when the save fails.
+        let tmp =
+            write_new_beside(&place.full, &bytes).map_err(|e| format!("{}: {e}", place.shown))?;
+        if let Err(e) = check_and_move(&tmp, &place.full, model.hash()) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("{}: {e}", place.shown));
         }
@@ -432,20 +444,77 @@ fn to_value<T: serde::Serialize>(v: &T) -> Result<Value, String> {
     serde_json::to_value(v).map_err(|e| e.to_string())
 }
 
-fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, String> {
-    serde_json::from_value(args.clone()).map_err(|e| format!("arguments: {e}"))
+fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
+    serde_json::from_value(args).map_err(|e| format!("arguments: {e}"))
 }
 
-/// Write a new file (never over one that is there).
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+/// Points (arrays of two or three numbers) anywhere in an op.
+fn points_in(v: &Value) -> usize {
+    match v {
+        Value::Array(a) if (2..=3).contains(&a.len()) && a.iter().all(Value::is_number) => 1,
+        Value::Array(a) => a.iter().map(points_in).sum(),
+        Value::Object(o) => o.values().map(points_in).sum(),
+        _ => 0,
+    }
+}
+
+/// Read the file written at `tmp` back, check it is the model (`hash`), and move it over
+/// `target`.
+fn check_and_move(tmp: &Path, target: &Path, hash: u64) -> Result<(), String> {
+    let back = std::fs::read(tmp).map_err(|e| format!("reading it back: {e}"))?;
+    let opened = sawhorse_shz::read(&back).map_err(|e| format!("reading it back: {e}"))?;
+    if opened.document.model().hash() != hash {
+        return Err("the file read back is not the model (nothing was saved)".to_string());
+    }
+    std::fs::rename(tmp, target).map_err(|e| e.to_string())
+}
+
+/// Write `bytes` to a new file beside `target`, under a name no file has, and say which.
+/// A file already there is never written over or removed.
+fn write_new_beside(target: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| e.to_string())?;
-    f.write_all(bytes).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    for n in 0..100 {
+        let tmp = target.with_file_name(format!(
+            ".{name}.{}-{n}.sawhorse-mcp-tmp",
+            std::process::id()
+        ));
+        let mut f = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        let done = f.write_all(bytes).and_then(|()| f.sync_all());
+        if let Err(e) = done {
+            drop(f);
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        return Ok(tmp);
+    }
+    Err("no free name for the temporary file beside it".into())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CutArgs {
+    #[serde(default)]
+    rounding: Option<sawhorse_kernel::cutlist::Rounding>,
+    #[serde(default)]
+    visible_only: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NestArgs {
+    #[serde(default)]
+    algorithm: Option<sawhorse_kernel::stock::NestAlgorithm>,
+    #[serde(default)]
+    visible_only: bool,
 }
 
 #[derive(Deserialize)]

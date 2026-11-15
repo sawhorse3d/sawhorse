@@ -2,7 +2,7 @@
 
 `sawhorse-mcp` lets an AI agent build and read Sawhorse models ([#14](https://github.com/sawhorse3d/sawhorse/issues/14)). It is a [Model Context Protocol](https://modelcontextprotocol.io) server on the same kernel as the app: the agent starts it, talks to it over stdin and stdout, and the `.shz` files it saves open in the app as they are, with the same model hash.
 
-It speaks MCP revision **2025-11-25** (a client asking for 2025-06-18 or 2025-03-26 gets that back; their tool calls are the same here). Messages are JSON-RPC 2.0, one a line. It has tools only: no resources, prompts or sampling. Nothing goes to the network, no window opens and nothing asks a question.
+It speaks MCP revision **2025-11-25** (a client asking for 2025-06-18 gets that back, since its tool calls are the same here; one asking for any other gets 2025-11-25). Messages are JSON-RPC 2.0, one a line. It has tools only: no resources, prompts or sampling. Nothing goes to the network, no window opens and nothing asks a question.
 
 ## Running it
 
@@ -32,8 +32,8 @@ Other clients take the same command and argument in their server list.
 - **Saving.** `save_model` writes through the kernel's own writer, the file the app writes. It writes beside the target, reads that back and checks its model hash, and only then puts it in place, so a save that fails leaves the old file as it was.
 - **All or nothing.** Every tool that changes the model is one undo step, worked out on a copy and kept only when the whole change validates. A refusal says why and changes nothing.
 - **What changed.** Each change answers with the cut list rows it added, removed and changed (`changes`), and the new `model_hash`.
-- **Names.** Parts are found by name, never by a geometry index. Where two parts share a name, `summary` lists it under `shared_names`, and `add_board` lists the others under `shares_name_with`. Neither picks one.
-- **Untrusted input.** A message that is not JSON, nested deeper than the parser allows (128 levels), longer than 16 MiB, or of the wrong shape gets a JSON-RPC error back, and the server reads on. A longer message is read past without being held.
+- **Names.** Parts are reported by name, never by a geometry index; a change names a part by the ids `summary` gives. Where two parts share a name, `summary` lists it under `shared_names`, and `add_board` lists the others under `shares_name_with`. Neither picks one.
+- **Untrusted input.** A message that is not JSON, nested deeper than the parser allows (128 levels), longer than 4 MiB, or of the wrong shape gets a JSON-RPC error back, and the server reads on. A longer message is read past without being held.
 
 ## Tools
 
@@ -46,7 +46,7 @@ Lengths in tool answers are millimetres where the field says `_mm`. The `cut_lis
 | `save_model` | `path` (optional) | Saves the model. Without a path, where it was opened from or last saved. |
 | `summary` | nothing | Every part (one per cut list row): `name`, `qty`, `size_mm` (thickness, width, length), `material`, `grain`, `target` and `items` (the ids `apply_ops` names). Also `path`, `unsaved`, `model_hash`, `display_units`, `materials` and `shared_names`. |
 | `add_board` | `name`, `thickness`, `width`, `length`; optional `position` (the corner nearest the origin, default `[0, 0, 0]`), `length_axis` (`x`, `y` or `z`, default `x`), `thickness_axis` (default `z`: lying flat), `units` (`mm`, the default, `cm`, `m` or `in`), `material` | Adds one solid board, named. `material` is one in the model, or one from the app's material library by name (Pine, Red oak, Walnut, Baltic birch ply, MDF and the rest), which is added with it. Answers `board` (its `object` id, `min_mm` and `max_mm`), `changes` and `shares_name_with`. |
-| `apply_ops` | `name` (names the undo step), `ops` | Applies kernel ops as one step: the named batch a plugin sends ([PLUGINS.md](PLUGINS.md)), with `{"$ref": i, "path": "..."}` placeholders for what an earlier op made. Undo, redo, batches and restores are not allowed. Answers each op's `outcome` and `changes`; a refusal names the op and why. |
+| `apply_ops` | `name` (names the undo step), `ops` | Applies kernel ops as one step: the named batch a plugin sends ([PLUGINS.md](PLUGINS.md)), with `{"$ref": i, "path": "..."}` placeholders for what an earlier op made. Undo, redo, batches, restores and opening a group are not allowed, and a batch holds at most 20,000 points in all (a sketch's edge limit; a longer stroke would be slow to refuse). Answers each op's `outcome` and `changes`; a refusal names the op and why. |
 | `cut_list` | `rounding` (`sixteenth`, `thirty_second` or `half_mm`), `visible_only` | The cut list, the same JSON as `sawhorse-cli cutlist`. |
 | `nest` | `algorithm` (`guillotine` or `maxrects`), `visible_only` | The nesting, the same JSON as `sawhorse-cli nest`. |
 | `undo`, `redo` | nothing | Undo or redo the last change. Answers `changes`. |
@@ -85,4 +85,3 @@ The summary lists four parts and `"shared_names":[{"name":"Shelf","parts":2},{"n
 - `check_clearance` (the gap or overlap between two parts) and `measure` (the distance between two parts' faces): the next step on #14.
 - Named dimensions ("make the carcass 900 wide and run it again"): they need parameters in the model, a file format question. For now an agent keeps its own spec and rebuilds.
 - Driving the app's window, rendering drawings, or the installers.
-- MCP revision 2026-07-28 (stateless requests): the server keeps one model between calls, which 2025-11-25 suits.

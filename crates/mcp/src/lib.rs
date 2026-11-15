@@ -15,10 +15,10 @@
 //!   file is read back, and its model hash compared, before the save is reported done.
 //! - **Untrusted input**: a message that is not JSON, nested deeper than the parser's limit,
 //!   longer than [`MAX_MESSAGE`], or of the wrong shape gets an error back; the server goes
-//!   on reading. A tool that panics is reported as a failed call, and the document is as it
-//!   was before it (every change is applied to a copy first).
-//! - **Results**: parts by name; where two parts share a name the answer says so and never
-//!   picks one.
+//!   on reading. A tool that panics is reported as a failed call, and the server goes on
+//!   (the kernel works every change out on a copy, so the document is never half changed).
+//! - **Results**: parts reported by name; where two parts share a name the answer says so
+//!   and never picks one. Changes name parts by the ids `summary` gives.
 //!
 //! Nothing here touches the network, opens a window or asks a question.
 
@@ -36,13 +36,15 @@ pub use tools::Server;
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Revisions a client may ask for and get back as they asked. Their tool calls, results and
-/// stdio framing are the same as far as this server goes.
-pub const SUPPORTED_VERSIONS: [&str; 3] = [PROTOCOL_VERSION, "2025-06-18", "2025-03-26"];
+/// stdio framing are the same as far as this server goes. (2025-03-26 is not one: it has
+/// JSON-RPC batches, which this server refuses.)
+pub const SUPPORTED_VERSIONS: [&str; 2] = [PROTOCOL_VERSION, "2025-06-18"];
 
 /// Longest message read, in bytes (a batch of `apply_ops` at its 2,000-op limit fits many
 /// times over). A longer one is skipped to its end without being held, and answered with
-/// an error.
-pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
+/// an error. A message is parsed into a tree that can take some tens of times its size
+/// (a 16 MiB one of small values took about 1 GB), so this is kept to 4 MiB.
+pub const MAX_MESSAGE: usize = 4 * 1024 * 1024;
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -65,16 +67,20 @@ impl Server {
             Ok(v) => v,
             Err(e) => return Some(error(Value::Null, PARSE_ERROR, format!("not JSON: {e}"))),
         };
-        let Some(obj) = msg.as_object() else {
+        // The message is taken apart, not copied: a large one is held once.
+        let Value::Object(mut obj) = msg else {
             return Some(error(
                 Value::Null,
                 INVALID_REQUEST,
                 "a message is one JSON object (batches are not part of the protocol)",
             ));
         };
-        let id = obj.get("id").cloned();
+        let id = obj.remove("id");
         let id_ok = matches!(&id, Some(Value::String(_) | Value::Number(_)));
-        let method = obj.get("method").and_then(Value::as_str);
+        let method = obj
+            .get("method")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let Some(method) = method else {
             // A client's response to a request of ours (we send none): nothing to say.
             if obj.contains_key("result") || obj.contains_key("error") {
@@ -98,8 +104,8 @@ impl Server {
                 "id must be a string or a number",
             ));
         }
-        let params = obj.get("params").cloned().unwrap_or_else(|| json!({}));
-        Some(match method {
+        let mut params = obj.remove("params").unwrap_or_else(|| json!({}));
+        Some(match method.as_str() {
             "initialize" => reply(id, initialize(&params)),
             "ping" => reply(id, json!({})),
             "tools/list" => reply(id, json!({"tools": tools::list()})),
@@ -114,18 +120,18 @@ impl Server {
                         format!("no tool named {name} (tools/list lists them)"),
                     ));
                 }
+                let name = name.to_string();
                 let args = params
-                    .get("arguments")
-                    .cloned()
+                    .get_mut("arguments")
+                    .map(Value::take)
                     .unwrap_or_else(|| json!({}));
                 if !args.is_object() {
                     return Some(error(id, INVALID_PARAMS, "arguments must be an object"));
                 }
-                let name = name.to_string();
-                let result = catch_unwind(AssertUnwindSafe(|| self.call(&name, &args)))
+                let result = catch_unwind(AssertUnwindSafe(|| self.call(&name, args)))
                     .unwrap_or_else(|_| {
                         Err(format!(
-                            "{name} failed inside the server (a bug: please report it); the model is as it was"
+                            "{name} failed inside the server (a bug: please report it); check summary before going on"
                         ))
                     });
                 reply(id, tool_result(result))
