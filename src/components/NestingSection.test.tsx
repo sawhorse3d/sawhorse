@@ -99,6 +99,39 @@ describe("Nesting section", () => {
     expect(joint.closest("label")!.getAttribute("title")).toContain("0 to 1/2 in");
   });
 
+  it("#57: the minimum strip is empty (auto) until set, takes a typed length, 0 to 12 in, and clears back to auto", () => {
+    const p = props();
+    const { rerender } = render(<NestingSection {...p} />);
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    // Absent from the document's settings: empty, the #56 rule.
+    expect(min.value).toBe("");
+    expect(min.placeholder).toBe("auto");
+    expect(min.closest("label")!.getAttribute("title")).toContain("1 1/2 in, or a quarter of the board");
+    fireEvent.change(min, { target: { value: "2" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 2 * IN });
+    // Out of range: refused, nothing sent.
+    fireEvent.change(min, { target: { value: "13" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(min.closest("label")!.getAttribute("title")).toContain("0 to 12 in");
+    // Set in the document: shown; cleared: the setting goes, not a 0.
+    const n = smallNesting();
+    n.settings = { ...n.settings, minStrip: 2 * IN };
+    rerender(<NestingSection {...p} nesting={n} />);
+    expect(min.value).toBe("2 in");
+    fireEvent.change(min, { target: { value: "" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(2);
+    const last = (p.onSettings as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[1][0];
+    expect(last).toEqual({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+    expect("minStrip" in last).toBe(false);
+    // 0 is a value (never even out), not auto.
+    fireEvent.change(min, { target: { value: "0" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 0 });
+  });
+
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];

@@ -850,12 +850,22 @@ fn settings() -> impl Strategy<Value = NestSettings> {
         1 => Just(0.0),
         1 => 0.0..(0.5 * IN)
     ];
-    (kerf, trim, alg, joint).prop_map(|(kerf, trim, algorithm, joint_loss)| NestSettings {
-        kerf,
-        trim,
-        algorithm,
-        joint_loss,
-    })
+    // #57: mostly the #56 rule; else none, half a board's width or more, or any in range.
+    let min_strip = prop_oneof![
+        3 => Just(None),
+        1 => Just(Some(0.0)),
+        1 => Just(Some(12.0 * IN)),
+        1 => (0.0..(12.0 * IN)).prop_map(Some)
+    ];
+    (kerf, trim, alg, joint, min_strip).prop_map(
+        |(kerf, trim, algorithm, joint_loss, min_strip)| NestSettings {
+            kerf,
+            trim,
+            algorithm,
+            joint_loss,
+            min_strip,
+        },
+    )
 }
 
 fn library() -> impl Strategy<Value = StockLibrary> {
@@ -914,6 +924,7 @@ fn oak(parts: &[(f64, f64, f64, usize)], joint_loss: f64) -> Nesting {
         trim: 0.0,
         algorithm: NestAlgorithm::Guillotine,
         joint_loss: joint_loss * IN,
+        min_strip: None,
     };
     let n = nest_list(&list, &lib, st);
     check_nesting_of(&list, &n).unwrap();
@@ -1194,6 +1205,7 @@ fn on_six_inch_boards(size: [f64; 3], joint: f64, kerf: f64) -> (CutList, Nestin
         trim: 0.0,
         algorithm: NestAlgorithm::Guillotine,
         joint_loss: joint,
+        min_strip: None,
     };
     let n = nest_list(&list, &lib, st);
     (list, n)
@@ -1221,7 +1233,7 @@ fn a_part_a_hair_wider_than_whole_boards_never_panics() {
         "{s:?}"
     );
     let h = 6.0 * IN;
-    let min = sawhorse_kernel::nesting::glue_minimum(h);
+    let min = sawhorse_kernel::nesting::glue_minimum(h, None);
     let (mut glued, mut made_equal) = (0, 0);
     for joint in [0.0, IN / 16.0, IN / 8.0, IN / 2.0] {
         for kerf in [0.0, IN / 8.0] {
@@ -1383,6 +1395,7 @@ fn a_board_too_short_for_the_part_is_passed_over_for_one_long_enough() {
             trim: 0.0,
             algorithm: NestAlgorithm::Guillotine,
             joint_loss: IN / 8.0,
+            min_strip: None,
         };
         let n = nest_list(&list, &lib, st);
         check_nesting_of(&list, &n).unwrap();
@@ -1434,6 +1447,7 @@ fn a_part_too_long_for_the_shared_board_goes_to_one_long_enough() {
             trim: 0.0,
             algorithm: NestAlgorithm::Guillotine,
             joint_loss: IN / 8.0,
+            min_strip: None,
         };
         let n = nest_list(&list, &lib, st);
         check_nesting_of(&list, &n).unwrap();
@@ -1567,6 +1581,7 @@ fn equal_strips_narrower_than_the_kerf_are_refused() {
             trim: 0.0,
             algorithm: NestAlgorithm::Guillotine,
             joint_loss: 0.0,
+            min_strip: None,
         };
         let n = nest_list(&list, &lib, st);
         check_nesting_of(&list, &n).unwrap();
@@ -1636,6 +1651,155 @@ fn the_joint_loss_is_saved_and_hashed_only_when_set() {
     assert_eq!(d.hash(), before);
     ok(&mut d, Op::SetNestSettings { settings: set });
     assert_ne!(d.hash(), before);
+}
+
+/// #57: the minimum strip is a document setting: absent (the #56 rule) unless set, 0 to
+/// 12 in, saved and hashed only when set, so every document saved before it keeps its file
+/// and its hash.
+#[test]
+fn the_minimum_strip_is_saved_and_hashed_only_when_set() {
+    let st = NestSettings::default();
+    assert_eq!(st.min_strip, None);
+    let json = serde_json::to_value(st).unwrap();
+    assert!(json.get("minStrip").is_none(), "{json}");
+    let set = NestSettings {
+        min_strip: Some(2.0 * IN),
+        ..st
+    };
+    assert_eq!(serde_json::to_value(set).unwrap()["minStrip"], 2.0 * IN);
+    let back: NestSettings = serde_json::from_value(serde_json::to_value(set).unwrap()).unwrap();
+    assert_eq!(back, set);
+    let old: NestSettings =
+        serde_json::from_value(serde_json::json!({ "kerf": IN / 8.0 })).unwrap();
+    assert_eq!(old, st);
+    for bad in [-1e-6, 12.0 * IN + 1e-6, f64::NAN, f64::INFINITY] {
+        assert!(
+            NestSettings {
+                min_strip: Some(bad),
+                ..st
+            }
+            .check()
+            .is_err(),
+            "{bad}"
+        );
+    }
+    for good in [0.0, 12.0 * IN] {
+        assert!(
+            NestSettings {
+                min_strip: Some(good),
+                ..st
+            }
+            .check()
+            .is_ok(),
+            "{good}"
+        );
+    }
+    // A model hashes as before until the setting is set, and as before again once cleared.
+    let (mut d, _) = bookshelf();
+    let before = d.hash();
+    ok(&mut d, Op::SetNestSettings { settings: st });
+    assert_eq!(d.hash(), before);
+    ok(&mut d, Op::SetNestSettings { settings: set });
+    let with = d.hash();
+    assert_ne!(with, before);
+    // Saved and opened: the setting, the hash and the nesting come back.
+    let json = serde_json::to_string(&d.model().snapshot()).unwrap();
+    assert!(json.contains("\"minStrip\""), "{json}");
+    let back =
+        sawhorse_kernel::Model::from_snapshot(&serde_json::from_str(&json).unwrap()).unwrap();
+    assert_eq!(back.hash_hex(), d.model().hash_hex());
+    assert_eq!(back.stock_library().settings.min_strip, Some(2.0 * IN));
+    assert_eq!(
+        back.nest(&NestOptions::default()).hash,
+        d.model().nest(&NestOptions::default()).hash
+    );
+    // Out of range: a typed refusal that changes nothing.
+    let e = d
+        .apply(&Op::SetNestSettings {
+            settings: NestSettings {
+                min_strip: Some(-1.0),
+                ..st
+            },
+        })
+        .unwrap_err();
+    assert!(!e.is_bug(), "{e}");
+    assert_eq!(d.hash(), with);
+    // Undo takes it back to the rule; cleared, the old hash and no "minStrip" in the file.
+    d.undo().unwrap();
+    assert_eq!(d.hash(), before);
+    d.redo().unwrap();
+    assert_eq!(d.hash(), with);
+    ok(&mut d, Op::SetNestSettings { settings: st });
+    assert_eq!(d.hash(), before);
+    assert!(
+        !serde_json::to_string(&d.model().snapshot())
+            .unwrap()
+            .contains("minStrip")
+    );
+}
+
+/// The strip widths (in) of one part `part_w` in wide and 20 in long glued from a library of
+/// only `board_w` x 96 in boards of 3/4 in: no joint loss, kerf 1/8 in, the minimum strip
+/// given. `None` when it is not glued.
+fn glued_from(board_w: f64, part_w: f64, min_strip: Option<f64>) -> Option<Vec<f64>> {
+    let list = list_of(&[(0.75, part_w, 20.0, 1, Grain::Length, false, 0)], 0);
+    let mut lib = StockLibrary::builtin();
+    lib.defaults.clear();
+    lib.stocks = vec![StockDef {
+        name: "Board".into(),
+        kind: StockKind::Board,
+        length: 96.0 * IN,
+        width: board_w * IN,
+        thickness: 0.75 * IN,
+        nominal: None,
+        grain: StockGrain::Length,
+    }];
+    let st = NestSettings {
+        kerf: IN / 8.0,
+        joint_loss: 0.0,
+        min_strip,
+        ..NestSettings::default()
+    };
+    let n = nest_list(&list, &lib, st);
+    check_nesting_of(&list, &n).unwrap_or_else(|e| panic!("{part_w} in, {min_strip:?}: {e}"));
+    n.glue_ups
+        .first()
+        .map(|g| g.widths.iter().map(|w| w / IN).collect())
+}
+
+fn widths_are(got: Option<Vec<f64>>, want: &[f64]) {
+    let got = got.expect("glued");
+    assert!(
+        got.len() == want.len() && got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-9),
+        "{got:?}, want {want:?}"
+    );
+}
+
+/// #57: a set minimum strip evens out the last strip with the one before it when it is
+/// narrower than the setting, or half the board when that is smaller; the #56 rule's
+/// quarter-board cap is the default's only. 0 never evens out: the last strip has only to
+/// clear the kerf and 1 mm, as before #56.
+#[test]
+fn a_set_minimum_strip_evens_the_last_strip_up_to_half_the_board() {
+    // Absent: the #56 rule, 1 1/2 in on a 6 in board. A 1 1/2 in last strip stays.
+    widths_are(glued_from(6.0, 13.5, None), &[6.0, 6.0, 1.5]);
+    widths_are(glued_from(6.0, 12.25, None), &[6.0, 3.125, 3.125]);
+    // Set to 2 in, the 1 1/2 in last strip is evened out with the full one before it.
+    widths_are(glued_from(6.0, 13.5, Some(2.0 * IN)), &[6.0, 3.75, 3.75]);
+    widths_are(glued_from(6.0, 14.0, Some(2.0 * IN)), &[6.0, 6.0, 2.0]);
+    // Set past half the board, it holds at half: 3 in on a 6 in board.
+    widths_are(glued_from(6.0, 14.99, Some(4.0 * IN)), &[6.0, 4.495, 4.495]);
+    widths_are(glued_from(6.0, 15.0, Some(4.0 * IN)), &[6.0, 6.0, 3.0]);
+    widths_are(glued_from(6.0, 15.01, Some(4.0 * IN)), &[6.0, 6.0, 3.01]);
+    // On a 2 in board the rule's quarter cap (1/2 in) leaves a 0.6 in last strip; a set
+    // 3/4 in is what it says (under half the board, 1 in).
+    widths_are(glued_from(2.0, 4.6, None), &[2.0, 2.0, 0.6]);
+    widths_are(glued_from(2.0, 4.6, Some(0.75 * IN)), &[2.0, 1.3, 1.3]);
+    // 0: never evened out. A 1/4 in last strip stays; one narrower than the kerf is refused
+    // as before #56, where the rule would have evened it out.
+    widths_are(glued_from(6.0, 12.25, Some(0.0)), &[6.0, 6.0, 0.25]);
+    widths_are(glued_from(6.0, 12.0625, None), &[6.0, 3.03125, 3.03125]);
+    assert_eq!(glued_from(6.0, 12.0625, Some(0.0)), None);
 }
 
 /// Oak rails on the built-in boards, no material defaults, kerf 1/8 in, no trim.

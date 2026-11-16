@@ -228,6 +228,7 @@ What the nesting (cutting diagrams) lays parts out on. Absent: Sawhorse's built-
 | `settings.trim` | number | Taken off every edge of a sheet and both ends of a board first, metres, 0 to 4 in (0.1016). A trim narrower than the kerf takes a kerf. |
 | `settings.algorithm` | `"guillotine"` or `"maxrects"` | Straight cuts edge to edge (default), or the tightest rectangle packing. |
 | `settings.jointLoss` | number | Optional ([#49](https://github.com/sawhorse3d/sawhorse/issues/49)). The width each glue joint costs, metres, 0 to 1/2 in (0.0127): a solid part wider than every board is planned as strips edge-glued, and each joint loses this much to jointing. Default 1/8 in; writers leave it out at the default, so a file saved before it reads the same. |
+| `settings.minStrip` | number | Optional ([#57](https://github.com/sawhorse3d/sawhorse/issues/57)). The narrowest a glue-up's last strip is left, metres, 0 to 12 in (0.3048): a last strip narrower than this, or than half the board when that is less, and the full strip before it are made two equal strips. 0 never evens them out. Absent: 1 1/2 in, or a quarter of the board when that is less ([#56](https://github.com/sawhorse3d/sawhorse/issues/56)). Writers leave it out when absent, so a file saved before it reads the same. |
 
 A reader refuses a library that breaks any rule above (as it refuses any invalid model). The nesting itself is not stored: it is worked out from the model and this library, and is the same everywhere.
 

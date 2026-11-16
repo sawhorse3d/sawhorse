@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { checkDxf, checkPdf, checkSvg } from "./checks";
 import { formatArea } from "../cutlist/format";
 import { cutText, fineU, len, lenU, nestSummary, pct, pieceTitle, pieceYield, reasonText, settingsText } from "./format";
-import { smallNesting } from "./fixture";
+import { gluedNesting, smallNesting } from "./fixture";
 import { pieceFileName } from "./svg";
 
 const IN = 0.0254;
@@ -42,6 +42,19 @@ describe("nesting in shop words", () => {
     expect(settingsText(n, "sixteenth")).toBe("Kerf 1/8 in · trim none · table saw");
     expect(pieceTitle(n.pieces[0])).toBe("Board 1 of 1 · 4/4 x 12 x 96 · Oak");
     expect(pieceFileName("Bookshelf", n.pieces[1])).toBe("Bookshelf 02 sheet 1 of 1, 4 x 8 sheet, 1-4.svg");
+  });
+
+  it("#57: the footer names a set minimum strip beside the joint loss, only when something is glued up", () => {
+    const g = gluedNesting();
+    expect(settingsText(g, "sixteenth")).toBe("Kerf 1/8 in · trim none · joint loss 1/8 in · table saw");
+    g.settings = { ...g.settings, minStrip: 2 * 0.0254 };
+    expect(settingsText(g, "sixteenth")).toBe("Kerf 1/8 in · trim none · joint loss 1/8 in · min strip 2 in · table saw");
+    g.settings = { ...g.settings, minStrip: 0 };
+    expect(settingsText(g, "sixteenth")).toBe("Kerf 1/8 in · trim none · joint loss 1/8 in · min strip 0 in · table saw");
+    // Nothing glued up: the footer reads as before, set or not.
+    const n = smallNesting();
+    n.settings = { ...n.settings, minStrip: 2 * 0.0254 };
+    expect(settingsText(n, "sixteenth")).toBe("Kerf 1/8 in · trim none · table saw");
   });
 
   // Lane 51: nine 16 x 32 in parts fill a 4 x 8 sheet with no kerf; before the kernel

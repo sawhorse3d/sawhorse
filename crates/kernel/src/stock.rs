@@ -32,6 +32,8 @@ pub const MAX_TRIM: f64 = 4.0 * M_PER_IN;
 pub const DEFAULT_JOINT_LOSS: f64 = M_PER_IN / 8.0;
 /// Most joint loss accepted: 1/2 in.
 pub const MAX_JOINT_LOSS: f64 = 0.5 * M_PER_IN;
+/// Widest minimum strip accepted (#57): 12 in.
+pub const MAX_MIN_STRIP: f64 = 12.0 * M_PER_IN;
 /// Smallest stock dimension accepted: 1 mm.
 pub const MIN_STOCK: f64 = 0.001;
 /// Largest stock dimension accepted: 10 m.
@@ -142,6 +144,12 @@ pub struct NestSettings {
         skip_serializing_if = "is_default_joint_loss"
     )]
     pub joint_loss: f64,
+    /// #57: the narrowest a glue-up's last strip is left, metres; narrower, it and the full
+    /// strip before it are made two equal strips. Never more than half the board. Absent:
+    /// the #56 rule (`nesting::glue_minimum`). Left out of files and the hash when absent,
+    /// so older documents keep both.
+    #[serde(rename = "minStrip", default, skip_serializing_if = "Option::is_none")]
+    pub min_strip: Option<f64>,
 }
 
 fn default_kerf() -> f64 {
@@ -163,6 +171,7 @@ impl Default for NestSettings {
             trim: 0.0,
             algorithm: NestAlgorithm::Guillotine,
             joint_loss: DEFAULT_JOINT_LOSS,
+            min_strip: None,
         }
     }
 }
@@ -182,6 +191,13 @@ impl NestSettings {
                 "the joint loss must be 0 to 1/2 in",
             ));
         }
+        if let Some(m) = self.min_strip
+            && !(m.is_finite() && (0.0..=MAX_MIN_STRIP).contains(&m))
+        {
+            return Err(StockError::BadSettings(
+                "the minimum strip must be 0 to 12 in",
+            ));
+        }
         Ok(())
     }
 
@@ -196,6 +212,11 @@ impl NestSettings {
         if !is_default_joint_loss(&self.joint_loss) {
             h.tag("jointLoss");
             h.len(self.joint_loss);
+        }
+        // #57: the same, only when set.
+        if let Some(m) = self.min_strip {
+            h.tag("minStrip");
+            h.len(m);
         }
     }
 }
