@@ -82,3 +82,51 @@ test("a tapered leg: the top face scaled about its centre", async ({ page }) => 
   near(s[0].max, [2, 2, 28]);
   await expect(vp).toHaveAttribute("data-watertight", "true");
 });
+
+/** #76: a 24 x 4 x 2 in board stretched to 36 in by its +red face grip, then Ctrl+Z with
+ * Scale still the tool. */
+async function scaledThenUndone(page: Page) {
+  await box(page, "24,4", "2");
+  await selectSolid(page, [12, 2, 2]);
+  await page.keyboard.press("s");
+  const g = await grip(page, [24, 2, 1]);
+  await page.mouse.click(g.x, g.y);
+  await page.mouse.move(g.x + 40, g.y, { steps: 3 });
+  await type(page, "1.5");
+  await expect(page.locator("#hint")).toContainText("×1.5 along red");
+  near((await solids(page))[0].max, [36, 4, 2]);
+  // The grips are on the scaled solid.
+  await grip(page, [36, 2, 1]);
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("#hint")).toContainText("Undone");
+  near((await solids(page))[0].max, [24, 4, 2]);
+}
+
+test("after Undo the box and its grips are back round the shape; New leaves none over the empty model (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  page.on("dialog", (d) => void d.accept());
+  await scaledThenUndone(page);
+  // The solid is 24 in again, and so is the box with its grips (before, they stayed at
+  // 36 in, where nothing was).
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+  await grip(page, [24, 2, 1]);
+  // File > New with Scale still the tool: no box over the empty model.
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
+test("a value typed after Undo scales the selection and undoes nothing more (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaledThenUndone(page);
+  // About the centre, as when no grip has been picked. Before, the tool began with an Undo of
+  // its own, as if the scale were still the last step, and that took the step before it.
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("×2 uniform");
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].min, [-12, -2, -1]);
+  near(s[0].max, [36, 6, 3]);
+  await expect(vp).toHaveAttribute("data-watertight", "true");
+});

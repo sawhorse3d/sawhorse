@@ -325,7 +325,9 @@ export function App() {
   // export and import errors that carry them) name things by public id, which people never
   // see (src/lib/names.ts).
   const setMessage = useCallback((m: Message) => setMessageRaw(m && m.error ? { ...m, text: friendlyError(m.text) } : m), []);
-  /** After undo / redo: the active tool's gesture is void and the measurements box shows its default again. */
+  /** After undo / redo, and when another model takes this one's place (New, Close, Open): the
+   * active tool's gesture is void, what it worked out from the model is stale (#76), and the
+   * measurements box shows its default again. */
   const afterHistoryRef = useRef<() => void>(() => undefined);
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
@@ -769,6 +771,7 @@ export function App() {
         }
         setReport({ title: `Opened ${f.name}: an empty model`, lines: notes });
         setSelection([]);
+        afterHistoryRef.current();
         setView("iso");
         return;
       }
@@ -815,7 +818,11 @@ export function App() {
         live.current.units = du as UnitSystem;
       }
       setReport(opened.notes.length ? { title: `Opened ${f.name}`, lines: opened.notes } : null);
+      // Live first: the active tool reads the selection as soon as it is told (#76), and an
+      // id selected in the old model can name something in this one.
+      live.current.selection = [];
       setSelection([]);
+      afterHistoryRef.current();
       setFitSeq((n) => n + 1);
     },
     [run, confirmDiscard, markClean],
@@ -867,6 +874,7 @@ export function App() {
       markClean(r.scene.state.log_hash);
       setReport(null);
       setSelection([]);
+      afterHistoryRef.current();
       setView("iso");
     }
   }, [run, confirmDiscard, markClean, docName]);
@@ -1502,6 +1510,7 @@ export function App() {
   afterHistoryRef.current = () => {
     const t = activeRef.current;
     t?.reset();
+    t?.modelChanged();
     setToolView(t?.view() ?? EMPTY_VIEW);
     if (!live.current.vcbEditing) setVcb(defaultValue(toolIdRef.current, live.current.units));
   };
