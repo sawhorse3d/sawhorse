@@ -67,8 +67,9 @@ export const EMPTY_VIEW: ToolView = { overlay: [], marker: null, labels: [], box
 export interface InferContext {
   /** The gesture's start point: axis, parallel and perpendicular inferences run from it. */
   start?: V3;
-  /** Directions not to offer as lines through `start` (a lock keeps them): a rectangle's far
-   * corner on its own sides would have no width. */
+  /** Directions not to offer as lines through `start`, nor through a "from point" anchor (a
+   * lock keeps them): a rectangle's far corner on its own sides would have no width, and on
+   * blue through an earlier corner it stood the rectangle up (#9). */
   skipStartLines?: V3[];
   /** Points to project: snaps are made on this plane (a face being drawn on). */
   plane?: { origin: V3; normal: V3 } | null;
