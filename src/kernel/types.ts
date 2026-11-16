@@ -1164,6 +1164,9 @@ export interface NestSettings {
   algorithm: NestAlgorithm;
   /** #49: the width each glue joint costs (metres); absent at the default, 1/8 in. */
   jointLoss?: number;
+  /** #57: the narrowest a glue-up's last strip is left (metres), never more than half the
+   * board; absent: 1 1/2 in, or a quarter of the board when that is less. */
+  minStrip?: number;
 }
 
 export interface StockLibrary {

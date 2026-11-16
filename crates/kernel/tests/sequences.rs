@@ -1916,6 +1916,10 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
                 },
                 // #49: the joint loss from the same lengths (some past 1/2 in, refused).
                 joint_loss: NEST_LENGTHS[(*k as usize / 3 + *t as usize) % NEST_LENGTHS.len()],
+                // #57: a third of the time a minimum strip from the same lengths, else the
+                // #56 rule.
+                min_strip: (*t % 3 == 1)
+                    .then(|| NEST_LENGTHS[(*k as usize + *t as usize / 3) % NEST_LENGTHS.len()]),
             },
         },
         Fuzz::ResetStock => Op::ResetStockLibrary,

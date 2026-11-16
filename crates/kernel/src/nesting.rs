@@ -99,9 +99,14 @@ pub const MIN_GLUE_FILLER: f64 = crate::stock::MIN_STOCK;
 
 /// #56: the narrowest a glue-up's last strip is left on a board `board_width` wide: the
 /// smaller of 1 1/2 in and a quarter of the board. A last strip narrower than that and the
-/// full strip before it are made two equal strips.
-pub fn glue_minimum(board_width: f64) -> f64 {
-    (1.5 * crate::cutlist::M_PER_IN).min(0.25 * board_width)
+/// full strip before it are made two equal strips. #57: with the document's minimum strip
+/// set (`NestSettings::min_strip`), that setting, but never more than half the board, so the
+/// two equal strips are never under it.
+pub fn glue_minimum(board_width: f64, set: Option<f64>) -> f64 {
+    match set {
+        Some(m) => m.min(0.5 * board_width),
+        None => (1.5 * crate::cutlist::M_PER_IN).min(0.25 * board_width),
+    }
 }
 /// Nodes the board lookahead may visit for one board, and in all.
 const LOOKAHEAD_PER_BOARD: usize = 20_000;
@@ -485,7 +490,14 @@ fn fit(row: &CutRow, s: &StockDef, trim: f64) -> Result<Vec<(f64, f64, bool)>, U
 /// apart by a hair: a part 12 in and 1 nm wide on 6 in boards with no joint loss counted 2
 /// strips with a filler a hair wider than 6 in and 1 nm, and the layout refused the strip.
 /// A part of no length (1 nm or less) is never glued: its strips would be of no length.
-fn glue_widths(row: &CutRow, s: &StockDef, trim: f64, joint: f64, kerf: f64) -> Option<Vec<f64>> {
+fn glue_widths(
+    row: &CutRow,
+    s: &StockDef,
+    trim: f64,
+    joint: f64,
+    kerf: f64,
+    min_strip: Option<f64>,
+) -> Option<Vec<f64>> {
     if s.kind != StockKind::Board || row.sheet || row.grain == Grain::Width {
         return None;
     }
@@ -519,7 +531,7 @@ fn glue_widths(row: &CutRow, s: &StockDef, trim: f64, joint: f64, kerf: f64) -> 
     v.push(filler);
     // #56: a filler under the minimum and the full strip before it become two equal strips,
     // each half of the two (at least half the board, so never under the minimum).
-    if filler < glue_minimum(u.h) {
+    if filler < glue_minimum(u.h, min_strip) {
         let half = 0.5 * (u.h + filler);
         let k = v.len();
         v[k - 2] = half;
@@ -567,6 +579,7 @@ fn choose_stock(
     trim: f64,
     joint: f64,
     kerf: f64,
+    min_strip: Option<f64>,
 ) -> Vec<Choice> {
     let n = list.rows.len();
     let mut out: Vec<Option<Choice>> = vec![None; n];
@@ -735,7 +748,7 @@ fn choose_stock(
                 .iter()
                 .filter(|(_, s)| s.thickness == class)
                 .filter_map(|&(k, s)| {
-                    let strips = glue_widths(row, s, trim, joint, kerf)?.len();
+                    let strips = glue_widths(row, s, trim, joint, kerf, min_strip)?.len();
                     Some((strips, Some(k) != shared_board, k))
                 })
                 .min();
@@ -1394,7 +1407,14 @@ fn trim_cuts(s: &StockDef, trim: f64, kerf: f64) -> Vec<Cut> {
 pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> Nesting {
     let kerf = settings.kerf;
     let trim = effective_trim(settings.trim, kerf);
-    let choice = choose_stock(list, lib, trim, settings.joint_loss, kerf);
+    let choice = choose_stock(
+        list,
+        lib,
+        trim,
+        settings.joint_loss,
+        kerf,
+        settings.min_strip,
+    );
     let mut glue_ups: Vec<GlueUp> = Vec::new();
     let mut needs: Vec<Need> = Vec::new();
     let mut unplaced: Vec<Unplaced> = Vec::new();
@@ -1415,9 +1435,16 @@ pub fn nest_list(list: &CutList, lib: &StockLibrary, settings: NestSettings) -> 
         // Whole, with its orientations; or (#49) glued up from strips of these widths.
         let stocked = choice[ri].and_then(|k| match fit(row, &lib.stocks[k], trim) {
             Ok(o) => Ok((k, o, None)),
-            Err(r) => glue_widths(row, &lib.stocks[k], trim, settings.joint_loss, kerf)
-                .map(|v| (k, Vec::new(), Some(v)))
-                .ok_or((r, Some(k))),
+            Err(r) => glue_widths(
+                row,
+                &lib.stocks[k],
+                trim,
+                settings.joint_loss,
+                kerf,
+                settings.min_strip,
+            )
+            .map(|v| (k, Vec::new(), Some(v)))
+            .ok_or((r, Some(k))),
         });
         for (ci, o) in counted.iter().enumerate() {
             let copy = ci + 1;

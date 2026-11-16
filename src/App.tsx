@@ -2218,7 +2218,7 @@ export function App() {
   }, [nestOpen]);
   const setNestSettings = useCallback(
     (s: NestSettings) =>
-      void apply({ op: "set_nest_settings", settings: s }, () => `Nesting: kerf ${fineU(s.kerf, nestUnits)}, trim ${s.trim > 0 ? `${fineU(s.trim, nestUnits)} per edge` : "none"}${s.jointLoss !== undefined ? `, joint loss ${fineU(s.jointLoss, nestUnits)}` : ""}, ${s.algorithm === "guillotine" ? "table saw (straight cuts edge to edge)" : "tightest layout"}.`),
+      void apply({ op: "set_nest_settings", settings: s }, () => `Nesting: kerf ${fineU(s.kerf, nestUnits)}, trim ${s.trim > 0 ? `${fineU(s.trim, nestUnits)} per edge` : "none"}${s.jointLoss !== undefined ? `, joint loss ${fineU(s.jointLoss, nestUnits)}` : ""}${s.minStrip !== undefined ? `, minimum strip ${fineU(s.minStrip, nestUnits)}` : ""}, ${s.algorithm === "guillotine" ? "table saw (straight cuts edge to edge)" : "tightest layout"}.`),
     [apply, nestUnits],
   );
   const defineStock = useCallback(

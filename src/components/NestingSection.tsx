@@ -32,9 +32,34 @@ export interface NestingSectionProps {
   lit?: string | null;
 }
 
-/** Kerf or trim typed in a field: committed on Enter, on leaving the field, or after a pause. */
-function LengthField({ label, value, units, rounding, max, onCommit }: { label: string; value: number; units: UnitSystem; rounding: Units; max: number; onCommit: (m: number) => void }) {
-  const shown = fineU(value, rounding);
+/**
+ * Kerf or trim typed in a field: committed on Enter, on leaving the field, or after a pause.
+ * #57: with `onClear` the field may be empty (`value` null, `placeholder` shown), and
+ * clearing it calls `onClear`.
+ */
+function LengthField({
+  label,
+  value,
+  units,
+  rounding,
+  max,
+  onCommit,
+  onClear,
+  placeholder,
+  hint,
+}: {
+  label: string;
+  value: number | null;
+  units: UnitSystem;
+  rounding: Units;
+  max: number;
+  onCommit: (m: number) => void;
+  onClear?: () => void;
+  placeholder?: string;
+  /** What the field's tip says before "(type a length: …)". */
+  hint?: string;
+}) {
+  const shown = value === null ? "" : fineU(value, rounding);
   const [text, setText] = useState(shown);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => setText(shown), [shown]);
@@ -42,8 +67,8 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
   // now, not as they were when the pause timer was set. The timer used to keep its render's:
   // Enter, then the pause, committed the same length twice, and a change from outside while
   // a typed length waited (a plugin, Redo) was undone in the other field when it fired.
-  const now = useRef({ value, shown, units, rounding, max, label, onCommit });
-  now.current = { value, shown, units, rounding, max, label, onCommit };
+  const now = useRef({ value, shown, units, rounding, max, label, onCommit, onClear });
+  now.current = { value, shown, units, rounding, max, label, onCommit, onClear };
   const timer = useRef<number | null>(null);
   const stopTimer = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -54,15 +79,21 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
     stopTimer();
     const c = now.current;
     if (t.trim() === c.shown) return setErr(null);
+    if (c.onClear && t.trim() === "") {
+      setErr(null);
+      if (c.value !== null) c.onClear();
+      return;
+    }
     const r = parseLength(t, c.units);
     if (!r.ok) return setErr(r.error);
     if (r.metres < 0 || r.metres > c.max) return setErr(`${c.label}: 0 to ${fineU(c.max, c.rounding)}.`);
     setErr(null);
-    if (Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
+    if (c.value === null || Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
   };
-  // A short pause after typing re-nests too.
+  // A short pause after typing re-nests too. #57: not an emptied optional field, which is
+  // more often on its way to another length than cleared; Enter or leaving it clears it.
   useEffect(() => {
-    if (text === shown) return;
+    if (text === shown || (onClear && text.trim() === "")) return;
     timer.current = window.setTimeout(() => {
       timer.current = null;
       commit(text);
@@ -71,11 +102,12 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return (
-    <label className={err ? "err" : undefined} title={err ?? `${label} (type a length: 1/8, 3/32, 3mm)`}>
+    <label className={err ? "err" : undefined} title={err ?? `${hint ?? label} (type a length: 1/8, 3/32, 3mm)`}>
       <span>{label}</span>
       <input
         aria-label={label}
         value={text}
+        placeholder={placeholder}
         size={5}
         onChange={(e) => setText(e.currentTarget.value)}
         onBlur={(e) => commit(e.currentTarget.value)}
@@ -95,6 +127,9 @@ function LengthField({ label, value, units, rounding, max, onCommit }: { label: 
 const KERF_MAX = 0.5 * 0.0254;
 const TRIM_MAX = 4 * 0.0254;
 const JOINT_LOSS_MAX = 0.5 * 0.0254;
+// 12 in as 0.3048 m, as the kernel has it: 12 * 0.0254 rounds a hair under, so 304.8 mm
+// and 1' would be refused.
+const MIN_STRIP_MAX = 0.3048;
 
 function PieceDiagram({ piece, rounding, lit, onHover, onSelect }: { piece: StockPiece; rounding: Units; lit?: string | null; onHover: (p: Placement | null) => void; onSelect: (p: Placement) => void }) {
   const d = useMemo(() => diagram(piece), [piece]);
@@ -177,6 +212,21 @@ export function NestingSection(p: NestingSectionProps) {
           <LengthField label="Kerf" value={settings.kerf} units={p.units} rounding={r} max={KERF_MAX} onCommit={(kerf) => set({ kerf })} />
           <LengthField label="Trim" value={settings.trim} units={p.units} rounding={r} max={TRIM_MAX} onCommit={(trim) => set({ trim })} />
           <LengthField label="Joint loss" value={settings.jointLoss ?? JOINT_LOSS_DEFAULT} units={p.units} rounding={r} max={JOINT_LOSS_MAX} onCommit={(jointLoss) => set({ jointLoss })} />
+          <LengthField
+            label="Minimum strip"
+            value={settings.minStrip ?? null}
+            units={p.units}
+            rounding={r}
+            max={MIN_STRIP_MAX}
+            placeholder="auto"
+            hint="Minimum strip: a glue-up's last strip narrower than this is evened out with the one before it, never past half the board. Empty: 1 1/2 in, or a quarter of the board if less"
+            onCommit={(minStrip) => set({ minStrip })}
+            onClear={() => {
+              if (!settings) return;
+              const { minStrip: _gone, ...rest } = settings;
+              p.onSettings(rest);
+            }}
+          />
         </div>
       ) : null}
       {p.problem ? <p className="note err">{p.problem}</p> : null}

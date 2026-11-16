@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gluedNesting, smallNesting } from "../nesting/fixture";
 import { NestingSection, type NestingSectionProps } from "./NestingSection";
@@ -97,6 +97,85 @@ describe("Nesting section", () => {
     fireEvent.keyDown(joint, { key: "Enter" });
     expect(p.onSettings).toHaveBeenCalledTimes(1);
     expect(joint.closest("label")!.getAttribute("title")).toContain("0 to 1/2 in");
+  });
+
+  it("#57: the minimum strip is empty (auto) until set, takes a typed length, 0 to 12 in, and clears back to auto", () => {
+    const p = props();
+    const { rerender } = render(<NestingSection {...p} />);
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    // Absent from the document's settings: empty, the #56 rule.
+    expect(min.value).toBe("");
+    expect(min.placeholder).toBe("auto");
+    expect(min.closest("label")!.getAttribute("title")).toContain("1 1/2 in, or a quarter of the board");
+    fireEvent.change(min, { target: { value: "2" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 2 * IN });
+    // Out of range: refused, nothing sent.
+    fireEvent.change(min, { target: { value: "13" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(min.closest("label")!.getAttribute("title")).toContain("0 to 12 in");
+    // Set in the document: shown; cleared: the setting goes, not a 0.
+    const n = smallNesting();
+    n.settings = { ...n.settings, minStrip: 2 * IN };
+    rerender(<NestingSection {...p} nesting={n} />);
+    expect(min.value).toBe("2 in");
+    fireEvent.change(min, { target: { value: "" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(2);
+    const last = (p.onSettings as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[1][0];
+    expect(last).toEqual({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+    expect("minStrip" in last).toBe(false);
+    // 0 is a value (never even out), not auto.
+    fireEvent.change(min, { target: { value: "0" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 0 });
+  });
+
+  it("#57: a pause on an emptied Minimum strip field clears nothing; Enter or leaving the field does", () => {
+    vi.useFakeTimers();
+    try {
+      const n = smallNesting();
+      n.settings = { ...n.settings, minStrip: 2 * IN };
+      const p = props({ nesting: n });
+      render(<NestingSection {...p} />);
+      const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+      // Backspaced to empty on the way to typing another length: the pause sends nothing.
+      fireEvent.change(min, { target: { value: "" } });
+      act(() => vi.advanceTimersByTime(2000));
+      expect(p.onSettings).not.toHaveBeenCalled();
+      // A length typed then pauses commit as before.
+      fireEvent.change(min, { target: { value: "3" } });
+      act(() => vi.advanceTimersByTime(800));
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 3 * IN });
+      // Emptied and left: cleared.
+      fireEvent.change(min, { target: { value: "" } });
+      fireEvent.blur(min);
+      expect(p.onSettings).toHaveBeenCalledTimes(2);
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#57: the minimum strip reads millimetres in a metric document and takes 12 in written any way", () => {
+    const n = smallNesting();
+    n.settings = { ...n.settings, minStrip: 0.038 };
+    const p = props({ nesting: n, units: "mm", rounding: "half_mm" });
+    render(<NestingSection {...p} />);
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    expect(min.value).toBe("38 mm");
+    // 12 in exactly, as 304.8 mm, 1 ft and 12 in: each taken, none refused as past 12 in.
+    for (const [typed, m] of [["304.8", 0.3048], ["1'", 0.3048], ["12in", 12 * IN]] as const) {
+      fireEvent.change(min, { target: { value: typed } });
+      fireEvent.keyDown(min, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: m });
+    }
+    expect(p.onSettings).toHaveBeenCalledTimes(3);
+    fireEvent.change(min, { target: { value: "304.9" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(3);
+    expect(min.closest("label")!.getAttribute("title")).toContain("0 to 304.8 mm");
   });
 
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {

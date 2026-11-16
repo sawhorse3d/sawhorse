@@ -246,7 +246,9 @@ export function nestSummary(n: Nesting, r: Units): NestSummary {
 export function settingsText(n: Nesting, r: Units): string {
   const alg = n.algorithm === "guillotine" ? "table saw" : "tightest layout (CNC)";
   // #49: the joint loss only when something is glued up, so every other footer reads as before.
-  const joint = n.glue_ups?.length ? ` · joint loss ${fineU(n.settings.jointLoss ?? JOINT_LOSS_DEFAULT, r)}` : "";
+  // #57: a set minimum strip beside it (absent, the rule needs no word).
+  const min = n.settings.minStrip !== undefined ? ` · min strip ${fineU(n.settings.minStrip, r)}` : "";
+  const joint = n.glue_ups?.length ? ` · joint loss ${fineU(n.settings.jointLoss ?? JOINT_LOSS_DEFAULT, r)}${min}` : "";
   return `Kerf ${fineU(n.settings.kerf, r)} · trim ${n.settings.trim > 0 ? `${fineU(n.settings.trim, r)} per edge` : "none"}${joint} · ${alg}`;
 }
 

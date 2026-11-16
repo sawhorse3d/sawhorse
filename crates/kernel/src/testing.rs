@@ -567,6 +567,7 @@ fn glue_count(
     trim: f64,
     joint: f64,
     kerf: f64,
+    min_strip: Option<f64>,
 ) -> Option<usize> {
     use crate::cutlist::Grain;
     use crate::nesting::{EPS, MAX_GLUE_STRIPS, MIN_GLUE_FILLER, glue_minimum};
@@ -586,7 +587,7 @@ fn glue_count(
     let (k, filler) = (2..=MAX_GLUE_STRIPS)
         .map(|k| (k, w + (k - 1) as f64 * joint - (k - 1) as f64 * bh))
         .find(|&(_, filler)| filler <= bh + EPS)?;
-    let narrowest = if filler < glue_minimum(bh) {
+    let narrowest = if filler < glue_minimum(bh, min_strip) {
         0.5 * (bh + filler)
     } else {
         filler
@@ -788,7 +789,7 @@ pub fn check_nesting_of(
             .ok_or_else(|| format!("part {} {copy}: strips name a missing stock", row_i + 1))?
             .1;
         let filler = row.size[1] + (of - 1) as f64 * joint - (of - 1) as f64 * board.width;
-        let min = glue_minimum(board.width);
+        let min = glue_minimum(board.width, n.settings.min_strip);
         let mut want = vec![board.width; of - 1];
         want.push(filler);
         if filler < min {
@@ -838,7 +839,8 @@ pub fn check_nesting_of(
             && n.library.stocks.iter().any(|b| {
                 b.kind == StockKind::Board
                     && b.thickness == board.thickness
-                    && glue_count(row, b, trim, joint, kerf).is_some_and(|k| k < of)
+                    && glue_count(row, b, trim, joint, kerf, n.settings.min_strip)
+                        .is_some_and(|k| k < of)
             })
         {
             return Err(format!(
@@ -912,8 +914,9 @@ pub fn check_nesting_of(
             // count's filler is worked out as the kernel works it out, so the two agree to
             // the last bit on a boundary. #56: the refusals are on the narrowest strip, after
             // a filler under the minimum is made equal with the strip before it.
-            let glues_on =
-                |b: &crate::stock::StockDef| glue_count(row, b, trim, joint, kerf).is_some();
+            let glues_on = |b: &crate::stock::StockDef| {
+                glue_count(row, b, trim, joint, kerf, n.settings.min_strip).is_some()
+            };
             // #56: a part whose stock is not said (by the part or its material's default) is
             // too large only when no board of that thickness glues it.
             let said = stock_said(row, n);

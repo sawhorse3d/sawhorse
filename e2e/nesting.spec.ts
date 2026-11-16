@@ -37,7 +37,7 @@ interface Piece {
 }
 interface Nest {
   algorithm: string;
-  settings: { kerf: number; trim: number; algorithm: string };
+  settings: { kerf: number; trim: number; algorithm: string; minStrip?: number };
   pieces: Piece[];
   unplaced: { tag: string; name: string; reason: string }[];
   totals: { sheets: number; boards: number; parts_in: number; placed: number; unplaced: number; efficiency: number };
@@ -507,4 +507,51 @@ test("a glue-up's last strip under the minimum is made equal with the one before
     ["4/4 x 12 x 96", "1.2", 6.25],
     ["4/4 x 12 x 96", "1.3", 6.25],
   ]);
+});
+
+// #57: the same 24 1/4 in top. The Minimum strip field is empty (auto, the #56 rule) until
+// set. Set to 1/4 in, the 1/2 in last strip is wide enough and stays: 12 + 12 + 1/2 in, the
+// footer naming it. Undo takes it back to auto, Redo sets it again, and clearing the field
+// goes back to auto and 12 + 6 1/4 + 6 1/4 in.
+test("the minimum strip re-plans a glue-up's last strip, undoes, and clears back to auto", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 24.25 * IN, 0], [0, 24.25 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Top" });
+  });
+  await openShz(page, shz, 1, "top.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  const glued = section.getByTestId("nest-glued");
+  const min = section.getByLabel("Minimum strip");
+  await expect(glued).toContainText("12 + 6 1/4 + 6 1/4 in");
+  await expect(min).toHaveValue("");
+  await expect(min).toHaveAttribute("placeholder", "auto");
+  await expect(section.getByTestId("nest-note")).not.toContainText("min strip");
+  await min.fill("1/4");
+  await min.press("Enter");
+  await expect(glued).toContainText("1 Top: glued up from 3 strips of 4/4 x 12 x 96, 12 + 12 + 1/2 in");
+  await expect(min).toHaveValue("1/4 in");
+  await expect(section.getByTestId("nest-note")).toContainText("joint loss 1/8 in · min strip 1/4 in");
+  await expect(page.locator("#hint")).toContainText("minimum strip 1/4 in");
+  const n = await nest(page);
+  expect(n.settings.minStrip).toBeCloseTo(0.25 * IN, 12);
+  checkLayout(n);
+  // Undo: back to auto. Redo: set again.
+  await page.getByLabel("Round sizes to").focus();
+  await page.keyboard.press("Control+z");
+  await expect(glued).toContainText("12 + 6 1/4 + 6 1/4 in");
+  await expect(min).toHaveValue("");
+  await page.keyboard.press("Control+y");
+  await expect(glued).toContainText("12 + 12 + 1/2 in");
+  await expect(min).toHaveValue("1/4 in");
+  // Cleared: auto again, and the document's settings say nothing of it.
+  await min.fill("");
+  await min.press("Enter");
+  await expect(glued).toContainText("12 + 6 1/4 + 6 1/4 in");
+  await expect(min).toHaveValue("");
+  expect("minStrip" in (await nest(page)).settings).toBe(false);
 });
