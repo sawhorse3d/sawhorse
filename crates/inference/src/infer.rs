@@ -60,8 +60,10 @@ pub struct InferQuery {
     #[serde(default)]
     pub start: Option<[f64; 3]>,
     /// Directions not to offer as lines through `start`, nor as "from point" alignments
-    /// along them: a rectangle's far corner on its own sides would have no width. A lock
-    /// keeps them all.
+    /// along them: a rectangle's far corner on its own sides would have no width. Since #9
+    /// the anchors' lines along them go too: blue through an earlier rectangle's corner
+    /// lifted the far corner off the ground and stood the rectangle up. A lock keeps them
+    /// all.
     #[serde(default)]
     pub start_skip: Vec<[f64; 3]>,
     /// Keep the result on this plane.
@@ -273,16 +275,17 @@ fn start_directions(q: &InferQuery, ctx: &Ctx) -> Vec<(DVec3, InferenceKind)> {
             }
         }
     }
-    dirs.retain(|(d, _)| ctx.in_plane(*d));
-    if q.lock.is_none() {
-        dirs.retain(|(d, _)| {
-            !q.start_skip.iter().any(|s| {
-                let s = DVec3::from_array(*s).normalize_or_zero();
-                s != DVec3::ZERO && d.cross(s).length() < 1e-9
-            })
-        });
-    }
+    dirs.retain(|(d, _)| ctx.in_plane(*d) && !skipped(q, *d));
     dirs
+}
+
+/// `d` is one of the query's skipped directions (never while a lock holds).
+fn skipped(q: &InferQuery, d: DVec3) -> bool {
+    q.lock.is_none()
+        && q.start_skip.iter().any(|s| {
+            let s = DVec3::from_array(*s).normalize_or_zero();
+            s != DVec3::ZERO && d.cross(s).length() < 1e-9
+        })
 }
 
 pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
@@ -508,7 +511,7 @@ pub fn infer(scene: &Scene, q: &InferQuery) -> Option<Inference> {
     }
     for &a in &anchors {
         for &d in &AXES {
-            if !ctx.in_plane(d) {
+            if !ctx.in_plane(d) || skipped(q, d) {
                 continue;
             }
             if let Some((p, dpx)) = ctx.on_line(a, d)

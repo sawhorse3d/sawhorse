@@ -102,6 +102,29 @@ test("Rect drawn square on the ground in the iso view stays a square, not a line
   await expect(page.locator("#hint")).toContainText("Rectangle 12 × 12 in on the ground");
 });
 
+test("A second rect started level with a corner the cursor rested on stays on the ground, not up blue through that corner (#9)", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "iso");
+  // A 16 x 10 in rectangle from the origin; rest on its corner at (16, 10) in.
+  await page.keyboard.press("r");
+  await page.keyboard.type("16,10");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#hint")).toContainText("Rectangle 16 × 10 in on the ground");
+  const [cx, cy] = await at(page, [16 * IN, 10 * IN, 0]);
+  await page.mouse.move(cx, cy, { steps: 2 });
+  await expect(vp).toHaveAttribute("data-inference", "endpoint");
+  // The second rectangle's first corner on the grid at x = 16 in, in front of the first.
+  await click(page, [16 * IN, -6 * IN, 0]);
+  await expect(page.locator("#hint")).toContainText("First corner set on the ground");
+  // The far corner taken 2 px beside the blue line through the corner rested on, 8 in up:
+  // that line lifted it, and the plane x = 16 in through the first corner held it.
+  const [x, y] = await at(page, [16 * IN, 10 * IN, 8 * IN], 2, 0);
+  await page.mouse.move(x, y, { steps: 4 });
+  await page.mouse.click(x, y);
+  await expect(page.locator("#hint")).toContainText(/Rectangle .* in on the ground/);
+});
+
 test("Rotated rectangle, circle and polygon with typed counts, arc with a typed radius", async ({ page }) => {
   const vp = await ready(page);
   await page.getByRole("button", { name: "Top", exact: true }).click();

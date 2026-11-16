@@ -331,6 +331,49 @@ fn skipped_start_lines_take_their_from_point_alignments_and_only_those_direction
 }
 
 #[test]
+fn skipped_start_lines_take_the_anchors_lines_along_them_too() {
+    // #9: a rectangle's plane is open, its first corner at the origin, and the cursor has
+    // rested on (0, 1, 0), a corner of an earlier rectangle sharing its x. Seen from the
+    // side and above, the cursor passes 2 px from the blue line through that corner, half a
+    // metre up. A far corner there stood the rectangle up on the plane x = 0.
+    let m = model(&[]);
+    let r2 = std::f64::consts::FRAC_1_SQRT_2;
+    let dir = [r2, 0.0, -r2];
+    let eye = [-10.0 * r2, 1.002, 0.5 + 10.0 * r2];
+    let mut q = InferQuery {
+        origin: eye,
+        dir,
+        px: PixelModel {
+            ortho: true,
+            scale: 0.001,
+            eye,
+            forward: dir,
+        },
+        start: Some([0.0, 0.0, 0.0]),
+        anchors: vec![[0.0, 1.0, 0.0]],
+        grid: false,
+        ..down(0.0, 0.0, 0.0)
+    };
+    let r = run(&m, &q);
+    assert_eq!(r.kind, K::FromPoint);
+    assert!(close(r.point, [0.0, 1.0, 0.5]), "{:?}", r.point);
+    // Blue skipped: the anchor's blue line goes with the start's, and its red line, 2 px
+    // from the same ray where it meets the ground, gives the far corner on the ground.
+    q.start_skip = vec![[0.0, 0.0, 1.0]];
+    let r = run(&m, &q);
+    assert_eq!(r.kind, K::FromPoint);
+    assert!(close(r.point, [0.5, 1.0, 0.0]), "{:?}", r.point);
+    // A lock keeps every line, the anchors' too: locked to blue, the point is the start's
+    // blue line level with the anchor's, as before.
+    q.lock = Some(LockQ {
+        dir: [0.0, 0.0, 1.0],
+        kind: K::AxisZ,
+    });
+    let r = run(&m, &q);
+    assert!(close(r.point, [0.0, 0.0, 0.5]), "{:?}", r.point);
+}
+
+#[test]
 fn locks_force_the_line_and_project_point_snaps_onto_it() {
     let m = model(&[rect(0.5, 0.5, 0.2, 0.2)]);
     let mut q = down(0.3, 0.4, 0.001);
