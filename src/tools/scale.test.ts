@@ -140,4 +140,17 @@ describe("Scale tool", () => {
     expect(h.ops.length).toBe(n);
     expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("flatten") });
   });
+
+  it("the status says which key is held and which is tapped (#81)", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    // Shift applies while it is down (onShift); Ctrl switches on a tap (onModifier).
+    expect(h.statuses.at(-1)?.text).toContain("Hold Shift: uniform. Tap Ctrl: switch between the opposite grip and the centre.");
+    // Over a grip, the line that stays up while the pointer is on it.
+    t.onEvent(at("move", [2, 0.5, 0.5]));
+    expect(h.statuses.at(-1)?.text).toMatch(/^A face grip.*Hold Shift: uniform\. Tap Ctrl: switch between the opposite grip and the centre\.$/);
+  });
 });

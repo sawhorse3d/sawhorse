@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed (Scale's status line, a pull request from @akvalentine977, 2026-11-16)
+
+- **Scale's status line says which key is held and which is tapped** ([#81](https://github.com/sawhorse3d/sawhorse/issues/81)). It read "Shift: uniform. Ctrl: about the centre.", the same form for both, though Shift applies only while it is held and Ctrl switches on a tap and stays on until the next. It now reads "Hold Shift: uniform. Tap Ctrl: switch between the opposite grip and the centre.", when the tool is picked and while the pointer is over a grip. The guide's tool table and its Scale paragraph say the same. Nothing about what the keys do has changed.
+- Tests: `src/tools/scale.test.ts` (the line on activating the tool, and the line over a face grip).
+
 ### Changed (lane 56, tests only, 2026-11-16)
 
 - **The Minimum strip setting's choice of stock, its top bound and a set 0 are pinned by tests** ([#57](https://github.com/sawhorse3d/sawhorse/issues/57)). No change to what the app does. Tests: `crates/kernel/tests/nesting.rs` (a 12 1/16 in part on 6 in and 4 1/2 in boards glued from the 6 in board with the setting absent and from the 4 1/2 in board with it set to 0, where the 6 in board would leave a 1/16 in last strip, narrower than the kerf); `src/components/NestingSection.test.tsx` (0.3048 m and the double under it taken and the double above it refused, each typed in metres; a set 0 shown as "0 in" and "0 mm", not empty, and cleared back to auto).

@@ -69,7 +69,7 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 | P | Push/Pull | Press on a face and drag, then release; or click, move, click. Double-click repeats the last distance. Hold Ctrl when you let go to pull out a new face. | a distance (negative flips it) |
 | M | Move | Click a solid or a sketch shape (or select first), move, click; or drag. Ctrl copies. With faces, edges or points selected, moves that part (Alt: autofold). | a distance; after a copy `x3`, `3x`, `*3` or `/4` |
 | Q | Rotate | Click the centre on the protractor's plane, the start of the angle, then the end. Ctrl copies. A sketch shape turns on its own plane. | an angle in degrees (`90`, `-22.5`, `30deg`); after a copy `x3` or `/4` |
-| S | Scale | Drag a grip on the selection's box (or click it, move, click). Shift: uniform. Ctrl: about the centre. Works on sketch shapes too. | a factor (`2`, `0.5`, `-1`), three factors (`2,1,0.5`), or a size with a unit (`30in`) |
+| S | Scale | Drag a grip on the selection's box (or click it, move, click). Hold Shift: uniform. Tap Ctrl: switch between the opposite grip and the centre. Works on sketch shapes too. | a factor (`2`, `0.5`, `-1`), three factors (`2,1,0.5`), or a size with a unit (`30in`) |
 | F | Offset | Click a face or region (or near selected edges), move inward or outward, click | a distance (negative goes the other way) |
 | W | Follow Me | Select the path first (edges, or a face for its edge), then click the profile | - |
 | T | Tape | Click two points to measure. Click an edge, then move away from it, to place a parallel guide. | the offset, or a length that drops a guide point |
@@ -187,7 +187,7 @@ Another count or distance replaces the last one. Ctrl+Z takes the whole array ba
 
 **Scale (S).** Grips appear on the box around the selection (or the solid under the cursor):
 - a face-centre grip stretches one way, an edge grip two ways, and a corner grip three;
-- Shift makes the scale uniform, and Ctrl scales about the centre instead of the opposite grip;
+- Shift, while it is held, makes the scale uniform; a tap of Ctrl switches to scaling about the centre instead of the opposite grip, and another tap switches back;
 - type `2` for twice the size, `-1` to mirror, or `30in` for an absolute length along the grip.
 
 Sawhorse refuses a scale that would flatten the solid, turn it inside out or fold it into itself. A sketch shape scales too; its box is flat, so its grips lie in its plane.
