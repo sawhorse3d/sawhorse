@@ -5,6 +5,7 @@ import { NestingSection, type NestingSectionProps } from "./NestingSection";
 import { StockDialog, type StockDialogProps } from "./StockDialog";
 import { CutListPane, type CutListPaneProps } from "./CutListPane";
 import { bookshelf } from "../cutlist/fixture";
+import { parseLength } from "../lib/units";
 
 afterEach(cleanup);
 
@@ -176,6 +177,60 @@ describe("Nesting section", () => {
     fireEvent.keyDown(min, { key: "Enter" });
     expect(p.onSettings).toHaveBeenCalledTimes(3);
     expect(min.closest("label")!.getAttribute("title")).toContain("0 to 304.8 mm");
+  });
+
+  it("#57 (lane 56): the minimum strip's top is exactly 0.3048 m, the float above it refused", () => {
+    // The neighbouring doubles of 0.3048, by their bits.
+    const step = (x: number, by: 1n | -1n) => {
+      const b = new BigInt64Array(new Float64Array([x]).buffer);
+      b[0] += by;
+      return new Float64Array(b.buffer)[0];
+    };
+    const above = step(0.3048, 1n);
+    const below = step(0.3048, -1n);
+    // Typed in metres, each reads as exactly that double.
+    const typed = (m: number) => `${m} m`;
+    for (const m of [0.3048, above, below]) {
+      const r = parseLength(typed(m), "frac-in");
+      expect(r.ok && r.metres === m).toBe(true);
+    }
+    expect(above).toBe(0.30480000000000007);
+    const p = props();
+    render(<NestingSection {...p} />);
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    // 0.3048 m and the double under it are taken (a top moved one step down refuses 0.3048).
+    for (const m of [0.3048, below]) {
+      fireEvent.change(min, { target: { value: typed(m) } });
+      fireEvent.keyDown(min, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: m });
+    }
+    expect(p.onSettings).toHaveBeenCalledTimes(2);
+    // The double above it is refused (a top moved one step up takes it), and nothing is sent.
+    fireEvent.change(min, { target: { value: typed(above) } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(2);
+    expect(min.closest("label")!.getAttribute("title")).toContain("Minimum strip: 0 to 12 in.");
+  });
+
+  it("#57 (lane 56): a minimum strip set to 0 shows 0 in the document's units, not auto", () => {
+    for (const [units, rounding, shown] of [
+      ["frac-in", "sixteenth", "0 in"],
+      ["mm", "half_mm", "0 mm"],
+    ] as const) {
+      const n = smallNesting();
+      n.settings = { ...n.settings, minStrip: 0 };
+      const p = props({ nesting: n, units, rounding });
+      render(<NestingSection {...p} />);
+      const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+      expect(min.value).toBe(shown);
+      // Shown as set, Enter on it sends nothing; emptied, it clears back to auto.
+      fireEvent.keyDown(min, { key: "Enter" });
+      expect(p.onSettings).not.toHaveBeenCalled();
+      fireEvent.change(min, { target: { value: "" } });
+      fireEvent.keyDown(min, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+      cleanup();
+    }
   });
 
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {

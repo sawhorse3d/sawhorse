@@ -1819,6 +1819,65 @@ fn a_set_minimum_strip_evens_the_last_strip_up_to_half_the_board() {
     assert_eq!(glued_from(6.0, 12.0625, Some(0.0)), None);
 }
 
+/// #57 (lane 56): the board a part is glued from is chosen with the setting it is planned
+/// with. A 12 1/16 x 20 in part, kerf 1/8 in, no joint loss, on a library of 4/4 x 6 x 96
+/// then 4/4 x 4 1/2 x 96. Both take three strips, so library order decides:
+/// - 6 in: 6 + 6 + 1/16 in. The rule evens the 1/16 in out (under 1 1/2 in), 6 + 3 1/32 +
+///   3 1/32 in; set to 0 it stays, narrower than the kerf, and the board is refused.
+/// - 4 1/2 in: 4 1/2 + 4 1/2 + 3 1/16 in, over 1 1/8 in (a quarter of the board), so the
+///   same with the setting absent or 0.
+///
+/// Absent, the 6 in board glues it. Set to 0, the 4 1/2 in board does; a choice made as if
+/// the setting were absent takes the 6 in board, which then cannot make it, and the part is
+/// left on no stock.
+#[test]
+fn the_board_a_part_is_glued_from_is_chosen_with_the_minimum_strip() {
+    let nest = |min_strip: Option<f64>| {
+        let list = list_of(&[(0.75, 12.0625, 20.0, 1, Grain::Length, false, 0)], 0);
+        let mut lib = StockLibrary::builtin();
+        lib.defaults.clear();
+        lib.stocks = [(6.0, "4/4 x 6 x 96"), (4.5, "4/4 x 4 1/2 x 96")]
+            .into_iter()
+            .map(|(w, name)| StockDef {
+                name: name.into(),
+                kind: StockKind::Board,
+                length: 96.0 * IN,
+                width: w * IN,
+                thickness: 0.75 * IN,
+                nominal: None,
+                grain: StockGrain::Length,
+            })
+            .collect();
+        let st = NestSettings {
+            kerf: IN / 8.0,
+            joint_loss: 0.0,
+            min_strip,
+            ..NestSettings::default()
+        };
+        let n = nest_list(&list, &lib, st);
+        check_nesting_of(&list, &n).unwrap_or_else(|e| panic!("{min_strip:?}: {e}"));
+        n
+    };
+    let n = nest(None);
+    assert!(n.unplaced.is_empty(), "{:#?}", n.unplaced);
+    let s = strips_of(&n, 0);
+    assert!(s.iter().all(|(st, _)| st == "4/4 x 6 x 96"), "{s:?}");
+    widths_are(
+        Some(s.iter().map(|(_, w)| *w).collect()),
+        &[6.0, 3.03125, 3.03125],
+    );
+    let n = nest(Some(0.0));
+    assert!(n.unplaced.is_empty(), "set to 0: {:#?}", n.unplaced);
+    let s = strips_of(&n, 0);
+    assert!(s.iter().all(|(st, _)| st == "4/4 x 4 1/2 x 96"), "{s:?}");
+    widths_are(
+        Some(s.iter().map(|(_, w)| *w).collect()),
+        &[4.5, 4.5, 3.0625],
+    );
+    assert_eq!(n.glue_ups.len(), 1);
+    assert_eq!(n.glue_ups[0].stock, "4/4 x 4 1/2 x 96");
+}
+
 /// #57, to the last bit: the setting's range ends at 12 in, written 0.3048 m (12 in typed,
 /// `12 * 0.0254`, rounds a hair under it and is taken too), and the cap is exactly half the
 /// board. A last strip of exactly half the board stays; one a hair under it is evened out,
