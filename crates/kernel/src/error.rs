@@ -56,8 +56,21 @@ pub enum BuildError {
 /// Errors from push/pull (which includes extruding a sketch region).
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PushError {
+    /// A push/pull shorter than MIN_EXTRUDE.
     #[error("distance must be at least 0.01 mm")]
     ZeroDistance,
+    /// Lane 53 (#66): an extrude of MIN_EXTRUDE or less (its walls would be no taller than
+    /// the merge distance, which no plane accepts).
+    #[error("an extrude must be more than 0.01 mm")]
+    ExtrudeTooShort,
+    /// Lane 53 (#66): a push/pull or extrude at the minimum (up to
+    /// [`crate::tolerance::MIN_EXTRUDE_SLACK`] over it) whose corners, as placed here, come
+    /// within the merge distance of each other or of a face, while twice the minimum goes
+    /// through.
+    #[error(
+        "too short here: at this distance two corners, or a corner and a face, would be 0.01 mm or less apart; use a longer distance"
+    )]
+    TooShortHere,
     #[error("distance is not finite or is beyond 10 km")]
     OutOfBounds,
     #[error("no object #{0}")]
@@ -200,6 +213,14 @@ pub enum SweepError {
 pub enum OffsetError {
     #[error("offset distance must be at least 0.01 mm")]
     ZeroDistance,
+    /// Lane 53 (#66): an offset at the minimum (up to
+    /// [`crate::tolerance::MIN_EXTRUDE_SLACK`] over it) whose loop, as placed here, comes
+    /// within the merge distance of the edges it starts from, while twice the minimum goes
+    /// through.
+    #[error(
+        "too short here: the offset would come 0.01 mm or less from the edges it starts from; use a longer distance"
+    )]
+    TooShortHere,
     #[error("a distance or point is not finite or is beyond 10 km")]
     OutOfBounds,
     #[error("the offset shrinks the shape to nothing; try a smaller distance")]

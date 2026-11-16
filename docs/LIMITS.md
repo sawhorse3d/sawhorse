@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.6, 2026-11-14 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.6, 2026-11-14 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44; the shortest distance in lane 53).
 
 ## Model size
 
@@ -34,6 +34,7 @@ A model that large is still slow to work in where every solid is involved: the c
 |---|---|
 | Coordinates | within 10 km of the origin |
 | Smallest feature | 0.01 mm (points closer than that are one point) |
+| Shortest Push/Pull, extrude or offset | 0.01 mm. Under it a push/pull is refused with "distance must be at least 0.01 mm" (an offset: "offset distance must be at least 0.01 mm"). An extrude must be more than 0.01 mm ("an extrude must be more than 0.01 mm"): at exactly 0.01 mm its walls are exactly the distance under which two points are one, which no plane accepts (lane 53, [#66](https://github.com/sawhorse3d/sawhorse/issues/66): it read as a kernel bug on some planes and extruded on others). A push/pull or offset of exactly 0.01 mm that builds nothing that short (a face slid along its neighbours, an outward offset) goes through. One that would, as placed, put corners or loops 0.01 mm or less apart (a push/pull with Ctrl, an inward offset, on some planes), at any distance up to 1 nm over the minimum, while twice the minimum would go through, is refused with "too short here: ...", alone or in a batch (where each such op's own result is checked at once); any other failure keeps its own message, a refusal mixing the minimum's violations with others is not relabelled, and a failure found only after later ops of a batch stays a kernel bug |
 | One imported item | 4,000,000 points or faces |
 | One import (a whole file) | 1,500,000 faces, 3,000,000 points, 50,000 objects |
 | Texture images | 512 per model, 16 MB and 4096 x 4096 pixels each, 256 MB and 128 million pixels in all |

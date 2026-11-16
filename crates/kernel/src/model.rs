@@ -1227,6 +1227,90 @@ fn finite3(p: &[f64; 3]) -> Option<DVec3> {
     (v.is_finite() && v.abs().max_element() <= crate::tolerance::MAX_COORD).then_some(v)
 }
 
+/// Lane 53 (#66): for a push/pull, extrude or offset at the shortest distance
+/// ([`crate::tolerance::at_min_distance`]), the same op at twice the minimum the same way
+/// and the refusal it gets when only the shortness stops it. `None` for any other op.
+fn at_the_minimum(op: &Op) -> Option<(Op, KernelError)> {
+    use crate::tolerance::{MIN_EXTRUDE, at_min_distance};
+    let longer = |d: f64| 2.0 * MIN_EXTRUDE * d.signum();
+    let short = KernelError::Push(PushError::TooShortHere);
+    match op {
+        Op::Extrude {
+            sketch,
+            region,
+            distance,
+        } if at_min_distance(*distance) => Some((
+            Op::Extrude {
+                sketch: *sketch,
+                region: *region,
+                distance: longer(*distance),
+            },
+            short,
+        )),
+        Op::PushPull {
+            object,
+            face,
+            distance,
+        } if at_min_distance(*distance) => Some((
+            Op::PushPull {
+                object: *object,
+                face: *face,
+                distance: longer(*distance),
+            },
+            short,
+        )),
+        Op::PushPullNewFace {
+            object,
+            face,
+            distance,
+        } if at_min_distance(*distance) => Some((
+            Op::PushPullNewFace {
+                object: *object,
+                face: *face,
+                distance: longer(*distance),
+            },
+            short,
+        )),
+        Op::Offset { source, distance } if at_min_distance(*distance) => Some((
+            Op::Offset {
+                source: source.clone(),
+                distance: longer(*distance),
+            },
+            KernelError::Offset(OffsetError::TooShortHere),
+        )),
+        _ => None,
+    }
+}
+
+/// Lane 53 (#66): the failures the shortest distance can cause, and only those: the
+/// validator's zero-length edges and self-contact (corners rounded to the merge distance),
+/// push/pull's degenerate or invalid result and a B-rep that would not build, and a face
+/// edit's loop meeting, leaving or touching the face's own edges. Any other failure at the
+/// minimum keeps its own message.
+fn about_the_minimum(e: &KernelError) -> bool {
+    match e {
+        KernelError::Topology(t) => {
+            !t.violations.is_empty()
+                && t.violations.iter().all(|v| {
+                    matches!(
+                        v,
+                        Violation::ZeroLengthEdge(_) | Violation::SelfIntersectingSolid(_)
+                    )
+                })
+        }
+        KernelError::Push(PushError::Boolean(_) | PushError::Build(_)) => true,
+        KernelError::FaceEdit(f) => matches!(
+            f,
+            FaceEditError::CrossesBoundary
+                | FaceEditError::NotInside
+                | FaceEditError::NotOnBoundary
+                | FaceEditError::Dangling
+                | FaceEditError::TooClose
+        ),
+        _ => false,
+    }
+}
+
 /// A group as lane 2 saw it: its name and the solids directly in it (public ids).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
@@ -1671,6 +1755,26 @@ impl Model {
     /// left as it is (what [`crate::Document`] keeps as the undo snapshot). Lane 16: the
     /// result is also held to the model-wide limits ([`crate::limits`]).
     pub fn applied(&self, op: &Op) -> Result<(Model, OpOutcome), KernelError> {
+        let r = self.applied_as_given(op);
+        // Lane 53 (#66): a push/pull, extrude or offset at the shortest distance can place
+        // corners that round to a wall or a gap no longer than the merge distance, which the
+        // kernel cannot accept (a kernel bug from the validator, or a refusal that names
+        // degenerate geometry or a path crossing the face's boundary). When that is how it
+        // failed and the same op twice as long goes through, the distance is too short here,
+        // and it is refused as such ([`about_the_minimum`]; inside a batch,
+        // [`Self::apply_in_batch`]). Anything that went through still does, unchanged.
+        if let Err(e) = &r
+            && let Some((longer, too_short)) = at_the_minimum(op)
+            && *e != too_short
+            && about_the_minimum(e)
+            && self.applied_as_given(&longer).is_ok()
+        {
+            return Err(too_short);
+        }
+        r
+    }
+
+    fn applied_as_given(&self, op: &Op) -> Result<(Model, OpOutcome), KernelError> {
         let mut next = self.clone();
         next.dirty = Dirty::default();
         let outcome = next.apply_in_place(op)?;
@@ -1758,6 +1862,46 @@ impl Model {
         OpOutcome::SketchEdited {
             regions: regions.into_iter().map(to_public).collect(),
         }
+    }
+
+    /// Lane 53 (#66): one op of a batch, as [`Self::applied`] takes one op: a push/pull,
+    /// extrude or offset at the shortest distance that fails for the reasons the minimum can
+    /// cause ([`about_the_minimum`]) while the same op twice as long would go through (on the
+    /// model as it stands before it, to the end: tidied, within the limits, valid) is refused
+    /// as too short here. The batch is refused either way, so nothing of it is kept. (A
+    /// failure the validator finds only when the whole batch is done is not traced to one op:
+    /// it stays a kernel bug.)
+    fn apply_in_batch(&mut self, op: &Op) -> Result<OpOutcome, KernelError> {
+        let Some((longer, too_short)) = at_the_minimum(op) else {
+            return self.apply_in_place(op);
+        };
+        let before = self.clone();
+        match self.apply_in_place(op) {
+            Err(e)
+                if e != too_short && about_the_minimum(&e) && before.would_go_through(&longer) =>
+            {
+                Err(too_short)
+            }
+            // Its result checked at once, as the edit's would be: a solid the validator
+            // refuses for the minimum's reasons is refused here as too short, not left for
+            // the batch's last check to call a kernel bug.
+            Ok(out) => match self.validate().map_err(KernelError::from) {
+                Err(e) if about_the_minimum(&e) && before.would_go_through(&longer) => {
+                    Err(too_short)
+                }
+                _ => Ok(out),
+            },
+            r => r,
+        }
+    }
+
+    /// Lane 53 (#66): whether `op` on a copy of this model goes through to the end.
+    fn would_go_through(&self, op: &Op) -> bool {
+        let mut p = self.clone();
+        p.apply_in_place(op).is_ok()
+            && p.tidy().is_ok()
+            && crate::limits::check_model(&p).is_ok()
+            && p.validate().is_ok()
     }
 
     /// One op, then propagation of what it changed into component definitions.
@@ -2072,7 +2216,7 @@ impl Model {
                     ) {
                         return Err(DocumentError::NotInBatch.into());
                     }
-                    outcomes.push(self.apply_in_place(op)?);
+                    outcomes.push(self.apply_in_batch(op)?);
                 }
                 Ok(OpOutcome::Batch { outcomes })
             }
@@ -4386,5 +4530,49 @@ mod tests {
             2,
             "one half of the split square and the triangle"
         );
+    }
+
+    /// Lane 53 (#66): the retry at the minimum relabels only the failures the minimum can
+    /// cause; every other failure keeps its own message (and a kernel bug of another kind
+    /// stays a kernel bug, so the fuzzer still sees it).
+    #[test]
+    fn only_the_minimum_s_own_failures_are_relabelled() {
+        use crate::boolean::BooleanError;
+        use crate::validate::{TopologyReport, Violation};
+        let topo = |v: Vec<Violation>| {
+            KernelError::Topology(TopologyError {
+                violations: v,
+                report: TopologyReport::default(),
+            })
+        };
+        let hit = crate::intersect::SelfHit::VertexOnFace { vertex: 0, face: 1 };
+        for e in [
+            topo(vec![Violation::ZeroLengthEdge(Default::default())]),
+            topo(vec![Violation::SelfIntersectingSolid(hit)]),
+            KernelError::Push(PushError::Boolean(BooleanError::Degenerate("x".into()))),
+            KernelError::FaceEdit(FaceEditError::CrossesBoundary),
+            KernelError::FaceEdit(FaceEditError::NotInside),
+            KernelError::FaceEdit(FaceEditError::NotOnBoundary),
+            KernelError::FaceEdit(FaceEditError::Dangling),
+            KernelError::FaceEdit(FaceEditError::TooClose),
+        ] {
+            assert!(about_the_minimum(&e), "{e}");
+        }
+        for e in [
+            topo(vec![]),
+            topo(vec![Violation::DanglingKey("object is not watertight")]),
+            topo(vec![
+                Violation::ZeroLengthEdge(Default::default()),
+                Violation::DanglingKey("object is not watertight"),
+            ]),
+            KernelError::Push(PushError::NoSuchFace(3)),
+            KernelError::Push(PushError::OutOfBounds),
+            KernelError::Offset(OffsetError::Vanishes),
+            KernelError::FaceEdit(FaceEditError::NoSuchFace(3)),
+            KernelError::Sketch(SketchError::Degenerate),
+            KernelError::Limit(crate::limits::LimitError::SketchEdges(20_001)),
+        ] {
+            assert!(!about_the_minimum(&e), "{e}");
+        }
     }
 }

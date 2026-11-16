@@ -41,7 +41,7 @@ Sawhorse is a push/pull modeler. Its kernel has to make "draw a closed loop, get
 | Area | Where | Notes |
 |---|---|---|
 | Crates | `crates/{kernel,tessellate,inference,export,wasm-api}` | `tessellate` has no kernel dependency, so booleans, render and export share one triangulator |
-| Tolerances | `kernel/src/tolerance.rs` | LENGTH_EPS 1 nm, POINT_MERGE 0.01 mm, PLANARITY 1 um, IMPORT_PLANARITY 0.1 mm, PARALLEL_EPS, MIN_EXTRUDE, MAX_COORD 10 km, HASH_QUANTUM 1 nm |
+| Tolerances | `kernel/src/tolerance.rs` | LENGTH_EPS 1 nm, POINT_MERGE 0.01 mm, PLANARITY 1 um, IMPORT_PLANARITY 0.1 mm, PARALLEL_EPS, MIN_EXTRUDE (an extrude must be longer; since lane 53 a push/pull, extrude or offset within MIN_EXTRUDE_SLACK, 1 nm, over it that fails as the minimum makes things fail, while twice the minimum goes through, is refused as too short here), MAX_COORD 10 km, HASH_QUANTUM 1 nm |
 | B-rep | `kernel/src/brep.rs` | slotmap ids; builder from indexed polygons pairs twins by directed edge |
 | Validator | `kernel/src/validate.rs` | integrity, next/prev, loop closure, twins, planarity, winding, ring self-intersection, hole containment, Euler-Poincare per shell, watertight |
 | Sketch | `kernel/src/sketch.rs` | `add_rectangle` only; region recomputation is the general algorithm (angular sort + face walk + hole nesting) |

@@ -46,6 +46,26 @@ pub const PARALLEL_EPS: f64 = 1e-9;
 /// shorter would create edges the kernel then refuses).
 pub const MIN_EXTRUDE: f64 = POINT_MERGE;
 
+/// How far over MIN_EXTRUDE a distance can still place geometry that rounds to the merge
+/// distance (lane 53, #66): 1 nm. A distance is typed as a number, but the solid tier
+/// measures the corners it places (the base plus the distance, in world coordinates), and
+/// near the minimum that sum can round to a wall or a gap no longer than POINT_MERGE, which
+/// the validator calls a zero-length edge or a vertex on a face. How far depends on where
+/// the shape is: on the ground exactly 0.01 mm measured as a vertex on the base, 500 mm up
+/// it rounded under 0.01 mm, 1000 mm up over it. Measured, the rounding reaches 1.4e-12 m
+/// over the minimum at 10 km (the coordinates' own rounding is about 2e-12 m there), far
+/// inside this band. A push/pull, extrude or offset within the band whose result the
+/// kernel cannot accept is refused as too short ([`at_min_distance`]), never a kernel bug.
+pub const MIN_EXTRUDE_SLACK: f64 = LENGTH_EPS;
+
+/// True for a distance from MIN_EXTRUDE up to MIN_EXTRUDE_SLACK over it, either sign: the
+/// shortest distances, whose placed geometry can round to the merge distance.
+#[inline]
+pub fn at_min_distance(d: f64) -> bool {
+    let a = d.abs();
+    (MIN_EXTRUDE..=MIN_EXTRUDE + MIN_EXTRUDE_SLACK).contains(&a)
+}
+
 /// Largest coordinate magnitude accepted from outside (10 km). Keeps POINT_MERGE
 /// meaningful: at 1e4 m an f64 still resolves ~2e-12 m.
 pub const MAX_COORD: f64 = 1e4;

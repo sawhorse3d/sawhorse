@@ -17,7 +17,7 @@ use crate::brep::{Brep, PolyFace, Polys};
 use crate::error::{FaceEditError, PushError};
 use crate::ids::{FaceId, SketchId, VertexId};
 use crate::plane::Plane;
-use crate::tolerance::{MIN_EXTRUDE, in_bounds};
+use crate::tolerance::{MIN_EXTRUDE, at_min_distance, in_bounds};
 use crate::validate::{TopologyError, TopologyReport, Violation, validate};
 
 /// **A face's triangles** (lane 19c), in the face's own turn: the tessellator's, in the face's
@@ -257,7 +257,7 @@ impl Object {
             return Err(PushError::OutOfBounds);
         }
         if distance.abs() < MIN_EXTRUDE {
-            return Err(PushError::ZeroDistance);
+            return Err(PushError::ExtrudeTooShort);
         }
         // Normalise winding: outer counter-clockwise, holes clockwise.
         let mut rings: Vec<Vec<DVec2>> = Vec::with_capacity(1 + holes.len());
@@ -293,6 +293,13 @@ impl Object {
             .any(|p| !in_bounds(p.x) || !in_bounds(p.y) || !in_bounds(p.z))
         {
             return Err(PushError::OutOfBounds);
+        }
+        // Exactly the minimum is refused too (lane 53, #66): its walls are exactly the merge
+        // distance tall, which the validator refuses on any plane (a vertex on the base) or
+        // the rounding of the placed corners does (a zero-length wall), wherever it is. (After
+        // the bounds, as main checked them: a shape beyond 10 km says so at any distance.)
+        if distance.abs() == MIN_EXTRUDE {
+            return Err(PushError::ExtrudeTooShort);
         }
 
         let rev = |r: &Vec<usize>| r.iter().rev().copied().collect::<Vec<_>>();
@@ -344,7 +351,23 @@ impl Object {
         for (k, f) in faces.iter_mut().enumerate() {
             f.id = Some(k as u64 + 1);
         }
-        let brep = Brep::from_polygons(&points, &faces)?;
+        // Within a nanometre over the minimum the placed corners can still round to a wall
+        // no longer than the merge distance (lane 53, #66): built without the debug check, so
+        // a solid the validator will refuse is a value here, not a debug panic. Whether that
+        // refusal is the minimum's (too short here) is decided with every other op's, by
+        // `Model::applied` and, in a batch, `Model::apply_in_batch`. Anything longer builds as
+        // it always did.
+        let near_min = at_min_distance(distance);
+        let brep = if near_min {
+            Brep::build(&Polys {
+                points: points.clone(),
+                faces: faces.clone(),
+                user_edges: Default::default(),
+            })
+            .map_err(PushError::Build)?
+        } else {
+            Brep::from_polygons(&points, &faces)?
+        };
         let mut obj = Object {
             brep,
             watertight: false,
@@ -709,8 +732,7 @@ impl Object {
         let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let ids = [p.faces[a].id, p.faces[b].id].map(|i| i.unwrap_or(0));
         self.brep = Brep::build(&p)?;
-        self.brep.debug_validate("split_face");
-        self.refuse_self_contact()?;
+        self.refuse_self_contact("split_face")?;
         self.settle_paint(&lineage);
         Ok(ids)
     }
@@ -730,8 +752,7 @@ impl Object {
         let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let id = p.faces[sub].id.unwrap_or(0);
         self.brep = Brep::build(&p)?;
-        self.brep.debug_validate("imprint");
-        self.refuse_self_contact()?;
+        self.refuse_self_contact("imprint")?;
         self.settle_paint(&lineage);
         if let Some(pl) = plane {
             self.give_paint_on_plane(&before, &pl, host);
@@ -774,8 +795,7 @@ impl Object {
         ids.dedup();
         let inside = inside.and_then(|i| p.faces.get(i).and_then(|f| f.id));
         self.brep = Brep::build(&p)?;
-        self.brep.debug_validate("draw");
-        self.refuse_self_contact()?;
+        self.refuse_self_contact("draw")?;
         self.settle_paint(&lineage);
         self.give_paint_on_plane(&before, &plane, host);
         Ok((ids, inside))
@@ -806,8 +826,7 @@ impl Object {
         let lineage = assign_face_ids(&mut p, &mut self.next_face_id);
         let id = p.faces.get(fi).and_then(|f| f.id).unwrap_or(0);
         self.brep = Brep::build(&p)?;
-        self.brep.debug_validate(what);
-        self.refuse_self_contact()?;
+        self.refuse_self_contact(what)?;
         self.settle_paint(&lineage);
         Ok(id)
     }
@@ -815,7 +834,20 @@ impl Object {
     /// A face edit that brings a new corner or edge within the merge distance of another
     /// face (a loop drawn on a sliver a few micrometres thick) would leave the solid
     /// touching itself: refused, typed, instead of reaching the validator as a bug.
-    fn refuse_self_contact(&self) -> Result<(), FaceEditError> {
+    ///
+    /// Lane 53 (#66): the same for a new corner within the merge distance of another along
+    /// an edge (a zero-length edge: an inward offset of exactly the minimum lays its loop
+    /// that close to the face's own edges), checked before the debug build's validator would
+    /// stop on it. `what` names the edit for that validator.
+    fn refuse_self_contact(&self, what: &str) -> Result<(), FaceEditError> {
+        let b = &self.brep;
+        if b.edges().any(|(e, _)| {
+            let (p, q) = b.edge_points(e);
+            p.distance(q) < crate::tolerance::POINT_MERGE
+        }) {
+            return Err(FaceEditError::TooClose);
+        }
+        b.debug_validate(what);
         match crate::intersect::self_intersection(&self.brep) {
             Some(_) => Err(FaceEditError::TooClose),
             None => Ok(()),
@@ -939,8 +971,15 @@ mod tests {
     fn typed_refusals() {
         assert_eq!(
             Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], 1e-7).unwrap_err(),
-            PushError::ZeroDistance
+            PushError::ExtrudeTooShort
         );
+        // Lane 53 (#66): exactly the minimum, either way, is too short too.
+        for d in [MIN_EXTRUDE, -MIN_EXTRUDE] {
+            assert_eq!(
+                Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], d).unwrap_err(),
+                PushError::ExtrudeTooShort
+            );
+        }
         assert_eq!(
             Object::extrude(&Plane::GROUND, &rect(1.0, 1.0), &[], f64::INFINITY).unwrap_err(),
             PushError::OutOfBounds
