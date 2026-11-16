@@ -222,6 +222,15 @@ impl Counts {
 
 /// Refuse a model over any model-wide limit.
 pub fn check_model(m: &Model) -> Result<(), LimitError> {
+    check_model_with(m, None)
+}
+
+/// [`check_model`], reading `unbuilt`'s count of edges for its sketch (lane 53, #65: a stroke
+/// certain to take that sketch past [`MAX_SKETCH_EDGES`], left out rather than inserted).
+pub(crate) fn check_model_with(
+    m: &Model,
+    unbuilt: Option<(crate::ids::SketchId, usize)>,
+) -> Result<(), LimitError> {
     let c = Counts::of(m);
     if c.objects > MAX_OBJECTS {
         return Err(LimitError::Objects(c.objects));
@@ -239,9 +248,13 @@ pub fn check_model(m: &Model) -> Result<(), LimitError> {
         return Err(LimitError::Points(c.points));
     }
     check_counts(&c)?;
-    for (_, s) in &m.sketches {
-        if s.edge_count() > MAX_SKETCH_EDGES {
-            return Err(LimitError::SketchEdges(s.edge_count()));
+    for (k, s) in &m.sketches {
+        let n = match unbuilt {
+            Some((u, n)) if u == k => n,
+            _ => s.edge_count(),
+        };
+        if n > MAX_SKETCH_EDGES {
+            return Err(LimitError::SketchEdges(n));
         }
     }
     check_textures(m.textures.values())

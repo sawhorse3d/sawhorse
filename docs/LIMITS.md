@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.6, 2026-11-14 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44; the shortest distance in lane 53).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.6, 2026-11-14 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44; the shortest distance and long strokes in lane 53).
 
 ## Model size
 
@@ -87,7 +87,7 @@ Every limit below is checked where the work it bounds starts, before memory is s
 | Component definitions | 20,000 | |
 | Faces | 5,000,000 | About 0.5 KB each with their edges. |
 | Points | 10,000,000 | |
-| One sketch | 20,000 edges | A sketch's edges are checked against each other whenever it changes. |
+| One sketch | 20,000 edges | A sketch's edges are checked against each other whenever it changes. A stroke that is the last op of its edit and is certain to take its sketch past the limit (it crosses, touches and folds over nothing, itself included, so it adds one edge a segment) is counted instead of drawn, and the edit is refused with the error the check gives with it drawn: the first sketch over the limit, in the check's order, with its count (lane 53, [#65](https://github.com/sawhorse3d/sawhorse/issues/65)). Any other stroke is drawn and then checked, as before. Opening a file does not check this limit, so a file can hold a sketch past it; every edit to such a model is refused for that sketch. |
 | Guides | 50,000 | Lane 16b. Each is drawn across the whole view and offered as an inference on every pointer move. |
 | Dimensions | 50,000 | Lane 16b. Each is laid out (leaders and text) whenever the camera moves. |
 | Tags | 10,000; also the tags with a colour, and the tags one scene hides | Lane 16b. The Tags pane lists each, and every scene holds the visibility of each. |

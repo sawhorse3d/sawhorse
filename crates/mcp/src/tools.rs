@@ -47,10 +47,9 @@ const MAX_FILE: u64 = sawhorse_shz::MAX_TOTAL;
 /// Longest part name: the kernel's own limit on a name.
 const MAX_NAME: usize = 64;
 
-/// Most points one `apply_ops` batch may hold, all its ops together. A stroke longer than a
-/// sketch may hold edges is refused by the kernel only after the work of inserting it,
-/// which grows faster than its length (32,000 points: about 10 s, then refused), so it is
-/// refused here before any work.
+/// Most points one `apply_ops` batch may hold, all its ops together: a sketch's edge limit.
+/// (Before lane 53 the kernel refused a stroke longer than that only after the work of
+/// inserting it, which grew faster than its length: 32,000 points took about 10 s.)
 pub const MAX_BATCH_POINTS: usize = sawhorse_kernel::limits::MAX_SKETCH_EDGES;
 
 /// The server: the folder it works in and the document it holds.

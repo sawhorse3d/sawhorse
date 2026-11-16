@@ -1163,6 +1163,16 @@ pub struct Model {
     /// Drawing sheets and their order (lane 12), see [`crate::sheets`].
     pub(crate) sheets: SlotMap<crate::ids::SheetId, crate::sheets::Sheet>,
     pub(crate) sheet_order: Vec<crate::ids::SheetId>,
+    /// Lane 53 (#65; transient, like `dirty`): the op in progress is the last before the
+    /// edit is held to the limits (the op itself, or the last op of its batch), so a stroke
+    /// certain to take its sketch past [`crate::limits::MAX_SKETCH_EDGES`] need not be
+    /// inserted: nothing after it can take edges away again.
+    pub(crate) last_op: bool,
+    /// Lane 53 (#65; transient): such a stroke, not inserted: its sketch and the edges the
+    /// sketch would hold with it. The limit check after the edit reads that count for that
+    /// sketch ([`crate::limits::check_model_with`]), so the edit is refused exactly as it is
+    /// with the stroke inserted, by the first thing over a limit in the check's own order.
+    pub(crate) unbuilt_stroke: Option<(SketchId, usize)>,
 }
 
 /// A material: sRGB colour with alpha; a texture (a path in the model's texture table, or a
@@ -1225,6 +1235,15 @@ impl Dimension {
 fn finite3(p: &[f64; 3]) -> Option<DVec3> {
     let v = DVec3::from_array(*p);
     (v.is_finite() && v.abs().max_element() <= crate::tolerance::MAX_COORD).then_some(v)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: how many edits were done again with a left-out stroke drawn.
+    static REDONE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Tests: leave out every stroke whose count is certain, over the limit or not (to reach
+    /// the path that does the edit again with it drawn).
+    static FORCE_LEAVE_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Lane 53 (#66): for a push/pull, extrude or offset at the shortest distance
@@ -1775,11 +1794,29 @@ impl Model {
     }
 
     fn applied_as_given(&self, op: &Op) -> Result<(Model, OpOutcome), KernelError> {
+        self.applied_by(op, true)
+    }
+
+    /// [`Self::applied_as_given`]; with `early`, a stroke certain to break the sketch edge
+    /// limit is not inserted (`unbuilt_stroke`) and the limit check refuses the edit.
+    fn applied_by(&self, op: &Op, early: bool) -> Result<(Model, OpOutcome), KernelError> {
         let mut next = self.clone();
         next.dirty = Dirty::default();
+        next.last_op = early;
         let outcome = next.apply_in_place(op)?;
+        next.last_op = false;
+        let unbuilt = next.unbuilt_stroke.take();
         next.tidy()?;
-        crate::limits::check_model(&next)?;
+        crate::limits::check_model_with(&next, unbuilt)?;
+        if unbuilt.is_some() {
+            // Unreachable as the code stands: a stroke is left out only when its count is
+            // over the limit, so the check above refuses the edit. Kept so that a model whose
+            // stroke was left out is never committed whatever changes: the edit is done again
+            // with the stroke inserted. (`tests::the_redo_with_the_stroke_drawn` forces it.)
+            #[cfg(test)]
+            REDONE.with(|r| r.set(r.get() + 1));
+            return self.applied_by(op, false);
+        }
         next.validate()?;
         Ok((next, outcome))
     }
@@ -1898,6 +1935,7 @@ impl Model {
     /// Lane 53 (#66): whether `op` on a copy of this model goes through to the end.
     fn would_go_through(&self, op: &Op) -> bool {
         let mut p = self.clone();
+        p.last_op = false;
         p.apply_in_place(op).is_ok()
             && p.tidy().is_ok()
             && crate::limits::check_model(&p).is_ok()
@@ -1948,6 +1986,11 @@ impl Model {
             } => {
                 let sid = self.sketch_edit_key(*sketch)?;
                 let pts: Vec<DVec2> = points.iter().map(|p| DVec2::from_array(*p)).collect();
+                if self.leave_out_sure_overflow(sid, &pts, *closed) {
+                    // Never seen: the limit check after the op refuses the edit (or it is
+                    // done again with the stroke drawn, `Self::applied_by`).
+                    return Ok(Self::edited(Vec::new()));
+                }
                 let r = self.sketches[sid].insert_polyline(&pts, *closed)?;
                 Ok(Self::edited(r))
             }
@@ -2103,6 +2146,13 @@ impl Model {
                     }
                     DrawTarget::Sketch { sketch } => {
                         let sid = self.sketch_edit_key(*sketch)?;
+                        if spec.is_none() && self.leave_out_sure_overflow_world(sid, &pts, *closed)
+                        {
+                            // A placeholder (a draw answers `Drawn`), never seen: the limit
+                            // check after the op refuses the edit, or it is done again with
+                            // the stroke drawn (`Self::applied_by`).
+                            return Ok(Self::edited(Vec::new()));
+                        }
                         let regions = self.draw_in_sketch(sid, &pts, *closed)?;
                         let curve = match spec {
                             Some(c) => self.stroke_to_curve(sid, &pts, *closed, c)?,
@@ -2198,7 +2248,9 @@ impl Model {
                         _ => false,
                     })
                     .collect();
-                for (op, was_there) in ops.iter().zip(named) {
+                let last = std::mem::replace(&mut self.last_op, false);
+                for (k, (op, was_there)) in ops.iter().zip(named).enumerate() {
+                    self.last_op = last && k + 1 == ops.len();
                     if let Op::EraseCurve { sketch, curve } = op
                         && was_there
                         && !curve_there(self, *sketch, *curve)
@@ -2218,6 +2270,7 @@ impl Model {
                     }
                     outcomes.push(self.apply_in_batch(op)?);
                 }
+                self.last_op = false;
                 Ok(OpOutcome::Batch { outcomes })
             }
             Op::AddGuide { point, dir } => {
@@ -3971,6 +4024,10 @@ impl Model {
         curve: Option<&StrokeCurve>,
     ) -> Result<OpOutcome, KernelError> {
         let sid = self.sketch_on(plane);
+        if curve.is_none() && self.leave_out_sure_overflow_world(sid, pts, closed) {
+            // A placeholder, never seen (see the same in `apply_op`'s draw).
+            return Ok(Self::edited(Vec::new()));
+        }
         let regions = self.draw_in_sketch(sid, pts, closed)?;
         let curve = match curve {
             Some(c) => self.stroke_to_curve(sid, pts, closed, c)?,
@@ -4047,6 +4104,72 @@ impl Model {
         let ring: Vec<DVec2> = pts.iter().map(|&p| s.plane().to_local(p)).collect();
         let q = sawhorse_tessellate::interior_point(&ring, &[])?;
         s.region_at(q).map(to_public)
+    }
+
+    /// Lane 53 (#65): a stroke into sketch `sid` (its own frame) that is certain to take the
+    /// sketch past [`crate::limits::MAX_SKETCH_EDGES`] is left out: true, with
+    /// `unbuilt_stroke` set to the count, and the edit goes on to its limit check, which
+    /// refuses it as it refuses the stroke inserted ([`Self::applied_by`]). Only for the last
+    /// op of an edit (`last_op`), and only when the count is certain
+    /// ([`Sketch::edges_after_clear_polyline`]); otherwise false and the stroke goes in as
+    /// always, so every stroke accepted before still is, and every edit refused is refused
+    /// with the same error.
+    fn leave_out_sure_overflow(&mut self, sid: SketchId, pts: &[DVec2], closed: bool) -> bool {
+        use crate::limits::MAX_SKETCH_EDGES;
+        let s = &self.sketches[sid];
+        let segs = if closed {
+            pts.len()
+        } else {
+            pts.len().saturating_sub(1)
+        };
+        #[cfg(test)]
+        let forced = FORCE_LEAVE_OUT.with(|f| f.get());
+        #[cfg(not(test))]
+        let forced = false;
+        if !self.last_op || (!forced && s.edge_count() + segs <= MAX_SKETCH_EDGES) {
+            return false;
+        }
+        #[cfg(test)]
+        if forced && let Some(n) = s.edges_after_clear_polyline(pts, closed) {
+            self.unbuilt_stroke = Some((sid, n));
+            return true;
+        }
+        match s.edges_after_clear_polyline(pts, closed) {
+            Some(n) if n > MAX_SKETCH_EDGES => {
+                self.unbuilt_stroke = Some((sid, n));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// [`Self::leave_out_sure_overflow`] for a world-space stroke, taken into the sketch's
+    /// frame as [`Self::draw_in_sketch`] takes it (a stroke it refuses goes on to be refused
+    /// there).
+    fn leave_out_sure_overflow_world(
+        &mut self,
+        sid: SketchId,
+        pts: &[DVec3],
+        closed: bool,
+    ) -> bool {
+        let s = &self.sketches[sid];
+        let segs = if closed {
+            pts.len()
+        } else {
+            pts.len().saturating_sub(1)
+        };
+        if !self.last_op || s.edge_count() + segs <= crate::limits::MAX_SKETCH_EDGES {
+            return false;
+        }
+        let plane = *s.plane();
+        let mut local = Vec::with_capacity(pts.len());
+        for p in pts {
+            if !p.is_finite() || plane.signed_distance(*p).abs() > PLANARITY {
+                return false;
+            }
+            local.push(plane.to_local(*p));
+        }
+        self.leave_out_sure_overflow(sid, &local, closed)
     }
 
     /// Insert a world-space stroke into a sketch (every point on its plane).
@@ -4574,5 +4697,141 @@ mod tests {
         ] {
             assert!(!about_the_minimum(&e), "{e}");
         }
+    }
+
+    /// Lane 53 (#65): opening a file does not hold its sketches to the edge limit, so a
+    /// model can already hold a sketch past it. A stroke certain to break the limit in
+    /// another sketch is then refused for the first sketch the check comes to, as it is with
+    /// the stroke drawn (and as every edit to such a model is).
+    #[test]
+    fn a_file_already_over_the_sketch_limit() {
+        use crate::limits::{LimitError, MAX_SKETCH_EDGES};
+        let zig = |n: usize, y: f64| -> Vec<DVec2> {
+            (0..n)
+                .map(|k| DVec2::new(0.001 * k as f64, y + 0.0005 * (k % 2) as f64))
+                .collect()
+        };
+        let mut m = Model::with_ground_sketch();
+        let b = match m
+            .apply(&Op::NewSketch {
+                origin: [0.0, 0.0, 1.0],
+                normal: [0.0, 0.0, 1.0],
+            })
+            .unwrap()
+        {
+            OpOutcome::SketchCreated { sketch } => sketch,
+            o => panic!("{o:?}"),
+        };
+        let a = m.sketch_order[0];
+        m.sketches[a]
+            .insert_polylines(&[(zig(MAX_SKETCH_EDGES + 2, 0.0), false)])
+            .unwrap();
+        assert_eq!(m.sketches[a].edge_count(), MAX_SKETCH_EDGES + 1);
+        let opened = Model::from_snapshot(&m.snapshot()).expect("a file may hold it");
+        let want = Err(KernelError::Limit(LimitError::SketchEdges(
+            MAX_SKETCH_EDGES + 1,
+        )));
+        let pts: Vec<[f64; 2]> = zig(MAX_SKETCH_EDGES + 5, 5.0)
+            .iter()
+            .map(|p| [p.x, p.y])
+            .collect();
+        let stroke = Op::AddPolyline {
+            sketch: b,
+            points: pts,
+            closed: false,
+        };
+        let guide = Op::AddGuide {
+            point: [0.0, 0.0, 0.0],
+            dir: None,
+        };
+        // Every edit to this model is refused, for A; the stroke into B too, counted or drawn.
+        assert_eq!(opened.clone().apply(&guide).map(|_| ()), want);
+        assert_eq!(opened.clone().apply(&stroke).map(|_| ()), want);
+        assert_eq!(
+            opened
+                .clone()
+                .apply(&Op::Batch {
+                    ops: vec![stroke, guide]
+                })
+                .map(|_| ()),
+            want
+        );
+    }
+
+    /// Lane 53 (#65): a zigzag of `n` points in the sketch's frame, every segment clear.
+    fn clear_zigzag(n: usize, y: f64) -> Vec<[f64; 2]> {
+        (0..n)
+            .map(|k| [0.001 * k as f64, y + 0.0005 * (k % 2) as f64])
+            .collect()
+    }
+
+    /// Lane 53 (#65): a stroke that makes exactly MAX_SKETCH_EDGES edges is drawn and
+    /// accepted (not left out and done again), and one more edge is refused with its count.
+    #[test]
+    fn a_stroke_of_exactly_the_limit_is_drawn() {
+        use crate::limits::{LimitError, MAX_SKETCH_EDGES};
+        let redone = || REDONE.with(|r| r.get());
+        let m = Model::with_ground_sketch();
+        let before = redone();
+        let (next, _) = m
+            .applied(&Op::AddPolyline {
+                sketch: 1,
+                points: clear_zigzag(MAX_SKETCH_EDGES + 1, 0.0),
+                closed: false,
+            })
+            .unwrap();
+        assert_eq!(
+            next.sketches[next.sketch_order[0]].edge_count(),
+            MAX_SKETCH_EDGES
+        );
+        assert_eq!(
+            redone(),
+            before,
+            "drawn at once, not left out and done again"
+        );
+        let e = m
+            .applied(&Op::AddPolyline {
+                sketch: 1,
+                points: clear_zigzag(MAX_SKETCH_EDGES + 2, 0.0),
+                closed: false,
+            })
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            e,
+            KernelError::Limit(LimitError::SketchEdges(MAX_SKETCH_EDGES + 1))
+        );
+        assert_eq!(redone(), before);
+    }
+
+    /// Lane 53 (#65): the path that does an edit again with a left-out stroke drawn cannot be
+    /// reached as the code stands (a stroke is left out only when its count is over the
+    /// limit). Forced here (every certain stroke left out): the edit is done again, once,
+    /// and comes out as the edit with the stroke drawn, model and outcome.
+    #[test]
+    fn the_redo_with_the_stroke_drawn() {
+        let mut m = Model::with_ground_sketch();
+        m.apply(&Op::AddRectangle {
+            sketch: 1,
+            x: -1.0,
+            y: -1.0,
+            w: 0.4,
+            h: 0.1,
+        })
+        .unwrap();
+        let op = Op::AddPolyline {
+            sketch: 1,
+            points: clear_zigzag(300, 0.0),
+            closed: false,
+        };
+        let (want, want_out) = m.applied(&op).unwrap();
+        let before = REDONE.with(|r| r.get());
+        FORCE_LEAVE_OUT.with(|f| f.set(true));
+        let got = m.applied(&op);
+        FORCE_LEAVE_OUT.with(|f| f.set(false));
+        let (got, got_out) = got.unwrap();
+        assert_eq!(REDONE.with(|r| r.get()), before + 1);
+        assert_eq!(got.hash(), want.hash());
+        assert_eq!(got_out, want_out);
     }
 }
