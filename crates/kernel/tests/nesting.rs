@@ -1699,9 +1699,22 @@ fn the_minimum_strip_is_saved_and_hashed_only_when_set() {
     let before = d.hash();
     ok(&mut d, Op::SetNestSettings { settings: st });
     assert_eq!(d.hash(), before);
+    // The value is in the hash, not only that the library was edited: 3 in hashes apart
+    // from 2 in.
+    ok(
+        &mut d,
+        Op::SetNestSettings {
+            settings: NestSettings {
+                min_strip: Some(3.0 * IN),
+                ..st
+            },
+        },
+    );
+    let three = d.hash();
     ok(&mut d, Op::SetNestSettings { settings: set });
     let with = d.hash();
     assert_ne!(with, before);
+    assert_ne!(with, three);
     // Saved and opened: the setting, the hash and the nesting come back.
     let json = serde_json::to_string(&d.model().snapshot()).unwrap();
     assert!(json.contains("\"minStrip\""), "{json}");
@@ -1724,9 +1737,13 @@ fn the_minimum_strip_is_saved_and_hashed_only_when_set() {
         .unwrap_err();
     assert!(!e.is_bug(), "{e}");
     assert_eq!(d.hash(), with);
-    // Undo takes it back to the rule; cleared, the old hash and no "minStrip" in the file.
+    // Undo takes it back to 3 in and then to the rule, Redo forward again; cleared, the old
+    // hash and no "minStrip" in the file.
+    d.undo().unwrap();
+    assert_eq!(d.hash(), three);
     d.undo().unwrap();
     assert_eq!(d.hash(), before);
+    d.redo().unwrap();
     d.redo().unwrap();
     assert_eq!(d.hash(), with);
     ok(&mut d, Op::SetNestSettings { settings: st });

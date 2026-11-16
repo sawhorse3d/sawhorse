@@ -854,6 +854,46 @@ mod tests {
         assert!(o.notes[0].contains("missing"));
     }
 
+    /// #57 (asked for on the issue): a document with the minimum strip set and then cleared
+    /// saves byte for byte as one that never had it, and gives the same nesting hash, with the
+    /// built-in library and with one whose kerf was changed.
+    #[test]
+    fn a_minimum_strip_cleared_saves_as_one_never_set() {
+        use sawhorse_kernel::nesting::NestOptions;
+        use sawhorse_kernel::stock::NestSettings;
+        let inch = 0.0254;
+        for kerf in [None, Some(3.0 / 32.0 * inch)] {
+            let mut d = sample();
+            let base = NestSettings {
+                kerf: kerf.unwrap_or(NestSettings::default().kerf),
+                ..NestSettings::default()
+            };
+            if kerf.is_some() {
+                d.apply(&Op::SetNestSettings { settings: base }).unwrap();
+            }
+            let save = |d: &Document| write(d.model(), &SaveOptions::default()).unwrap();
+            let nest = |d: &Document| d.model().nest(&NestOptions::default()).hash;
+            let (never, never_nest) = (save(&d), nest(&d));
+            d.apply(&Op::SetNestSettings {
+                settings: NestSettings {
+                    min_strip: Some(2.0 * inch),
+                    ..base
+                },
+            })
+            .unwrap();
+            assert_ne!(save(&d), never, "{kerf:?}: set, the file says so");
+            d.apply(&Op::SetNestSettings { settings: base }).unwrap();
+            let cleared = save(&d);
+            assert_eq!(cleared, never, "{kerf:?}: cleared, byte for byte");
+            assert_eq!(nest(&d), never_nest, "{kerf:?}");
+            assert_eq!(
+                nest(&read(&cleared).unwrap().document),
+                never_nest,
+                "{kerf:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_empty_document_saves_and_opens() {
         let d = Document::with_ground_sketch();

@@ -90,9 +90,10 @@ function LengthField({
     setErr(null);
     if (c.value === null || Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
   };
-  // A short pause after typing re-nests too.
+  // A short pause after typing re-nests too. #57: not an emptied optional field, which is
+  // more often on its way to another length than cleared; Enter or leaving it clears it.
   useEffect(() => {
-    if (text === shown) return;
+    if (text === shown || (onClear && text.trim() === "")) return;
     timer.current = window.setTimeout(() => {
       timer.current = null;
       commit(text);

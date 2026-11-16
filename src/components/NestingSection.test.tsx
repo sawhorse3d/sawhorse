@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gluedNesting, smallNesting } from "../nesting/fixture";
 import { NestingSection, type NestingSectionProps } from "./NestingSection";
@@ -130,6 +130,32 @@ describe("Nesting section", () => {
     fireEvent.change(min, { target: { value: "0" } });
     fireEvent.keyDown(min, { key: "Enter" });
     expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 0 });
+  });
+
+  it("#57: a pause on an emptied Minimum strip field clears nothing; Enter or leaving the field does", () => {
+    vi.useFakeTimers();
+    try {
+      const n = smallNesting();
+      n.settings = { ...n.settings, minStrip: 2 * IN };
+      const p = props({ nesting: n });
+      render(<NestingSection {...p} />);
+      const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+      // Backspaced to empty on the way to typing another length: the pause sends nothing.
+      fireEvent.change(min, { target: { value: "" } });
+      act(() => vi.advanceTimersByTime(2000));
+      expect(p.onSettings).not.toHaveBeenCalled();
+      // A length typed then pauses commit as before.
+      fireEvent.change(min, { target: { value: "3" } });
+      act(() => vi.advanceTimersByTime(800));
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine", minStrip: 3 * IN });
+      // Emptied and left: cleared.
+      fireEvent.change(min, { target: { value: "" } });
+      fireEvent.blur(min);
+      expect(p.onSettings).toHaveBeenCalledTimes(2);
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
