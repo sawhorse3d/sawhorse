@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { checkDxf, checkPdf, checkSvg } from "./checks";
 import { formatArea } from "../cutlist/format";
-import { cutText, fineU, len, lenU, nestSummary, pct, pieceTitle, pieceYield, reasonText, settingsText } from "./format";
+import { builtInStockText, cutText, fineU, KERF_DEFAULT, len, lenU, nestSummary, pct, pieceTitle, pieceYield, reasonText, settingsText } from "./format";
 import { gluedNesting, smallNesting } from "./fixture";
 import { pieceFileName } from "./svg";
 
@@ -42,6 +42,15 @@ describe("nesting in shop words", () => {
     expect(settingsText(n, "sixteenth")).toBe("Kerf 1/8 in · trim none · table saw");
     expect(pieceTitle(n.pieces[0])).toBe("Board 1 of 1 · 4/4 x 12 x 96 · Oak");
     expect(pieceFileName("Bookshelf", n.pieces[1])).toBe("Bookshelf 02 sheet 1 of 1, 4 x 8 sheet, 1-4.svg");
+  });
+
+  it("#58: what Built-in stock puts back is written in the document's units, as the Kerf field writes it", () => {
+    expect(builtInStockText("sixteenth")).toBe("kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
+    expect(builtInStockText({ r: "sixteenth", style: "decimal" })).toBe("kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
+    // Metric: the built-in set is still 1/8 in until a metric set exists (#58, ADR-0014).
+    expect(builtInStockText("half_mm")).toBe("kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+    expect(builtInStockText("half_mm")).toContain(`kerf ${fineU(KERF_DEFAULT, "half_mm")}`);
+    expect(KERF_DEFAULT).toBe(IN / 8);
   });
 
   it("#57: the footer names a set minimum strip beside the joint loss, only when something is glued up", () => {

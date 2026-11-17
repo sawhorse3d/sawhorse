@@ -365,6 +365,18 @@ describe("Stock dialog", () => {
     expect(p.onReset).toHaveBeenCalled();
   });
 
+  it("#58: Built-in stock's tooltip says what it puts back in the document's units", () => {
+    const title = (over: Partial<StockDialogProps>) => {
+      const { unmount } = render(<StockDialog {...dprops(over)} />);
+      const t = screen.getByRole("button", { name: "Built-in stock" }).getAttribute("title");
+      unmount();
+      return t;
+    };
+    expect(title({})).toBe("Back to the built-in sheets and boards: kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
+    expect(title({ rounding: "half_mm", units: "mm" })).toBe("Back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+    expect(title({ rounding: { r: "sixteenth", style: "decimal" }, units: "in" })).toBe("Back to the built-in sheets and boards: kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
+  });
+
   it("fills the actual thickness from the nominal until it is typed (lane 15)", () => {
     const p = dprops();
     render(<StockDialog {...p} />);

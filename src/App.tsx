@@ -12,7 +12,7 @@ import { NestingSection } from "./components/NestingSection";
 import { StockDialog } from "./components/StockDialog";
 import { nestingPdf } from "./nesting/booklet";
 import { DXF_TYPE, nestingDxf, type DxfFlavour } from "./nesting/dxf";
-import { fineU, pieceTitle } from "./nesting/format";
+import { builtInStockText, fineU, pieceTitle } from "./nesting/format";
 import { pieceFileName, pieceSvg, SVG_TYPE } from "./nesting/svg";
 import { grainOverlay } from "./cutlist/arrows";
 import { csvBytes, CSV_TYPE } from "./cutlist/csv";
@@ -2242,7 +2242,7 @@ export function App() {
       void apply({ op: "set_material_stock", material, stock }, () => (stock ? `${quoted(material)} parts come from ${quoted(stock)}.` : `${quoted(material)} parts: stock chosen automatically.`)),
     [apply],
   );
-  const resetStock = useCallback(() => void apply({ op: "reset_stock_library" }, () => "Stock back to the built-in sheets and boards (kerf 1/8 in, no trim, table saw)."), [apply]);
+  const resetStock = useCallback(() => void apply({ op: "reset_stock_library" }, () => `Stock back to the built-in sheets and boards: ${builtInStockText(nestUnits)}.`), [apply, nestUnits]);
   const hoverPlacement = useCallback((p: Placement | null) => setNestHover(p ? entityOfItem(p.item) : null), []);
   /** A nested piece clicked: select it in the model (as its cut list row would, one piece). */
   const selectPlacement = useCallback(
