@@ -4558,6 +4558,53 @@ mod lookup_tests {
         assert!(t.vertex_at(mid).is_some());
         assert_eq!(t.vertex_finder()(mid), t.vertex_at(mid));
     }
+
+    /// #11: [`Sketch::retain_live`] keeps what [`Sketch::edge_between`] finds, in order,
+    /// through the set (over 64 pairs) as through the scans: every edge given either way
+    /// round, beside pairs of vertices with no edge between them.
+    #[test]
+    fn retain_live_keeps_the_edges_either_way_round() {
+        let mut s = Sketch::new(Plane::GROUND);
+        for i in 0..12 {
+            let c = DVec2::new(0.1 * i as f64, 0.0);
+            let ring: Vec<DVec2> = (0..8)
+                .map(|k| c + 0.03 * DVec2::from_angle(TAU * k as f64 / 8.0))
+                .collect();
+            let _ = s.insert_polyline(&ring, true);
+        }
+        let ids: Vec<SVertexId> = s.vertices.keys().collect();
+        let mut pairs: Vec<(SVertexId, SVertexId)> = Vec::new();
+        for (k, e) in s.edges.values().enumerate() {
+            // Both ways round, and a pair with no edge (a vertex and one far along the list).
+            pairs.push(if k % 2 == 0 {
+                (e[0], e[1])
+            } else {
+                (e[1], e[0])
+            });
+            pairs.push((e[1], ids[(k * 7 + 3) % ids.len()]));
+        }
+        assert!(pairs.len() > 64);
+        let scanned = |list: &[(SVertexId, SVertexId)]| -> Vec<(SVertexId, SVertexId)> {
+            list.iter()
+                .copied()
+                .filter(|&(a, b)| s.edge_between(a, b).is_some())
+                .collect()
+        };
+        let want = scanned(&pairs);
+        assert!(
+            want.len() >= s.edges.len(),
+            "{} {}",
+            want.len(),
+            s.edges.len()
+        );
+        assert!(want.iter().any(|&(a, b)| a > b) && want.iter().any(|&(a, b)| a < b));
+        let mut many = pairs.clone();
+        s.retain_live(&mut many);
+        assert_eq!(many, want, "over 64 pairs");
+        let mut few = pairs[..64].to_vec();
+        s.retain_live(&mut few);
+        assert_eq!(few, scanned(&pairs[..64]), "64 pairs");
+    }
 }
 
 /// Lane 53 (#65): [`Sketch::edges_after_clear_polyline`], the count of a stroke's edges that
