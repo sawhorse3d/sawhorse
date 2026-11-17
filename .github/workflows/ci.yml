@@ -138,6 +138,17 @@ jobs:
           [ -s "$dir/Shelf.shz" ] || { echo "no Shelf.shz in the folder"; exit 1; }
           [ "$(ls -A "$dir")" = "Shelf.shz" ] || { echo "the folder holds: $(ls -A "$dir")"; exit 1; }
           echo "the binary answered all five requests and saved Shelf.shz ($(wc -c < "$dir/Shelf.shz" | tr -d ' ') bytes)"
+      # The binary that just answered, kept for a week from a push to main, so that someone
+      # without this system's toolchain can try the server with a real client (#14). It is
+      # unsigned and it is not a release. The path is from the repository's root, not from
+      # `crates`: `working-directory` applies to `run` steps only.
+      - uses: actions/upload-artifact@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: sawhorse-mcp-${{ matrix.name }}
+          path: crates/target/release/sawhorse-mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
+          retention-days: 7
 
   web:
     name: Web (wasm-pack, build, vitest, golden, boolean diff, corpus, e2e)
