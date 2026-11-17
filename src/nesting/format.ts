@@ -57,7 +57,12 @@ export function lenU(m: number, r: Units): string {
 export function fineU(m: number, u: Units): string {
   const r = roundingOf(u);
   const style = styleOf(u);
-  if (r === "half_mm" || style === "mm") return `${Number((m * 1000).toFixed(2))} mm`;
+  if (r === "half_mm" || style === "mm") {
+    const hundredths = Math.abs(m) * 100_000;
+    // Allow for floating-point error when a converted length lands on a midpoint.
+    const rounded = Math.round(hundredths + hundredths * Number.EPSILON);
+    return `${Math.sign(m) * rounded / 100} mm`;
+  }
   const inches = m / M_PER_IN;
   if (style === "decimal") return `${Number(inches.toFixed(3))} in`;
   const n = Math.round(inches * 64);

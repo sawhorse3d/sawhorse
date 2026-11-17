@@ -233,6 +233,19 @@ describe("Nesting section", () => {
     }
   });
 
+  it("#89: the 1/8 in kerf and joint loss read 3.18 mm, and Enter on them or leaving them keeps exactly 1/8 in", () => {
+    const p = props({ units: "mm", rounding: "half_mm" });
+    render(<NestingSection {...p} />);
+    for (const label of ["Kerf", "Joint loss"]) {
+      const f = screen.getByLabelText(label) as HTMLInputElement;
+      expect(f.value).toBe("3.18 mm");
+      fireEvent.keyDown(f, { key: "Enter" });
+      fireEvent.blur(f);
+    }
+    // 3.18 mm read back would be 0.005 mm wider than the 1/8 in the document holds.
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];
@@ -373,7 +386,7 @@ describe("Stock dialog", () => {
       return t;
     };
     expect(title({})).toBe("Back to the built-in sheets and boards: kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
-    expect(title({ rounding: "half_mm", units: "mm" })).toBe("Back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+    expect(title({ rounding: "half_mm", units: "mm" })).toBe("Back to the built-in sheets and boards: kerf 3.18 mm, no trim, joint loss 3.18 mm, minimum strip auto, table saw");
     expect(title({ rounding: { r: "sixteenth", style: "decimal" }, units: "in" })).toBe("Back to the built-in sheets and boards: kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
   });
 

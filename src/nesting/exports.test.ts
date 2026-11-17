@@ -48,9 +48,18 @@ describe("nesting in shop words", () => {
     expect(builtInStockText("sixteenth")).toBe("kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
     expect(builtInStockText({ r: "sixteenth", style: "decimal" })).toBe("kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
     // Metric: the built-in set is still 1/8 in; metric defaults are open on #58.
-    expect(builtInStockText("half_mm")).toBe("kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+    expect(builtInStockText("half_mm")).toBe("kerf 3.18 mm, no trim, joint loss 3.18 mm, minimum strip auto, table saw");
     expect(builtInStockText("half_mm")).toContain(`kerf ${fineU(KERF_DEFAULT, "half_mm")}`);
     expect(KERF_DEFAULT).toBe(IN / 8);
+  });
+
+  it("rounds half-hundredths of a millimetre without lifting shorter lengths", () => {
+    expect(fineU(IN / 8, "half_mm")).toBe("3.18 mm");
+    expect(fineU(0.00317499, "half_mm")).toBe("3.17 mm");
+    expect(fineU(0.00317501, "half_mm")).toBe("3.18 mm");
+    expect(fineU(0.0031749999999999, "half_mm")).toBe("3.17 mm");
+    expect(fineU((3 / 8) * IN, "half_mm")).toBe("9.53 mm");
+    expect(fineU(0.003125, { r: "sixteenth", style: "mm" })).toBe("3.13 mm");
   });
 
   it("#57: the footer names a set minimum strip beside the joint loss, only when something is glued up", () => {

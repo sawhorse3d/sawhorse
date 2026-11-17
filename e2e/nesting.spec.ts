@@ -587,12 +587,12 @@ test("Built-in stock says what it puts back in the document's units", async ({ p
   await section.getByRole("button", { name: "Stock…" }).click();
   const dlg = page.getByRole("dialog", { name: "Stock" });
   const reset = dlg.getByRole("button", { name: "Built-in stock" });
-  await expect(reset).toHaveAttribute("title", "Back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+  await expect(reset).toHaveAttribute("title", "Back to the built-in sheets and boards: kerf 3.18 mm, no trim, joint loss 3.18 mm, minimum strip auto, table saw");
   await reset.click();
-  await expect(page.locator("#hint")).toContainText("Stock back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw.");
+  await expect(page.locator("#hint")).toContainText("Stock back to the built-in sheets and boards: kerf 3.18 mm, no trim, joint loss 3.18 mm, minimum strip auto, table saw.");
   await dlg.getByRole("button", { name: "Done" }).click();
-  await expect(kerf).toHaveValue("3.17 mm");
-  await expect(joint).toHaveValue("3.17 mm");
+  await expect(kerf).toHaveValue("3.18 mm");
+  await expect(joint).toHaveValue("3.18 mm");
   await expect(min).toHaveValue("");
   const n = await nest(page);
   expect(n.settings.kerf).toBe(IN / 8);
