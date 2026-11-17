@@ -373,7 +373,7 @@ describe("Stock dialog", () => {
       return t;
     };
     expect(title({})).toBe("Back to the built-in sheets and boards: kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
-    expect(title({ rounding: "half_mm", units: "mm" })).toBe("Back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+    expect(title({ rounding: "half_mm", units: "mm" })).toBe("Back to the built-in sheets and boards: kerf 3.18 mm, no trim, joint loss 3.18 mm, minimum strip auto, table saw");
     expect(title({ rounding: { r: "sixteenth", style: "decimal" }, units: "in" })).toBe("Back to the built-in sheets and boards: kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
   });
 

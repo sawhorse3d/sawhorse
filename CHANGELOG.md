@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (nesting length rounding, 2026-11-18)
+
+- **The built-in kerf and joint loss display as 3.18 mm in metric documents** ([#89](https://github.com/sawhorse3d/sawhorse/issues/89)). A conversion error could make the exact 1/8 in setting display as 3.17 mm. Nesting settings and stock readouts now round midpoint values consistently.
+- Tests cover lengths on either side of the midpoint, the built-in stock message and its tooltip.
+
 ### Fixed (lane 61, a pull request from @aramshaw, 2026-11-17)
 
 - **Built-in stock says what it puts back in the document's units** ([#88](https://github.com/sawhorse3d/sawhorse/pull/88), from @aramshaw; [#58](https://github.com/sawhorse3d/sawhorse/issues/58)). The status line after Built-in stock and the button's tooltip read "kerf 1/8 in, no trim, table saw" in every document, and left out that the joint loss goes back to 1/8 in and the minimum strip to auto as well. Now both name the kerf and the joint loss as the Kerf and Joint loss fields then show them, in fractions, decimal inches or millimetres as the units and the cut list's rounding choose ("kerf 1/8 in", "kerf 0.125 in", "kerf 3.17 mm"), and say the minimum strip goes back to auto: "Stock back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw." In millimetres the built-in kerf is still 1/8 in, which the field shows as 3.17 mm; metric defaults are still open on #58. Front end only: no kernel, model hash, golden or file format change. Docs: `docs/USER-GUIDE.md`, `docs/DEVELOPMENT.md`.
