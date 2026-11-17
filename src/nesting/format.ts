@@ -26,6 +26,15 @@ export const M_PER_IN = 0.0254;
 /** #49: the kernel's default joint loss, 1/8 in (a document stores none until it is changed). */
 export const JOINT_LOSS_DEFAULT = M_PER_IN / 8;
 
+/** #58: the kernel's default kerf, 1/8 in (Built-in stock puts it back). */
+export const KERF_DEFAULT = M_PER_IN / 8;
+
+/** #58: what Built-in stock puts back, in the document's units as the Kerf field writes them:
+ * "kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw". */
+export function builtInStockText(u: Units): string {
+  return `kerf ${fineU(KERF_DEFAULT, u)}, no trim, joint loss ${fineU(JOINT_LOSS_DEFAULT, u)}, minimum strip auto, table saw`;
+}
+
 /** One rounding step, metres. */
 export function stepOf(r: Rounding): number {
   return r === "half_mm" ? 0.0005 : r === "thirty_second" ? M_PER_IN / 32 : M_PER_IN / 16;

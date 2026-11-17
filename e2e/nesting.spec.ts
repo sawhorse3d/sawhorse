@@ -11,6 +11,7 @@ import DxfParser from "dxf-parser";
 // back with every part in them. Every layout is checked for overlaps and kerf gaps.
 import { buildBookshelf, hint, ready } from "./bookshelf-build";
 import { buildShz, openShz } from "./shz";
+import { setUnits } from "./helpers";
 import { readPdf } from "../src/cutlist/pdf";
 
 const IN = 0.0254;
@@ -554,4 +555,63 @@ test("the minimum strip re-plans a glue-up's last strip, undoes, and clears back
   await expect(glued).toContainText("12 + 6 1/4 + 6 1/4 in");
   await expect(min).toHaveValue("");
   expect("minStrip" in (await nest(page)).settings).toBe(false);
+});
+
+// #58: Built-in stock says what it puts back in the document's units. In millimetres a kerf
+// of 2 mm and a minimum strip of 30 mm are set, then Built-in stock: its tooltip and the
+// status line read the kerf and joint loss as the Kerf field writes them (still 1/8 in until
+// a metric set exists), the minimum strip back to auto, and the fields agree. In inches the
+// tooltip reads 1/8 in.
+test("Built-in stock says what it puts back in the document's units", async ({ page }) => {
+  test.setTimeout(90_000);
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 10 * IN, 0], [0, 10 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Shelf" });
+  });
+  await openShz(page, shz, 1, "shelf.shz");
+  await setUnits(page, "mm");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  const kerf = section.getByLabel("Kerf", { exact: true });
+  const joint = section.getByLabel("Joint loss");
+  const min = section.getByLabel("Minimum strip");
+  await kerf.fill("2");
+  await kerf.press("Enter");
+  await expect(kerf).toHaveValue("2 mm");
+  await min.fill("30");
+  await min.press("Enter");
+  await expect(min).toHaveValue("30 mm");
+  await section.getByRole("button", { name: "Stock…" }).click();
+  const dlg = page.getByRole("dialog", { name: "Stock" });
+  const reset = dlg.getByRole("button", { name: "Built-in stock" });
+  await expect(reset).toHaveAttribute("title", "Back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw");
+  await reset.click();
+  await expect(page.locator("#hint")).toContainText("Stock back to the built-in sheets and boards: kerf 3.17 mm, no trim, joint loss 3.17 mm, minimum strip auto, table saw.");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await expect(kerf).toHaveValue("3.17 mm");
+  await expect(joint).toHaveValue("3.17 mm");
+  await expect(min).toHaveValue("");
+  const n = await nest(page);
+  expect(n.settings.kerf).toBe(IN / 8);
+  expect("minStrip" in n.settings).toBe(false);
+  // In inches the same button reads 1/8 in.
+  await setUnits(page, "frac-in");
+  await section.getByRole("button", { name: "Stock…" }).click();
+  await expect(dlg.getByRole("button", { name: "Built-in stock" })).toHaveAttribute("title", "Back to the built-in sheets and boards: kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
+  // Decimal inches chosen with the dialog open: the tooltip follows, and after a 0.1 in kerf
+  // the status line reads as the Kerf field then does, 0.125 in.
+  await setUnits(page, "in");
+  await expect(reset).toHaveAttribute("title", "Back to the built-in sheets and boards: kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await kerf.fill("0.1");
+  await kerf.press("Enter");
+  await expect(kerf).toHaveValue("0.1 in");
+  await section.getByRole("button", { name: "Stock…" }).click();
+  await reset.click();
+  await expect(page.locator("#hint")).toContainText("Stock back to the built-in sheets and boards: kerf 0.125 in, no trim, joint loss 0.125 in, minimum strip auto, table saw.");
+  await dlg.getByRole("button", { name: "Done" }).click();
+  await expect(kerf).toHaveValue("0.125 in");
 });

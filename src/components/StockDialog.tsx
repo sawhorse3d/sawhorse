@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { StockDef, StockGrain, StockKind, StockLibrary } from "../kernel/types";
 import { parseLength, type UnitSystem } from "../lib/units";
-import { fineU, len, lenU, standardActual, stockSize, type Units } from "../nesting/format";
+import { builtInStockText, fineU, len, lenU, standardActual, stockSize, type Units } from "../nesting/format";
 
 export interface StockDialogProps {
   library: StockLibrary;
@@ -219,7 +219,7 @@ export function StockDialog(p: StockDialogProps) {
             Cancel edit
           </button>
         ) : null}
-        <button type="button" className="btn" onClick={p.onReset} title="Back to the built-in sheets and boards, kerf 1/8 in, no trim, table saw">
+        <button type="button" className="btn" onClick={p.onReset} title={`Back to the built-in sheets and boards: ${builtInStockText(p.rounding)}`}>
           Built-in stock
         </button>
         <button type="button" className="btn" onClick={p.onClose}>

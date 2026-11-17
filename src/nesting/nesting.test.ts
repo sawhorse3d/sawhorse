@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { CutList, Nesting, WasmDoc } from "../kernel/types";
 import { checkDxf, checkPdf, checkSvg } from "./checks";
 import { nestingDxf } from "./dxf";
-import { glueNote } from "./format";
+import { builtInStockText, glueNote, JOINT_LOSS_DEFAULT, KERF_DEFAULT } from "./format";
 
 const IN = 0.0254;
 const pkg = path.resolve(__dirname, "../wasm/pkg");
@@ -115,5 +115,20 @@ describe.skipIf(!built)("nesting through the WASM kernel", () => {
     const maxrects = JSON.parse(d.nest(JSON.stringify({ algorithm: "maxrects" }))) as Nesting;
     expect(maxrects.algorithm).toBe("maxrects");
     expect(maxrects.totals.placed).toBe(n.totals.placed);
+  });
+
+  it("#58: Built-in stock puts back what its message says: the kernel's own defaults", async () => {
+    const mod = await kernel();
+    const d = mod.document_replay(JSON.stringify(golden("cutlist").ops));
+    d.apply_op(JSON.stringify({ op: "set_nest_settings", settings: { kerf: 0.002, trim: 0.005, algorithm: "maxrects", jointLoss: 0.001, minStrip: 0.03 } }));
+    expect((JSON.parse(d.nest("{}")) as Nesting).settings.kerf).toBe(0.002);
+    d.apply_op(JSON.stringify({ op: "reset_stock_library" }));
+    const s = (JSON.parse(d.nest("{}")) as Nesting).settings;
+    expect([s.kerf, s.trim, s.algorithm, s.jointLoss ?? JOINT_LOSS_DEFAULT, s.minStrip]).toEqual([KERF_DEFAULT, 0, "guillotine", JOINT_LOSS_DEFAULT, undefined]);
+    // The kernel leaves its default joint loss out, so the front end's is pinned by setting
+    // it: only the kernel's own default is left out again.
+    d.apply_op(JSON.stringify({ op: "set_nest_settings", settings: { kerf: KERF_DEFAULT, trim: 0, algorithm: "guillotine", jointLoss: JOINT_LOSS_DEFAULT } }));
+    expect("jointLoss" in (JSON.parse(d.nest("{}")) as Nesting).settings).toBe(false);
+    expect(builtInStockText("sixteenth")).toBe("kerf 1/8 in, no trim, joint loss 1/8 in, minimum strip auto, table saw");
   });
 });
