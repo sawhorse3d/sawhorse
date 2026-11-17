@@ -140,4 +140,64 @@ describe("Scale tool", () => {
     expect(h.ops.length).toBe(n);
     expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("flatten") });
   });
+
+  // #76: Undo and Redo, and another model in this one's place, are not the tool's own steps;
+  // the app tells it with reset() then modelChanged(), the host already answering for the
+  // model as it is now.
+  /** The solid after the kernel stretched it to `x` m along red. */
+  const stretched = (x: number) => ({ ...state, solids: [{ ...state.solids[0], max: [x, 1, 1] }] }) as unknown as DocState;
+  const gripsAt = (t: ScaleTool) => t.view().labels.filter((l) => l.className?.startsWith("grip")).map((l) => l.at);
+  /** A solid selected and stretched to 3 m by its +red face grip. */
+  async function scaled() {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    h._state = stretched(3);
+    t.onValue("1.5");
+    await tick();
+    expect(Math.max(...gripsAt(t).map((p) => p[0]))).toBeCloseTo(3, 12);
+    return { h, t };
+  }
+
+  it("after Undo the box and its grips are round the selection as it is now (#76)", async () => {
+    const { h, t } = await scaled();
+    h._state = state;
+    t.reset();
+    t.modelChanged();
+    await tick();
+    expect(gripsAt(t)).toHaveLength(26);
+    expect(Math.max(...gripsAt(t).map((p) => p[0]))).toBeCloseTo(2, 12);
+    const box = t.view().overlay.find((o) => o.kind === "segments" && o.dashed)!;
+    expect(Math.max(...(box as { points: V3[] }).points.map((p) => p[0]))).toBeCloseTo(2, 12);
+  });
+
+  it("a value typed after Undo scales the selection and undoes nothing more (#76)", async () => {
+    const { h, t } = await scaled();
+    h._state = state;
+    t.reset();
+    t.modelChanged();
+    await tick();
+    const n = h.ops.length;
+    t.onValue("2");
+    await tick();
+    // Not "undo, then the last grip again": that scale is no longer the last step.
+    expect(ops(h).slice(n)).toMatchObject([{ op: "transform", objects: [1] }]);
+    // Uniform about the centre (1, 0.5, 0.5), as when no grip has been picked.
+    close(applyX(ops(h).at(-1)!.xform as Xform, [2, 1, 1]), [3, 1.5, 1.5]);
+  });
+
+  it("another model in this one's place: no box is left over it (#76)", async () => {
+    const { h, t } = await scaled();
+    h.sel = [];
+    h._state = { ...state, solids: [], stats: { objects: 0 } } as unknown as DocState;
+    t.reset();
+    t.modelChanged();
+    await tick();
+    expect(gripsAt(t)).toHaveLength(0);
+    expect(t.view().overlay).toHaveLength(0);
+  });
 });

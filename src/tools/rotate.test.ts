@@ -118,6 +118,21 @@ describe("Rotate tool", () => {
     close(applyX(ops(h).at(-1)!.xform as Xform, [0, 1, 0]), [0, Math.cos(45 * DEG), -Math.sin(45 * DEG)]);
   });
 
+  it("an angle typed after Undo undoes nothing more (#76)", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new RotateTool(h);
+    await turn(t, 90);
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform", objects: [1] });
+    // What the app does after Undo, Redo, New, Close and Open.
+    t.reset();
+    t.modelChanged();
+    const n = h.ops.length;
+    t.onValue("45");
+    await tick();
+    expect(h.ops.length).toBe(n);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Turn something first") });
+  });
+
   it("Ctrl copies; x3 arrays by the angle; /4 divides it", async () => {
     const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
     const t = new RotateTool(h);

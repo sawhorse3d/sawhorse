@@ -183,6 +183,17 @@ export class ScaleTool extends Tool {
     this.fresh = false;
   }
 
+  /** #76: the box and its grips go round the selection as it is now (after Undo they stood
+   * where the scaled shape had been; after New or Close, over an empty model), and the scale
+   * a typed value would redo is forgotten: it is no longer the last step, and redoing it
+   * starts with an Undo, which would take the step before it. */
+  modelChanged(): void {
+    this.target = null;
+    this.hot = null;
+    this.last = null;
+    void this.refreshTarget(null);
+  }
+
   activate(): void {
     this.target = null;
     this.hot = null;

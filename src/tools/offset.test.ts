@@ -96,6 +96,27 @@ describe("Offset tool", () => {
     expect(t.view().labels.some((l) => l.text.includes("too far"))).toBe(true);
   });
 
+  it("a distance typed after Undo undoes nothing more (#76)", async () => {
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 } });
+    h.outline = async () => [unitSquare];
+    const t = new OffsetTool(h);
+    t.onEvent(at("down", 1, 0.5));
+    await tick();
+    t.onEvent(at("click", 1, 0.5));
+    t.onEvent(at("move", 1.3, 0.5));
+    t.onValue("1");
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "offset" });
+    // What the app does after Undo, Redo, New, Close and Open.
+    t.reset();
+    t.modelChanged();
+    const n = h.ops.length;
+    t.onValue("2");
+    await tick();
+    expect(h.ops.length).toBe(n);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Offset something first") });
+  });
+
   it("offsets a selected chain of edges to the side of the cursor", async () => {
     const h = fakeHost({ outcome: { kind: "drawn", sketch: null, regions: [], faces: [2, 8], inside: null } });
     const edge: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };

@@ -59,3 +59,23 @@ test("a selected edge offsets across the face as a cut", async ({ page }) => {
   await expect(vp).toHaveAttribute("data-parts", "7");
   await expect(vp).toHaveAttribute("data-watertight", "true");
 });
+
+test("a distance typed after Undo undoes nothing more (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page, "12,8", "4");
+  await page.keyboard.press("f");
+  await clickAt(page, [4, 0, 4], "on-edge", 0, -1);
+  await point(page, [4, 3, 4]);
+  await type(page, "1");
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("Offset face 2 of solid 1 1 in inward, on the solid");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  // Before, Offset began with an Undo of its own and took the Push/Pull that made the box.
+  await type(page, "1/2");
+  await expect(hint).toContainText("Offset something first");
+  await expect(vp).toHaveAttribute("data-parts", "6");
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  expect(s[0].volume).toBeCloseTo(12 * 8 * 4, 6);
+});

@@ -97,3 +97,26 @@ test("turn the top face about its front edge into a wedge; a twist is refused", 
   expect(s[0].volume).toBeCloseTo((Math.abs(area) / 2) * 12, 4);
   await expect(vp).toHaveAttribute("data-watertight", "true");
 });
+
+test("an angle typed after Undo undoes nothing more (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page, "24,4", "2");
+  await page.keyboard.press("q");
+  await page.keyboard.press("ArrowUp");
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("Protractor locked level");
+  await clickAt(page, [0, 0, 0], "endpoint", 1, 1);
+  await clickAt(page, [24, 0, 0], "endpoint", -1, 1);
+  await point(page, [0, 20, 0]);
+  await type(page, "90");
+  await expect(hint).toContainText("Turned solid 1 90° about the blue axis");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  // Before, Rotate began with an Undo of its own and took the Push/Pull that made the board.
+  await type(page, "45");
+  await expect(hint).toContainText("Turn something first");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  const s = await solids(page);
+  near(s[0].min, [0, 0, 0]);
+  near(s[0].max, [24, 4, 2]);
+});

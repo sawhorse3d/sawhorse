@@ -149,6 +149,12 @@ export class OffsetTool extends Tool {
     this.wanted = null;
   }
 
+  /** #76: the offset a typed distance would redo is no longer the last step, and redoing it
+   * starts with an Undo, which would take the step before it. */
+  modelChanged(): void {
+    this.last = null;
+  }
+
   activate(): void {
     this.host.status(this.host.selection().some((e) => e.kind === "edge") ? "Click near the selected edges and move to the side to offset them, or type a distance." : "Click a face or a region, move inward or outward, click again; or type a distance.");
   }

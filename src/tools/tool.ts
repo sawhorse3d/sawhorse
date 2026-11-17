@@ -150,6 +150,10 @@ export abstract class Tool {
   }
   /** Forget the current gesture. */
   reset(): void {}
+  /** The model changed other than by this tool's own step (Undo, Redo, or another model in
+   * this one's place): drop what was worked out from the model as it was (#76). Called after
+   * `reset`, with the host already answering for the model and the selection as they are now. */
+  modelChanged(): void {}
   /** A gesture is in progress (Esc cancels it instead of clearing the selection). */
   busy(): boolean {
     return false;

@@ -125,3 +125,24 @@ test("moving part of a solid: a face slides, a corner bends a face unless autofo
   s = await solids(page);
   near(s[0].max, [12, 12, 9]);
 });
+
+test("a distance typed after Undo undoes nothing more (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  await page.keyboard.press("m");
+  await clickAt(page, [12, 0, 6], "endpoint");
+  await point(page, [20, 0, 6]);
+  await type(page, "24");
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("Moved solid 1 24 in along +red");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  // Before, Move began with an Undo of its own, as when a move is typed again: that took the
+  // Push/Pull that made the box, and the move was refused ("that solid no longer exists").
+  await type(page, "30");
+  await expect(hint).toContainText("Move something first");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  const s = await solids(page);
+  near(s[0].min, [0, 0, 0]);
+  near(s[0].max, [12, 12, 6]);
+});

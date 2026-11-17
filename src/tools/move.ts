@@ -95,6 +95,12 @@ export class MoveTool extends Tool {
     this.lock.clear();
   }
 
+  /** #76: the move a typed distance would redo is no longer the last step, and redoing it
+   * starts with an Undo, which would take the step before it. */
+  modelChanged(): void {
+    this.last = null;
+  }
+
   activate(): void {
     this.host.status(this.hint());
   }

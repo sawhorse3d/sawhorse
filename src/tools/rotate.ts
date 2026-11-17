@@ -144,6 +144,12 @@ export class RotateTool extends Tool {
     this.copy = false;
   }
 
+  /** #76: the turn a typed angle would redo is no longer the last step, and redoing it
+   * starts with an Undo, which would take the step before it. */
+  modelChanged(): void {
+    this.last = null;
+  }
+
   activate(): void {
     this.host.status("Click the centre of the turn (arrow keys choose the protractor's plane), then the start, then the end; or type an angle.");
   }

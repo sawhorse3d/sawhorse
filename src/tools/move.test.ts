@@ -510,6 +510,25 @@ describe("Move tool", () => {
     expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
   });
 
+  it("a distance typed after Undo undoes nothing more (#76)", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [0, 0, 0.5], { snapKind: "axis-z" }));
+    t.onEvent(ev("click", [0, 0, 0.5], { snapKind: "axis-z" }));
+    await tick();
+    // What the app does after Undo, Redo, New, Close and Open.
+    t.reset();
+    t.modelChanged();
+    const n = h.ops.length;
+    t.onValue("6");
+    await tick();
+    expect(h.ops.length).toBe(n);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Move something first") });
+  });
+
   it("moves part of a solid; Alt turns autofold on", async () => {
     const h = fakeHost({ outcome: { kind: "geometry_moved", faces: [2, 3] } });
     h.sel = [face];
