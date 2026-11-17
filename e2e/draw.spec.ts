@@ -195,3 +195,26 @@ test("a line across a solid's face from edge to edge splits it; a dangling line 
   await expect(vp).toHaveAttribute("data-parts", "7");
   await expect(vp).toHaveAttribute("data-watertight", "true");
 });
+
+test("Undo drops a line half drawn: a length typed then draws nothing from where the undone line ended", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "Top", exact: true }).click();
+  await page.keyboard.press("l");
+  await click(page, [0, 0, 0]);
+  await click(page, [12 * IN, 0, 0]);
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("Line 12 in");
+  // The chain waits at the line's far end for the next point. Undo takes the line away, and
+  // the chain with it.
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  const hash = await vp.getAttribute("data-hash");
+  const [x, y] = await at(page, [12 * IN, 8 * IN, 0]);
+  await page.mouse.move(x, y, { steps: 2 });
+  await page.keyboard.type("6");
+  await page.keyboard.press("Enter");
+  // Without the app resetting the tool, the chain outlived the Undo and this drew a 6 in line
+  // up from (12, 0, 0), where nothing is any more.
+  await expect(hint).toContainText("Click where the line starts");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+});

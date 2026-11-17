@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 // Scale (lane 4): grips on the selection's bounding box, a face grip with a typed factor,
 // an absolute size with a unit, a mirror (-1), and a tapered leg: the top face of a post
@@ -175,4 +176,65 @@ test("Edit > Restore Unsaved Work with Scale active leaves no box and nothing to
   const s = await solids(page);
   expect(s).toHaveLength(1);
   near(s[0].max, [24, 16, 12]);
+});
+
+/** A 24 x 4 x 2 in board selected, with Scale the tool and its 26 grips shown. */
+async function scaleOnBoard(page: Page) {
+  await box(page, "24,4", "2");
+  await selectSolid(page, [12, 2, 2]);
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+}
+
+test("after Redo the box and its grips are round the scaled shape again (#76)", async ({ page }) => {
+  await ready(page);
+  await scaledThenUndone(page);
+  await page.keyboard.press("Control+y");
+  await expect(page.locator("#hint")).toContainText("Redone");
+  near((await solids(page))[0].max, [36, 4, 2]);
+  // The box follows the shape out to 36 in again (without the app telling the tool, it
+  // stayed at 24 in, round the shape as it was before the Redo).
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+  await grip(page, [36, 2, 1]);
+});
+
+test("File > Close with Scale active leaves no box over the empty model (#76)", async ({ page }) => {
+  const vp = await ready(page);
+  page.on("dialog", (d) => void d.accept());
+  await scaleOnBoard(page);
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+  await expect(page.locator("#hint")).toContainText("Closed Untitled.");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
+test("Open with Scale active leaves no box, and what was selected scales nothing in the opened model (#76)", async ({ page }) => {
+  // io=basic: Save is a download the test can catch.
+  await page.goto("/?io=basic&autosave=0");
+  const vp = page.locator("main.vp");
+  await expect(vp).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
+  page.on("dialog", (d) => void d.accept());
+  // A 12 x 12 x 6 in box saved. Its solid has the number the board drawn next will have.
+  await box(page);
+  const [d] = await Promise.all([page.waitForEvent("download"), page.keyboard.press("Control+s")]);
+  const saved = readFileSync((await d.path())!);
+  const number = (await solids(page))[0].number;
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await scaleOnBoard(page);
+  expect((await solids(page))[0].number).toBe(number);
+  await page.getByTestId("file-input").setInputFiles({ name: "box.shz", mimeType: "application/vnd.sawhorse.shz", buffer: saved });
+  await expect(page).toHaveTitle("box - Sawhorse");
+  near((await solids(page))[0].max, [12, 12, 6]);
+  // Nothing is selected in the opened model, so no box: not the board's, and not one round
+  // the box, which the board's selection would name if it outlived the Open.
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("Select something");
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].min, [0, 0, 0]);
+  near(s[0].max, [12, 12, 6]);
 });

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseSkp, type Definition, type SkpModel } from "openskp";
-import { IN, solids, type Solid, setUnits } from "./helpers";
+import { IN, at, box, selectAt, solids, type Solid, setUnits } from "./helpers";
 import { checkCutListFits, dragPanelTo, panelWidth } from "./cutlist-fit";
 
 // Real SketchUp-authored files through Sawhorse's own .skp import (File > Import's input,
@@ -564,6 +564,31 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     await info.attach("observed", { contentType: "application/json", body: JSON.stringify(observed, null, 2) });
     info.annotations.push({ type: "capture", description: shot });
     expect.soft(dialogs, "no dialogs").toEqual([]);
+    expect.soft(errors, "no page errors or console errors").toEqual([]);
+  });
+
+  // #76 (lane 59): an empty model opened in place of one with Scale active over a selection
+  // leaves no box over it. Without the app telling the tool the model changed, the board's
+  // dashed box and its 26 grips stayed over the empty model.
+  test(`${BLANK}: opened with Scale active, no box is left over the empty model`, async ({ page }) => {
+    test.skip(!have(BLANK), `${BLANK} is not in the fixtures directory`);
+    test.setTimeout(60_000);
+    const errors = watchErrors(page);
+    // The board is unsaved: the question before the empty model takes its place is answered Yes.
+    page.on("dialog", (d) => void d.accept());
+    const vp = await open(page);
+    await box(page, "24,4", "2");
+    await page.keyboard.press("Space");
+    await selectAt(page, [12, 2, 2], "face");
+    const [x, y] = await at(page, [12, 2, 2], 1, -1);
+    await page.mouse.dblclick(x, y);
+    await expect(page.locator("#hint")).toContainText("Selected solid");
+    await page.keyboard.press("s");
+    await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+    const { title } = await importFile(page, BLANK);
+    expect(title).toBe("Opened blank-26-purged.skp: an empty model");
+    await expect(vp).toHaveAttribute("data-objects", "0");
+    await expect(page.locator(".vlabel.grip")).toHaveCount(0);
     expect.soft(errors, "no page errors or console errors").toEqual([]);
   });
 });
