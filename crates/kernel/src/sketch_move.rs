@@ -60,6 +60,7 @@ use crate::error::{KernelError, SketchError, TransformError};
 use crate::ids::{RegionId, SVertexId, SketchId, from_public, to_public};
 use crate::model::{MAX_ARRAY, Model, OpOutcome};
 use crate::plane::Plane;
+use crate::sketch::NewCurve;
 use crate::tolerance::{PLANARITY, POINT_MERGE, in_bounds};
 use crate::transform::{Xform, map_plane};
 
@@ -369,10 +370,23 @@ impl Model {
         for (into, segs, curves) in dests {
             let touched = self.draw_segments(into, &segs)?;
             out.extend(pairs(into, &touched));
-            for c in &curves {
-                if let Some((id, _)) = self.redraw_curve(into, c) {
-                    made.push([to_public(into), id]);
-                }
+            // #11: the copies' curves together, as an import's are (`Sketch::add_curves`: the
+            // same sketch and ids as one at a time, which settled every curve in the sketch
+            // for each and so grew with the square of the copy).
+            let s = &mut self.sketches[into];
+            let plane = *s.plane();
+            let list: Vec<NewCurve> = curves
+                .iter()
+                .map(|c| NewCurve {
+                    pts: c.points.iter().map(|&p| plane.to_local(p)).collect(),
+                    closed: c.closed,
+                    kind: c.kind,
+                    centre: c.centre.map(|w| plane.to_local(w)),
+                    segments: c.segments,
+                })
+                .collect();
+            for id in s.add_curves(&list).into_iter().flatten() {
+                made.push([to_public(into), id]);
             }
         }
         Ok(OpOutcome::SketchCopied {
@@ -397,13 +411,16 @@ impl Model {
         if points.is_empty() && edges.is_empty() && regions.is_empty() && curves.is_empty() {
             return Err(TransformError::NothingSelected.into());
         }
+        // #11: one grid of the vertices and one set of the edges for the whole selection, not
+        // a scan of each per point and per edge (every edge of 400 polylines took 0.25 s).
+        let find = s.vertex_finder();
+        let pairs = s.edge_pairs();
         let vertex = |p: &[f64; 3]| -> Result<SVertexId, KernelError> {
             let w = DVec3::from_array(*p);
             if !w.is_finite() || plane.signed_distance(w).abs() > POINT_MERGE {
                 return Err(TransformError::NoSuchSketchPoint.into());
             }
-            s.vertex_at(plane.to_local(w))
-                .ok_or_else(|| TransformError::NoSuchSketchPoint.into())
+            find(plane.to_local(w)).ok_or_else(|| TransformError::NoSuchSketchPoint.into())
         };
         let mut moving: BTreeSet<SVertexId> = BTreeSet::new();
         let mut lone: BTreeSet<SVertexId> = BTreeSet::new();
@@ -415,7 +432,7 @@ impl Model {
         }
         for [p, q] in edges {
             let (u, w) = (vertex(p)?, vertex(q)?);
-            if u == w || !s.has_edge(u, w) {
+            if u == w || !pairs.contains(&(u.min(w), u.max(w))) {
                 return Err(TransformError::NoSuchSketchEdge.into());
             }
             moving.extend([u, w]);
