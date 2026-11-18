@@ -77,6 +77,9 @@ function LengthField({
     if (typing.current && document.activeElement === input.current && text !== was) return;
     typing.current = false;
     setText(shown);
+    // #101: the field now shows the reading, so an error that belonged to the text before
+    // goes with it. A refused length still being typed returned above, mark and all.
+    setErr(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown]);
   // Lane 30 (from the #33 review): a commit reads the value and the settings as they are

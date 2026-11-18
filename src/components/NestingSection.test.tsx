@@ -6,6 +6,7 @@ import { StockDialog, type StockDialogProps } from "./StockDialog";
 import { CutListPane, type CutListPaneProps } from "./CutListPane";
 import { bookshelf } from "../cutlist/fixture";
 import { parseLength } from "../lib/units";
+import { fineU } from "../nesting/format";
 
 afterEach(cleanup);
 
@@ -277,6 +278,31 @@ describe("Nesting section", () => {
       expect(p.onSettings).not.toHaveBeenCalled();
       cleanup();
     }
+  });
+
+  it("#101: a new reading clears a refused length's error, but unchanged text keeps it", () => {
+    const n = smallNesting();
+    n.settings = { ...n.settings, kerf: 0.00318 };
+    const p = props({ nesting: n, units: "mm", rounding: "half_mm" });
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+
+    fireEvent.change(kerf, { target: { value: "999" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(kerf.closest("label")!.getAttribute("title")).toContain("Kerf: 0 to");
+
+    // A rerender with the same reading does not replace the refused text, so the mark stays.
+    rerender(<NestingSection {...p} nesting={n} />);
+    expect(kerf.closest("label")!.getAttribute("title")).toContain("Kerf: 0 to");
+
+    // Leaving the field ends typing; a later Undo/Redo reading replaces the refused text.
+    fireEvent.blur(kerf);
+    const redone = smallNesting();
+    redone.settings = { ...redone.settings, kerf: 0.0031 };
+    rerender(<NestingSection {...p} nesting={redone} />);
+    expect(kerf.value).toBe("3.1 mm");
+    expect(kerf.closest("label")!.className).toBe("");
+    expect(kerf.closest("label")!.getAttribute("title")).not.toContain("Kerf: 0 to");
   });
 
   it("#93: a committed field that reads the same still gets its unit back", () => {
@@ -626,6 +652,136 @@ describe("Nesting section", () => {
     } finally {
       gone.mockRestore();
     }
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
+  // #101: a refused length keeps its mark and its reason while it is the field's text, and
+  // both go when a new reading replaces that text.
+  const FIELDS101 = [
+    ["Kerf", "kerf", IN / 16],
+    ["Trim", "trim", IN / 16],
+    ["Joint loss", "jointLoss", IN / 16],
+    ["Minimum strip", "minStrip", IN],
+  ] as const;
+  const UNITS101 = [
+    ["mm", "half_mm"],
+    ["frac-in", "sixteenth"],
+    ["in", { r: "sixteenth", style: "decimal" }],
+  ] as const;
+  const tip = (f: HTMLInputElement) => f.closest("label")!.getAttribute("title")!;
+  const marked = (f: HTMLInputElement) => f.closest("label")!.className;
+  const TIP = /\(type a length: 1\/8, 3\/32, 3mm\)$/;
+
+  it("#101: a refused length that was left gives way to a new reading with no mark or reason, in every field and unit", () => {
+    for (const [units, rounding] of UNITS101) {
+      for (const [label, key, m] of FIELDS101) {
+        for (const typed of ["abc", "999"]) {
+          const p = props({ units, rounding });
+          const { rerender } = render(<NestingSection {...p} />);
+          const field = screen.getByLabelText(label, { exact: true }) as HTMLInputElement;
+          const at = `${label}, ${units}, ${typed}`;
+          act(() => field.focus());
+          fireEvent.change(field, { target: { value: typed } });
+          fireEvent.keyDown(field, { key: "Enter" });
+          expect(marked(field), at).toBe("err");
+          const reason = tip(field);
+          expect(reason, at).not.toMatch(TIP);
+          fireEvent.blur(field);
+          expect(field.value, at).toBe(typed);
+          expect(tip(field), at).toBe(reason);
+          // Redo from elsewhere: the new reading replaces the text, and the mark goes with it.
+          rerender(<NestingSection {...p} nesting={at93({ [key]: m })} />);
+          expect(field.value, at).toBe(fineU(m, rounding));
+          expect(marked(field), at).toBe("");
+          expect(tip(field), at).toMatch(TIP);
+          expect(p.onSettings, at).not.toHaveBeenCalled();
+          cleanup();
+        }
+      }
+    }
+  });
+
+  it("#101: a refused length still in the focused field keeps its mark and reason through a new reading", () => {
+    vi.useFakeTimers();
+    try {
+      for (const [label, key, m] of FIELDS101) {
+        const p = props({ units: "mm", rounding: "half_mm" });
+        const { rerender } = render(<NestingSection {...p} />);
+        const field = screen.getByLabelText(label, { exact: true }) as HTMLInputElement;
+        act(() => field.focus());
+        // Refused by Enter, then by the pause.
+        for (const commit of ["Enter", "pause"]) {
+          fireEvent.change(field, { target: { value: commit === "Enter" ? "999" : "abc" } });
+          if (commit === "Enter") fireEvent.keyDown(field, { key: "Enter" });
+          else act(() => void vi.advanceTimersByTime(800));
+          const typed = field.value;
+          expect(marked(field), label).toBe("err");
+          const reason = tip(field);
+          rerender(<NestingSection {...p} nesting={at93({ [key]: commit === "Enter" ? m : 2 * m })} />);
+          expect(field.value, label).toBe(typed);
+          expect(marked(field), label).toBe("err");
+          expect(tip(field), label).toBe(reason);
+          // Nothing comes back later to clear or set it again.
+          act(() => void vi.advanceTimersByTime(2000));
+          expect(marked(field), label).toBe("err");
+          expect(tip(field), label).toBe(reason);
+        }
+        // Escape gives it up for the reading stored now.
+        fireEvent.keyDown(field, { key: "Escape" });
+        expect(field.value, label).toBe(fineU(2 * m, "half_mm"));
+        expect(marked(field), label).toBe("");
+        expect(p.onSettings, label).not.toHaveBeenCalled();
+        cleanup();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#101: a change of units keeps a refused length being typed, and replaces one that was left", () => {
+    const p = props({ units: "mm", rounding: "half_mm" });
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    act(() => kerf.focus());
+    fireEvent.change(kerf, { target: { value: "999" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    const reason = tip(kerf);
+    expect(reason).toBe("Kerf: 0 to 12.7 mm.");
+    // Fractions chosen while the field is still being typed in: the text and its reason stay.
+    rerender(<NestingSection {...p} units="frac-in" rounding="sixteenth" />);
+    expect(kerf.value).toBe("999");
+    expect(marked(kerf)).toBe("err");
+    expect(tip(kerf)).toBe(reason);
+    // Left, then decimal inches: the reading in the new units, no mark.
+    fireEvent.blur(kerf);
+    expect(marked(kerf)).toBe("err");
+    rerender(<NestingSection {...p} units="in" rounding={{ r: "sixteenth", style: "decimal" }} />);
+    expect(kerf.value).toBe("0.125 in");
+    expect(marked(kerf)).toBe("");
+    expect(tip(kerf)).toMatch(TIP);
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
+  it("#101: a refused Minimum strip that was left gives way to auto, and a rerender with the same reading keeps the mark", () => {
+    const p = props({ units: "mm", rounding: "half_mm", nesting: at93({ minStrip: 0.03 }) });
+    const { rerender } = render(<NestingSection {...p} />);
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    expect(min.value).toBe("30 mm");
+    act(() => min.focus());
+    fireEvent.change(min, { target: { value: "1 m" } });
+    fireEvent.blur(min);
+    expect(marked(min)).toBe("err");
+    const reason = tip(min);
+    // The same reading again (the pane worked out the same settings): the refused text and
+    // its mark stay.
+    rerender(<NestingSection {...p} nesting={at93({ minStrip: 0.03 })} />);
+    expect(min.value).toBe("1 m");
+    expect(tip(min)).toBe(reason);
+    // Undo back to auto: empty, the placeholder shown, no mark.
+    rerender(<NestingSection {...p} nesting={at93({})} />);
+    expect(min.value).toBe("");
+    expect(marked(min)).toBe("");
+    expect(tip(min)).toMatch(TIP);
     expect(p.onSettings).not.toHaveBeenCalled();
   });
 
