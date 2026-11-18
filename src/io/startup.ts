@@ -12,13 +12,16 @@
 // messages.
 //
 // The autosave comes first (App.tsx). At start the app sets aside what the last run kept
-// for "Restore unsaved work?" (takeAutosave in src/lib/autosave.ts) and only then asks for
+// for "Restore unsaved work?" (takeAutosaves in src/lib/autosave.ts) and only then asks for
 // the start-up file. Opening a file deletes this session's autosave (it is the copy to go
 // back to), so a file opened before the last run's work was set aside would delete that
 // work. And when there is work to offer, the file waits for the answer: Restore brings the
 // work back into a new untitled model and the file is offered beside it ("Open shelf.shz"),
 // Discard deletes the work and opens the file. Restoring after the file had opened would put
 // the work in the file's place under the file's name, where Save would write it over the file.
+// Lane 64 (#94): with more than one piece of work set aside, a Discard offers the next at once
+// and the file waits for that answer too; it opens after the last Discard. (Restore makes an
+// untitled model now wherever it is picked, so Save never writes restored work over a file.)
 import { baseName, isTauri } from "./files";
 
 /** The shell's command that hands the start-up file over, once. */

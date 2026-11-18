@@ -210,6 +210,31 @@ test("unsaved work from the last run is offered first; Discard deletes it and op
   await expect(hint).not.toContainText("Restore unsaved work?");
 });
 
+test("two pieces of unsaved work and a start-up file: a Discard offers the next at once, and the file opens after the last (#94)", async ({ page }) => {
+  // Lane 64: the last run's work is offered first, the run before's after it, and the file
+  // waits for both answers.
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, SHELF);
+  await loaded(page);
+  await expect(hint).toContainText("Restore unsaved work? 1 solid, 3 steps, saved just now. 1 older set of unsaved work is set aside too. shelf.shz opens after you answer.");
+  await hint.getByRole("button", { name: "Discard" }).click();
+  await expect(hint).toContainText("Unsaved work discarded. Restore unsaved work? 1 solid, 3 steps, saved just now. shelf.shz opens after you answer.");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect((await bridge(page)).reads).toEqual([]);
+  await hint.getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect.poll(() => slot(page, "offered-meta")).toBe(null);
+});
+
 test("with the autosave off (?autosave=0) a start-up file opens at once", async ({ page }) => {
   const vp = await started(page, SHELF, "/?autosave=0");
   await expect(page).toHaveTitle("shelf - Sawhorse");

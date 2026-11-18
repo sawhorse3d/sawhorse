@@ -159,3 +159,32 @@ describe("the browser demo's first-run hint", () => {
     get.mockRestore();
   });
 });
+
+// Lane 64 (#94): while unsaved work is set aside and its offer is no longer the status line's
+// message (an edit replaced it), the line says so, and a click shows the offer again.
+describe("the reminder of unsaved work set aside", () => {
+  it("says how much is set aside after the message, and its click shows the offer", () => {
+    const onShow = vi.fn();
+    const { rerender } = bar({ message: { text: "Extruded 12 in.", error: false }, setAside: { count: 2, onShow } });
+    const hint = document.getElementById("hint")!;
+    const note = screen.getByTestId("hint-offers");
+    expect(note.textContent).toBe("Unsaved work set aside (2). Click to restore or discard.");
+    expect(hint.textContent).toContain("Extruded 12 in.");
+    fireEvent.click(note);
+    expect(onShow).toHaveBeenCalledTimes(1);
+    rerender({ setAside: { count: 1, onShow } });
+    expect(screen.getByTestId("hint-offers").textContent).toBe("Unsaved work set aside. Click to restore or discard.");
+    // The tool's own hint (no message) keeps it too.
+    rerender({ message: null, setAside: { count: 1, onShow } });
+    expect(screen.getByTestId("hint-offers")).toBeTruthy();
+  });
+
+  it("is not there with nothing set aside", () => {
+    const { rerender } = bar({ message: { text: "Extruded 12 in.", error: false } });
+    expect(screen.queryByTestId("hint-offers")).toBeNull();
+    rerender({ setAside: null });
+    expect(screen.queryByTestId("hint-offers")).toBeNull();
+    rerender({ setAside: { count: 0, onShow: () => {} } });
+    expect(screen.queryByTestId("hint-offers")).toBeNull();
+  });
+});
