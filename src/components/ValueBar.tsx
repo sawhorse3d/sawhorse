@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useState } from "react";
+import { setAsideNote } from "../lib/autosave";
 import { valueUnitKind, type ToolDef } from "../lib/tools";
 import { unitInfo, type UnitSystem } from "../lib/units";
 import { UnitPicker } from "./UnitPicker";
@@ -15,6 +16,9 @@ export interface ValueBarProps {
   onUnits: (u: UnitSystem) => void;
   /** Overrides the tool hint, e.g. to report a parse error or a kernel result. */
   message: StatusMessage | null;
+  /** Lane 64 (#94): unsaved work set aside whose offer is not on the line now: a reminder
+   * after the message, and the click that shows the offer again. */
+  setAside?: { count: number; onShow: () => void } | null;
   /** True while nothing is drawn: the status line then names the units and offers the picker. */
   empty?: boolean;
   /** Lane 24: the browser demo's first-run hint about units (never in the desktop app). */
@@ -28,11 +32,13 @@ export interface StatusMessage {
   text: string;
   error: boolean;
   actions?: { label: string; run: () => void }[];
+  /** Lane 64: this is the "Restore unsaved work?" offer (no reminder of it is shown beside it). */
+  offer?: boolean;
 }
 
 /** The Value Control Box: type mid-gesture, press Enter. */
 export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function ValueBar(
-  { tool, value, onChange, onCommit, onCancel, units, onUnits, message, empty = false, firstRunHint = false, openPicker = 0 },
+  { tool, value, onChange, onCommit, onCancel, units, onUnits, message, setAside = null, empty = false, firstRunHint = false, openPicker = 0 },
   ref,
 ) {
   const info = unitInfo(units);
@@ -72,6 +78,11 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
             {a.label}
           </button>
         ))}
+        {setAside && setAside.count > 0 ? (
+          <button type="button" className="hint-action hint-offers" data-testid="hint-offers" title="Show the offer to restore or discard it" onClick={setAside.onShow}>
+            {setAsideNote(setAside.count)}
+          </button>
+        ) : null}
         {unitsLine ? (
           <button type="button" className="hint-action hint-units" data-testid="hint-units" title="Choose the units lengths are typed and shown in" onClick={open}>
             Units: {info.name}. Click to change.

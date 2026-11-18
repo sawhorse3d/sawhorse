@@ -165,6 +165,26 @@ async function plant(page: Page, records: Record<string, unknown>) {
   );
 }
 
+/** Steps in this session's autosave record (0 until the first save). */
+function keptSteps(page: Page) {
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const req = indexedDB.open("sawhorse", 1);
+        req.onsuccess = () => {
+          const db = req.result;
+          const get = db.transaction("autosave", "readonly").objectStore("autosave").get("current-meta");
+          get.onsuccess = () => {
+            db.close();
+            resolve((get.result?.steps as number | undefined) ?? 0);
+          };
+          get.onerror = () => resolve(0);
+        };
+        req.onerror = () => resolve(0);
+      }),
+  );
+}
+
 test("an autosave that cannot be read, or is too large, never blocks the start: it is set aside and offered for discarding", async ({ page }) => {
   const vp = await ready(page, "/?io=basic");
   // Unreadable: a record that is not a record, a log that is not a log.
@@ -180,11 +200,17 @@ test("an autosave that cannot be read, or is too large, never blocks the start: 
   // The app works while the offer stands: a box, and the record is still kept aside.
   await box(page);
   await expect(vp).toHaveAttribute("data-objects", "1");
+  // Lane 64 (#94): once the box is autosaved, the next start offers it first (it is the newer
+  // work) and the record that cannot be read after it, at once after a Discard.
+  await expect.poll(() => keptSteps(page)).toBe(3);
   await page.reload();
   await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
-  await expect(hint).toContainText("cannot be read");
+  await expect(hint).toContainText("Restore unsaved work? 1 solid, 3 steps, saved just now. 1 older set of unsaved work is set aside too.");
+  await hint.getByRole("button", { name: "Discard" }).click();
+  await expect(hint).toContainText("Unsaved work discarded. Unsaved work was kept in this browser, but the record kept in this browser cannot be read");
   await hint.getByRole("button", { name: "Discard" }).click();
   await expect(hint).toContainText("Unsaved work discarded");
+  await expect(hint).not.toContainText("cannot be read");
 
   // Too large: 100 MB of history is offered for discarding only, never loaded.
   await plant(page, { "current-meta": { savedAt: Date.now(), solids: 3, steps: 9, bytes: 100 * 1024 * 1024, worth: true }, current: "[]" });

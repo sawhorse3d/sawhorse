@@ -5,7 +5,9 @@
 // (src-tauri/src/lib.rs, src-tauri/close-guard): the page tells it whether the model has
 // unsaved changes ("unsaved" or "saved"); a close request over unsaved changes keeps the
 // window open and sends `sawhorse://close-requested`; the page asks the question File > New
-// asks, with "and close Sawhorse", and answers "keep" (No) or "close" (Yes).
+// asks, with "and close Sawhorse", and answers "keep" (No) or "close" (Yes). Yes deletes this
+// session's autosave, as File > New does; unsaved work set aside at start and not yet answered
+// (lane 64, #94) is not this session's and stays for the next start.
 //
 // The window can never be held open by the page. The page does not register Tauri's own
 // close-requested listener (with one, the shell holds every close until the page destroys

@@ -56,7 +56,7 @@ import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
-import { autosaveEnabled, clearAutosave, clearOffered, describeAutosave, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, saveAutosave, takeAutosave, worthRestoring, type Autosave } from "./lib/autosave";
+import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
 import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
 import { closeHandler, desktopShell, discardQuestion } from "./io/closing";
 import { notOpenedNote, openLabel, startupOrder, takeStartupFile, waitingNote } from "./io/startup";
@@ -458,8 +458,19 @@ export function App() {
 
   // ---- dev autosave (IndexedDB): the op log after every edit; offered back on reload ----
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** An autosave found at load and not yet restored or discarded (also on the Edit menu). */
-  const [pendingRestore, setPendingRestore] = useState<Autosave | null>(null);
+  /** Lane 64 (#94): the unsaved work set aside and not yet restored or discarded, the one to
+   * offer first at the front (newest first at start; on the Edit menu while any is there). The
+   * state is for what is drawn, the ref for the answers. */
+  const [offers, setOffersRaw] = useState<Offer[]>([]);
+  const offersRef = useRef<Offer[]>([]);
+  const setOffers = useCallback((o: Offer[]) => {
+    offersRef.current = o;
+    setOffersRaw(o);
+  }, []);
+  /** Said once, with the first offer, when the start deleted the oldest work (MAX_OFFERS). */
+  const droppedRef = useRef("");
+  /** The log length of a new empty model (set at start): a restored model is unsaved. */
+  const emptyLogLen = useRef<number | null>(null);
   /** Lane 16: said once per model when its history is too large to autosave. */
   const autosaveTooLarge = useRef(false);
   /** Lane 16: the log hash of the model as last saved, opened or started new. While the
@@ -619,12 +630,10 @@ export function App() {
 
   // Lane 37 (#45): the file the desktop app was started with, while it waits for the answer to
   // "Restore unsaved work?" (src/io/startup.ts): Restore offers it beside the restored work,
-  // Discard opens it. The state is for the offer's text, the ref for the answers.
-  const [startupWaiting, setStartupWaitingRaw] = useState<string | null>(null);
+  // Discard opens it. (Lane 64: the offer's text is written when it is shown, so a ref is all.)
   const startupWaitingRef = useRef<string | null>(null);
   const setStartupWaiting = useCallback((path: string | null) => {
     startupWaitingRef.current = path;
-    setStartupWaitingRaw(path);
   }, []);
   /** The waiting start-up file, no longer waiting. */
   const takeStartupWaiting = useCallback(() => {
@@ -635,19 +644,80 @@ export function App() {
   /** Opens a start-up file the way a dropped file opens (set below, where that is defined). */
   const openStartupRef = useRef<(path: string) => Promise<void>>(async () => {});
 
+  /** The status line's offer of the front piece of set-aside work (`before` goes first). */
+  const showOffer = useCallback(
+    (before = "") => {
+      const list = offersRef.current;
+      const a = list[0];
+      if (!a) return;
+      const usable = a.state === "ok";
+      const path = startupWaitingRef.current;
+      const notes = [list.length > 1 ? olderNote(list.length - 1) : "", droppedRef.current, path ? waitingNote(path) : ""].filter(Boolean);
+      const after = notes.length ? ` ${notes.join(" ")}` : "";
+      setMessage({
+        text: `${before}${usable ? `Restore unsaved work? ${describeAutosave(a)}.` : `Unsaved work was kept in this browser, but ${describeAutosave(a)}; it is set aside, not loaded.`}${after}`,
+        error: !usable,
+        offer: true,
+        actions: usable
+          ? [
+              { label: "Restore", run: () => restoreRef.current(a) },
+              { label: "Discard", run: () => discardRef.current(a) },
+            ]
+          : [{ label: "Discard", run: () => discardRef.current(a) }],
+      });
+    },
+    [setMessage],
+  );
+
   const restore = useCallback(
-    (a: Autosave) => {
+    (a: Offer) => {
       const k = kernelRef.current;
-      if (!k) return;
-      setPendingRestore(null);
+      // Answered already (a second click): nothing to restore twice.
+      if (!k || !offersRef.current.some((o) => o.id === a.id)) return;
+      // Off the list at once, before the queue gets to it.
+      droppedRef.current = "";
+      setOffers(offersRef.current.filter((o) => o.id !== a.id));
       editsPending.current++;
       const next = queue.current.then(async () => {
+        // Lane 64 (#94): the model open now goes, so unsaved work in it is set aside first,
+        // as one more offer, at the back of the list: the offer line and the Edit menu take the
+        // front, so every other set comes back before this one (the next start orders by time).
+        // Nothing to keep when it is as it was started, saved or opened, or holds no work.
+        // An autosave still waiting is not needed: the log below is what it would write. Were it to
+        // run during the replay, it would write that same log to `current`, which the move into
+        // `current` below then replaces (and a start keeps one of two exact copies).
+        if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+        const ops = k.logTexts();
+        const clean = cleanLogHash.current !== null && live.current.scene?.state.log_hash === cleanLogHash.current;
+        let kept: Offer | null = null;
+        if (!clean && logIsWorth(ops)) {
+          kept = await setAside(k.logJson(), { savedAt: Date.now(), solids: live.current.scene?.state.stats.objects ?? 0, steps: ops.length, worth: true });
+          // Too large to keep, or storage failed: the question File > Open asks.
+          if (!kept && !(await askYesNo(discardQuestion()))) {
+            setOffers([a, ...offersRef.current]);
+            return;
+          }
+        }
         try {
           // The log goes to the kernel as the text it was kept as (lane 16).
-          const json = await loadOffered();
+          const json = await loadOffered(a.id);
           if (json === null) throw new Error("the unsaved work kept in this browser cannot be read");
           const s = await k.replay(json);
-          void clearOffered();
+          // The restored work is this session's now: its offer becomes this session's autosave.
+          await adoptOffered(a.id);
+          // The sets the Edit menu restores before this model: those it can load (it skips
+          // the unreadable and the too large).
+          const others = offersRef.current.filter((o) => o.state === "ok").length;
+          if (kept) setOffers([...offersRef.current, kept]);
+          // An untitled model, as at start: Save never writes it over the file that was open.
+          if (docNameRef.current !== null) {
+            pluginsRef.current?.documentOpened(null);
+            setDocName(null);
+          }
+          fileHandle.current = undefined;
+          cleanLogHash.current = null;
+          setSavedLogLen(emptyLogLen.current);
           live.current.scene = s;
           setNameSource(s.state, s.mesh);
           setScene(s);
@@ -656,7 +726,7 @@ export function App() {
           live.current.selection = [];
           setSelection([]);
           afterHistoryRef.current();
-          const restored = `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.steps} steps (undo works as before).`;
+          const restored = `Restored your unsaved work: ${s.state.stats.objects} solid${s.state.stats.objects === 1 ? "" : "s"}, ${a.steps} steps (undo works as before).${kept ? ` The model you had open is set aside as unsaved work: Edit > Restore Unsaved Work brings it back${others ? ` after ${others === 1 ? "1 other set" : `${others} other sets`}` : ""}.` : ""}`;
           // A start-up file was waiting for this answer: it is offered, not opened, so the
           // restored work stays in front of the person, and opening it asks about the work.
           const waiting = takeStartupWaiting();
@@ -665,24 +735,42 @@ export function App() {
           setFitSeq((n) => n + 1);
           scheduleAutosave();
         } catch (err) {
-          // Kept aside, still offered: Discard removes it.
-          setPendingRestore({ ...a, state: "unreadable" });
-          setMessage({ text: `Could not restore the unsaved work: ${friendlyError(err instanceof Error ? err.message : String(err))}`, error: true, actions: [{ label: "Discard", run: () => discardRef.current() }] });
+          // Kept aside, still offered: Discard removes it. The open model is as it was (a
+          // refused log leaves the kernel's document alone), so what was set aside of it goes
+          // back to being this session's autosave, kept once; it stays an offer only if
+          // storage fails to move it.
+          const broken: Offer = { ...a, state: "unreadable" };
+          const back = kept ? await adoptOffered(kept.id) : true;
+          setOffers([broken, ...offersRef.current, ...(kept && !back ? [kept] : [])]);
+          setMessage({ text: `Could not restore the unsaved work: ${friendlyError(err instanceof Error ? err.message : String(err))}`, error: true, offer: true, actions: [{ label: "Discard", run: () => discardRef.current(broken) }] });
         }
       });
       void next.finally(() => editsPending.current--);
       queue.current = next;
     },
-    [scheduleAutosave, takeStartupWaiting],
+    [scheduleAutosave, takeStartupWaiting, setOffers],
   );
-  const discardRestore = useCallback(() => {
-    setPendingRestore(null);
-    void clearOffered();
-    setMessage({ text: "Unsaved work discarded.", error: false });
-    // Lane 37: a start-up file waiting for this answer opens now (its own message follows).
-    const waiting = takeStartupWaiting();
-    if (waiting) void openStartupRef.current(waiting);
-  }, [takeStartupWaiting]);
+  const restoreRef = useRef(restore);
+  restoreRef.current = restore;
+  const discardRestore = useCallback(
+    (a: Offer) => {
+      if (!offersRef.current.some((o) => o.id === a.id)) return;
+      const rest = offersRef.current.filter((o) => o.id !== a.id);
+      droppedRef.current = "";
+      setOffers(rest);
+      void clearOffered(a.id);
+      // Lane 64: older work set aside is offered at once; a start-up file waits for it too.
+      if (rest.length) {
+        showOffer("Unsaved work discarded. ");
+        return;
+      }
+      setMessage({ text: "Unsaved work discarded.", error: false });
+      // Lane 37: a start-up file waiting for this answer opens now (its own message follows).
+      const waiting = takeStartupWaiting();
+      if (waiting) void openStartupRef.current(waiting);
+    },
+    [takeStartupWaiting, setOffers, showOffer],
+  );
   const discardRef = useRef(discardRestore);
   discardRef.current = discardRestore;
 
@@ -1054,14 +1142,18 @@ export function App() {
         setScene(s);
         setKernelState("ready");
         setSavedLogLen(s.state.log_len);
+        emptyLogLen.current = s.state.log_len;
         let offered = false;
         if (autosaveEnabled()) {
           // Never blocks the start (lane 16): a record that cannot be read or is too large is
-          // offered for discarding only.
+          // offered for discarding only. Lane 64 (#94): every piece of work set aside is
+          // offered, newest first.
           try {
-            const saved = await takeAutosave();
-            if (worthRestoring(saved)) {
-              setPendingRestore(saved);
+            const found = await takeAutosaves();
+            if (found.offers.length) {
+              droppedRef.current = droppedNote(found.dropped);
+              setOffers(found.offers);
+              showOffer();
               offered = true;
             }
           } catch {
@@ -1078,8 +1170,11 @@ export function App() {
           /* a shell that cannot say: no start-up file */
         }
         const order = startupOrder(path, offered);
-        if (path !== null && order === "wait") setStartupWaiting(path);
-        else if (path !== null && order === "open") void openStartupRef.current(path);
+        if (path !== null && order === "wait") {
+          setStartupWaiting(path);
+          // The offer again, now saying the file waits for the answer.
+          showOffer();
+        } else if (path !== null && order === "open") void openStartupRef.current(path);
       })
       .catch((err) => {
         if (err instanceof KernelUnavailableError) {
@@ -1095,22 +1190,6 @@ export function App() {
       kernelRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    if (!pendingRestore) return;
-    const usable = pendingRestore.state === "ok";
-    const waiting = startupWaiting ? ` ${waitingNote(startupWaiting)}` : "";
-    setMessage({
-      text: usable ? `Restore unsaved work? ${describeAutosave(pendingRestore)}.${waiting}` : `Unsaved work was kept in this browser, but ${describeAutosave(pendingRestore)}; it is set aside, not loaded.${waiting}`,
-      error: !usable,
-      actions: usable
-        ? [
-            { label: "Restore", run: () => restore(pendingRestore) },
-            { label: "Discard", run: discardRestore },
-          ]
-        : [{ label: "Discard", run: discardRestore }],
-    });
-  }, [pendingRestore, restore, discardRestore, startupWaiting]);
 
   // Read-only hooks for e2e tests: every solid with its display number, bounds and volume,
   // and the scene graph (groups, components, the open context).
@@ -2859,7 +2938,15 @@ export function App() {
           },
         },
         "-",
-        { label: "Restore Unsaved Work", disabled: !pendingRestore || pendingRestore.state !== "ok", onSelect: () => pendingRestore && restore(pendingRestore) },
+        // Lane 64 (#94): the front piece of set-aside work that can be restored.
+        {
+          label: "Restore Unsaved Work",
+          disabled: !offers.some((o) => o.state === "ok"),
+          onSelect: () => {
+            const a = offersRef.current.find((o) => o.state === "ok");
+            if (a) restore(a);
+          },
+        },
         "-",
         {
           label: "Units",
@@ -2925,7 +3012,7 @@ export function App() {
         : {}),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, pendingRestore, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -3212,6 +3299,7 @@ export function App() {
         units={units}
         onUnits={chooseUnits}
         message={message}
+        setAside={offers.length && !message?.offer ? { count: offers.length, onShow: () => showOffer() } : null}
         empty={kernelState === "ready" && !!st && st.stats.objects === 0 && st.stats.edges === 0 && !st.meshes?.length}
         firstRunHint={isWebDemo()}
         openPicker={unitPickerOpen}
