@@ -246,6 +246,34 @@ describe("Nesting section", () => {
     expect(p.onSettings).not.toHaveBeenCalled();
   });
 
+  it("#93: a committed field that reads the same still gets its unit back", () => {
+    // A typed value that rounds to the text already shown leaves the raw text in the box:
+    // the `shown` string does not change, so the effect that resets it never runs. #93.
+    // Millimetres: the built-in 1/8 in (3.175 mm) reads "3.18 mm"; typing 3.18 reads the
+    // same, so the committed value must still be shown with its unit.
+    {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      expect(kerf.value).toBe("3.18 mm");
+      fireEvent.change(kerf, { target: { value: "3.18" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.00318, trim: 0, algorithm: "guillotine" });
+      expect(kerf.value).toBe("3.18 mm");
+      cleanup();
+    }
+    // Fractional inches: typing 0.13 in rounds to 1/8 in, the text already shown.
+    {
+      const p = props();
+      render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      expect(kerf.value).toBe("1/8 in");
+      fireEvent.change(kerf, { target: { value: "0.13" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(kerf.value).toBe("1/8 in");
+      cleanup();
+    }
+  });
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];

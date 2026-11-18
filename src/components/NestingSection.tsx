@@ -89,6 +89,10 @@ function LengthField({
     if (r.metres < 0 || r.metres > c.max) return setErr(`${c.label}: 0 to ${fineU(c.max, c.rounding)}.`);
     setErr(null);
     if (c.value === null || Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
+    // #93: a commit reads the same when a typed length rounds to the text already shown.
+    // `shown` does not change, so the effect below does not reset the field; do it here so
+    // the unit the value is displayed with comes back after Enter or leaving the field.
+    setText(shown);
   };
   // A short pause after typing re-nests too. #57: not an emptied optional field, which is
   // more often on its way to another length than cleared; Enter or leaving it clears it.
