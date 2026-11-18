@@ -616,6 +616,26 @@ test("Built-in stock says what it puts back in the document's units", async ({ p
   await expect(kerf).toHaveValue("0.125 in");
 });
 
+// An edit sets the Nesting pane busy until its nesting is worked out again, 200 ms later.
+// `nestEdit` starts counting the times the pane stops being busy; `nestSettled` waits for one
+// and for the pane to be idle, so the fields then show the document as it is.
+function nestEdit(page: Page) {
+  return page.evaluate(() => {
+    const w = window as unknown as { __nestDone: number; __nestWatch?: MutationObserver };
+    const el = document.querySelector('[data-testid="nesting"] .nest-body')!;
+    w.__nestWatch?.disconnect();
+    w.__nestDone = 0;
+    w.__nestWatch = new MutationObserver(() => {
+      if (el.getAttribute("aria-busy") === "false") w.__nestDone++;
+    });
+    w.__nestWatch.observe(el, { attributes: true, attributeFilter: ["aria-busy"] });
+  });
+}
+async function nestSettled(page: Page) {
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __nestDone: number }).__nestDone)).toBeGreaterThan(0);
+  await expect(page.getByTestId("nesting").locator(".nest-body")).toHaveAttribute("aria-busy", "false");
+}
+
 // #93: a length typed into a Nesting field that reads the same as the old one (3.18 in a
 // millimetre document, where the built-in 1/8 in kerf reads 3.18 mm) is stored as typed and
 // the field shows it with its unit again, after Enter or leaving the field, and through
@@ -641,24 +661,8 @@ test("a Nesting length that reads the same as before is shown with its unit (#93
   const away = page.getByLabel("Round sizes to");
   await expect(kerf).toHaveValue("3.18 mm");
   await expect(body).toHaveAttribute("aria-busy", "false");
-  // An edit sets the pane busy until its nesting is worked out again. `edit` starts counting
-  // the times the pane stops being busy; `settled` waits for one and for the pane to be
-  // idle, so the fields then show the document as it is.
-  const edit = () =>
-    page.evaluate(() => {
-      const w = window as unknown as { __nestDone: number; __nestWatch?: MutationObserver };
-      const el = document.querySelector('[data-testid="nesting"] .nest-body')!;
-      w.__nestWatch?.disconnect();
-      w.__nestDone = 0;
-      w.__nestWatch = new MutationObserver(() => {
-        if (el.getAttribute("aria-busy") === "false") w.__nestDone++;
-      });
-      w.__nestWatch.observe(el, { attributes: true, attributeFilter: ["aria-busy"] });
-    });
-  const settled = async () => {
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __nestDone: number }).__nestDone)).toBeGreaterThan(0);
-    await expect(body).toHaveAttribute("aria-busy", "false");
-  };
+  const edit = () => nestEdit(page);
+  const settled = () => nestSettled(page);
   const stored = async () => (await nest(page)).settings as Nest["settings"] & { jointLoss?: number };
   expect((await stored()).kerf).toBe(IN / 8);
   // Enter.
@@ -767,6 +771,9 @@ test("a Nesting length that reads the same as before is shown with its unit (#93
   await kerf.fill("4");
   await settled();
   expect((await stored()).kerf).toBeCloseTo(0.004, 12);
+  // #98: the field is still being typed in, so the new reading waits until it is left.
+  await expect(kerf).toHaveValue("4");
+  await away.focus();
   await expect(kerf).toHaveValue("4 mm");
   await expect.poll(async () => (await recorded()).at(-1)).toBe("4 mm");
   seen = await recorded();
@@ -796,4 +803,96 @@ test("a Nesting length that reads the same as before is shown with its unit (#93
   await settled();
   expect((await stored()).kerf).toBeCloseTo(0.1301 * IN, 12);
   await expect(kerf).toHaveValue("0.13 in");
+});
+
+// #98: text being typed in a Nesting length field stays while the reading of the stored value
+// changes. The pause: 3.1 typed in millimetres is stored after the pause and stays as typed,
+// so a 5 typed next makes 3.15, not 3.1 mm5; the same in fractional and decimal inches. A
+// late refresh: Undo sets the pane working the nesting out again, a length is typed before
+// that lands, and it stays; Enter stores it, and Escape gives it up for the reading that
+// arrived. The page's clock holds the refresh until the text is in the field, so the two never
+// race.
+test("a Nesting length field keeps the text being typed when its reading changes (#98)", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.clock.install();
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 10 * IN, 0], [0, 10 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Shelf" });
+  });
+  await openShz(page, shz, 1, "shelf.shz");
+  await setUnits(page, "mm");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  const body = section.locator(".nest-body");
+  const kerf = section.getByLabel("Kerf", { exact: true });
+  const away = page.getByLabel("Round sizes to");
+  const stored = async () => (await nest(page)).settings as Nest["settings"] & { jointLoss?: number };
+  await expect(kerf).toHaveValue("3.18 mm");
+  await expect(body).toHaveAttribute("aria-busy", "false");
+  // A late refresh. A 2 mm kerf is set; then timers stop, Undo (from outside the field) puts
+  // the 1/8 in kerf back and sets the pane busy, and its refresh, due 200 ms later, waits for
+  // the clock.
+  await nestEdit(page);
+  await kerf.fill("2");
+  await kerf.press("Enter");
+  await nestSettled(page);
+  await expect(kerf).toHaveValue("2 mm");
+  const late = async (typed: string) => {
+    await away.focus();
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    await nestEdit(page);
+    await page.keyboard.press("Control+z");
+    await expect(body).toHaveAttribute("aria-busy", "true");
+    await kerf.fill(typed);
+    await page.clock.runFor(250);
+    await nestSettled(page);
+    // The refresh has landed: the field still holds what was typed.
+    await expect(kerf).toHaveValue(typed);
+  };
+  await late("5");
+  expect((await stored()).kerf).toBeCloseTo(IN / 8, 12);
+  await nestEdit(page);
+  await kerf.press("Enter");
+  await page.clock.resume();
+  await nestSettled(page);
+  expect((await stored()).kerf).toBeCloseTo(0.005, 12);
+  await expect(kerf).toHaveValue("5 mm");
+  // Undo again takes the 5 mm kerf back. Escape gives the typed length up for the reading
+  // that arrived; nothing is stored.
+  await late("7");
+  expect((await stored()).kerf).toBeCloseTo(IN / 8, 12);
+  await kerf.press("Escape");
+  await expect(kerf).toHaveValue("3.18 mm");
+  // Past the pause: nothing left to store.
+  await page.clock.runFor(1000);
+  await page.clock.resume();
+  expect((await stored()).kerf).toBeCloseTo(IN / 8, 12);
+  await expect(kerf).toHaveValue("3.18 mm");
+  // The pause, in each kind of units: stored, the typed text left as it is, the next keys
+  // added to it, and Enter storing the whole and showing it with its unit.
+  const pause = async (label: string, first: string, more: string, metres: number, reads: string) => {
+    const field = section.getByLabel(label, { exact: true });
+    await nestEdit(page);
+    await field.fill(first);
+    await nestSettled(page);
+    await expect(field).toHaveValue(first);
+    await field.press("End");
+    await field.pressSequentially(more);
+    await expect(field).toHaveValue(first + more);
+    await nestEdit(page);
+    await field.press("Enter");
+    await nestSettled(page);
+    const key = { Kerf: "kerf", Trim: "trim", "Joint loss": "jointLoss", "Minimum strip": "minStrip" }[label] as "kerf";
+    expect((await stored())[key], label).toBeCloseTo(metres, 12);
+    await expect(field).toHaveValue(reads);
+    await expect(section.locator("label.err")).toHaveCount(0);
+  };
+  await pause("Kerf", "3.1", "5", 0.00315, "3.15 mm");
+  await setUnits(page, "frac-in");
+  await pause("Minimum strip", "1", " 1/2", 1.5 * IN, "1 1/2 in");
+  await setUnits(page, "in");
+  await pause("Trim", "0.5", "5", 0.55 * IN, "0.55 in");
 });

@@ -62,7 +62,23 @@ function LengthField({
   const shown = value === null ? "" : fineU(value, rounding);
   const [text, setText] = useState(shown);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setText(shown), [shown]);
+  // #98: while the person is typing in the focused field, a new reading of the stored value
+  // (the pause's own commit, a nesting refresh, Undo) does not replace their text. It waits
+  // for Enter, leaving the field or Escape, which end the typing.
+  const typing = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  const before = useRef(shown);
+  useEffect(() => {
+    const was = before.current;
+    before.current = shown;
+    // Still being typed: a key since the last commit, the field still focused (focus can go
+    // without a blur event reaching it), and text other than the reading it was typed over.
+    // Otherwise nothing of the person's is lost, and the field follows the stored value.
+    if (typing.current && document.activeElement === input.current && text !== was) return;
+    typing.current = false;
+    setText(shown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown]);
   // Lane 30 (from the #33 review): a commit reads the value and the settings as they are
   // now, not as they were when the pause timer was set. The timer used to keep its render's:
   // Enter, then the pause, committed the same length twice, and a change from outside while
@@ -78,8 +94,17 @@ function LengthField({
     // Enter or leaving the field commits now; the pause has nothing left to do.
     stopTimer();
     const c = now.current;
-    if (t.trim() === c.shown) return setErr(null);
+    // #98: Enter ends the typing once the length is taken. A refused one is still the
+    // person's text, kept with its reason; leaving the field ends the typing (onBlur).
+    const taken = () => {
+      if (!paused) typing.current = false;
+    };
+    if (t.trim() === c.shown) {
+      taken();
+      return setErr(null);
+    }
     if (c.onClear && t.trim() === "") {
+      taken();
       setErr(null);
       if (c.value !== null) c.onClear();
       return;
@@ -87,6 +112,7 @@ function LengthField({
     const r = parseLength(t, c.units);
     if (!r.ok) return setErr(r.error);
     if (r.metres < 0 || r.metres > c.max) return setErr(`${c.label}: 0 to ${fineU(c.max, c.rounding)}.`);
+    taken();
     setErr(null);
     if (c.value === null || Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
     // #93: a commit reads the same when a typed length rounds to the text already shown.
@@ -112,16 +138,24 @@ function LengthField({
     <label className={err ? "err" : undefined} title={err ?? `${hint ?? label} (type a length: 1/8, 3/32, 3mm)`}>
       <span>{label}</span>
       <input
+        ref={input}
         aria-label={label}
         value={text}
         placeholder={placeholder}
         size={5}
-        onChange={(e) => setText(e.currentTarget.value)}
-        onBlur={(e) => commit(e.currentTarget.value)}
+        onChange={(e) => {
+          typing.current = document.activeElement === e.currentTarget;
+          setText(e.currentTarget.value);
+        }}
+        onBlur={(e) => {
+          typing.current = false;
+          commit(e.currentTarget.value);
+        }}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") commit(e.currentTarget.value);
           if (e.key === "Escape") {
+            typing.current = false;
             setText(shown);
             setErr(null);
           }
