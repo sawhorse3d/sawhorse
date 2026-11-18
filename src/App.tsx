@@ -1820,6 +1820,10 @@ export function App() {
       if (r) {
         live.current.selection = [];
         setSelection([]);
+        const t = activeRef.current;
+        t?.reset();
+        t?.modelChanged();
+        setToolView(t?.view() ?? EMPTY_VIEW);
       }
     });
   }, [apply]);

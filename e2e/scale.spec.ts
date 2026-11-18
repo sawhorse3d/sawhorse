@@ -186,6 +186,15 @@ async function scaleOnBoard(page: Page) {
   await expect(page.locator(".vlabel.grip")).toHaveCount(26);
 }
 
+test("Delete clears the box and grips of the solid it removes (#85)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#hint")).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
 test("after Redo the box and its grips are round the scaled shape again (#76)", async ({ page }) => {
   await ready(page);
   await scaledThenUndone(page);
