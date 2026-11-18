@@ -4,6 +4,10 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (inch nesting settings, 2026-11-18)
+
+- **Fine inch nesting settings exactly halfway between displayed values round up** ([#92](https://github.com/sawhorse3d/sawhorse/issues/92)). Conversion through metres could make 3/16 in read as 0.187 in and 3/128 in read as 1/64 in. They now read as 0.188 in and 1/32 in respectively, without changing the stored lengths. Tests cover both inch formats, lengths just below the midpoint, and leaving the Kerf field unchanged after rounding. Docs: `docs/USER-GUIDE.md`.
+
 ### Fixed (lane 63, a pull request from @Golden007-prog, 2026-11-17)
 
 - **A length halfway between two hundredths of a millimetre reads as the upper one** ([#90](https://github.com/sawhorse3d/sawhorse/pull/90), from @Golden007-prog; [#89](https://github.com/sawhorse3d/sawhorse/issues/89)). The lengths the saw is set to, written to 0.01 mm when the cut list rounds in millimetres (the Kerf, Trim, Joint loss and Minimum strip fields and their messages, the status line after a change to them, the footer under the diagrams, a trim step in the cut sequence, a stock's actual thickness and Built-in stock's tooltip and status line), were rounded from a product with floating-point error, so a length exactly halfway often read low: the built-in 1/8 in kerf and joint loss (3.175 mm) as 3.17 mm, 3/8 in as 9.52 mm, a typed 0.045 mm as 0.04 mm. They now read 3.18, 9.53 and 0.05 mm; every other length reads as before, and what is stored does not change. Front end only: no kernel, model hash, golden or file format change. Docs: `docs/USER-GUIDE.md`, `docs/DEVELOPMENT.md`.

@@ -51,6 +51,11 @@ export function lenU(m: number, r: Units): string {
   return `${len(m, r)} ${sizeUnit(r)}`;
 }
 
+function roundFineSteps(steps: number): number {
+  // Allow for floating-point error when a converted length lands on a midpoint.
+  return Math.round(steps + Math.abs(steps) * Number.EPSILON);
+}
+
 /** A small length the saw is set to (kerf, trim) with the precision it needs, whatever the
  * cut list's rounding: inches to the nearest 1/64 ("3/32 in"), decimal inches to 0.001,
  * millimetres to 0.01 ("2.38 mm"). */
@@ -59,13 +64,13 @@ export function fineU(m: number, u: Units): string {
   const style = styleOf(u);
   if (r === "half_mm" || style === "mm") {
     const hundredths = Math.abs(m) * 100_000;
-    // Allow for floating-point error when a converted length lands on a midpoint.
-    const rounded = Math.round(hundredths + hundredths * Number.EPSILON);
-    return `${Math.sign(m) * rounded / 100} mm`;
+    return `${Math.sign(m) * roundFineSteps(hundredths) / 100} mm`;
   }
-  const inches = m / M_PER_IN;
-  if (style === "decimal") return `${Number(inches.toFixed(3))} in`;
-  const n = Math.round(inches * 64);
+  if (style === "decimal") {
+    const thousandths = Math.abs(m) / (M_PER_IN / 1000);
+    return `${Math.sign(m) * roundFineSteps(thousandths) / 1000} in`;
+  }
+  const n = roundFineSteps(m / (M_PER_IN / 64));
   const whole = Math.floor(n / 64);
   let num = n - whole * 64;
   let den = 64;

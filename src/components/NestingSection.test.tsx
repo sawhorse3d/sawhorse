@@ -246,6 +246,18 @@ describe("Nesting section", () => {
     expect(p.onSettings).not.toHaveBeenCalled();
   });
 
+  it("#92: Enter and blur keep the exact kerf when the decimal display rounds up", () => {
+    const nesting = smallNesting();
+    nesting.settings.kerf = (3 / 16) * IN;
+    const p = props({ nesting, units: "in", rounding: { r: "sixteenth", style: "decimal" } });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    expect(kerf.value).toBe("0.188 in");
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    fireEvent.blur(kerf);
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];

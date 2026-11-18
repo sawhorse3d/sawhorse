@@ -62,6 +62,28 @@ describe("nesting in shop words", () => {
     expect(fineU(0.003125, { r: "sixteenth", style: "mm" })).toBe("3.13 mm");
   });
 
+  it.each([
+    [3 / 16, "0.188 in"],
+    [29 / 16, "1.813 in"],
+    [53 / 16, "3.313 in"],
+    [3 / 16 - 1e-14, "0.187 in"],
+  ])("rounds %s inches to the nearest displayed thousandth", (inches, displayed) => {
+    expect(fineU(inches * IN, { r: "sixteenth", style: "decimal" })).toBe(displayed);
+  });
+
+  it("rounds a decimal inch midpoint also reached through a millimetre conversion", () => {
+    expect(fineU(2.0075 * 25.4 / 1000, { r: "sixteenth", style: "decimal" })).toBe("2.008 in");
+  });
+
+  it.each([
+    [3 / 128, "1/32 in"],
+    [29 / 128, "15/64 in"],
+    [127 / 128, "1 in"],
+    [3 / 128 - 1e-14, "1/64 in"],
+  ])("rounds %s inches to the nearest displayed sixty-fourth", (inches, displayed) => {
+    expect(fineU(inches * IN, "sixteenth")).toBe(displayed);
+  });
+
   it("#57: the footer names a set minimum strip beside the joint loss, only when something is glued up", () => {
     const g = gluedNesting();
     expect(settingsText(g, "sixteenth")).toBe("Kerf 1/8 in · trim none · joint loss 1/8 in · table saw");
