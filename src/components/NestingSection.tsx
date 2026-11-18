@@ -62,7 +62,13 @@ function LengthField({
   const shown = value === null ? "" : fineU(value, rounding);
   const [text, setText] = useState(shown);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => setText(shown), [shown]);
+  // #98: while the person is typing in the focused field, a new reading of the stored value
+  // (the pause's own commit, a nesting refresh, Undo) does not replace their text. It waits
+  // for Enter, leaving the field or Escape, which end the typing.
+  const typing = useRef(false);
+  useEffect(() => {
+    if (!typing.current) setText(shown);
+  }, [shown]);
   // Lane 30 (from the #33 review): a commit reads the value and the settings as they are
   // now, not as they were when the pause timer was set. The timer used to keep its render's:
   // Enter, then the pause, committed the same length twice, and a change from outside while
@@ -78,6 +84,7 @@ function LengthField({
     // Enter or leaving the field commits now; the pause has nothing left to do.
     stopTimer();
     const c = now.current;
+    if (!paused) typing.current = false;
     if (t.trim() === c.shown) return setErr(null);
     if (c.onClear && t.trim() === "") {
       setErr(null);
@@ -116,12 +123,16 @@ function LengthField({
         value={text}
         placeholder={placeholder}
         size={5}
-        onChange={(e) => setText(e.currentTarget.value)}
+        onChange={(e) => {
+          typing.current = document.activeElement === e.currentTarget;
+          setText(e.currentTarget.value);
+        }}
         onBlur={(e) => commit(e.currentTarget.value)}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Enter") commit(e.currentTarget.value);
           if (e.key === "Escape") {
+            typing.current = false;
             setText(shown);
             setErr(null);
           }

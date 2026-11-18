@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (a Nesting length field leaves text being typed alone, 2026-11-18)
+
+- **A Nesting length field no longer replaces what is being typed when its reading changes** ([#98](https://github.com/sawhorse3d/sawhorse/issues/98)). In the Kerf, Trim, Joint loss and Minimum strip fields, a new reading of the stored length that arrived while a person was typing replaced their text: the pause's own commit turned `3.1` into `3.1 mm`, so the next key gave `3.1 mm5`, and a nesting refresh (about 200 ms after Undo, Redo or a commit in another field) put the old reading over fresh text, so Enter stored nothing new. Now a focused field keeps the typed text until Enter, leaving the field or Escape, and shows the new reading after that.
+- Tests: `src/components/NestingSection.test.tsx` (the pause then more keys, a late refresh then Enter, leaving the field and Escape, with fake timers); they fail on the code before this change.
+
 ### Fixed (lane 66, 2026-11-18)
 
 - **A Nesting length that reads the same as before is shown with its unit** ([#96](https://github.com/sawhorse3d/sawhorse/pull/96), from @bfs2021; [#93](https://github.com/sawhorse3d/sawhorse/issues/93)). In the Kerf, Trim, Joint loss and Minimum strip fields, a typed length that reads the same as the one shown (3.18 in a millimetre document, where the 1/8 in kerf reads 3.18 mm, or 0.13 where it reads 1/8 in) was stored as typed, but the field went on showing the typed text without its unit, after Undo and Redo too. Now Enter or leaving the field shows it as the field writes lengths, 3.18 mm. The pause after typing still stores it and leaves what was typed in the field until Enter or leaving it, so typing can go on. A length that reads differently shows what was typed until the new value is worked out, then its reading, as before. What is stored does not change. Front end only: no kernel, model hash, golden or file format change. Docs: `docs/DEVELOPMENT.md`.

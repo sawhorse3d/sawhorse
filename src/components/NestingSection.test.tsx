@@ -704,4 +704,75 @@ describe("Cut list pane with nesting", () => {
     // The sheet, with no strips, reads as before.
     expect(screen.getAllByRole("figure")[1].querySelector("summary")!.textContent).toContain("2 cuts, 1 part");
   });
+  const kerfOf = (kerf: number) => {
+    const n = smallNesting();
+    return { ...n, settings: { ...n.settings, kerf } };
+  };
+  // #98: text typed into a focused length field is not replaced when the reading of the
+  // stored value changes meanwhile; the new reading waits for Enter, leaving or Escape.
+  it("#98: the pause stores what was typed, and the next keys land in the typed text", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      const { rerender } = render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      act(() => kerf.focus());
+      fireEvent.change(kerf, { target: { value: "3.1" } });
+      act(() => void vi.advanceTimersByTime(800));
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 3.1 * 0.001, trim: 0, algorithm: "guillotine" });
+      // The app applies the pause's length; the field is still being typed in.
+      rerender(<NestingSection {...p} nesting={kerfOf(0.0031)} />);
+      expect(kerf.value).toBe("3.1");
+      fireEvent.change(kerf, { target: { value: "3.15" } });
+      expect(kerf.value).toBe("3.15");
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 3.15 * 0.001, trim: 0, algorithm: "guillotine" });
+      rerender(<NestingSection {...p} nesting={kerfOf(0.00315)} />);
+      expect(kerf.value).toBe("3.15 mm");
+      expect(screen.queryByTitle(/mm5/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#98: a late refresh that changes the reading leaves the typed text, and Enter stores it", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      const { rerender } = render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      act(() => kerf.focus());
+      fireEvent.change(kerf, { target: { value: "5" } });
+      // Undo from elsewhere lands before the pause: the stored kerf now reads 2 mm.
+      rerender(<NestingSection {...p} nesting={kerfOf(0.002)} />);
+      expect(kerf.value).toBe("5");
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.005, trim: 0, algorithm: "guillotine" });
+      rerender(<NestingSection {...p} nesting={kerfOf(0.005)} />);
+      expect(kerf.value).toBe("5 mm");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#98: the new reading shows after leaving the field or Escape", () => {
+    const p = props({ units: "mm", rounding: "half_mm" });
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    // Leaving: a reading that changed meanwhile is shown once the typed one is committed.
+    act(() => kerf.focus());
+    fireEvent.change(kerf, { target: { value: "5" } });
+    rerender(<NestingSection {...p} nesting={kerfOf(0.002)} />);
+    expect(kerf.value).toBe("5");
+    fireEvent.blur(kerf);
+    rerender(<NestingSection {...p} nesting={kerfOf(0.005)} />);
+    expect(kerf.value).toBe("5 mm");
+    // Escape gives the typed text up for the reading now stored.
+    act(() => kerf.focus());
+    fireEvent.change(kerf, { target: { value: "7" } });
+    rerender(<NestingSection {...p} nesting={kerfOf(0.002)} />);
+    expect(kerf.value).toBe("7");
+    fireEvent.keyDown(kerf, { key: "Escape" });
+    expect(kerf.value).toBe("2 mm");
+  });
 });
