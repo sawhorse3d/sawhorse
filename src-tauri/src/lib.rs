@@ -4,8 +4,8 @@
 //! Rust kernel as WASM inside the webview (ADR-0001), so geometry never crosses IPC.
 //! Native-only concerns live here: file dialogs and file access (lane 6: the dialog and fs
 //! plugins), drag-and-drop of files onto the window, the render-credit device key in the
-//! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout in the
-//! system browser, showing a plugin's folder (lane 11), the question before the window
+//! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout (and,
+//! since lane 67, the Help menu's pages) in the system browser, showing a plugin's folder (lane 11), the question before the window
 //! closes over unsaved changes (lane 35, `close-guard/`), and the file the app was started
 //! with (lane 37, `start-file/`): a double-click on a `.shz` in Windows Explorer, where the
 //! installers associate `.shz` with Sawhorse (`tauri.windows.conf.json`), or a path after the
@@ -66,13 +66,14 @@ fn device_sign(state: State<'_, Device>, message: String) -> Result<String, Stri
     with_key(&state, |k| k.sign_b64(&message).map_err(|e| e.to_string()))
 }
 
-/// Open a checkout page in the system browser. Only Stripe Checkout (and the render
-/// service's simulated checkout on loopback, in development) is allowed.
+/// Open a checkout page or a Help page in the system browser. Only Stripe Checkout (and
+/// the render service's simulated checkout on loopback, in development) and the Help menu's
+/// three pages (lane 67, `sawhorse_device_key::HELP_URLS`) are allowed.
 #[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     if !external_url_allowed(&url) {
         return Err(format!(
-            "refusing to open {url}: only checkout pages open from the app"
+            "refusing to open {url}: only checkout and help pages open from the app"
         ));
     }
     app.opener()

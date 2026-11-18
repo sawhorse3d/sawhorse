@@ -3,6 +3,8 @@ import { BrandMark } from "./glyphs";
 import { BAR_VIEWS, type ViewId } from "../viewport/camera";
 
 // "Plugins" (lane 11) sits after Tools: commands from enabled plugins, and managing them.
+// Lane 67 (#97): a title is in the bar only while its menu has an entry, so no title does
+// nothing on a click. Draw and Window have none in any build, so they are not shown.
 const MENUS = ["File", "Edit", "View", "Draw", "Tools", "Plugins", "Window", "Help"];
 
 /** One entry in a drop-down menu ("-" is a separator; `items` opens a submenu). */
@@ -33,7 +35,7 @@ export interface TopBarProps {
   creditsTitle?: string;
   /** Click on the chip (opens the Render pane). */
   onCredits?: () => void;
-  /** Drop-down contents by menu name; menus without an entry stay inert, as in the mock. */
+  /** Drop-down contents by menu name; a menu without an entry is not in the bar (lane 67). */
   menus?: Partial<Record<string, MenuItem[]>>;
 }
 
@@ -90,6 +92,13 @@ export function TopBar({ view, onView, credits, showCredits = true, creditsState
 
   useEffect(() => setSub(null), [open]);
 
+  // The open menu's title left the bar (its last entry went): nothing is left open.
+  const shown = MENUS.filter((m) => !!menus?.[m]?.length);
+  const openShown = open !== null && shown.includes(open);
+  useEffect(() => {
+    if (open !== null && !openShown) setOpen(null);
+  }, [open, openShown]);
+
   useEffect(() => {
     if (!open) return;
     const close = (e: Event) => {
@@ -112,19 +121,14 @@ export function TopBar({ view, onView, credits, showCredits = true, creditsState
         Sawhorse
       </div>
       <nav className="menu" aria-label="Menu" ref={navRef}>
-        {MENUS.map((m) => {
-          const items = menus?.[m];
+        {shown.map((m) => {
+          const items = menus![m]!;
           return (
             <span key={m} style={{ position: "relative" }}>
-              <button
-                type="button"
-                aria-haspopup={items ? "menu" : undefined}
-                aria-expanded={items ? open === m : undefined}
-                onClick={() => items && setOpen(open === m ? null : m)}
-              >
+              <button type="button" aria-haspopup="menu" aria-expanded={open === m} onClick={() => setOpen(open === m ? null : m)}>
                 {m}
               </button>
-              {items && open === m ? (
+              {open === m ? (
                 <div className="drop" role="menu" aria-label={m}>
                   {items.map((it, i) => (
                     <Entry key={i} item={it} sub={sub} setSub={setSub} close={() => setOpen(null)} />

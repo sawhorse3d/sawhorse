@@ -136,6 +136,31 @@ try {
   if (await page.getByRole("note", { name: "About this demo" }).count()) fail("banner came back after Dismiss");
   ok("banner dismissed and stays dismissed");
 
+  // 5b. the Help menu (lane 67): its four entries, each opening its page in a new tab, the
+  // site's pages beside the demo; the demo itself stays where it is.
+  await page.evaluate(() => {
+    window.__opened = [];
+    window.open = (url, target, features) => {
+      window.__opened.push([String(url), target, features]);
+      return null;
+    };
+  });
+  const demoAt = page.url();
+  const help = [];
+  for (const name of ["User Guide", "What's New", "Download the Desktop App", "Source on GitHub"]) {
+    await page.getByRole("button", { name: "Help", exact: true }).click();
+    const entries = await page.getByRole("menu", { name: "Help" }).getByRole("menuitem").allTextContents();
+    help.push(entries.join(" | "));
+    await page.getByRole("menuitem", { name, exact: true }).click();
+  }
+  const base = new URL(server.url).pathname;
+  const want = [`${base}guide/`, `${base}changelog/`, "https://github.com/sawhorse3d/sawhorse/releases/latest", "https://github.com/sawhorse3d/sawhorse"];
+  const opened = await page.evaluate(() => window.__opened);
+  if (help.some((h) => h !== "User Guide | What's New | Download the Desktop App | Source on GitHub")) fail(`Help menu: ${JSON.stringify(help)}`);
+  if (JSON.stringify(opened) !== JSON.stringify(want.map((u) => [u, "_blank", "noopener,noreferrer"]))) fail(`Help opened ${JSON.stringify(opened)}`);
+  if (page.url() !== demoAt) fail(`Help moved the demo to ${page.url()}`);
+  ok(`Help: four entries, opened ${want.join(", ")} in new tabs`);
+
   // 6. documents
   await page.goto(`${server.url}guide/`);
   if (!(await page.locator("h1").first().textContent())?.includes("Sawhorse user guide")) fail("guide has no title");

@@ -2,7 +2,8 @@ import { flushSync } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TopBar, type MenuItem } from "./components/TopBar";
 import { DemoBanner } from "./components/DemoBanner";
-import { isWebDemo, RELEASES_URL, REPO_URL, sitePage } from "./lib/site";
+import { isWebDemo } from "./lib/site";
+import { helpLinks, openLink } from "./lib/help";
 import { ToolRail } from "./components/ToolRail";
 import { Viewport, type KernelState, type ViewportPointer } from "./components/Viewport";
 import { SidePanel, type PaneId } from "./components/SidePanel";
@@ -2998,18 +2999,11 @@ export function App() {
       ],
       Plugins: plugins.menu,
       Tools: [{ label: "Section Plane", title: "Cut the model with a plane (no default key)", checked: toolId === "section", onSelect: () => selectTool("section") }],
-      // The browser demo's way back to the site (the desktop app has no Help entries yet).
-      ...(isWebDemo()
-        ? {
-            Help: [
-              { label: "User Guide", onSelect: () => openLink(sitePage("guide/")) },
-              { label: "What's New", onSelect: () => openLink(sitePage("changelog/")) },
-              "-" as const,
-              { label: "Download the Desktop App", title: "Windows, macOS and Linux installers on GitHub", onSelect: () => openLink(RELEASES_URL) },
-              { label: "Source on GitHub", onSelect: () => openLink(REPO_URL) },
-            ],
-          }
-        : {}),
+      // Lane 67 (#97): the way to the guide, the changelog and the source, in every build; the
+      // desktop app opens them in the system's browser (src/lib/help.ts).
+      Help: helpLinks(isTauri()).map((h) =>
+        h === "-" ? h : { label: h.label, title: h.title, onSelect: () => openLink(h.url, (text) => setMessage({ text, error: true })) },
+      ),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
@@ -3308,7 +3302,3 @@ export function App() {
   );
 }
 
-/** Open a page of the site or GitHub in a new tab (browser demo only). */
-function openLink(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
-}

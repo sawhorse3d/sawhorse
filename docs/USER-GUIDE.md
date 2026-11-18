@@ -462,6 +462,12 @@ A push, or a Follow Me cut, that cuts a board in two leaves two solids. The piec
 
 **Edit > Settings…** holds one setting today: the **render service**. Renders (and the Credits chip and the Render pane) are not part of this alpha: they appear only when a render service address is saved here and that service answers when the app starts. Without one, the line under the field says "Renders are off" and nothing about credits is shown. Nothing else in Sawhorse needs a network or an account.
 
+## Help
+
+The **Help** menu leads to this guide, the changelog and the source. In the desktop app it holds **User Guide** (this page on sawhorse3d.com), **What's New** (the changelog) and **Source on GitHub**, and each opens in the system's browser; the Sawhorse window stays as it is. In the browser version it also holds **Download the Desktop App** (the installers on GitHub), and each page opens in a new tab.
+
+The menu bar shows only the menus that have something in them, in every version: File, Edit, View, Tools, Plugins and Help. There is no Draw or Window menu yet; the drawing tools are on the tool rail and their keys (see [Keys](#keys)).
+
 ## Known limits
 
 How large a model has been tried, which SketchUp files do not open, and the hard limits: [LIMITS](https://github.com/sawhorse3d/sawhorse/blob/main/docs/LIMITS.md).

@@ -3,7 +3,7 @@
 // The same front end is served three ways: the Tauri desktop app, `npm run dev` /
 // `npm run preview`, and the zero-install demo at https://sawhorse3d.com/app/ built by
 // .github/workflows/pages.yml with VITE_BASE=/app/ and VITE_WEB_DEMO=1. Only that last
-// build shows the demo banner and the Help menu's links back to the site.
+// build shows the demo banner. Every build has a Help menu since lane 67 (src/lib/help.ts).
 import { isTauri } from "../io/files";
 
 export const REPO_URL = "https://github.com/sawhorse3d/sawhorse";

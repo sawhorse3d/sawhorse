@@ -207,9 +207,23 @@ impl DeviceKey {
     }
 }
 
-/// URLs the desktop app may open in the system browser: Stripe Checkout, and the render
-/// service's own simulated checkout on a loopback address during development.
+/// The pages the Help menu opens (lane 67, #97): the user guide and the changelog on the
+/// public site, and the source on GitHub. Exactly these addresses, nothing below or beside
+/// them; the front end's list (src/lib/help.ts) is checked against this one by
+/// src/lib/help.test.ts.
+pub const HELP_URLS: [&str; 3] = [
+    "https://sawhorse3d.com/guide/",
+    "https://sawhorse3d.com/changelog/",
+    "https://github.com/sawhorse3d/sawhorse",
+];
+
+/// URLs the desktop app may open in the system browser: Stripe Checkout, the render
+/// service's own simulated checkout on a loopback address during development, and the
+/// Help menu's pages (`HELP_URLS`).
 pub fn external_url_allowed(url: &str) -> bool {
+    if HELP_URLS.contains(&url) {
+        return true;
+    }
     if let Some(rest) = url.strip_prefix("https://checkout.stripe.com/") {
         return !rest.contains(char::is_whitespace);
     }
@@ -346,6 +360,34 @@ mod tests {
             "file:///C:/Windows/System32/calc.exe"
         ));
         assert!(!external_url_allowed("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn only_the_help_pages_open_beside_checkout() {
+        for url in HELP_URLS {
+            assert!(external_url_allowed(url), "{url}");
+        }
+        for url in [
+            "https://sawhorse3d.com/",
+            "https://sawhorse3d.com/app/",
+            "https://sawhorse3d.com/guide",
+            "https://sawhorse3d.com/guide/x",
+            "https://sawhorse3d.com/guide/?q=1",
+            "https://sawhorse3d.com/guide/#keys",
+            "https://sawhorse3d.com/guide/ ",
+            "http://sawhorse3d.com/guide/",
+            "https://sawhorse3d.com.evil.example/guide/",
+            "https://evil.example/https://sawhorse3d.com/guide/",
+            "HTTPS://SAWHORSE3D.COM/GUIDE/",
+            "https://github.com/sawhorse3d/sawhorse/",
+            "https://github.com/sawhorse3d/sawhorse/releases/latest",
+            "https://github.com/sawhorse3d/sawhorse.evil",
+            "https://github.com/sawhorse3d",
+            "file:///C:/Windows/System32/calc.exe",
+            "",
+        ] {
+            assert!(!external_url_allowed(url), "{url}");
+        }
     }
 
     /// The real OS keychain. Run by hand: `cargo test -p sawhorse-device-key -- --ignored`.
