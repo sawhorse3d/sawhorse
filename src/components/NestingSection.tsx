@@ -77,6 +77,8 @@ function LengthField({
     if (typing.current && document.activeElement === input.current && text !== was) return;
     typing.current = false;
     setText(shown);
+    // The reading is replacing rejected text, so its error belongs to the old text.
+    setErr(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown]);
   // Lane 30 (from the #33 review): a commit reads the value and the settings as they are

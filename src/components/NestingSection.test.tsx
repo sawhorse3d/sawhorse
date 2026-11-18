@@ -279,6 +279,30 @@ describe("Nesting section", () => {
     }
   });
 
+  it("#101: a new reading clears a refused length's error, but unchanged text keeps it", () => {
+    const n = smallNesting();
+    n.settings = { ...n.settings, kerf: 0.00318 };
+    const p = props({ nesting: n, units: "mm", rounding: "half_mm" });
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+
+    fireEvent.change(kerf, { target: { value: "999" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(kerf.closest("label")!.getAttribute("title")).toContain("Kerf: 0 to");
+
+    // A rerender with the same reading does not replace the refused text, so the mark stays.
+    rerender(<NestingSection {...p} nesting={n} />);
+    expect(kerf.closest("label")!.getAttribute("title")).toContain("Kerf: 0 to");
+
+    // Leaving the field ends typing; a later Undo/Redo reading replaces the refused text.
+    fireEvent.blur(kerf);
+    const redone = smallNesting();
+    redone.settings = { ...redone.settings, kerf: 0.0031 };
+    rerender(<NestingSection {...p} nesting={redone} />);
+    expect(kerf.value).not.toBe("999");
+    expect(kerf.closest("label")!.getAttribute("title")).not.toContain("Kerf: 0 to");
+  });
+
   it("#93: a committed field that reads the same still gets its unit back", () => {
     // A typed value that rounds to the text already shown leaves the raw text in the box:
     // the `shown` string does not change, so the effect that resets it never runs. #93.
