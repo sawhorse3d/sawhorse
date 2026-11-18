@@ -246,6 +246,39 @@ describe("Nesting section", () => {
     expect(p.onSettings).not.toHaveBeenCalled();
   });
 
+  it("#92: Enter and blur keep the exact kerf when the decimal display rounds up", () => {
+    const nesting = smallNesting();
+    nesting.settings.kerf = (3 / 16) * IN;
+    const p = props({ nesting, units: "in", rounding: { r: "sixteenth", style: "decimal" } });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    expect(kerf.value).toBe("0.188 in");
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    fireEvent.blur(kerf);
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
+  it("#92: a kerf and joint loss reading 1/32 in or 0.188 in keep their exact length on Enter or leaving the field", () => {
+    for (const [units, rounding, length, shown] of [
+      ["frac-in", "sixteenth", (3 / 128) * IN, "1/32 in"],
+      ["in", { r: "sixteenth", style: "decimal" }, (3 / 16) * IN, "0.188 in"],
+    ] as const) {
+      const n = smallNesting();
+      n.settings = { ...n.settings, kerf: length, jointLoss: length };
+      const p = props({ nesting: n, units, rounding });
+      render(<NestingSection {...p} />);
+      for (const label of ["Kerf", "Joint loss"]) {
+        const f = screen.getByLabelText(label) as HTMLInputElement;
+        expect(f.value).toBe(shown);
+        fireEvent.keyDown(f, { key: "Enter" });
+        fireEvent.blur(f);
+      }
+      // Read back, 1/32 in is 1/128 in wider and 0.188 in 0.0005 in wider than what is held.
+      expect(p.onSettings).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];
