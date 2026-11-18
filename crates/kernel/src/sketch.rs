@@ -1680,22 +1680,35 @@ impl Sketch {
             new_edges.extend(next.add_segment_with(points[i], points[(i + 1) % n], look)?);
         }
         next.repair()?;
-        // The edges still there after the repair. For a long stroke (lane 53) one set of the
-        // sketch's edges instead of a scan of them for each new one (`edge_between` either way
-        // round is this pair); for a short one the scans, which cost less than the set.
-        if new_edges.len() > 64 {
-            let live: std::collections::HashSet<(SVertexId, SVertexId)> = next
-                .edges
-                .values()
-                .map(|&[a, b]| (a.min(b), a.max(b)))
-                .collect();
-            new_edges.retain(|&(a, b)| live.contains(&(a.min(b), a.max(b))));
-        } else {
-            new_edges.retain(|&(a, b)| next.edge_between(a, b).is_some());
-        }
+        next.retain_live(&mut new_edges);
         next.settle();
         next.debug_check("insert");
         Ok((next, new_edges))
+    }
+
+    /// Keep the edges of `made` still there after a repair. For many (lane 53) one set of
+    /// the sketch's edges instead of a scan of them for each (`edge_between` either way round
+    /// is this pair); for a few the scans, which cost less than the set. #11: a move or copy
+    /// of everything had the scans' square here too.
+    fn retain_live(&self, made: &mut Vec<(SVertexId, SVertexId)>) {
+        if made.len() > 64 {
+            let live: std::collections::HashSet<(SVertexId, SVertexId)> = self.edge_pairs();
+            made.retain(|&(a, b)| live.contains(&(a.min(b), a.max(b))));
+        } else {
+            made.retain(|&(a, b)| self.edge_between(a, b).is_some());
+        }
+    }
+
+    /// #11: a [`Lookup`] for drawing `segs` (two-point strokes) into `self`, as
+    /// [`Self::with_polyline_by`] chooses one for a stroke: `None` (the scans) under the work
+    /// a lookup pays for, or for the tests always (`Some(true)`) or never one.
+    fn lookup_for_segments(&self, segs: &[[DVec2; 2]], lookup: Option<bool>) -> Option<Lookup> {
+        let strokes = segs.iter().map(|s| (&s[..], false));
+        match lookup {
+            Some(false) => None,
+            Some(true) => Lookup::for_strokes(self, strokes, 0),
+            None => Lookup::for_strokes(self, strokes, LOOKUP_MIN_WORK),
+        }
     }
 
     fn debug_check(&self, what: &str) {
@@ -1840,19 +1853,10 @@ impl Sketch {
     }
 
     /// Insert one segment into the graph without re-detecting regions. Returns the edges it
-    /// created (pieces that already existed are not repeated).
-    fn add_segment(
-        &mut self,
-        a: DVec2,
-        b: DVec2,
-    ) -> Result<Vec<(SVertexId, SVertexId)>, SketchError> {
-        self.add_segment_with(a, b, &mut None)
-    }
-
-    /// [`Self::add_segment`], looking things up through `look` when there is one (lane 53,
-    /// #65: a long stroke's insertion scanned every vertex and edge for each segment, so it
-    /// grew with the square of the stroke). The same tests on every candidate that can pass
-    /// them, so the same sketch.
+    /// created (pieces that already existed are not repeated). Things are looked up through
+    /// `look` when there is one (lane 53, #65: a long stroke's insertion scanned every vertex
+    /// and edge for each segment, so it grew with the square of the stroke; `None`: the
+    /// scans). The same tests on every candidate that can pass them, so the same sketch.
     fn add_segment_with(
         &mut self,
         a: DVec2,
@@ -2088,6 +2092,22 @@ impl Sketch {
             .map(|(_, k)| k)
     }
 
+    /// #11: [`Self::vertex_at`] for many points, through one grid of the vertices (the
+    /// same vertex the scan finds, ties to the smaller id): a selection of every edge of 400
+    /// polylines found each of its points with a scan of every vertex.
+    pub(crate) fn vertex_finder(&self) -> impl Fn(DVec2) -> Option<SVertexId> + '_ {
+        let g = VertexGrid::new(self, SKETCH_MERGE);
+        move |p| g.near(self, p)
+    }
+
+    /// #11: every edge's vertex pair, smaller id first, for many [`Self::has_edge`] questions.
+    pub(crate) fn edge_pairs(&self) -> std::collections::HashSet<(SVertexId, SVertexId)> {
+        self.edges
+            .values()
+            .map(|&[a, b]| (a.min(b), a.max(b)))
+            .collect()
+    }
+
     /// Whether an edge joins `a` and `b`.
     pub fn has_edge(&self, a: SVertexId, b: SVertexId) -> bool {
         self.edge_between(a, b).is_some()
@@ -2124,6 +2144,22 @@ impl Sketch {
         anchor: &dyn Fn(DVec2) -> DVec2,
         round: &dyn Fn(&Round) -> Option<(DVec2, f64)>,
     ) -> Result<MovedSketch, SketchError> {
+        self.with_moved_vertices_by(to, anchor, round, None)
+    }
+
+    /// [`Self::with_moved_vertices`], drawing the taken edges again through a [`Lookup`]
+    /// when there are enough for one to pay (`None`; #11: with the scans of every vertex and
+    /// edge for each edge, a move of everything grew with the square of the sketch), or (for
+    /// the tests that hold the two ways to one result) always through one (`Some(true)`) or
+    /// always with the scans. The lookup is built after the vertices have moved, so it sees
+    /// what the scans see.
+    fn with_moved_vertices_by(
+        &self,
+        to: &BTreeMap<SVertexId, DVec2>,
+        anchor: &dyn Fn(DVec2) -> DVec2,
+        round: &dyn Fn(&Round) -> Option<(DVec2, f64)>,
+        lookup: Option<bool>,
+    ) -> Result<MovedSketch, SketchError> {
         for p in to.values() {
             if !(p.is_finite() && in_bounds(p.x) && in_bounds(p.y)) {
                 return Err(SketchError::OutOfBounds);
@@ -2156,13 +2192,17 @@ impl Sketch {
                 r.anchor = anchor(r.anchor);
             }
         }
+        let strokes: Vec<[DVec2; 2]> = taken
+            .iter()
+            .map(|(_, [a, b])| [next.vertices[*a], next.vertices[*b]])
+            .collect();
+        let mut look = next.lookup_for_segments(&strokes, lookup);
         let mut made = Vec::new();
-        for (_, [a, b]) in taken {
-            let (pa, pb) = (next.vertices[a], next.vertices[b]);
+        for [pa, pb] in strokes {
             if pa.distance(pb) <= SKETCH_MERGE {
                 continue; // shrunk to nothing: its ends merge in the repair
             }
-            match next.add_segment(pa, pb) {
+            match next.add_segment_with(pa, pb, &mut look) {
                 Ok(e) => made.extend(e),
                 // Both ends snapped onto one vertex: nothing left of it.
                 Err(SketchError::Degenerate) => {}
@@ -2171,7 +2211,7 @@ impl Sketch {
         }
         next.remove_isolated_vertices();
         next.repair()?;
-        made.retain(|&(a, b)| next.edge_between(a, b).is_some());
+        next.retain_live(&mut made);
         let split = next.settle_traced();
         next.debug_check("move");
         let touched = next.live_regions_touching(&made);
@@ -2187,7 +2227,19 @@ impl Sketch {
         &self,
         segs: &[(DVec2, DVec2)],
     ) -> Result<Option<(Sketch, Vec<RegionId>)>, SketchError> {
+        self.with_segments_by(segs, None)
+    }
+
+    /// [`Self::with_segments`] through a [`Lookup`] when one pays, or always or never one
+    /// (as [`Self::with_moved_vertices_by`]; #11: Copy and Array drew with the same scans).
+    fn with_segments_by(
+        &self,
+        segs: &[(DVec2, DVec2)],
+        lookup: Option<bool>,
+    ) -> Result<Option<(Sketch, Vec<RegionId>)>, SketchError> {
         let mut next = self.clone();
+        let strokes: Vec<[DVec2; 2]> = segs.iter().map(|&(a, b)| [a, b]).collect();
+        let mut look = next.lookup_for_segments(&strokes, lookup);
         let mut made = Vec::new();
         for &(a, b) in segs {
             if !(a.is_finite() && b.is_finite())
@@ -2198,7 +2250,7 @@ impl Sketch {
             if a.distance(b) <= SKETCH_MERGE {
                 continue;
             }
-            match next.add_segment(a, b) {
+            match next.add_segment_with(a, b, &mut look) {
                 Ok(e) => made.extend(e),
                 Err(SketchError::Degenerate) => {}
                 Err(e) => return Err(e),
@@ -2208,7 +2260,7 @@ impl Sketch {
             return Ok(None);
         }
         next.repair()?;
-        made.retain(|&(a, b)| next.edge_between(a, b).is_some());
+        next.retain_live(&mut made);
         next.settle();
         next.debug_check("copy");
         let touched = next.live_regions_touching(&made);
@@ -4213,6 +4265,7 @@ mod tests {
 mod lookup_tests {
     use super::*;
     use proptest::prelude::*;
+    use std::f64::consts::TAU;
 
     /// Everything a sketch holds, keys and bits included.
     fn fingerprint(s: &Sketch) -> String {
@@ -4375,6 +4428,182 @@ mod lookup_tests {
                 prop_assert_eq!(fingerprint(&a), fingerprint(&b));
             }
         }
+    }
+
+    /// #11: a sketch to move or copy from: [`case`]'s sketch and strokes drawn, and circles
+    /// of 6 to 48 segments as curves, some on the strokes and rectangles.
+    fn moving_case() -> impl Strategy<Value = (Sketch, u8, (f64, f64, f64, f64))> {
+        (
+            case(),
+            prop::collection::vec(
+                (-0.05f64..0.05, -0.05f64..0.05, 0.002f64..0.03, 6usize..49),
+                0..6,
+            ),
+            0u8..6,
+            prop_oneof![
+                // A shift anywhere near, or exactly the merge distance (or a hair past it),
+                // or a rectangle's width, so moved edges weld, split and merge.
+                (-0.06f64..0.06, -0.06f64..0.06, Just(0.0), Just(1.0)),
+                Just((1e-5, 0.0, 0.0, 1.0)),
+                Just((1.0e-5 + 2e-9, 0.0, 0.0, 1.0)),
+                (0.001f64..0.06).prop_map(|w| (w, 0.0, 0.0, 1.0)),
+                // A turn or a scale about the origin.
+                (-3.2f64..3.2).prop_map(|a| (0.0, 0.0, a, 1.0)),
+                (0.25f64..3.0).prop_map(|k| (0.0, 0.0, 0.0, k)),
+            ],
+        )
+            .prop_map(|((mut s, strokes, closed), circles, pick, map)| {
+                for (pts, c) in strokes.iter().zip(&closed) {
+                    let _ = s.insert_polyline(pts, *c);
+                }
+                let o = s.vertices.values().next().copied().unwrap_or(DVec2::ZERO);
+                for (x, y, r, n) in circles {
+                    let c = o + DVec2::new(x, y);
+                    let ring: Vec<DVec2> = (0..n)
+                        .map(|k| c + r * DVec2::from_angle(TAU * k as f64 / n as f64))
+                        .collect();
+                    if s.insert_polyline(&ring, true).is_ok() {
+                        s.add_curve(&ring, true, CurveKind::Circle, Some(c), n as u32);
+                    }
+                }
+                (s, pick, map)
+            })
+    }
+
+    /// The map `(dx, dy, turn, scale)` of [`moving_case`] about `o`.
+    fn mapped(p: DVec2, o: DVec2, (dx, dy, turn, k): (f64, f64, f64, f64)) -> DVec2 {
+        o + DVec2::from_angle(turn).rotate(p - o) * k + DVec2::new(dx, dy)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 100, ..ProptestConfig::default() })]
+        /// #11: a move's edges drawn again through a lookup leave exactly the sketch the
+        /// scans leave (keys and bits included), the same regions and the same curve pieces:
+        /// every vertex moved, or one in two to six of them (some edges then stretch between
+        /// a moved and a still end).
+        #[test]
+        fn a_move_through_the_lookup_is_the_move_scanned((s, pick, map) in moving_case()) {
+            let o = s.vertices.values().next().copied().unwrap_or(DVec2::ZERO);
+            let to: BTreeMap<SVertexId, DVec2> = s
+                .vertices
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| pick == 0 || i % (pick as usize + 1) == 0)
+                .map(|(_, (k, &p))| (k, mapped(p, o, map)))
+                .collect();
+            let anchor = |q: DVec2| mapped(q, o, map);
+            let round = |c: &Round| Some((mapped(c.centre, o, map), c.radius * map.3));
+            let fast = s.with_moved_vertices_by(&to, &anchor, &round, Some(true));
+            let slow = s.with_moved_vertices_by(&to, &anchor, &round, Some(false));
+            match (fast, slow) {
+                (Ok((a, ta, sa)), Ok((b, tb, sb))) => {
+                    prop_assert_eq!(fingerprint(&a), fingerprint(&b));
+                    prop_assert_eq!(ta, tb);
+                    prop_assert_eq!(sa, sb);
+                }
+                (a, b) => prop_assert_eq!(a.err(), b.err()),
+            }
+        }
+
+        /// #11: a copy's segments (the sketch's edges mapped, as Copy and Array draw them)
+        /// drawn through a lookup leave exactly the sketch the scans leave.
+        #[test]
+        fn a_copy_through_the_lookup_is_the_copy_scanned((s, pick, map) in moving_case()) {
+            let o = s.vertices.values().next().copied().unwrap_or(DVec2::ZERO);
+            let segs: Vec<(DVec2, DVec2)> = s
+                .edges
+                .values()
+                .enumerate()
+                .filter(|(i, _)| pick == 0 || i % (pick as usize + 1) == 0)
+                .map(|(_, &[a, b])| {
+                    (mapped(s.vertices[a], o, map), mapped(s.vertices[b], o, map))
+                })
+                .collect();
+            let fast = s.with_segments_by(&segs, Some(true));
+            let slow = s.with_segments_by(&segs, Some(false));
+            match (fast, slow) {
+                (Ok(Some((a, ta))), Ok(Some((b, tb)))) => {
+                    prop_assert_eq!(fingerprint(&a), fingerprint(&b));
+                    prop_assert_eq!(ta, tb);
+                }
+                (a, b) => prop_assert_eq!(
+                    a.map(|r| r.map(|(_, t)| t)),
+                    b.map(|r| r.map(|(_, t)| t))
+                ),
+            }
+        }
+    }
+
+    /// #11: the selection's points found through one grid are the points [`Sketch::vertex_at`]
+    /// finds, at the merge distance and either side of it, and on a tie between two vertices.
+    #[test]
+    fn the_vertex_finder_finds_what_vertex_at_finds() {
+        let mut s = Sketch::new(Plane::GROUND);
+        let _ = s.add_rectangle(DVec2::new(0.0, 0.0), DVec2::new(0.01, 0.02));
+        let _ = s.insert_polyline(&[DVec2::new(-0.3, 0.1), DVec2::new(0.4, -0.2)], false);
+        let find = s.vertex_finder();
+        let near: Vec<DVec2> = s.vertices.values().copied().collect();
+        for p in near {
+            for d in [0.0, 0.5e-5, 1e-5, 1.0e-5 + 1e-12, 2e-5] {
+                for a in [0.0, 0.7, 1.9, 3.1, 4.4] {
+                    let q = p + d * DVec2::from_angle(a);
+                    assert_eq!(find(q), s.vertex_at(q), "{q:?}");
+                }
+            }
+        }
+        // Exactly between two vertices 1.5e-5 apart: a tie, to the smaller id.
+        let mut t = Sketch::new(Plane::GROUND);
+        let _ = t.insert_polyline(&[DVec2::new(0.0, 0.0), DVec2::new(1.5e-5, 0.0)], false);
+        let mid = DVec2::new(0.75e-5, 0.0);
+        assert!(t.vertex_at(mid).is_some());
+        assert_eq!(t.vertex_finder()(mid), t.vertex_at(mid));
+    }
+
+    /// #11: [`Sketch::retain_live`] keeps what [`Sketch::edge_between`] finds, in order,
+    /// through the set (over 64 pairs) as through the scans: every edge given either way
+    /// round, beside pairs of vertices with no edge between them.
+    #[test]
+    fn retain_live_keeps_the_edges_either_way_round() {
+        let mut s = Sketch::new(Plane::GROUND);
+        for i in 0..12 {
+            let c = DVec2::new(0.1 * i as f64, 0.0);
+            let ring: Vec<DVec2> = (0..8)
+                .map(|k| c + 0.03 * DVec2::from_angle(TAU * k as f64 / 8.0))
+                .collect();
+            let _ = s.insert_polyline(&ring, true);
+        }
+        let ids: Vec<SVertexId> = s.vertices.keys().collect();
+        let mut pairs: Vec<(SVertexId, SVertexId)> = Vec::new();
+        for (k, e) in s.edges.values().enumerate() {
+            // Both ways round, and a pair with no edge (a vertex and one far along the list).
+            pairs.push(if k % 2 == 0 {
+                (e[0], e[1])
+            } else {
+                (e[1], e[0])
+            });
+            pairs.push((e[1], ids[(k * 7 + 3) % ids.len()]));
+        }
+        assert!(pairs.len() > 64);
+        let scanned = |list: &[(SVertexId, SVertexId)]| -> Vec<(SVertexId, SVertexId)> {
+            list.iter()
+                .copied()
+                .filter(|&(a, b)| s.edge_between(a, b).is_some())
+                .collect()
+        };
+        let want = scanned(&pairs);
+        assert!(
+            want.len() >= s.edges.len(),
+            "{} {}",
+            want.len(),
+            s.edges.len()
+        );
+        assert!(want.iter().any(|&(a, b)| a > b) && want.iter().any(|&(a, b)| a < b));
+        let mut many = pairs.clone();
+        s.retain_live(&mut many);
+        assert_eq!(many, want, "over 64 pairs");
+        let mut few = pairs[..64].to_vec();
+        s.retain_live(&mut few);
+        assert_eq!(few, scanned(&pairs[..64]), "64 pairs");
     }
 }
 

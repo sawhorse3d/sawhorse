@@ -932,3 +932,34 @@ fn an_edge_a_rounding_error_over_the_merge_distance_is_too_short() {
     })
     .unwrap();
 }
+
+/// Lane 60 (#11, from #87): a Move draws its taken edges again in the sketch's edge order,
+/// and that order decides which edge takes which freed slot, so which id each edge has
+/// after it. A rectangle beside another, moved half its width: the edges in id order end
+/// where drawing them in the sketch's order leaves them. Fails with the taken edges drawn
+/// in another order (main leaves the same).
+#[test]
+fn a_move_redraws_its_edges_in_the_sketch_s_order() {
+    let mut d = doc(&[rect(0.0, 0.0, 1.0, 1.0), rect(2.0, 0.0, 1.0, 1.0)]);
+    let r = region_ids(d.model(), 1)[0];
+    one_step(&mut d, &op(1, &[], &[], &[r], shift(0.5, 0.0, 0.0)));
+    let s = d.model().sketch(1).unwrap();
+    let at = |v: sawhorse_kernel::ids::SVertexId| {
+        let p = s.vertex(v).unwrap();
+        q(p.x, p.y)
+    };
+    let edges: Vec<[(i64, i64); 2]> = s.edges().map(|(_, [a, b])| [at(a), at(b)]).collect();
+    // The moved rectangle's four edges first, in the slots its old edges freed, then the
+    // other rectangle's, as they were.
+    let want = vec![
+        [q(0.5, 1.0), q(0.5, 0.0)],
+        [q(1.5, 1.0), q(0.5, 1.0)],
+        [q(1.5, 0.0), q(1.5, 1.0)],
+        [q(0.5, 0.0), q(1.5, 0.0)],
+        [q(2.0, 0.0), q(3.0, 0.0)],
+        [q(3.0, 0.0), q(3.0, 1.0)],
+        [q(3.0, 1.0), q(2.0, 1.0)],
+        [q(2.0, 1.0), q(2.0, 0.0)],
+    ];
+    assert_eq!(edges, want);
+}

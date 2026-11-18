@@ -452,6 +452,57 @@ fn a_copy_is_a_new_curve_and_a_lone_point_is_refused() {
     assert_eq!(d.hash(), h);
 }
 
+/// Lane 60 (#11, from #87): a copy's curves are made together, numbered as one at a time
+/// numbered them: an array of two of a circle, an arc and a polygon gives six new ids in a
+/// row, copy by copy and in the selection's order, each on the copy of its own curve where
+/// it landed. Fails with each copy's curves handed over in another order.
+#[test]
+fn an_array_s_curves_are_numbered_copy_by_copy() {
+    let mut d = Document::with_ground_sketch();
+    let c = drawn_curve(&ok(&mut d, circle([0.0, 0.0], 0.1, 24)));
+    let a = drawn_curve(&ok(&mut d, arc([0.4, 0.0], 0.1, 8, 0.0, PI)));
+    let p = drawn_curve(&ok(&mut d, polygon([0.8, 0.0], 0.1, 6)));
+    let out = ok(
+        &mut d,
+        Op::TransformSketch {
+            sketch: 1,
+            points: vec![],
+            edges: vec![],
+            regions: vec![],
+            curves: vec![c, a, p],
+            xform: Xform::translation(DVec3::new(0.0, 0.5, 0.0)),
+            copy: true,
+            count: 2,
+        },
+    );
+    let OpOutcome::SketchCopied { curves: made, .. } = out else {
+        panic!("{out:?}")
+    };
+    let ids: Vec<u64> = made.iter().map(|m| m[1]).collect();
+    assert_eq!(ids.len(), 6, "{made:?}");
+    assert!(
+        ids[0] > p && ids.windows(2).all(|w| w[1] == w[0] + 1),
+        "{ids:?}"
+    );
+    let s = d.model().sketch(1).unwrap();
+    let want = [
+        (CurveKind::Circle, 0.0),
+        (CurveKind::Arc, 0.4),
+        (CurveKind::Polygon, 0.8),
+    ];
+    for (k, id) in ids.iter().enumerate() {
+        let curve = s.curve(*id).unwrap();
+        let (kind, x) = want[k % 3];
+        let y = 0.5 * (k / 3 + 1) as f64;
+        let centre = curve.round.unwrap().centre;
+        assert_eq!(curve.kind, kind, "curve {id}");
+        assert!(
+            centre.distance(DVec2::new(x, y)) < 1e-9,
+            "curve {id}: {centre:?}, not ({x}, {y})"
+        );
+    }
+}
+
 #[test]
 fn a_circle_lifted_off_its_plane_is_a_circle_there() {
     let mut d = Document::with_ground_sketch();
