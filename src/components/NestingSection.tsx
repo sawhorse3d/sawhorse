@@ -74,7 +74,7 @@ function LengthField({
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
   };
-  const commit = (t: string) => {
+  const commit = (t: string, paused = false) => {
     // Enter or leaving the field commits now; the pause has nothing left to do.
     stopTimer();
     const c = now.current;
@@ -89,6 +89,13 @@ function LengthField({
     if (r.metres < 0 || r.metres > c.max) return setErr(`${c.label}: 0 to ${fineU(c.max, c.rounding)}.`);
     setErr(null);
     if (c.value === null || Math.abs(r.metres - c.value) > 1e-9) c.onCommit(r.metres);
+    // #93: a commit reads the same when a typed length rounds to the text already shown.
+    // `shown` does not change, so the effect below does not reset the field; do it here so
+    // the unit the value is displayed with comes back after Enter or leaving the field.
+    // Only then: a length that reads differently keeps the typed text until the new value
+    // arrives (the effect shows it), instead of the old reading in between. And not on the
+    // pause, which would swap the text under the caret while nothing visible has changed.
+    if (!paused && fineU(r.metres, c.rounding) === c.shown) setText(c.shown);
   };
   // A short pause after typing re-nests too. #57: not an emptied optional field, which is
   // more often on its way to another length than cleared; Enter or leaving it clears it.
@@ -96,7 +103,7 @@ function LengthField({
     if (text === shown || (onClear && text.trim() === "")) return;
     timer.current = window.setTimeout(() => {
       timer.current = null;
-      commit(text);
+      commit(text, true);
     }, 700);
     return stopTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps

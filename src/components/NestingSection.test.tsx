@@ -279,6 +279,172 @@ describe("Nesting section", () => {
     }
   });
 
+  it("#93: a committed field that reads the same still gets its unit back", () => {
+    // A typed value that rounds to the text already shown leaves the raw text in the box:
+    // the `shown` string does not change, so the effect that resets it never runs. #93.
+    // Millimetres: the built-in 1/8 in (3.175 mm) reads "3.18 mm"; typing 3.18 reads the
+    // same, so the committed value must still be shown with its unit.
+    {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      expect(kerf.value).toBe("3.18 mm");
+      fireEvent.change(kerf, { target: { value: "3.18" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.00318, trim: 0, algorithm: "guillotine" });
+      expect(kerf.value).toBe("3.18 mm");
+      cleanup();
+    }
+    // Fractional inches: typing 0.13 in rounds to 1/8 in, the text already shown.
+    {
+      const p = props();
+      render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      expect(kerf.value).toBe("1/8 in");
+      fireEvent.change(kerf, { target: { value: "0.13" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(kerf.value).toBe("1/8 in");
+      cleanup();
+    }
+  });
+
+  // #93, more cases: the settings as the app holds them after a commit, Undo or Redo.
+  const at93 = (s: Partial<ReturnType<typeof smallNesting>["settings"]>) => {
+    const n = smallNesting();
+    return { ...n, settings: { ...n.settings, ...s } };
+  };
+
+  it("#93: leaving the field commits a length that reads the same, and Undo and Redo keep the unit", () => {
+    const p = props({ units: "mm", rounding: "half_mm" });
+    const { rerender } = render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    fireEvent.change(kerf, { target: { value: "3.18" } });
+    fireEvent.blur(kerf);
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.00318, trim: 0, algorithm: "guillotine" });
+    expect(kerf.value).toBe("3.18 mm");
+    // The app applies it; then Undo (back to 1/8 in) and Redo: the reading never changes.
+    rerender(<NestingSection {...p} nesting={at93({ kerf: 0.00318 })} />);
+    expect(kerf.value).toBe("3.18 mm");
+    rerender(<NestingSection {...p} nesting={at93({})} />);
+    expect(kerf.value).toBe("3.18 mm");
+    rerender(<NestingSection {...p} nesting={at93({ kerf: 0.00318 })} />);
+    expect(kerf.value).toBe("3.18 mm");
+    // Enter and leaving the field again commit nothing more.
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    fireEvent.blur(kerf);
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("#93: Trim, Joint loss and Minimum strip get their unit back too, and so do decimal inches", () => {
+    {
+      const p = props({ units: "mm", rounding: "half_mm", nesting: at93({ minStrip: 0.0381 }) });
+      render(<NestingSection {...p} />);
+      const trim = screen.getByLabelText("Trim") as HTMLInputElement;
+      expect(trim.value).toBe("0 mm");
+      fireEvent.change(trim, { target: { value: "0" } });
+      fireEvent.keyDown(trim, { key: "Enter" });
+      expect(trim.value).toBe("0 mm");
+      expect(p.onSettings).not.toHaveBeenCalled();
+      const loss = screen.getByLabelText("Joint loss") as HTMLInputElement;
+      fireEvent.change(loss, { target: { value: "3.18" } });
+      fireEvent.keyDown(loss, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, jointLoss: 0.00318, minStrip: 0.0381, algorithm: "guillotine" });
+      expect(loss.value).toBe("3.18 mm");
+      const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+      expect(min.value).toBe("38.1 mm");
+      fireEvent.change(min, { target: { value: "38.1" } });
+      fireEvent.keyDown(min, { key: "Enter" });
+      expect(min.value).toBe("38.1 mm");
+      cleanup();
+    }
+    {
+      const p = props({ units: "in", rounding: { r: "sixteenth", style: "decimal" } });
+      render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      expect(kerf.value).toBe("0.125 in");
+      fireEvent.change(kerf, { target: { value: "0.1251" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenCalledTimes(1);
+      expect(kerf.value).toBe("0.125 in");
+      cleanup();
+    }
+  });
+
+  it("#93: the pause commits a length that reads the same but leaves the typed text until Enter or leaving the field", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      const { rerender } = render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      fireEvent.change(kerf, { target: { value: "3.18" } });
+      vi.advanceTimersByTime(800);
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.00318, trim: 0, algorithm: "guillotine" });
+      rerender(<NestingSection {...p} nesting={at93({ kerf: 0.00318 })} />);
+      // Still what was typed: the person may be going on to type 3.185.
+      expect(kerf.value).toBe("3.18");
+      fireEvent.blur(kerf);
+      expect(kerf.value).toBe("3.18 mm");
+      expect(p.onSettings).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#93: a length that reads differently keeps the typed text until the new value arrives, then reads it", () => {
+    vi.useFakeTimers();
+    try {
+      const p = props({ units: "mm", rounding: "half_mm" });
+      const { rerender } = render(<NestingSection {...p} />);
+      const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+      fireEvent.change(kerf, { target: { value: "5" } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.005, trim: 0, algorithm: "guillotine" });
+      // Not the old 3.18 mm while the app works it out.
+      expect(kerf.value).toBe("5");
+      rerender(<NestingSection {...p} nesting={at93({ kerf: 0.005 })} />);
+      expect(kerf.value).toBe("5 mm");
+      // The same by the pause.
+      fireEvent.change(kerf, { target: { value: "4" } });
+      vi.advanceTimersByTime(800);
+      expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: 0.004, trim: 0, algorithm: "guillotine" });
+      expect(kerf.value).toBe("4");
+      rerender(<NestingSection {...p} nesting={at93({ kerf: 0.004 })} />);
+      expect(kerf.value).toBe("4 mm");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#93: a length that is refused stays as typed, with the reason", () => {
+    const p = props({ units: "mm", rounding: "half_mm" });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    for (const typed of ["abc", "2 in"]) {
+      fireEvent.change(kerf, { target: { value: typed } });
+      fireEvent.keyDown(kerf, { key: "Enter" });
+      expect(kerf.value).toBe(typed);
+      expect(kerf.closest("label")!.className).toBe("err");
+      fireEvent.blur(kerf);
+      expect(kerf.value).toBe(typed);
+    }
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
+  it("#93: a stored kerf over the field's top, typed as it reads, is refused and stays as typed", () => {
+    // A file can hold a kerf the field would refuse: 0.6 in, over the 1/2 in top.
+    const p = props({ units: "mm", rounding: "half_mm", nesting: at93({ kerf: 0.6 * IN }) });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    expect(kerf.value).toBe("15.24 mm");
+    fireEvent.change(kerf, { target: { value: "15.24" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(kerf.value).toBe("15.24");
+    expect(kerf.closest("label")!.className).toBe("err");
+    expect(kerf.closest("label")!.title).toBe("Kerf: 0 to 12.7 mm.");
+    expect(p.onSettings).not.toHaveBeenCalled();
+  });
+
   it("#49: a glued part lists its glue-up, each strip at its own width, and the model lights every strip", () => {
     const n = smallNesting();
     const piece = n.pieces[0];
