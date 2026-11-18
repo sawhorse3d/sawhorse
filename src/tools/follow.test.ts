@@ -49,6 +49,25 @@ describe("Follow Me", () => {
     expect(t.view().overlay).toEqual([]);
   });
 
+  it("#86: drops a path the model no longer has", async () => {
+    const h = fakeHost();
+    h.sel = [{ kind: "face", object: 1, face: 2 }];
+    h.outline = async () => [topRing];
+    const t = new FollowTool(h);
+    t.activate();
+    await tick();
+    expect(t.view().overlay).toHaveLength(1);
+
+    t.reset();
+    t.modelChanged();
+    expect(t.view().overlay).toEqual([]);
+
+    t.onEvent(ev("click", [0, 0.02, 0.29], { picked: onEnd }));
+    await tick();
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Select the path first") });
+    expect(h.ops.filter((o: KernelOp) => o.op === "follow_me")).toHaveLength(0);
+  });
+
   it("refuses a click with no path, or on nothing, typed", async () => {
     const h = fakeHost();
     const t = new FollowTool(h);

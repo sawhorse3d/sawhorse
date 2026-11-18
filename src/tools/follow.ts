@@ -71,6 +71,14 @@ export class FollowTool extends Tool {
     void this.loadPath();
   }
 
+  /** #86: Undo or Redo may have removed the path this tool loaded. Drop it quietly: the
+   * history's own status stays, and the next click asks for a path instead of sweeping a
+   * stale one. */
+  modelChanged(): void {
+    this.path = null;
+    this.pathError = "Select the path first, then click the profile.";
+  }
+
   private async loadPath(): Promise<void> {
     const h = this.host;
     const p = await pathOf(h.selection(), async (e) => (e.kind === "face" ? h.outline({ kind: "face", object: e.object, face: e.face }) : e.kind === "region" ? h.outline({ kind: "region", sketch: e.sketch, region: e.region }) : []));
