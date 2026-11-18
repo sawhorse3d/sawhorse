@@ -195,6 +195,29 @@ pub(crate) struct Lookup {
     poor: std::cell::Cell<u32>,
 }
 
+thread_local! {
+    /// Lane 70: a test-only measure, not a feature (nothing in the kernel reads it). Every
+    /// vertex, edge and curve point the sketch's searches look at on this thread, counted
+    /// once per search: a scan counts the whole sketch, a [`Lookup`] the entries it enters
+    /// and those in the cells a query reads, the grid of the vertices the same, and each
+    /// curve settled its points. The same number on every run and machine for the same ops,
+    /// so `tests/move_redraw.rs` holds how a Move's work grows without a clock
+    /// ([`crate::testing::sketch_visits`]). Per thread, so tests on other threads never add
+    /// to it; one add per search, never per item, so it costs nothing that can be measured.
+    static VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Lane 70: count `n` visits ([`VISITS`]).
+#[inline]
+fn visit(n: usize) {
+    VISITS.with(|c| c.set(c.get().wrapping_add(n as u64)));
+}
+
+/// Lane 70: the visits counted on this thread so far ([`VISITS`]).
+pub(crate) fn visits() -> u64 {
+    VISITS.with(std::cell::Cell::get)
+}
+
 /// Lane 53 (#65): a [`Lookup`] whose queries come back with more than a quarter of the
 /// sketch this many times, once the sketch holds 4,096 vertices and edges (under that the
 /// scans cost little either way), is dropped and the scans take over: its cells are too big
@@ -434,6 +457,7 @@ impl Lookup {
         list.push(v);
         let len = list.len();
         self.entries += 1;
+        visit(1);
         self.entries <= self.ceiling && !self.crowded(len)
     }
 
@@ -445,6 +469,7 @@ impl Lookup {
             return false;
         };
         self.entries += keys.len();
+        visit(keys.len());
         for k in keys {
             let list = self.edges.entry(k).or_default();
             list.push(e);
@@ -491,13 +516,16 @@ impl Lookup {
         size: usize,
     ) -> Option<Vec<SVertexId>> {
         let cells = self.query_cells(a, b, Self::query_most(size))?;
+        let mut read = 0;
         let out: Vec<SVertexId> = cells
             .iter()
             .filter_map(|c| self.verts.get(c))
+            .inspect(|l| read += l.len())
             .flatten()
             .copied()
             .filter(|v| live.contains_key(*v))
             .collect();
+        visit(read);
         self.found(out.len(), size);
         Some(out)
     }
@@ -512,13 +540,16 @@ impl Lookup {
         size: usize,
     ) -> Option<Vec<SEdgeId>> {
         let cells = self.query_cells(a, b, Self::query_most(size))?;
+        let mut read = 0;
         let mut out: Vec<SEdgeId> = cells
             .iter()
             .filter_map(|c| self.edges.get(c))
+            .inspect(|l| read += l.len())
             .flatten()
             .copied()
             .filter(|e| live.contains_key(*e))
             .collect();
+        visit(read);
         out.sort_unstable();
         out.dedup();
         self.found(out.len(), size);
@@ -532,6 +563,7 @@ impl Lookup {
         b: SVertexId,
         live: &SlotMap<SEdgeId, [SVertexId; 2]>,
     ) -> Option<SEdgeId> {
+        visit(1);
         let e = *self.pairs.get(&(a.min(b), a.max(b)))?;
         let [c, d] = *live.get(e)?;
         ((c == a && d == b) || (c == b && d == a)).then_some(e)
@@ -1004,6 +1036,7 @@ impl VertexGrid {
                 g.bins.entry(c).or_default().push(k);
             }
         }
+        visit(s.vertices.len());
         g
     }
 
@@ -1020,9 +1053,11 @@ impl VertexGrid {
             return s.vertex_near(p, self.reach);
         };
         let mut best: Option<(f64, SVertexId)> = None;
+        let mut read = 0;
         for cx in x - 1..=x + 1 {
             for cy in y - 1..=y + 1 {
                 for &k in self.bins.get(&(cx, cy)).into_iter().flatten() {
+                    read += 1;
                     let d = s.vertices[k].distance(p);
                     let better = best.is_none_or(|(bd, bk)| {
                         d.total_cmp(&bd).then(k.cmp(&bk)) == std::cmp::Ordering::Less
@@ -1033,6 +1068,7 @@ impl VertexGrid {
                 }
             }
         }
+        visit(read);
         best.map(|(_, k)| k)
     }
 }
@@ -1740,10 +1776,15 @@ impl Sketch {
     }
 
     fn edge_between(&self, a: SVertexId, b: SVertexId) -> Option<SEdgeId> {
-        self.edges
+        let mut read = 0;
+        let found = self
+            .edges
             .iter()
+            .inspect(|_| read += 1)
             .find(|(_, e)| (e[0] == a && e[1] == b) || (e[0] == b && e[1] == a))
-            .map(|(k, _)| k)
+            .map(|(k, _)| k);
+        visit(read);
+        found
     }
 
     /// Split edge `e` at `pos` (which lies on it); returns the new vertex.
@@ -1794,16 +1835,26 @@ impl Sketch {
         look: &Option<Lookup>,
     ) -> Option<Vec<SVertexId>> {
         let size = self.vertices.len() + self.edges.len();
-        look.as_ref()
-            .and_then(|l| l.vertices_near(a, b, &self.vertices, size))
+        let near = look
+            .as_ref()
+            .and_then(|l| l.vertices_near(a, b, &self.vertices, size));
+        if near.is_none() {
+            visit(self.vertices.len()); // the caller scans every vertex
+        }
+        near
     }
 
     /// [`Self::vertex_candidates`] for edges: those near the point or segment, which hold
     /// every edge within the merge distance of it or crossing it.
     fn edge_candidates(&self, a: DVec2, b: DVec2, look: &Option<Lookup>) -> Option<Vec<SEdgeId>> {
         let size = self.vertices.len() + self.edges.len();
-        look.as_ref()
-            .and_then(|l| l.edges_near(a, b, &self.edges, size))
+        let near = look
+            .as_ref()
+            .and_then(|l| l.edges_near(a, b, &self.edges, size));
+        if near.is_none() {
+            visit(self.edges.len()); // the caller scans every edge
+        }
+        near
     }
 
     /// [`Self::edge_between`], through `look`'s table of vertex pairs when there is one.
@@ -2084,6 +2135,7 @@ impl Sketch {
     /// The vertex at `p` (sketch frame): the nearest one within `SKETCH_MERGE`, ties to the
     /// smaller id.
     pub fn vertex_at(&self, p: DVec2) -> Option<SVertexId> {
+        visit(self.vertices.len());
         self.vertices
             .iter()
             .map(|(k, q)| (q.distance(p), k))
@@ -2389,6 +2441,7 @@ impl Sketch {
 
     /// The vertex nearest `p` within `reach`, ties to the smaller id.
     fn vertex_near(&self, p: DVec2, reach: f64) -> Option<SVertexId> {
+        visit(self.vertices.len());
         self.vertices
             .iter()
             .map(|(k, q)| (q.distance(p), k))
@@ -2492,6 +2545,7 @@ impl Sketch {
         claimed: &mut BTreeSet<(SVertexId, SVertexId)>,
         next: &mut u64,
     ) -> Vec<(u64, Curve)> {
+        visit(c.chain.len());
         let mut out = Vec::new();
         let (pieces, lost) = self.curve_pieces(c, adj, held, claimed);
         let split = !(pieces.len() == 1 && pieces[0].1 == c.closed);

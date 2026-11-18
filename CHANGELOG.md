@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed (lane 70, tests only, 2026-11-18)
+
+- **The test that a big sketch Move grows with the selection counts work instead of timing it** ([#11](https://github.com/sawhorse3d/sawhorse/issues/11)). No change to what the kernel does: the same models, hashes and file format. Since lane 60 `crates/kernel/tests/move_redraw.rs` timed a Move and a Copy of everything at two sizes and failed when four times the rings took more than twelve times as long. That is a wall-clock comparison, and on a loaded machine it failed now and then for reasons that had nothing to do with the code. Now the default run counts the vertices, edges and curve points the sketch's searches look at during each op, a number that is the same on every run and machine, and fails when four times the rings cost more than six times the work. It covers a Move, a Copy and an Array of 3, of circles and of polylines, drawn one ring at a time and imported. The counts grow about 4.1 times; with the kernel before lane 60 they grow about 16 times and every case fails. The count is kept per thread in the kernel and read through `testing::sketch_visits`, a hidden test hook. The wall-clock test is ignored now, beside the timing table, and still runs by hand in a release build.
+- Tests: `crates/kernel/tests/move_redraw.rs`.
+
 ### Fixed (lane 69, 2026-11-18)
 
 - **A refused Nesting length loses its error mark when a new reading replaces it** ([#102](https://github.com/sawhorse3d/sawhorse/pull/102), from @socrabs151; [#101](https://github.com/sawhorse3d/sawhorse/issues/101)). In the Kerf, Trim, Joint loss and Minimum strip fields, a refused length stays as typed, marked in red with its reason in the tooltip. When the field had been left and a new reading of the stored length then replaced the text (Redo, or a change of units), the red mark and the reason stayed beside a length that is fine, until a length was next committed in that field. Now the mark and the reason go with the text they belong to. As before, a refused length keeps both while it is still in the focused field, through a new reading too, and while the stored length reads the same. Front end only: no kernel, model hash, golden or file format change.

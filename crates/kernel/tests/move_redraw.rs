@@ -1,7 +1,9 @@
 //! #11, the Move after Enter: a Move, Copy or Array of a whole sketch selection draws every
 //! carried edge again with the insertion rules. Drawn with a scan of every vertex and edge
 //! for each edge, it grew with the square of the selection (400 circles of 48 segments took
-//! about 3.4 s natively). The timings here are of the kernel's op alone.
+//! about 3.4 s natively). Lane 70: the default run counts the op's work instead of timing
+//! it (`testing::sketch_visits`, the same number on every run and machine); the timings,
+//! of the kernel's op alone, are ignored tests.
 
 use std::f64::consts::TAU;
 
@@ -109,15 +111,64 @@ fn imported(rings: usize, n: usize, circles: bool) -> Document {
     d
 }
 
+/// Lane 70: a Move, Copy and Array of 3 of everything, circles (by curve id) and polylines
+/// (edge by edge), drawn one ring at a time and imported, four times as many rings costing at
+/// most six times the work: the vertices, edges and curve points the sketch's searches look
+/// at during the op ([`sawhorse_kernel::testing::sketch_visits`]). A count, not a clock, so
+/// it is the same on every run and machine and a loaded one cannot fail it. With every edge
+/// drawn again through a scan of the sketch, as before #87, the work grows with the square
+/// of the selection, sixteen times for four times the rings, and this fails for every case.
+#[test]
+fn a_move_copy_or_array_of_everything_counts_work_in_step_with_the_selection() {
+    use sawhorse_kernel::testing::sketch_visits;
+    let mut table = Vec::new();
+    for (what, copy, count, small, big) in [
+        ("move", false, 1, 50, 200),
+        ("copy", true, 1, 50, 200),
+        ("array 3", true, 3, 25, 100),
+    ] {
+        for circles in [true, false] {
+            for drawn in [false, true] {
+                let work = [small, big].map(|k| {
+                    let mut d = if drawn {
+                        rings(k, 24, circles)
+                    } else {
+                        imported(k, 24, circles)
+                    };
+                    let op = move_all(&d, circles, copy, count);
+                    sketch_visits(|| ok(&mut d, op)).1
+                });
+                let line = format!(
+                    "{what:8} {:9} {:8} {small:3} rings {:9}, {big:3} rings {:9} ({:.2} times)",
+                    if circles { "circles" } else { "polylines" },
+                    if drawn { "drawn" } else { "imported" },
+                    work[0],
+                    work[1],
+                    work[1] as f64 / work[0] as f64
+                );
+                eprintln!("{line}");
+                table.push((line, work));
+            }
+        }
+    }
+    for (line, [a, b]) in &table {
+        assert!(*a > 0 && *b <= 6 * *a, "{line}");
+    }
+}
+
 /// #11: a Move of everything, of circles and of polylines selected edge by edge, and a Copy
 /// of circles, four times as many rings costing at most twelve times as long (the fastest of
 /// three runs each, and of up to nine while they are not within the bound). With every edge
 /// drawn again through scans of the sketch it cost about fifteen to sixteen times. Measured:
 /// the code before #87 gives 15.3 to 16.6 times and fails every time; now about 6 to 7.5
 /// times on an idle machine, and 10 to 13 times has been seen beside other work. It is a
-/// wall-clock comparison: on a heavily loaded machine it can fail, and the answer is a rerun
-/// on a quiet one. The seconds are in `the_move_copy_and_array_timings`.
+/// wall-clock comparison: on a heavily loaded machine it can fail, so since lane 70 it is
+/// ignored and the count above holds the same growth in the default run (what the count
+/// leaves out, the time of the op's other steps, this still times). Release only: `cargo
+/// test --release -p sawhorse-kernel --test move_redraw -- --ignored --nocapture`; the
+/// seconds are in `the_move_copy_and_array_timings`.
 #[test]
+#[ignore]
 fn a_move_or_copy_of_everything_grows_with_the_selection_not_its_square() {
     for (what, circles, copy, small, big) in [
         ("move, circles", true, false, 200, 800),

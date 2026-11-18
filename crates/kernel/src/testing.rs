@@ -1821,3 +1821,15 @@ pub fn png_from_raw(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
     chunk(&mut out, b"IEND", &[]);
     out
 }
+
+/// Lane 70: what `f` returns, and how much the sketch's searches looked at on this thread
+/// while it ran: every vertex, edge and curve point, a scan counting the whole sketch and a
+/// lookup or a grid what it entered and read (the count in `sketch.rs`). A measure for tests
+/// of how an op's work grows, the same on every run and machine for the same ops, so it
+/// needs no clock; not a feature, and nothing in the kernel reads it. Counted per thread,
+/// so tests running beside each other on other threads never add to it.
+pub fn sketch_visits<R>(f: impl FnOnce() -> R) -> (R, u64) {
+    let before = crate::sketch::visits();
+    let out = f();
+    (out, crate::sketch::visits().wrapping_sub(before))
+}
