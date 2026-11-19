@@ -390,3 +390,75 @@ fn parts_too_big_to_compare_are_refused_up_front() {
     }
     assert_eq!(s.hash(), hash);
 }
+
+/// The verifier's finds on the first version.
+#[test]
+fn verifier_finds_stay_fixed() {
+    let mut s = Session::new(&folder("finds"));
+    // A thin overlap turned to the axes: the kernel's intersection gives up on it. The gap
+    // still answers, and the overlap and seated say they are not known, and why.
+    for angle in [0.3, std::f64::consts::FRAC_PI_4] {
+        let (a, b) = stacked(&mut s, 18.99);
+        turn_all(&mut s, &[1, 2], [1.0, 0.0, 0.0], angle, [0.0, 0.0, 0.0]);
+        let r = clearance(&mut s, &a, &b);
+        assert_eq!(r["gap_mm"], 0.0, "{r}");
+        if r["overlap_unknown"].is_string() {
+            assert_eq!(r["overlap_mm3"], Value::Null, "{r}");
+            assert_eq!(r["overlap_size_mm"], Value::Null, "{r}");
+            assert_eq!(r["seated"], Value::Null, "{r}");
+        } else {
+            assert_eq!(r["seated"], true, "{r}");
+        }
+    }
+
+    // A solid inside a group, named by its own item, answers with its own name.
+    s.ok("new_model", json!({}));
+    let a = board(&mut s, "A", [19.0, 300.0, 600.0], [0.0, 0.0, 0.0]);
+    let b = board(&mut s, "B", [19.0, 300.0, 600.0], [0.0, 0.0, 50.0]);
+    s.ok(
+        "apply_ops",
+        json!({"name": "Group", "ops": [{"op": "make_group", "items": [a], "name": "Box"}]}),
+    );
+    let r = clearance(&mut s, &a, &b);
+    assert_eq!(r["a"]["name"], "A", "{r}");
+
+    // Hidden by a tag, and by the group around it.
+    s.ok(
+        "apply_ops",
+        json!({"name": "Tag", "ops": [
+            {"op": "create_tag", "name": "Back"},
+            {"op": "tag_items", "items": [b], "tag": "Back"},
+            {"op": "set_tag_visible", "tag": "Back", "visible": false}]}),
+    );
+    let r = clearance(&mut s, &a, &b);
+    assert_eq!(r["a"]["hidden"], false, "{r}");
+    assert_eq!(r["b"]["hidden"], true, "{r}");
+    let group = json!({"node": s.ok("summary", json!({}))["parts"].as_array().unwrap()
+        .iter().find(|p| p["items"][0]["node"].is_u64()).unwrap()["items"][0]["node"]});
+    s.ok(
+        "apply_ops",
+        json!({"name": "Hide", "ops": [{"op": "set_hidden", "items": [group], "hidden": true}]}),
+    );
+    let r = clearance(&mut s, &a, &b);
+    assert_eq!(r["a"]["hidden"], true, "the group around it is hidden: {r}");
+
+    // Parallel faces looking at each other with no area in common: nothing.
+    s.ok("new_model", json!({}));
+    let a = board(&mut s, "A", [19.0, 300.0, 600.0], [0.0, 0.0, 0.0]);
+    let b = board(&mut s, "B", [19.0, 300.0, 600.0], [700.0, 0.0, 50.0]);
+    let m = s.ok("measure", json!({"a": a, "b": b}));
+    assert_eq!(m["facing"], json!([]), "{m}");
+
+    // A small block either side of the diagonal that splits a board's top into two
+    // triangles (corner to corner, (0, 0) to (600, 300)), so whichever triangle is compared
+    // first, one block is over the other.
+    for at in [[10.0, 200.0, 30.0], [540.0, 10.0, 30.0]] {
+        s.ok("new_model", json!({}));
+        let a = board(&mut s, "A", [19.0, 300.0, 600.0], [0.0, 0.0, 0.0]);
+        let b = board(&mut s, "Block", [10.0, 50.0, 50.0], at);
+        let m = s.ok("measure", json!({"a": a, "b": b}));
+        let facing = m["facing"].as_array().unwrap();
+        assert_eq!(facing.len(), 1, "block at {at:?}: {m}");
+        close(&facing[0]["distance_mm"], 11.0, 1e-6);
+    }
+}

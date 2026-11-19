@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 
 /// Most triangle pairs one call compares, the two parts' triangles multiplied. The gap and
 /// the facing faces compare every triangle of one part with every triangle of the other
-/// (with a box check that skips most of them); past this a call could run for minutes, so
-/// it is refused before any work. Measured 2026-11-20 on a Windows 11 machine, release
+/// (for the gap, with a box check that skips most of them); past this a call could run for
+/// minutes, so it is refused before any work. Measured 2026-11-20 on a Windows 11 machine, release
 /// build in WSL Ubuntu 24.04 (`pair_cost` below): 4,000,000 pairs compared one by one, none
 /// skipped, took 0.45 s, about 113 ns a pair, so the limit is about 2.3 s at worst; two
 /// plates of 2,000 slivers 1 mm apart, where the box checks skip most pairs, took 7 ms.
@@ -77,7 +77,8 @@ fn part<'m>(model: &'m Model, item: &Item, which: &str) -> Result<Part<'m>, Stri
         .map(|r| r.name.clone())
         .or_else(|| match *item {
             Item::Node(id) => model.node(id).and_then(|n| n.name.clone()),
-            Item::Object(_) => None,
+            // A solid inside a group is no row of its own: its own name.
+            Item::Object(id) => model.object(id).and_then(|o| o.name()).map(str::to_string),
         });
     let hidden = match *item {
         Item::Node(id) => !model.node_visible(id),
@@ -201,6 +202,7 @@ pub fn clearance(model: &Model, a: &Item, b: &Item) -> Result<Value, String> {
     let mut volume = 0.0;
     let mut lo = DVec3::splat(f64::INFINITY);
     let mut hi = DVec3::splat(f64::NEG_INFINITY);
+    let mut unknown: Option<String> = None;
     for (i, oa) in &pa.solids {
         for (j, ob) in &pb.solids {
             if !boxes_meet(oa.bounds(), ob.bounds()) {
@@ -216,10 +218,13 @@ pub fn clearance(model: &Model, a: &Item, b: &Item) -> Result<Value, String> {
                 // Empty, or thinner than the kernel keeps (it drops an intersection of
                 // about the merge distance's depth): no overlap to report.
                 Ok(None) => {}
+                // The kernel could not build the intersection: seen for solids meeting
+                // within about the merge distance at an angle to the axes. The gap still
+                // stands; the overlap and seated are not known, and the answer says why.
                 Err(e) => {
-                    return Err(format!(
-                        "the overlap of solids {i} and {j} could not be worked out: {e}"
-                    ));
+                    unknown.get_or_insert_with(|| {
+                        format!("the overlap of solids {i} and {j} could not be worked out: {e}")
+                    });
                 }
             }
         }
@@ -233,8 +238,10 @@ pub fn clearance(model: &Model, a: &Item, b: &Item) -> Result<Value, String> {
     } else {
         (gap, pa_at, pb_at)
     };
+    // The overlap's box is along the world axes, so for parts turned to them its thinnest
+    // side can only overstate how deep the overlap is.
     let seated = gap <= SEATED && size.is_none_or(|s| s.min_element() <= SEATED);
-    Ok(json!({
+    let mut answer = json!({
         "a": describe(&pa),
         "b": describe(&pb),
         "gap_mm": mm(gap),
@@ -243,7 +250,14 @@ pub fn clearance(model: &Model, a: &Item, b: &Item) -> Result<Value, String> {
         "overlap_size_mm": size.map(point_mm),
         "seated": seated,
         "merge_mm": mm(POINT_MERGE),
-    }))
+    });
+    if let Some(why) = unknown {
+        answer["overlap_mm3"] = Value::Null;
+        answer["overlap_size_mm"] = Value::Null;
+        answer["seated"] = Value::Null;
+        answer["overlap_unknown"] = Value::String(why);
+    }
+    Ok(answer)
 }
 
 fn boxes_meet((la, ha): (DVec3, DVec3), (lb, hb): (DVec3, DVec3)) -> bool {
@@ -546,13 +560,16 @@ mod tests {
                     .map(|_| [0, 1, 2].map(|_| DVec3::new(r() + off, r(), r()) * 0.1))
                     .collect()
             };
-            let (a, b) = (soup(0.0), soup(1.5));
-            let fast = gap(&a, &b).0;
-            let every = a
-                .iter()
-                .flat_map(|x| b.iter().map(move |y| tri_tri(x, y).0))
-                .fold(f64::INFINITY, f64::min);
-            assert_eq!(fast, every);
+            // Far apart, and so close that the nearest pair is a hair nearer than many others.
+            for off in [1.5, 1.001] {
+                let (a, b) = (soup(0.0), soup(off));
+                let fast = gap(&a, &b).0;
+                let every = a
+                    .iter()
+                    .flat_map(|x| b.iter().map(move |y| tri_tri(x, y).0))
+                    .fold(f64::INFINITY, f64::min);
+                assert_eq!(fast, every);
+            }
         }
     }
 
