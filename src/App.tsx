@@ -329,7 +329,8 @@ export function App() {
   /** After undo / redo, when another model takes this one's place (New, Close, Open, the
    * unsaved work restored), after Delete erased the selection (#85), and after an edit from
    * outside the tool that can remove or hide what it worked from (#111: the Outliner's Delete
-   * and eye, Edit > Hide, a tag hidden, a scene, Explode Curve): the active tool's
+   * and eye, Edit > Hide, a tag hidden or the selection put on a hidden one, a scene, Explode
+   * Curve): the active tool's
    * gesture is void, what it worked out from the model is stale (#76), and the measurements
    * box shows its default again. */
   const afterHistoryRef = useRef<() => void>(() => undefined);
@@ -3289,7 +3290,8 @@ export function App() {
           onDelete: (tag) => void apply({ op: "delete_tag", tag }, () => `Tag ${quoted(tag)} deleted: what was on it is untagged now.`),
           onAssign: (tag) => {
             const items = itemsOf(live.current.selection);
-            void apply({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ? `tag ${quoted(tag)}` : "Untagged"}.`);
+            // #111: a hidden tag hides what is put on it.
+            void applyFromOutside({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ? `tag ${quoted(tag)}` : "Untagged"}.`);
           },
           editing: editingTag,
           onEdited: () => {

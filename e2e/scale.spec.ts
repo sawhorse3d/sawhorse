@@ -342,6 +342,24 @@ test("hiding the tag of the solid being scaled clears its box and grips (#111)",
   await expect(page.locator(".vlabel.grip")).toHaveCount(0);
 });
 
+test("putting the solid being scaled on a hidden tag clears its box and grips (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page, "24,4", "2");
+  await page.getByRole("tab", { name: "Tags" }).click();
+  await page.getByRole("button", { name: /New tag/ }).click();
+  const tagName = page.getByLabel("New name for tag Tag 1");
+  await tagName.fill("Carcass");
+  await tagName.press("Enter");
+  await page.getByRole("button", { name: "Hide tag Carcass" }).click();
+  await selectSolid(page, [12, 2, 2]);
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+  await page.getByRole("button", { name: "Put the selection on Carcass" }).click();
+  await expect(page.locator("#hint")).toContainText("on tag 'Carcass'");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
 test("a scene that hides the solid being scaled clears its box and grips (#111)", async ({ page }) => {
   const vp = await ready(page);
   await taggedBoard(page);
