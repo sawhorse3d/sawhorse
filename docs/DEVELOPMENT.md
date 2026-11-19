@@ -16,13 +16,13 @@ Three places run the code: the maintainer's Windows machine (no MSVC), WSL Ubunt
 
 | Where | What | Notes |
 |---|---|---|
-| Windows | Node 24 + npm 11 | front end, Vite, Vitest, Playwright |
+| Windows | Node 24.15 or later + npm 11 | front end, Vite, Vitest, Playwright; jsdom (Vitest's page) asks for `^24.15.0` on Node 24 |
 | Windows | Rust stable 1.99 at `%USERPROFILE%\.cargo\bin`, `wasm32-unknown-unknown` target | only useful once MSVC exists; `export PATH="$HOME/.cargo/bin:$PATH"` |
 | Windows | `just` | optional task runner (`just --list`) |
 | WSL Ubuntu 24.04 | rustup stable 1.99 + `wasm32-unknown-unknown` + `rustfmt` + `clippy`, gcc, Node 22 | does all Rust work |
 | WSL Ubuntu | `wasm-pack` 0.15.0 in `~/.local/bin` | installed with `npm i -g --prefix ~/.local wasm-pack@0.15.0` |
 
-One-time WSL setup (already done on the maintainer's machine, 2026-10-11):
+One-time WSL setup (already done on the maintainer's machine, 2026-10-11). `scripts/cargo.sh`, `npm run wasm` and the `wsl.exe` commands in this file name no distro, so they run in the default one: make Ubuntu the default first if another distro is. `wsl --list` shows the names and marks the default; `wsl --set-default <name>` changes it, with the name it shows (`Ubuntu-24.04` or `Ubuntu`, depending on how it was installed).
 
 ```bash
 wsl.exe bash -lc 'rustup default stable && rustup target add wasm32-unknown-unknown && rustup component add rustfmt clippy'
