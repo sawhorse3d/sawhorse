@@ -30,7 +30,7 @@ A free, local-first, open-source push/pull 3D modeler for woodworkers and makers
 
 **Headless**: From a checkout, in its `crates/` folder (the Rust workspace), `cargo run -p sawhorse-cli -- cutlist Bookshelf.shz` prints the cut list of a saved file as JSON, and `cargo run -p sawhorse-cli -- nest Bookshelf.shz` its nesting, exactly what the app's panes read (`--visible-only`, `--rounding`, `--algorithm guillotine|maxrects`, `--pretty`; what the reader had to do to open the file goes to stderr as `note:` lines; `crates/cli`). For scripts and agents that want the numbers without the app. The installers do not include it yet.
 
-**For AI agents**: `sawhorse-mcp <folder>` is a Model Context Protocol server on the same kernel (`crates/mcp`): an agent builds a model from named boards or the kernel's own ops, reads back its parts, cut list and nesting, undoes, and saves a `.shz` the app opens as it is, all within that one folder. Built from a checkout like `sawhorse-cli` (`cargo build --release -p sawhorse-mcp`, in `crates/`); not in the installers. The tools and a worked example: [`docs/MCP.md`](docs/MCP.md).
+**For AI agents**: `sawhorse-mcp <folder>` is a Model Context Protocol server on the same kernel (`crates/mcp`): an agent builds a model from named boards or the kernel's own ops, reads back its parts, cut list and nesting, checks the gap or overlap between two parts and the distance between their faces, undoes, and saves a `.shz` the app opens as it is, all within that one folder. Built from a checkout like `sawhorse-cli` (`cargo build --release -p sawhorse-mcp`, in `crates/`); not in the installers. The tools and a worked example: [`docs/MCP.md`](docs/MCP.md).
 
 ## Not yet
 

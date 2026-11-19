@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use crate::paths;
 
 /// The tools, in the order `tools/list` gives them.
-pub const NAMES: [&str; 10] = [
+pub const NAMES: [&str; 12] = [
     "new_model",
     "open_model",
     "save_model",
@@ -30,6 +30,8 @@ pub const NAMES: [&str; 10] = [
     "apply_ops",
     "cut_list",
     "nest",
+    "check_clearance",
+    "measure",
     "undo",
     "redo",
 ];
@@ -118,6 +120,14 @@ impl Server {
                     algorithm: a.algorithm,
                 };
                 to_value(&self.doc.model().nest(&opts))
+            }
+            "check_clearance" => {
+                let a: TwoParts = parse(args)?;
+                crate::measure::clearance(self.doc.model(), &a.a, &a.b)
+            }
+            "measure" => {
+                let a: TwoParts = parse(args)?;
+                crate::measure::measure(self.doc.model(), &a.a, &a.b)
             }
             "undo" => {
                 parse::<Empty>(args)?;
@@ -534,6 +544,14 @@ struct NestArgs {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 
+/// Two parts, each an item from `summary`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TwoParts {
+    a: Item,
+    b: Item,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NewArgs {
@@ -597,6 +615,11 @@ struct BoardArgs {
 pub fn list() -> Value {
     let axis = json!({"type": "string", "enum": ["x", "y", "z"]});
     let none = json!({"type": "object", "properties": {}, "additionalProperties": false});
+    let item = json!({"type": "object", "description": "An item from summary: {\"object\": id} or {\"node\": id}",
+        "minProperties": 1, "maxProperties": 1, "additionalProperties": false, "properties": {
+        "object": {"type": "integer", "minimum": 0}, "node": {"type": "integer", "minimum": 0}}});
+    let two_parts = json!({"type": "object", "additionalProperties": false, "required": ["a", "b"],
+        "properties": {"a": item.clone(), "b": item}});
     let path = |what: &str| {
         json!({"type": "object", "additionalProperties": false, "properties": {
             "path": {"type": "string", "description": what}}})
@@ -644,6 +667,12 @@ pub fn list() -> Value {
          "inputSchema": {"type": "object", "additionalProperties": false, "properties": {
              "algorithm": {"type": "string", "enum": ["guillotine", "maxrects"]},
              "visible_only": {"type": "boolean"}}}},
+        {"name": "check_clearance", "title": "Check clearance",
+         "description": "How two parts sit against each other, each named by an item from summary ({\"object\": id} or {\"node\": id}; a group or component stands for every solid in it). Answers gap_mm (the shortest distance between their surfaces, exact over their faces; 0 when they touch or overlap) and the closest points, overlap_mm3 and the overlap's size in mm, and seated: true when the gap and the overlap's thinnest side are both within the kernel's merge distance (0.01 mm). Says when a part measured is hidden. Changes nothing.",
+         "inputSchema": two_parts.clone()},
+        {"name": "measure", "title": "Measure",
+         "description": "The distance between two parts' faces that face each other: for each pair of parallel flat faces, one from each part, facing each other with some area in common, the distance along their normal in mm and the faces (object and face id), nearest first. Two sides of a shelf give the inside width. Parts as for check_clearance. Changes nothing.",
+         "inputSchema": two_parts},
         {"name": "undo", "title": "Undo",
          "description": "Undo the last change. Answers the cut list changes.",
          "inputSchema": none.clone()},

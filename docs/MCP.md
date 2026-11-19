@@ -35,11 +35,12 @@ Other clients take the same command and argument in their server list.
 - **All or nothing.** Every tool that changes the model is one undo step, worked out on a copy and kept only when the whole change validates. A refusal says why and changes nothing.
 - **What changed.** Each change answers with the cut list rows it added, removed and changed (`changes`), and the new `model_hash`. A row counts as changed when its name, quantity, size (to 0.1 mm), material, grain or items move; a change only to what is hidden, the stock or what is counted shows in `cut_list` and the hash, not in `changes`.
 - **Names.** Parts are reported by name, never by a geometry index; a change names a part by the ids `summary` gives. Where two parts share a name, `summary` lists it under `shared_names`, and `add_board` lists the others under `shares_name_with`. Neither picks one.
+- **Measuring.** `check_clearance` and `measure` name a part by an item from `summary`, never by a name. A group or component instance stands for every solid in it, at any depth, where it sits in the world: the gap is the least over all of them, the overlap all of them added up, and `solids` says how many. A copy of a component is measured where it sits. Hidden parts are measured, since hiding is how a person looks inside a carcass, and the answer says so (`a.hidden`, `b.hidden`: the item hidden, on a hidden tag, inside something hidden, or holding a hidden solid). Refused plainly: the same item twice, one item inside the other (they share solids), an item that is not there, and one that holds no solid. Both compare every triangle of one part with every triangle of the other, skipping pairs whose boxes are further apart than the best so far; past 20,000,000 pairs (the two parts' triangle counts multiplied) a call is refused before any work, with the counts. Measured 2026-11-20 on a Windows 11 machine, release build in WSL: 4,000,000 pairs with none skipped took 0.45 s, so the limit is about 2.3 s at worst; boards have 12 triangles each.
 - **Untrusted input.** A message that is not JSON, nested deeper than the parser allows (128 levels), longer than 4 MiB, or of the wrong shape gets a JSON-RPC error back, and the server reads on. A longer message is read past without being held.
 
 ## Tools
 
-Lengths in tool answers are millimetres, to 0.1 mm, where the field says `_mm` (3/4 in reads 19.0). The `cut_list` and `nest` answers and `apply_ops`' ops are the kernel's own, in metres, exact.
+Lengths in tool answers are millimetres, to 0.1 mm, where the field says `_mm` (3/4 in reads 19.0), except in `check_clearance` and `measure`, which give them to the nanometre (0.000001 mm), since a gap is read at the merge distance. The `cut_list` and `nest` answers and `apply_ops`' ops are the kernel's own, in metres, exact.
 
 | Tool | Takes | Does |
 |---|---|---|
@@ -51,6 +52,8 @@ Lengths in tool answers are millimetres, to 0.1 mm, where the field says `_mm` (
 | `apply_ops` | `name` (names the undo step), `ops` | Applies kernel ops as one step: the named batch a plugin sends ([PLUGINS.md](PLUGINS.md)), with `{"$ref": i, "path": "..."}` placeholders for what an earlier op made. To repeat parts, `copy` or `array` them by the ids `summary` gives rather than adding each again. Undo, redo, batches, restores and opening a group are not allowed, and a batch holds at most 20,000 points in all (a sketch's edge limit). Every array of two or three numbers in the ops counts as a point, a plane's origin and normal included. Answers each op's `outcome` and `changes`; a refusal names the op and why. |
 | `cut_list` | `rounding` (`sixteenth`, `thirty_second` or `half_mm`), `visible_only` | The cut list, the same JSON as `sawhorse-cli cutlist` prints for the saved file, with the keys of each object in alphabetical order. |
 | `nest` | `algorithm` (`guillotine` or `maxrects`), `visible_only` | The nesting, the same JSON as `sawhorse-cli nest`, keys in alphabetical order as for `cut_list`. |
+| `check_clearance` | `a`, `b`: two parts, each an item from `summary` (`{"object": id}` or `{"node": id}`) | How the two sit against each other. `gap_mm`: the shortest distance between their surfaces, worked out exactly over their faces (point to face, edge to edge), not from boxes, so a turned part reads right; 0 when they touch or overlap, a part wholly inside another included. `closest_mm`: a point on each where the gap is. `overlap_mm3` and `overlap_size_mm` (its box): the volume both fill, from the kernel's boolean intersection, worked out on copies. `seated`: the gap and the overlap's thinnest side both within the kernel's merge distance, 0.01 mm (`merge_mm`, `POINT_MERGE`, with 1 nm for rounding). An overlap about the merge distance deep or less is one the kernel does not keep, so it reads 0 and seated. Changes nothing. |
+| `measure` | `a`, `b` as for `check_clearance` | The distance between faces that face each other: each pair of parallel flat faces, one from each part, facing each other with some area in common, as `facing` (nearest first, at most 50; `more` says how many past those): `distance_mm` along the normal, `a_face` and `b_face` (`object` and persistent `face` id, as ops take them) and `normal` (a's face, outward). Faces that are not parallel give nothing here; `check_clearance` covers them. Changes nothing. |
 | `undo`, `redo` | nothing | Undo or redo the last change. Answers `changes`. |
 
 A tool that fails answers with `isError: true` and an `error` saying why. An unknown tool, or arguments that are not an object, is a JSON-RPC error (`-32602`).
@@ -68,7 +71,9 @@ A shelf of two 19 mm pine sides and two shelves, saved. Each line the agent send
 {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add_board","arguments":{"name":"Shelf","thickness":19,"width":250,"length":462,"position":[19,0,0],"material":"Pine"}}}
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"add_board","arguments":{"name":"Shelf","thickness":19,"width":250,"length":462,"position":[19,0,581],"material":"Pine"}}}
 {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"summary","arguments":{}}}
-{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"save_model","arguments":{"path":"Shelf.shz"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"measure","arguments":{"a":{"object":1},"b":{"object":2}}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"check_clearance","arguments":{"a":{"object":1},"b":{"object":4}}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"save_model","arguments":{"path":"Shelf.shz"}}}
 ```
 
 The second side's answer says it shares its name, and what the cut list gained:
@@ -80,16 +85,15 @@ The second side's answer says it shares its name, and what the cut list gained:
  "model_hash":"..."}
 ```
 
-The summary lists four parts and `"shared_names":[{"name":"Shelf","parts":2},{"name":"Side","parts":2}]`. To make the bottom shelf an inch deeper, the agent changes it by its object id from `items` (3) and the box `add_board` answered (`min_mm` `[19,0,0]`, `max_mm` `[481,250,19]`): it moves the four corners of the shelf's back face, at 250 mm, 25.4 mm further back. No tool names a face, so a push/pull, which takes a face id, is not the way here.
+The summary lists four parts and `"shared_names":[{"name":"Shelf","parts":2},{"name":"Side","parts":2}]`. `measure` between the two sides gives the inside width, one pair of faces looking at each other (`facing[0].distance_mm` 462), and `check_clearance` between the first side and the top shelf says the shelf sits against it: `"gap_mm":0`, `"overlap_mm3":0`, `"seated":true`. To make the bottom shelf an inch deeper, the agent changes it by its object id from `items` (3) and the box `add_board` answered (`min_mm` `[19,0,0]`, `max_mm` `[481,250,19]`): it moves the four corners of the shelf's back face, at 250 mm, 25.4 mm further back. `measure` names only faces that face another part, and the shelf's back faces none, so a push/pull, which takes a face id, is not the way here.
 
 ```json
-{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"apply_ops","arguments":{"name":"Deeper shelf","ops":[{"op":"transform_geometry","object":3,"points":[[0.019,0.25,0],[0.481,0.25,0],[0.019,0.25,0.019],[0.481,0.25,0.019]],"xform":{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[0,0.0254,0]},"autofold":false}]}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"apply_ops","arguments":{"name":"Deeper shelf","ops":[{"op":"transform_geometry","object":3,"points":[[0.019,0.25,0],[0.481,0.25,0],[0.019,0.25,0.019],[0.481,0.25,0.019]],"xform":{"linear":[[1,0,0],[0,1,0],[0,0,1]],"translation":[0,0.0254,0]},"autofold":false}]}}}
 ```
 
 The answer's `changes.changed` shows that row's size before and after (`size_mm` `[19,250,462]`, then `[19,275.4,462]`). After another `save_model`, `Shelf.shz` opens in the app as it is, and `sawhorse-cli cutlist Shelf.shz` prints the cut list the server showed.
 
 ## Not yet
 
-- `check_clearance` (the gap or overlap between two parts) and `measure` (the distance between two parts' faces): the next step on #14.
 - Named dimensions ("make the carcass 900 wide and run it again"): they need parameters in the model, a file format question. For now an agent keeps its own spec and rebuilds.
 - Driving the app's window, rendering drawings, or the installers.

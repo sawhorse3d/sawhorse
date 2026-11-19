@@ -50,6 +50,8 @@ fn initialize_names_the_protocol_and_lists_the_tools() {
             "apply_ops",
             "cut_list",
             "nest",
+            "check_clearance",
+            "measure",
             "undo",
             "redo"
         ]
@@ -560,8 +562,16 @@ fn the_worked_example_in_the_docs_runs() {
         .filter(|l| !l.is_empty())
         .map(|l| serde_json::from_slice(l).unwrap())
         .collect();
-    // Eight requests and one notification.
-    assert_eq!(answers.len(), 8, "{answers:?}");
+    // Ten requests and one notification.
+    assert_eq!(answers.len(), 10, "{answers:?}");
+    // measure between the sides: the inside width.
+    let facing = &answers[7]["result"]["structuredContent"]["facing"];
+    assert_eq!(facing[0]["distance_mm"], 462.0, "{facing}");
+    // check_clearance between the first side and the top shelf: seated.
+    let c = &answers[8]["result"]["structuredContent"];
+    assert_eq!(c["gap_mm"], 0.0, "{c}");
+    assert_eq!(c["overlap_mm3"], 0.0, "{c}");
+    assert_eq!(c["seated"], true, "{c}");
     for a in &answers[1..] {
         assert_eq!(a["result"]["isError"], false, "{a}");
     }
