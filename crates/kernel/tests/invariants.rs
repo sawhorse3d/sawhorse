@@ -153,15 +153,12 @@ fn extrude_then_push_back_near_a_rounding_boundary_gives_the_corners_back() {
         h,
         d,
     );
-    let corners = |m: &Model| {
-        let mut c: Vec<[f64; 2]> = m
-            .sketch(1)
+    let corners = |m: &Model| -> Vec<[f64; 2]> {
+        m.sketch(1)
             .unwrap()
             .vertices()
             .map(|(_, p)| [p.x, p.y])
-            .collect();
-        c.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        c
+            .collect()
     };
     let before = corners(&Model::replay(&ops[..2]).unwrap());
     let mut m = Model::replay(&ops).unwrap();
@@ -179,12 +176,15 @@ fn extrude_then_push_back_near_a_rounding_boundary_gives_the_corners_back() {
     assert_eq!(m.objects().len(), 0);
     let after = corners(&m);
     assert_eq!(after.len(), 4);
-    // Measured: 1.8e-15 m. 1 pm is 500 times that and 1,000 times under the hash quantum.
-    for (a, b) in before.iter().zip(&after) {
-        assert!(
-            (a[0] - b[0]).abs() <= 1e-12 && (a[1] - b[1]).abs() <= 1e-12,
-            "corner {a:?} came back at {b:?}"
-        );
+    // Measured: 1.8e-15 m. 1 pm is over 500 times that and 1,000 times under the hash
+    // quantum. Each corner is matched with the nearest one that came back, so noise either
+    // side of zero cannot pair the wrong corners.
+    for a in &before {
+        let gap = after
+            .iter()
+            .map(|b| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()))
+            .fold(f64::INFINITY, f64::min);
+        assert!(gap <= 1e-12, "corner {a:?} came back {gap:e} m away");
     }
     m.apply(&Op::Extrude {
         sketch: 1,
