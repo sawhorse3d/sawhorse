@@ -237,7 +237,7 @@ export function NestingSection(p: NestingSectionProps) {
   const s = n ? nestSummary(n, r) : null;
   // #100: shown, and changed, as stored now; the controls still wait for a first nesting.
   const settings = n ? (p.stored ?? n.settings) : undefined;
-  const set =(patch: Partial<NestSettings>) => settings && p.onSettings({ ...settings, ...patch });
+  const set = (patch: Partial<NestSettings>) => settings && p.onSettings({ ...settings, ...patch });
   return (
     <section className="nesting" aria-label="Nesting" data-testid="nesting">
       <header className="nest-head">

@@ -641,8 +641,9 @@ async function nestSettled(page: Page) {
 // the field shows it with its unit again, after Enter or leaving the field, and through
 // Undo and Redo. The pause stores it too and leaves the typed text until the field is left.
 // A length that reads differently is never shown as the old reading while it is worked out.
-// The fields show the nesting the pane last worked out, 200 ms after an edit: every step
-// that changes the document waits for that before it reads or types again.
+// The pane works the nesting out again 200 ms after an edit (the fields show the settings
+// stored now since #100): every step that changes the document waits for that before it
+// reads or types again.
 test("a Nesting length that reads the same as before is shown with its unit (#93)", async ({ page }) => {
   test.setTimeout(90_000);
   const shz = await buildShz((apply) => {
