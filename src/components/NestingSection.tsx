@@ -19,6 +19,10 @@ export interface NestingSectionProps {
   rounding: Units;
   /** How typed kerf and trim are read (a bare number is in these units). */
   units: UnitSystem;
+  /** #100: the settings stored now (the app's state after every change, Undo and Redo
+   * included). The fields show these and a change is laid over them; `nesting.settings` is
+   * the last nesting worked out, 200 ms behind. Absent: the nesting's are used. */
+  stored?: NestSettings | null;
   onSettings: (s: NestSettings) => void;
   onStock: () => void;
   /** The pointer is over a part's rectangle (null: over none). */
@@ -231,8 +235,9 @@ export function NestingSection(p: NestingSectionProps) {
   const n = p.nesting;
   const r = p.rounding;
   const s = n ? nestSummary(n, r) : null;
-  const settings = n?.settings;
-  const set = (patch: Partial<NestSettings>) => settings && p.onSettings({ ...settings, ...patch });
+  // #100: shown, and changed, as stored now; the controls still wait for a first nesting.
+  const settings = n ? (p.stored ?? n.settings) : undefined;
+  const set =(patch: Partial<NestSettings>) => settings && p.onSettings({ ...settings, ...patch });
   return (
     <section className="nesting" aria-label="Nesting" data-testid="nesting">
       <header className="nest-head">

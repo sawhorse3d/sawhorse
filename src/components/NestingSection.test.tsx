@@ -1045,3 +1045,79 @@ describe("Cut list pane with nesting", () => {
     expect(screen.getAllByRole("figure")[1].querySelector("summary")!.textContent).toContain("2 cuts, 1 part");
   });
 });
+
+// #100: the settings stored now (`stored`, from the state the app reads after every change,
+// Undo and Redo included) are what a change is laid over and what a typed length is compared
+// with, not the last nesting worked out (`nesting.settings`), which lags 200 ms behind.
+describe("Nesting settings after Undo or Redo (#100)", () => {
+  const MM = 0.001;
+  // What a length typed in millimetres is read as, to the bit.
+  const typed = (t: string) => {
+    const r = parseLength(t, "mm");
+    if (!r.ok) throw new Error(r.error);
+    return r.metres;
+  };
+  // The pane's last nesting: kerf and trim 3.1 mm. Undo has since put trim back to 0.
+  const lagging = () => {
+    const n = smallNesting();
+    return { ...n, settings: { ...n.settings, kerf: 3.1 * MM, trim: 3.1 * MM } };
+  };
+  const mm = (over: Partial<NestingSectionProps>) => props({ units: "mm", rounding: "half_mm", nesting: lagging(), ...over });
+
+  it("a change to one setting keeps the others as stored now, not as last nested", () => {
+    const p = mm({ stored: { kerf: 3.1 * MM, trim: 0, algorithm: "guillotine" } });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    fireEvent.change(kerf, { target: { value: "3.15" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: typed("3.15"), trim: 0, algorithm: "guillotine" });
+  });
+
+  it("the fields show the stored settings at once, before the nesting catches up", () => {
+    render(<NestingSection {...mm({ stored: { kerf: IN / 8, trim: 0, algorithm: "maxrects", jointLoss: 2 * MM, minStrip: 30 * MM } })} />);
+    expect((screen.getByLabelText("Kerf") as HTMLInputElement).value).toBe("3.18 mm");
+    expect((screen.getByLabelText("Trim") as HTMLInputElement).value).toBe("0 mm");
+    expect((screen.getByLabelText("Joint loss") as HTMLInputElement).value).toBe("2 mm");
+    expect((screen.getByLabelText("Minimum strip") as HTMLInputElement).value).toBe("30 mm");
+    expect((screen.getByLabelText("Nesting algorithm") as HTMLSelectElement).value).toBe("maxrects");
+  });
+
+  it("a typed length is compared with the stored value: Enter after Undo stores it", () => {
+    // Kerf 3.1 mm was set, then Undo put the 1/8 in kerf back; the nesting still says 3.1.
+    const p = mm({ stored: { kerf: IN / 8, trim: 3.1 * MM, algorithm: "guillotine" } });
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    fireEvent.change(kerf, { target: { value: "3.1" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenCalledTimes(1);
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: typed("3.1"), trim: 3.1 * MM, algorithm: "guillotine" });
+  });
+
+  it("the saw, the joint loss and clearing the minimum strip keep the stored settings too", () => {
+    const stored = { kerf: IN / 8, trim: 0, algorithm: "guillotine" as const, minStrip: 30 * MM };
+    const p = mm({ stored });
+    render(<NestingSection {...p} />);
+    fireEvent.change(screen.getByLabelText("Nesting algorithm"), { target: { value: "maxrects" } });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ ...stored, algorithm: "maxrects" });
+    const joint = screen.getByLabelText("Joint loss") as HTMLInputElement;
+    fireEvent.change(joint, { target: { value: "2" } });
+    fireEvent.keyDown(joint, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ ...stored, jointLoss: typed("2") });
+    const min = screen.getByLabelText("Minimum strip") as HTMLInputElement;
+    fireEvent.change(min, { target: { value: "" } });
+    fireEvent.keyDown(min, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: IN / 8, trim: 0, algorithm: "guillotine" });
+    expect(p.onSettings).toHaveBeenCalledTimes(3);
+  });
+
+  it("with no stored settings (an older caller), the last nesting's are used as before", () => {
+    const p = mm({});
+    render(<NestingSection {...p} />);
+    const kerf = screen.getByLabelText("Kerf") as HTMLInputElement;
+    expect(kerf.value).toBe("3.1 mm");
+    fireEvent.change(kerf, { target: { value: "3.15" } });
+    fireEvent.keyDown(kerf, { key: "Enter" });
+    expect(p.onSettings).toHaveBeenLastCalledWith({ kerf: typed("3.15"), trim: 3.1 * MM, algorithm: "guillotine" });
+  });
+});

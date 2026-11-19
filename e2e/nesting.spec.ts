@@ -896,3 +896,91 @@ test("a Nesting length field keeps the text being typed when its reading changes
   await setUnits(page, "in");
   await pause("Trim", "0.5", "5", 0.55 * IN, "0.55 in");
 });
+
+// #100: a Nesting setting changed right after Undo or Redo, before the pane has worked the
+// nesting out again, is laid over the settings stored now, and a typed length is compared with
+// the stored one, not the pane's last nesting. The page's clock holds the refresh (as for #98),
+// so each step lands inside the 200 ms the pane takes, every time.
+test("a Nesting setting changed right after Undo or Redo keeps what Undo or Redo did (#100)", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.clock.install();
+  const shz = await buildShz((apply) => {
+    const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[0, 0, 0], [40 * IN, 0, 0], [40 * IN, 10 * IN, 0], [0, 10 * IN, 0]], closed: true });
+    const made = apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: 0.75 * IN });
+    apply({ op: "make_component", items: [{ object: made.object }], name: "Shelf" });
+  });
+  await openShz(page, shz, 1, "shelf.shz");
+  await setUnits(page, "mm");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  await expect(page.locator(".cutlist table")).toBeVisible();
+  await page.getByRole("button", { name: "Nesting ›" }).click();
+  const section = page.getByTestId("nesting");
+  const body = section.locator(".nest-body");
+  const kerf = section.getByLabel("Kerf", { exact: true });
+  const trim = section.getByLabel("Trim", { exact: true });
+  const away = page.getByLabel("Round sizes to");
+  const stored = async () => (await nest(page)).settings;
+  await expect(kerf).toHaveValue("3.18 mm");
+  await expect(body).toHaveAttribute("aria-busy", "false");
+  const enter = async (field: typeof kerf, text: string) => {
+    await nestEdit(page);
+    await field.fill(text);
+    await field.press("Enter");
+    await nestSettled(page);
+  };
+  // Undo or Redo from outside the fields, the pane's refresh held by the clock; then `then`
+  // runs before the refresh, and the clock lets it go.
+  const beforeRefresh = async (key: string, then: () => Promise<void>) => {
+    await away.focus();
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    await nestEdit(page);
+    await page.keyboard.press(key);
+    await expect(body).toHaveAttribute("aria-busy", "true");
+    await then();
+    await page.clock.resume();
+    await nestSettled(page);
+  };
+  // 1. Another field's Undo is kept. Kerf and trim 3.1 mm; Undo puts trim back to 0; kerf
+  // 3.15 typed before the refresh stores kerf 3.15 mm and leaves trim at 0.
+  const near = async (want: { kerf: number; trim: number; algorithm?: string }) => {
+    const s = await stored();
+    expect(s.kerf, "kerf").toBeCloseTo(want.kerf, 12);
+    expect(s.trim, "trim").toBeCloseTo(want.trim, 12);
+    if (want.algorithm) expect(s.algorithm).toBe(want.algorithm);
+  };
+  await enter(kerf, "3.1");
+  await enter(trim, "3.1");
+  await near({ kerf: 0.0031, trim: 0.0031 });
+  await beforeRefresh("Control+z", async () => {
+    await kerf.fill("3.15");
+    await kerf.press("Enter");
+  });
+  await near({ kerf: 0.00315, trim: 0 });
+  await expect(kerf).toHaveValue("3.15 mm");
+  await expect(trim).toHaveValue("0 mm");
+  // 2. Enter after Undo stores the length typed. Undo takes the 3.15 back to 3.1 mm, and Undo
+  // again takes kerf back to 1/8 in; 3.1 typed and Enter, before the refresh, stores 3.1 mm.
+  await nestEdit(page);
+  await away.focus();
+  await page.keyboard.press("Control+z");
+  await nestSettled(page);
+  await expect(kerf).toHaveValue("3.1 mm");
+  await beforeRefresh("Control+z", async () => {
+    await kerf.fill("3.1");
+    await kerf.press("Enter");
+  });
+  await near({ kerf: 0.0031, trim: 0 });
+  await expect(kerf).toHaveValue("3.1 mm");
+  // 3. After Redo too. Trim 3.1 mm, then Undo; Redo puts it back, and the saw switched before
+  // the refresh keeps it.
+  await enter(trim, "3.1");
+  await nestEdit(page);
+  await away.focus();
+  await page.keyboard.press("Control+z");
+  await nestSettled(page);
+  await expect(trim).toHaveValue("0 mm");
+  await beforeRefresh("Control+y", async () => {
+    await section.getByLabel("Nesting algorithm").selectOption("maxrects");
+  });
+  await near({ kerf: 0.0031, trim: 0.0031, algorithm: "maxrects" });
+});
