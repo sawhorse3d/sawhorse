@@ -3199,8 +3199,11 @@ version = "0.1.0-alpha.6"
 name = "sawhorse-desktop"
 version = "0.1.0-alpha.6"
 dependencies = [
+ "gio",
+ "glib",
  "sawhorse-close-guard",
  "sawhorse-device-key",
+ "sawhorse-logout-hold",
  "sawhorse-safe-save",
  "sawhorse-start-file",
  "sawhorse-window-title",
@@ -3224,6 +3227,10 @@ dependencies = [
  "sha2",
  "zeroize",
 ]
+
+[[package]]
+name = "sawhorse-logout-hold"
+version = "0.1.0-alpha.6"
 
 [[package]]
 name = "sawhorse-safe-save"

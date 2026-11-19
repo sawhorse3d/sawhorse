@@ -35,10 +35,18 @@ sawhorse-device-key = { path = "device-key" }
 sawhorse-safe-save = { path = "safe-save" }
 # The question before the window closes over unsaved changes (lane 35): never held open.
 sawhorse-close-guard = { path = "close-guard" }
+# A Linux desktop's logout held while the model has unsaved changes (#73): the hold's state.
+sawhorse-logout-hold = { path = "logout-hold" }
 # Which argument, if any, is the file to open at start (lane 37): a double-click on a .shz.
 sawhorse-start-file = { path = "start-file" }
 # What the window's title bar shows, from the page's title (lane 39): the model's name.
 sawhorse-window-title = { path = "window-title" }
+
+# The session bus call behind the logout hold (#73). Both are in the tree already, under
+# the webview's GTK: nothing new is downloaded or built.
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.18"
+glib = "0.18"
 
 [profile.release]
 codegen-units = 1
