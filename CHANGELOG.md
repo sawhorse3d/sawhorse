@@ -4,7 +4,7 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
-### Fixed (2026-11-20)
+### Fixed (a pull request from @aramshaw, 2026-11-20)
 
 - **The MCP server's first save through a link the file server follows is refused, and leaves nothing outside the folder** (from @aramshaw; [#118](https://github.com/sawhorse3d/sawhorse/issues/118)). `place` in `crates/mcp/src/paths.rs` resolves the folder a new file goes in and refuses one outside the server's folder. On a Samba share seen from Windows, a link made on the server to another folder of the share resolves as the folder asked for, and only a file in it shows where it really is, so `save_model` wrote `out/Escaped.shz` outside the folder while `open_model` and a second save refused the same path. Now `save_model` resolves the temporary file it wrote (`written_inside`), and when that is outside the folder removes it and refuses with the words a second save gives ("it leads out of the server's folder"), before anything is read back or moved. Saves into a local folder, a mapped drive and a UNC path are unchanged. Server only: no kernel, model hash, golden or file format change.
 - Tests: `crates/mcp/src/paths.rs` (a written file inside passes, one outside is refused with those words, one that is not there is refused) and `crates/mcp/src/tools.rs` (a save into a folder whose files resolve outside, made by hand since a link on Unix resolves as a folder and `place` refuses it first, refused with nothing left outside; the same save inside goes through). Both fail on the code before this change. Docs: `docs/MCP.md`, `docs/DEVELOPMENT.md`.
