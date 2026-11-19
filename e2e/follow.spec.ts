@@ -70,6 +70,37 @@ test("a path that Undo removed is not swept (#86)", async ({ page }) => {
   near(s[0].max, [12, 12, 6]);
 });
 
+test("a path that Delete removed is not swept (#85, #86)", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  // The steps of #86 with Delete in place of Ctrl+Z: the region chosen as the path is still
+  // the selection, so Delete erases it.
+  await box(page, "12,12", "6");
+  await page.keyboard.press("r");
+  await clickAt(page, [30, 0, 0], "grid", 1, 1);
+  await point(page, [33, 3, 0]);
+  await type(page, "6,6");
+  await expect(hint).toContainText(/Rectangle 6 \S 6 in on the ground/);
+  await page.keyboard.press("Space");
+  await selectAt(page, [33, 3, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await page.keyboard.press("w");
+  await expect(hint).toContainText("Path: the edge of region 1 (closed, 4 segments)");
+  await page.keyboard.press("Delete");
+  await expect(hint).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  const hash = await vp.getAttribute("data-hash");
+  // Before, the box's front face was swept along the erased rectangle's edge and added to
+  // the box, which grew to (0, -30, 0)..(66, 36, 6).
+  await clickAt(page, [6, 0, 3], /on-face|grid|from-point/, 0, 0);
+  await expect(hint).toContainText("Select the path first");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].min, [0, 0, 0]);
+  near(s[0].max, [12, 12, 6]);
+});
+
 function near2(a: number[], b: number[]) {
   a.forEach((x, k) => expect(Math.abs(x - b[k])).toBeLessThan(1e-4));
 }

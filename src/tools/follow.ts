@@ -75,8 +75,8 @@ export class FollowTool extends Tool {
     void this.loadPath();
   }
 
-  /** #86: Undo, Redo, New, Close, Open, Restore Unsaved Work or an empty SketchUp file
-   * imported in place of the model may have removed the path this tool loaded. Drop it
+  /** #86: Undo, Redo, New, Close, Open, Restore Unsaved Work, an empty SketchUp file
+   * imported in place of the model, or Delete (#85) may have removed the path this tool loaded. Drop it
    * quietly: the status they wrote stays, and the next click asks for a path instead of
    * sweeping a stale one. */
   modelChanged(): void {

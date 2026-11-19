@@ -186,6 +186,88 @@ async function scaleOnBoard(page: Page) {
   await expect(page.locator(".vlabel.grip")).toHaveCount(26);
 }
 
+test("Delete clears the box and grips of the solid it removes (#85)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  const [x, y] = await at(page, [24, 2, 1]);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#hint")).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  // The issue's last step: a press, a move and a click where the right end's grip was. Before,
+  // the grip lit up and the click was refused with "that solid no longer exists"; now there is
+  // no grip there, and the press gets the words a press off a grip always gets.
+  const hash = await vp.getAttribute("data-hash");
+  await page.mouse.move(x, y, { steps: 2 });
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.mouse.move(x + 40, y, { steps: 3 });
+  await page.mouse.click(x + 40, y);
+  await expect(page.locator("#hint")).toContainText("Press on a grip");
+  await expect(page.locator("#hint")).not.toContainText("no longer exists");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  await expect(vp).toHaveAttribute("data-objects", "0");
+});
+
+test("Edit > Delete clears the box too, and Undo brings the board back unselected, its box on hover (#85)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^Delete( Delete)?$/ }).click();
+  await expect(page.locator("#hint")).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  // Undo with Scale still the tool: the board is back, not selected (Delete had emptied the
+  // selection), so no box until the cursor is over it, as with nothing selected.
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("#hint")).toContainText("Undone");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await grip(page, [24, 2, 1]);
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+});
+
+test("a factor typed after Delete does not undo the Delete (#85)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  const g = await grip(page, [24, 2, 1]);
+  await page.mouse.click(g.x, g.y);
+  await page.mouse.move(g.x + 40, g.y, { steps: 3 });
+  await type(page, "1.5");
+  await expect(page.locator("#hint")).toContainText("×1.5 along red");
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#hint")).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  // Before, the tool took this as the last scale typed again: it began with an Undo, which
+  // took the Delete back, and scaled the board to 72 in.
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("Select something");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect(await solids(page)).toHaveLength(0);
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
+test("Delete in the middle of a scale drops it, and the box's factor goes too (#85)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  const g = await grip(page, [24, 2, 1]);
+  await page.mouse.click(g.x, g.y);
+  await page.mouse.move(g.x + 60, g.y, { steps: 3 });
+  // The live factor is in the measurements box while the grip moves.
+  await expect(page.locator("#vcb")).not.toHaveValue("");
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#hint")).toContainText("Erased 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await expect(page.locator("#vcb")).toHaveValue("");
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("Select something");
+  expect(await solids(page)).toHaveLength(0);
+});
+
 test("after Redo the box and its grips are round the scaled shape again (#76)", async ({ page }) => {
   await ready(page);
   await scaledThenUndone(page);

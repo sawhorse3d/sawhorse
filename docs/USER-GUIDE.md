@@ -214,7 +214,7 @@ Sawhorse refuses a scale that would flatten the solid, turn it inside out or fol
 
 The profile travels along the path and turns on a miter at every corner. A region becomes a new solid. A face adds to its solid, or cuts into it when the path runs into it.
 
-Follow Me reads the path when you press W. Undo, Redo, New, Close, Open, Restore Unsaved Work, or an Import of an empty SketchUp file (it opens in place of the model) while it is the tool lets the path go: the blue goes, and a click on a profile asks for the path. To go on, select the path and press W again.
+Follow Me reads the path when you press W. Undo, Redo, Delete, New, Close, Open, Restore Unsaved Work, or an Import of an empty SketchUp file (it opens in place of the model) while it is the tool lets the path go: the blue goes, and a click on a profile asks for the path. To go on, select the path and press W again.
 
 **A moulding round the top of a box.**
 1. Look at one end of the box (Right).

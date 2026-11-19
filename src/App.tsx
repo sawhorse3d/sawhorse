@@ -326,9 +326,10 @@ export function App() {
   // export and import errors that carry them) name things by public id, which people never
   // see (src/lib/names.ts).
   const setMessage = useCallback((m: Message) => setMessageRaw(m && m.error ? { ...m, text: friendlyError(m.text) } : m), []);
-  /** After undo / redo, and when another model takes this one's place (New, Close, Open, the
-   * unsaved work restored): the active tool's gesture is void, what it worked out from the
-   * model is stale (#76), and the measurements box shows its default again. */
+  /** After undo / redo, when another model takes this one's place (New, Close, Open, the
+   * unsaved work restored), and after Delete erased the selection (#85): the active tool's
+   * gesture is void, what it worked out from the model is stale (#76), and the measurements
+   * box shows its default again. */
   const afterHistoryRef = useRef<() => void>(() => undefined);
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
@@ -1820,6 +1821,9 @@ export function App() {
       if (r) {
         live.current.selection = [];
         setSelection([]);
+        // #85: the active tool is told, as after Undo (Scale's box and grips go with the
+        // solid, and a typed factor no longer starts with an Undo of this Delete).
+        afterHistoryRef.current();
       }
     });
   }, [apply]);
