@@ -6,7 +6,8 @@
 //! plugins), drag-and-drop of files onto the window, the render-credit device key in the
 //! OS secure store (lane 8, ADR-0004, `device-key/`) and opening Stripe Checkout (and,
 //! since lane 67, the Help menu's pages) in the system browser, showing a plugin's folder (lane 11), the question before the window
-//! closes over unsaved changes (lane 35, `close-guard/`), and the file the app was started
+//! closes over unsaved changes (lane 35, `close-guard/`), a Linux desktop's logout held while
+//! there are unsaved changes (#73, `logout-hold/`), and the file the app was started
 //! with (lane 37, `start-file/`): a double-click on a `.shz` in Windows Explorer, where the
 //! installers associate `.shz` with Sawhorse (`tauri.windows.conf.json`), or a path after the
 //! program's name on any system. A second double-click starts a second window, as starting
@@ -19,10 +20,13 @@
 //! (the dialog plugin adds them to the scope), dropped on the window (added below), or the
 //! one file the app was started with (added by `start_file`, below, when the page asks).
 
+mod logout_hold;
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use logout_hold::LogoutHold;
 use sawhorse_close_guard::{Guard, Request, Say, Then};
 use sawhorse_device_key::{external_url_allowed, DeviceKey, KeyringStore};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -182,13 +186,24 @@ impl CloseGuard {
 /// next close request closes at once); "exit" is File > Exit, an ordinary close request.
 /// Whatever the page says or fails to say, a close request two seconds after an unanswered
 /// question closes the window (`sawhorse_close_guard`).
+///
+/// On Linux "unsaved" and "saved" also take and give back a logout inhibitor (#73,
+/// `logout_hold`): GNOME and Cinnamon end a session without closing the window, so its
+/// question never shows there, and their own logout dialog names Sawhorse instead.
 #[tauri::command]
 fn close_guard(
     window: tauri::Window,
     state: State<'_, CloseGuard>,
+    hold: State<'_, LogoutHold>,
     say: String,
 ) -> Result<(), String> {
-    let say = Say::parse(&say).ok_or_else(|| format!("close_guard: no such message {say:?}"))?;
+    let word = say;
+    let say = Say::parse(&word).ok_or_else(|| format!("close_guard: no such message {word:?}"))?;
+    // "unsaved" takes the hold; "saved" and "close" (Yes: the window is about to go) give it
+    // back (`sawhorse_logout_hold::word`).
+    if let Some(unsaved) = sawhorse_logout_hold::word(&word) {
+        hold.unsaved(unsaved);
+    }
     // The lock is released at the end of this statement: Window::close raises a close
     // request whose handler takes it again.
     let then = state
@@ -259,6 +274,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(Device::default())
         .manage(CloseGuard::default())
+        .manage(LogoutHold::default())
         .manage(StartFile::from_args())
         .on_window_event(|window, event| match event {
             // Files dropped on the window: allow exactly those paths, then tell the page,
