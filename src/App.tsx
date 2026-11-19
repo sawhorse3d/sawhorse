@@ -327,7 +327,9 @@ export function App() {
   // see (src/lib/names.ts).
   const setMessage = useCallback((m: Message) => setMessageRaw(m && m.error ? { ...m, text: friendlyError(m.text) } : m), []);
   /** After undo / redo, when another model takes this one's place (New, Close, Open, the
-   * unsaved work restored), and after Delete erased the selection (#85): the active tool's
+   * unsaved work restored), after Delete erased the selection (#85), and after an edit from
+   * outside the tool that can remove or hide what it worked from (#111: the Outliner's Delete
+   * and eye, Edit > Hide, a tag hidden, a scene, Explode Curve): the active tool's
    * gesture is void, what it worked out from the model is stale (#76), and the measurements
    * box shows its default again. */
   const afterHistoryRef = useRef<() => void>(() => undefined);
@@ -1807,6 +1809,19 @@ export function App() {
     return Promise.resolve();
   }, []);
 
+  /** #111: an edit made from outside the active tool that can remove or hide what the tool
+   * worked out from the selection (the Outliner's Delete and eye, Edit > Hide, ...): once it
+   * has landed the tool is told, as after Undo and Delete (#85). Not done in `apply` itself,
+   * since a tool's own steps go through it and telling the tool there would cancel them. */
+  const applyFromOutside = useCallback(
+    (op: KernelOp, describe?: (r: EditResult) => string) =>
+      apply(op, describe).then((r) => {
+        if (r) afterHistoryRef.current();
+        return r;
+      }),
+    [apply],
+  );
+
   /** Delete / Backspace: erase the selection as one undo step. */
   const eraseSelection = useCallback(() => {
     const sel = live.current.selection;
@@ -1840,6 +1855,8 @@ export function App() {
         const rest = sel.filter((e) => e.kind !== "curve");
         live.current.selection = rest;
         setSelection(rest);
+        // #111: told with the curves gone from the selection, as Delete does (#85).
+        afterHistoryRef.current();
       }
     });
   }, [apply]);
@@ -2017,7 +2034,7 @@ export function App() {
           return;
         case "hide":
         case "show":
-          void apply({ op: "set_hidden", items, hidden: action === "hide" }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(items.length, "item")}.`);
+          void applyFromOutside({ op: "set_hidden", items, hidden: action === "hide" }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(items.length, "item")}.`);
           return;
         case "lock":
         case "unlock":
@@ -2030,13 +2047,17 @@ export function App() {
             if (!(await inContext(parentOfItem(items[0])))) return;
             const ops: KernelOp[] = items.map((it) => ("node" in it ? { op: "delete_node", node: it.node } : { op: "delete_object", object: it.object }));
             const r = await apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Deleted ${plural(items.length, "item")}.`);
-            if (r) select([]);
+            if (r) {
+              select([]);
+              // #111: told with the selection already empty, as Delete does (#85).
+              afterHistoryRef.current();
+            }
           })();
           return;
         }
       }
     },
-    [apply, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
+    [apply, applyFromOutside, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
   );
 
   /** A row clicked in the Outliner: select it, opening what holds it when that is not open. */
@@ -2136,9 +2157,9 @@ export function App() {
       setCamView(null);
       setActiveScene(name);
       const before = live.current.scene?.state.style;
-      void apply({ op: "activate_scene", name }, () => sceneNote(name, sc, before));
+      void applyFromOutside({ op: "activate_scene", name }, () => sceneNote(name, sc, before));
     },
-    [apply],
+    [applyFromOutside],
   );
 
   const addScene = useCallback(() => {
@@ -2925,7 +2946,7 @@ export function App() {
               r.outcome.kind === "paint_cleared" ? `Paint cleared from ${plural(r.outcome.cleared_faces, "face")} and ${plural(r.outcome.cleared_items, "item")}: what holds them shows now.` : "Paint cleared.",
             ),
         },
-        { label: "Hide", disabled: !selItems.length, onSelect: () => void apply({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
+        { label: "Hide", disabled: !selItems.length, onSelect: () => void applyFromOutside({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
         { label: "Lock", disabled: !selItems.length, onSelect: () => void apply({ op: "set_locked", items: selItems, locked: true }, () => `Locked ${plural(selItems.length, "item")}.`) },
         {
           label: "Close Group / Component",
@@ -3010,7 +3031,7 @@ export function App() {
       ),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, applyFromOutside, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -3258,7 +3279,7 @@ export function App() {
           state: st ?? null,
           canTag: selItems.length > 0,
           onCreate: () => void createTag(),
-          onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
+          onVisible: (tag, visible) => void applyFromOutside({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
           onColor: (tag, color) => void apply({ op: "set_tag_color", tag, color: hexToRgb(color) }),
           onRename: (tag, name) => {
             const created = createdTagRef.current === tag;

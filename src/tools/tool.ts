@@ -151,7 +151,8 @@ export abstract class Tool {
   /** Forget the current gesture. */
   reset(): void {}
   /** The model changed other than by this tool's own step (Undo, Redo, another model in this
-   * one's place, or Delete, #85): drop what was worked out from the model as it was (#76).
+   * one's place, Delete, #85, or an edit from outside the tool that can remove or hide what it
+   * worked from, #111): drop what was worked out from the model as it was (#76).
    * Called after `reset`, with the host already answering for the model and the selection as
    * they are now. */
   modelChanged(): void {}

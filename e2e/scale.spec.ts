@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 // Scale (lane 4): grips on the selection's bounding box, a face grip with a typed factor,
 // an absolute size with a unit, a mirror (-1), and a tapered leg: the top face of a post
 // scaled about its centre (Ctrl) to half size, checked against the frustum's volume.
-import { at, box, near, ready, selectAt, solids, type, type V3 } from "./helpers";
+import { at, box, clickAt, near, point, ready, selectAt, solids, type, type V3 } from "./helpers";
 
 /** Put the cursor on a grip (inches) and wait until it is the hot one. */
 async function grip(page: Page, p: V3) {
@@ -266,6 +266,117 @@ test("Delete in the middle of a scale drops it, and the box's factor goes too (#
   await type(page, "2");
   await expect(page.locator("#hint")).toContainText("Select something");
   expect(await solids(page)).toHaveLength(0);
+});
+
+/** The Outliner's row for a key ("o:1" is solid 1). */
+const outlinerRow = (page: Page, key: string) => page.getByTestId("outliner").locator(`[data-row="${key}"]`);
+
+test("the Outliner's Delete clears the box and grips of the solid it removes (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  await page.getByRole("tab", { name: "Outliner" }).click();
+  await outlinerRow(page, "o:1").click({ button: "right" });
+  await page.getByRole("menuitem", { name: /^Delete/ }).click();
+  await expect(page.locator("#hint")).toContainText("Deleted 1 item");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  // Before, the dashed box and its 26 grips stayed over the empty model.
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("Select something");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+});
+
+test("Edit > Hide clears the box and grips of the solid it hides (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+  await expect(page.locator("#hint")).toContainText("Hid 1 item");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  // The hidden board is not scaled by a typed factor either.
+  const hash = await vp.getAttribute("data-hash");
+  await type(page, "2");
+  await expect(page.locator("#hint")).toContainText("Select something");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+});
+
+test("the Outliner's eye clears the box and grips of the solid it hides, and Show leaves it unselected (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  await page.getByRole("tab", { name: "Outliner" }).click();
+  await page.getByRole("button", { name: "Hide Solid 1" }).click();
+  await expect(page.locator("#hint")).toContainText("Hid 1 item");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  // Shown again: still not selected, so no box until the cursor is over it.
+  await page.getByRole("button", { name: "Show Solid 1" }).click();
+  await expect(page.locator("#hint")).toContainText("Showed 1 item");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+  await grip(page, [24, 2, 1]);
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+});
+
+/** The board of {@link scaleOnBoard} on a new tag "Carcass", with the Tags pane open. */
+async function taggedBoard(page: Page) {
+  await box(page, "24,4", "2");
+  await page.getByRole("tab", { name: "Tags" }).click();
+  await page.getByRole("button", { name: /New tag/ }).click();
+  const tagName = page.getByLabel("New name for tag Tag 1");
+  await tagName.fill("Carcass");
+  await tagName.press("Enter");
+  await selectSolid(page, [12, 2, 2]);
+  await page.getByRole("button", { name: "Put the selection on Carcass" }).click();
+  await expect(page.locator("#hint")).toContainText("on tag 'Carcass'");
+}
+
+test("hiding the tag of the solid being scaled clears its box and grips (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await taggedBoard(page);
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+  await page.getByRole("button", { name: "Hide tag Carcass" }).click();
+  await expect(page.locator("#hint")).toContainText("Tag 'Carcass' hidden");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
+test("a scene that hides the solid being scaled clears its box and grips (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await taggedBoard(page);
+  // Scene 1 with the tag hidden, Scene 2 with it shown.
+  await page.getByRole("button", { name: "Hide tag Carcass" }).click();
+  await page.getByRole("button", { name: /Add a scene/ }).click();
+  await page.getByRole("button", { name: "Show tag Carcass" }).click();
+  await page.getByRole("button", { name: /Add a scene/ }).click();
+  await selectSolid(page, [12, 2, 2]);
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(26);
+  await page.getByRole("tab", { name: "Scene 1" }).click();
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
+});
+
+test("Explode Curve clears the box and grips of the circle it makes plain (#111)", async ({ page }) => {
+  const vp = await ready(page);
+  await page.keyboard.press("c");
+  await clickAt(page, [0, 0, 0], /origin|endpoint|grid/);
+  await point(page, [6, 0, 0]);
+  await type(page, "6");
+  await page.keyboard.press("Space");
+  // The middle of the circle's first segment.
+  const a = Math.PI / 24;
+  await selectAt(page, [6 * Math.cos(a) * Math.cos(a), 6 * Math.cos(a) * Math.sin(a), 0], "curve");
+  await expect(page.locator("#hint")).toContainText("Selected a circle");
+  await page.keyboard.press("s");
+  await expect(page.locator(".vlabel.grip")).not.toHaveCount(0);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Explode Curve/ }).click();
+  await expect(page.locator("#hint")).toContainText("Exploded the curve");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  // Before, the box and its grips stayed round edges no longer selected.
+  await expect(page.locator(".vlabel.grip")).toHaveCount(0);
 });
 
 test("after Redo the box and its grips are round the scaled shape again (#76)", async ({ page }) => {
