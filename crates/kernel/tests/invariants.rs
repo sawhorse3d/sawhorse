@@ -31,6 +31,19 @@ fn size() -> impl Strategy<Value = f64> {
     (0.001..10.0f64, any::<bool>()).prop_map(|(s, neg)| if neg { -s } else { s })
 }
 
+/// Sizes from 1 mm to 10 m, either sign, on a 1 um grid (#112). Push back redraws the
+/// footprint from the solid's world points, which carries float noise of about 1e-15 m, and
+/// the model hash rounds positions to 1 nm: an arbitrary size can sit within that noise of a
+/// half-nanometre and hash differently after the round trip, with the shape right. A whole
+/// number of micrometres sits 0.5 nm from the nearest rounding boundary, so the exact hash
+/// comparison holds. The origin and the normal stay arbitrary.
+fn grid_size() -> impl Strategy<Value = f64> {
+    (1_000i64..=10_000_000, any::<bool>()).prop_map(|(um, neg)| {
+        let s = um as f64 / 1e6;
+        if neg { -s } else { s }
+    })
+}
+
 fn box_ops(origin: [f64; 3], normal: [f64; 3], x: f64, y: f64, w: f64, h: f64, d: f64) -> Vec<Op> {
     vec![
         Op::NewSketch { origin, normal },
@@ -65,7 +78,7 @@ proptest! {
     }
 
     #[test]
-    fn extrude_then_push_back_restores_the_sketch(o in origin(), n in normal(), w in size(), h in size(), d in size()) {
+    fn extrude_then_push_back_restores_the_sketch(o in origin(), n in normal(), w in grid_size(), h in grid_size(), d in grid_size()) {
         let ops = box_ops(o, n, 0.0, 0.0, w, h, d);
         let sketch_only = Model::replay(&ops[..2]).unwrap();
         let mut m = Model::replay(&ops).unwrap();
@@ -121,4 +134,62 @@ proptest! {
         let expect = (w * h - (w - 2.0 * ix) * (h - 2.0 * iy)) * d.abs();
         prop_assert!((st.volume_m3 - expect).abs() <= 1e-9 * expect.max(1.0));
     }
+}
+
+/// #112: the input CI's property test found, with a size off the 1 um grid. The rectangle's
+/// top corners sit at v = 0.6679310874999995 m (667931087.4999995 nm) and come back from the
+/// solid's world points, 49.86 m from the origin, at 0.6679310875000013 m, either side of a
+/// half-nanometre, so the model hash differs while the shape is right. This holds what the
+/// kernel does guarantee for it, and pins no hash.
+#[test]
+fn extrude_then_push_back_near_a_rounding_boundary_gives_the_corners_back() {
+    let (w, h, d) = (0.001, 0.6679310874999995, 0.001);
+    let ops = box_ops(
+        [0.0, 49.86081083353802, 0.0],
+        [0.0, 0.0, 1.0],
+        0.0,
+        0.0,
+        w,
+        h,
+        d,
+    );
+    let corners = |m: &Model| {
+        let mut c: Vec<[f64; 2]> = m
+            .sketch(1)
+            .unwrap()
+            .vertices()
+            .map(|(_, p)| [p.x, p.y])
+            .collect();
+        c.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        c
+    };
+    let before = corners(&Model::replay(&ops[..2]).unwrap());
+    let mut m = Model::replay(&ops).unwrap();
+    let out = m
+        .apply(&Op::PushPull {
+            object: 1,
+            face: 2,
+            distance: -d,
+        })
+        .unwrap();
+    let OpOutcome::ObjectCollapsed { regions } = out else {
+        panic!("not collapsed: {out:?}");
+    };
+    assert_eq!(regions.len(), 1, "the footprint went back to the sketch");
+    assert_eq!(m.objects().len(), 0);
+    let after = corners(&m);
+    assert_eq!(after.len(), 4);
+    // Measured: 1.8e-15 m. 1 pm is 500 times that and 1,000 times under the hash quantum.
+    for (a, b) in before.iter().zip(&after) {
+        assert!(
+            (a[0] - b[0]).abs() <= 1e-12 && (a[1] - b[1]).abs() <= 1e-12,
+            "corner {a:?} came back at {b:?}"
+        );
+    }
+    m.apply(&Op::Extrude {
+        sketch: 1,
+        region: regions[0],
+        distance: d,
+    })
+    .expect("region extrudes again");
 }
