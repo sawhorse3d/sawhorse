@@ -54,7 +54,7 @@ Known limits (model size, `.skp` versions that do not open): [docs/LIMITS.md](do
 
 ## Run the browser build
 
-Needs Node 24+ and, for the kernel, Rust with the `wasm32-unknown-unknown` target and `wasm-pack` (see `docs/DEVELOPMENT.md`; on a Windows machine without Visual Studio Build Tools the Rust step runs in WSL automatically).
+Needs Node 24.15 or later (jsdom, which the front-end tests run in, asks for it) and, for the kernel, Rust with the `wasm32-unknown-unknown` target and `wasm-pack` (see `docs/DEVELOPMENT.md`; on a Windows machine without Visual Studio Build Tools the Rust step runs in WSL automatically).
 
 ```bash
 npm ci

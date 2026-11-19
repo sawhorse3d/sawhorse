@@ -4,6 +4,11 @@ All notable changes to Sawhorse are recorded here. The format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed (a pull request from @aramshaw, 2026-11-19)
+
+- **The setup docs name the Node version and the WSL distro the build needs.** The README said Node 24+, and `docs/DEVELOPMENT.md` said Node 24, but jsdom, the page Vitest's front-end tests run in, asks for 24.15 or later on Node 24 (`^22.22.2 || ^24.15.0 || >=26.0.0`), so an earlier 24 could not be relied on. Both now say 24.15 or later. `scripts/cargo.sh` and `npm run wasm` forward to WSL with `wsl.exe` and no distro named, so on a machine whose default distro is not Ubuntu they ran in the wrong one; the one-time WSL setup in `docs/DEVELOPMENT.md` now says to make Ubuntu the default first, and how. Docs only: no code, kernel, model hash, golden or file format change.
+- Docs: `README.md`, `docs/DEVELOPMENT.md`.
+
 ### Fixed (lane 69, 2026-11-18)
 
 - **A refused Nesting length loses its error mark when a new reading replaces it** ([#102](https://github.com/sawhorse3d/sawhorse/pull/102), from @socrabs151; [#101](https://github.com/sawhorse3d/sawhorse/issues/101)). In the Kerf, Trim, Joint loss and Minimum strip fields, a refused length stays as typed, marked in red with its reason in the tooltip. When the field had been left and a new reading of the stored length then replaced the text (Redo, or a change of units), the red mark and the reason stayed beside a length that is fine, until a length was next committed in that field. Now the mark and the reason go with the text they belong to. As before, a refused length keeps both while it is still in the focused field, through a new reading too, and while the stored length reads the same. Front end only: no kernel, model hash, golden or file format change.
