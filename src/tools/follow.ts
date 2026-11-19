@@ -18,9 +18,13 @@ export interface Path {
   what: string;
 }
 
+/** What the tool says when it has no path: with nothing selected, and after the model
+ * changed under it (#86). The path is read when the tool starts, so W comes after it. */
+export const NO_PATH = "Select the path first (edges end to end, or a face to go round its edge), then press W and click the profile.";
+
 /** The path from the selection: a chain of edges, or a face's (region's) outer edge. */
 export async function pathOf(sel: Entity[], outline: (e: Entity) => Promise<V3[][]>): Promise<Path | string> {
-  if (!sel.length) return "Select the path first (edges end to end, or a face to go round its edge), then press W and click the profile.";
+  if (!sel.length) return NO_PATH;
   const edges = sel.filter((e): e is Extract<Entity, { kind: "edge" }> => e.kind === "edge");
   if (edges.length === sel.length) {
     const c = chainOf(edges.map((e) => [e.a, e.b]));
@@ -69,6 +73,15 @@ export class FollowTool extends Tool {
 
   activate(): void {
     void this.loadPath();
+  }
+
+  /** #86: Undo, Redo, New, Close, Open, Restore Unsaved Work or an empty SketchUp file
+   * imported in place of the model may have removed the path this tool loaded. Drop it
+   * quietly: the status they wrote stays, and the next click asks for a path instead of
+   * sweeping a stale one. */
+  modelChanged(): void {
+    this.path = null;
+    this.pathError = NO_PATH;
   }
 
   private async loadPath(): Promise<void> {

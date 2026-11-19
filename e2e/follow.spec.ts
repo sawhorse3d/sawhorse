@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 // corner of the box's end face cut off with the Line tool; the path is the top face's edge
 // (select the face, press W, click the profile). Checked against the exact volume: the
 // box less the triangle's area times its centroid's path round the top.
-import { box, clickAt, ready, selectAt, solids } from "./helpers";
+import { box, clickAt, near, point, ready, selectAt, solids, type } from "./helpers";
 
 test("a moulding routed round the top of a box", async ({ page }) => {
   const vp = await ready(page);
@@ -37,6 +37,37 @@ test("a moulding routed round the top of a box", async ({ page }) => {
   const removed = 2 * (2 * (24 - 2 * inset) + 2 * (12 - 2 * inset));
   expect(s[0].volume).toBeCloseTo(24 * 12 * 8 - removed, 4);
   near2(s[0].max, [24, 12, 8]);
+});
+
+test("a path that Undo removed is not swept (#86)", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  // The issue's steps: a 12 x 12 x 6 in box, a 6 x 6 in rectangle on the ground at (30, 0),
+  // its region selected as the path, W, then Ctrl+Z, which removes the rectangle.
+  await box(page, "12,12", "6");
+  await page.keyboard.press("r");
+  await clickAt(page, [30, 0, 0], "grid", 1, 1);
+  await point(page, [33, 3, 0]);
+  await type(page, "6,6");
+  await expect(hint).toContainText(/Rectangle 6 \S 6 in on the ground/);
+  await page.keyboard.press("Space");
+  await selectAt(page, [33, 3, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await page.keyboard.press("w");
+  await expect(hint).toContainText("Path: the edge of region 1 (closed, 4 segments)");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  await expect(vp).toHaveAttribute("data-can-redo", "true");
+  const hash = await vp.getAttribute("data-hash");
+  // The box's front face as the profile. Before, it was swept along the edge of the
+  // rectangle that Undo had removed, and added to the box.
+  await clickAt(page, [6, 0, 3], /on-face|grid|from-point/, 0, 0);
+  await expect(hint).toContainText("Select the path first");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  await expect(vp).toHaveAttribute("data-can-redo", "true");
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].max, [12, 12, 6]);
 });
 
 function near2(a: number[], b: number[]) {

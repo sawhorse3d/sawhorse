@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entity, KernelOp, Picked, SurfaceHit, V3 } from "../kernel/types";
 import { ev, fakeHost } from "./fakeHost";
-import { FollowTool, orientPath, pathOf } from "./follow";
+import { FollowTool, NO_PATH, orientPath, pathOf } from "./follow";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const end: SurfaceHit = { at: { kind: "face", object: 1, face: 9 }, frame: { origin: [0, 0.02, 0.29], normal: [-1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }, point: [0, 0.02, 0.29], t: 3 };
@@ -47,6 +47,81 @@ describe("Follow Me", () => {
     expect(h.statuses.at(-1)?.text).toContain("cut from");
     expect(h.sel).toEqual([]);
     expect(t.view().overlay).toEqual([]);
+  });
+
+  it("#86: drops a path the model no longer has", async () => {
+    const h = fakeHost();
+    h.sel = [{ kind: "face", object: 1, face: 2 }];
+    h.outline = async () => [topRing];
+    const t = new FollowTool(h);
+    t.activate();
+    await tick();
+    expect(t.view().overlay).toHaveLength(1);
+
+    t.reset();
+    t.modelChanged();
+    expect(t.view().overlay).toEqual([]);
+
+    t.onEvent(ev("click", [0, 0.02, 0.29], { picked: onEnd }));
+    await tick();
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Select the path first") });
+    expect(h.ops.filter((o: KernelOp) => o.op === "follow_me")).toHaveLength(0);
+  });
+
+  it("#86: the drop writes no status, and the click after it says to press W", async () => {
+    const h = fakeHost({ outcome: { kind: "swept", objects: [1], cut: false } });
+    h.sel = [{ kind: "face", object: 1, face: 2 }];
+    h.outline = async () => [topRing];
+    const t = new FollowTool(h);
+    t.activate();
+    await tick();
+    const before = h.statuses.length;
+    t.reset();
+    t.modelChanged();
+    await tick();
+    // The history's own status ("Undone ...") is the one the person sees.
+    expect(h.statuses).toHaveLength(before);
+    t.onEvent(ev("click", [0, 0.02, 0.29], { picked: onEnd }));
+    await tick();
+    expect(h.statuses.at(-1)).toEqual({ text: NO_PATH, error: true });
+    expect(NO_PATH).toContain("then press W");
+    expect(h.ops).toHaveLength(0);
+  });
+
+  it("#86: a path of selected edges is dropped too", async () => {
+    const h = fakeHost({ outcome: { kind: "swept", objects: [1], cut: false } });
+    h.sel = [edge([0, 0, 0.3], [1, 0, 0.3]), edge([1, 0, 0.3], [1, 0.5, 0.3])];
+    const t = new FollowTool(h);
+    t.activate();
+    await tick();
+    expect(h.statuses.at(-1)?.text).toContain("Path: 2 edges (open, 2 segments)");
+    expect(t.view().overlay[0]).toMatchObject({ kind: "strip" });
+    t.reset();
+    t.modelChanged();
+    expect(t.view().overlay).toEqual([]);
+    t.onEvent(ev("click", [0, 0.02, 0.29], { picked: onEnd }));
+    await tick();
+    expect(h.statuses.at(-1)).toEqual({ text: NO_PATH, error: true });
+    expect(h.ops).toHaveLength(0);
+  });
+
+  it("#86: after the drop, W again loads the path from the selection as it is now", async () => {
+    const h = fakeHost({ outcome: { kind: "swept", objects: [1], cut: true } });
+    h.sel = [{ kind: "face", object: 1, face: 2 }];
+    h.outline = async () => [topRing];
+    const t = new FollowTool(h);
+    t.activate();
+    await tick();
+    t.reset();
+    t.modelChanged();
+    // The app's W on the active tool: deactivate, then activate again.
+    t.deactivate();
+    t.activate();
+    await tick();
+    expect(h.statuses.at(-1)?.text).toContain("closed, 4 segments");
+    t.onEvent(ev("click", [0, 0.02, 0.29], { picked: onEnd }));
+    await tick();
+    expect(h.ops.at(-1)).toMatchObject({ op: "follow_me", path: topRing, closed: true });
   });
 
   it("refuses a click with no path, or on nothing, typed", async () => {
