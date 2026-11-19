@@ -2,7 +2,8 @@
 //!
 //! A path is relative to that folder. It is refused when it is absolute, holds `..`, does
 //! not end in `.shz`, or leads out of the folder through a link (its folder, or the file
-//! itself when it is there, resolves outside). Its folder must already exist.
+//! itself when it is there, resolves outside). Its folder must already exist. A save also
+//! checks the file it writes, before moving it into place (`written_inside`, #118).
 //!
 //! A name that means something else on Windows is refused on every system, so a path
 //! names the same file everywhere: one holding `:` (a drive, or a stream of another file),
@@ -135,4 +136,57 @@ pub fn place(root: &Path, given: &str) -> Result<Place, String> {
         shown: parts.join("/"),
         exists,
     })
+}
+
+/// Refuse `written`, a file just made for the path `given`, when it resolves outside `root`
+/// (already resolved), with the words `place` gives for a path out of the folder (#118).
+/// `place` resolves a new file's folder, not the file. Through a link the file server
+/// follows (a Samba share on Windows), the folder resolves where it was asked and only a
+/// file in it shows where it really is, so a save checks the file it wrote, before moving it.
+pub fn written_inside(root: &Path, written: &Path, given: &str) -> Result<(), String> {
+    let given = given.trim();
+    let real = std::fs::canonicalize(written)
+        .map_err(|e| format!("{given}: cannot find the file just written: {e}"))?;
+    if !real.starts_with(root) {
+        return Err(format!("{given}: it leads out of the server's folder"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join("sawhorse-mcp-tests")
+            .join(format!("paths-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// #118: a file written under the folder is checked where it really is. One that
+    /// resolves outside is refused with the words `place` gives for a path out of the folder.
+    #[test]
+    fn a_written_file_is_checked_where_it_really_is() {
+        let base = folder("written");
+        let (inside, outside) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = root(&inside).unwrap();
+        std::fs::write(inside.join("in.shz"), b"x").unwrap();
+        std::fs::write(outside.join("out.shz"), b"x").unwrap();
+        assert_eq!(
+            written_inside(&root, &inside.join("in.shz"), "in.shz"),
+            Ok(())
+        );
+        assert_eq!(
+            written_inside(&root, &outside.join("out.shz"), " out/Escaped.shz "),
+            Err("out/Escaped.shz: it leads out of the server's folder".to_string())
+        );
+        // A file that is not there (removed under it) is refused too, never taken as inside.
+        assert!(written_inside(&root, &inside.join("gone.shz"), "gone.shz").is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
