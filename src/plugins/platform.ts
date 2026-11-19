@@ -8,6 +8,7 @@
 // - Browser: installed packages in IndexedDB (store.ts); a .zip can also be loaded for this
 //   session only.
 import { isTauri } from "../io/files";
+import { startFolder } from "../io/folder";
 import { browserPackages } from "./store";
 import { BAD_SEGMENT, filesFromEntries, PACKAGE_LIMITS, PackageError } from "./zip";
 
@@ -138,8 +139,12 @@ function desktop(): PluginPlatform {
     },
     async pickFolder() {
       const { open } = await import("@tauri-apps/plugin-dialog");
+      // #71, #80: on Linux this dialog starts where Open and Save start (src/io/folder.ts),
+      // not in the working directory. The folder picked is not kept as that folder: a
+      // plugin's folder is not where the models are.
+      const folder = await startFolder();
       // recursive: the dialog adds the folder and everything under it to the fs scope.
-      const dir = await open({ directory: true, multiple: false, recursive: true, title: "Load an unpacked plugin folder" });
+      const dir = await open({ directory: true, multiple: false, recursive: true, title: "Load an unpacked plugin folder", ...(folder ? { defaultPath: folder } : {}) });
       if (typeof dir !== "string") return null;
       return { files: await readTree(dir), location: dir };
     },

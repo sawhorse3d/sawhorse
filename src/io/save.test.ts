@@ -17,6 +17,10 @@ const dialog = vi.hoisted(() => ({ save: vi.fn<() => Promise<string | null>>(), 
 const core = vi.hoisted(() => ({ invoke: vi.fn<(cmd: string, body: unknown, opts: { headers: Record<string, string> }) => Promise<void>>() }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 vi.mock("@tauri-apps/api/core", () => core);
+// The folder the dialog starts in is asked of the shell first (#71, #80), through the same
+// invoke. It is stood in for here, with no folder, so every call below is a save's; what is
+// asked and what the dialog is then given is tested in folder.test.ts.
+vi.mock("./folder", async (real) => ({ ...(await real<typeof import("./folder")>()), startFolder: async () => null }));
 
 describe("withExtension", () => {
   it("leaves a name that has one of the type's extensions, in any case", () => {
