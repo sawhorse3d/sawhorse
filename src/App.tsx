@@ -3197,6 +3197,7 @@ export function App() {
               busy={nestBusy}
               rounding={nestUnits}
               units={units}
+              stored={scene?.state.nest_settings ?? null}
               onSettings={setNestSettings}
               onStock={() => setStockOpen(true)}
               onHover={hoverPlacement}

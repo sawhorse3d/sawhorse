@@ -452,6 +452,9 @@ export interface DocState {
   /** The drawing style and the sun (null: the defaults). */
   style?: Style | null;
   shadows?: Shadows | null;
+  /** #100: the nest settings stored now (written as a nesting's `settings`), which the
+   * Nesting pane lays a change over; its last nesting lags 200 ms behind Undo and Redo. */
+  nest_settings?: NestSettings;
 }
 
 /** A material as the Materials pane shows it (crates/wasm-api `MaterialInfo`). */

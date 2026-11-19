@@ -145,6 +145,10 @@ struct DocState<'a> {
     /// The drawing style and the sun (lane 10); `null`: the defaults.
     style: Option<&'a sawhorse_kernel::looks::Style>,
     shadows: Option<&'a sawhorse_kernel::looks::Shadows>,
+    /// #100: the nest settings stored now, written as the nesting writes them, so the
+    /// Nesting pane lays a change over these and not over its last nesting (which is worked
+    /// out 200 ms after a change, Undo and Redo included). Read only.
+    nest_settings: sawhorse_kernel::stock::NestSettings,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -502,6 +506,7 @@ impl DocCore {
                 .collect(),
             style: m.style(),
             shadows: m.shadows(),
+            nest_settings: m.stock_library().settings,
         };
         serde_json::to_string(&st).unwrap_or_else(|_| "{}".to_string())
     }
@@ -1909,6 +1914,44 @@ mod tests {
         op(&mut d, r#"{"op":"reset_stock_library"}"#);
         let n: serde_json::Value = serde_json::from_str(&d.nest_json("").unwrap()).unwrap();
         assert_eq!(n["algorithm"], "guillotine");
+    }
+
+    /// #100: the state the app reads after every change holds the nest settings stored now,
+    /// written as the nesting writes them, so a change to one setting is laid over these and
+    /// not over the last nesting worked out. Undo and Redo move them with the model.
+    #[test]
+    fn the_state_holds_the_nest_settings_stored_now() {
+        let state =
+            |d: &DocCore| -> serde_json::Value { serde_json::from_str(&d.state_json()).unwrap() };
+        let nested = |d: &DocCore| -> serde_json::Value {
+            let n: serde_json::Value = serde_json::from_str(&d.nest_json("").unwrap()).unwrap();
+            n["settings"].clone()
+        };
+        let mut d = DocCore::default();
+        let built_in = state(&d)["nest_settings"].clone();
+        assert_eq!(built_in, nested(&d));
+        assert_eq!(built_in["kerf"], serde_json::json!(0.0254 / 8.0));
+        assert_eq!(built_in["trim"], serde_json::json!(0.0));
+        assert_eq!(built_in["algorithm"], "guillotine");
+        // The built-in joint loss and an unset minimum strip are left out, as the nesting does.
+        assert!(built_in.get("jointLoss").is_none());
+        assert!(built_in.get("minStrip").is_none());
+        op(
+            &mut d,
+            r#"{"op":"set_nest_settings","settings":{"kerf":0.0031,"trim":0.0031,"algorithm":"maxrects","jointLoss":0.002,"minStrip":0.03}}"#,
+        );
+        let set = state(&d)["nest_settings"].clone();
+        assert_eq!(
+            set,
+            serde_json::json!({"kerf":0.0031,"trim":0.0031,"algorithm":"maxrects","jointLoss":0.002,"minStrip":0.03})
+        );
+        assert_eq!(set, nested(&d));
+        d.undo().unwrap();
+        assert_eq!(state(&d)["nest_settings"], built_in);
+        d.redo().unwrap();
+        assert_eq!(state(&d)["nest_settings"], set);
+        op(&mut d, r#"{"op":"reset_stock_library"}"#);
+        assert_eq!(state(&d)["nest_settings"], built_in);
     }
 
     #[test]

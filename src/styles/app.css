@@ -345,7 +345,7 @@ button.chip:hover{border-color:var(--accent)}
 .nest-head .btn{padding:3px 8px;font-size:12px}
 .nest-controls input{width:62px;font:12px var(--mono);padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);text-align:right}
 .nest-controls label.err input{border-color:var(--warn);outline:1px solid var(--warn)}
-.nest-body.busy{opacity:.6;transition:opacity .15s .1s}
+.nest-body.busy,.nest-note.busy{opacity:.6;transition:opacity .15s .1s}
 .nest-sum{grid-template-columns:1fr 1fr}
 .nest-sum .wide{grid-column:1 / -1}
 .nest-unplaced{margin-top:10px;padding:7px 9px;border:1px solid var(--warn);border-radius:6px;background:color-mix(in srgb,var(--warn) 9%,transparent);font-size:11.5px}
