@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DocState, Entity, GraphNode, MeshData, SceneGraph } from "../kernel/types";
 import { highlightFor, eraseOp, partsOf } from "./entities";
-import { contextTrail, describeNode, expandNodes, objectEditable, placementOf, reachableContext, scopeEntity, sketchEditable, solidsIn } from "./scope";
+import { contextTrail, describeNode, expandNodes, hidSomething, objectEditable, placementOf, reachableContext, scopeEntity, sketchEditable, solidsIn } from "./scope";
 import { objectsOp, subjectOf } from "../tools/xform";
 import { moveOp } from "../tools/move";
 
@@ -135,5 +135,57 @@ describe("nodes as entities", () => {
     // With nothing selected, the press picks up the closed unit under the cursor.
     expect(subjectOf([], face(10), new Map(), state())).toMatchObject({ kind: "objects", nodes: [1], covered: [10, 11] });
     expect(subjectOf([], face(12), new Map(), state(1))).toMatch(/outside/);
+  });
+});
+
+describe("what a step from outside the tool hid (#111)", () => {
+  const section = (id: number, visible: boolean) => ({ id, name: `Section ${id}`, parent: null, active: true, hidden: !visible, visible, origin: [0, 0, 0], normal: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1], extent: [0, 0, 1, 1] }) as NonNullable<SceneGraph["sections"]>[number];
+  /** The bookshelf with some things not drawn: solids, nodes and section planes by id. */
+  const shown = (hidden: { objects?: number[]; nodes?: number[]; sections?: number[]; gone?: number[] } = {}, sections: number[] = []) => {
+    const g = graph();
+    return {
+      graph: {
+        ...g,
+        objects: g.objects.filter((o) => !hidden.gone?.includes(o.id)).map((o) => ({ ...o, visible: !hidden.objects?.includes(o.id) })),
+        nodes: g.nodes.map((n) => ({ ...n, visible: !hidden.nodes?.includes(n.id) })),
+        sections: sections.map((id) => section(id, !hidden.sections?.includes(id))),
+      },
+      solids: [],
+    } as unknown as DocState;
+  };
+
+  it("is a solid, a group or component, or a section plane drawn before and not after", () => {
+    expect(hidSomething(shown(), shown({ objects: [14] }))).toBe(true);
+    expect(hidSomething(shown(), shown({ nodes: [1], objects: [10, 11] }))).toBe(true);
+    expect(hidSomething(shown({}, [1]), shown({ sections: [1] }, [1]))).toBe(true);
+    // Gone counts as not drawn.
+    expect(hidSomething(shown(), shown({ gone: [14] }))).toBe(true);
+  });
+
+  it("is a group that holds no solid, only sketch geometry, hidden", () => {
+    // A group whose solid was deleted from inside it keeps the strokes drawn there (sketch 2
+    // in group 1 here): hiding it stops no solid being drawn, only the group.
+    const noSolids = (hidden: number[]) => {
+      const st = shown({ nodes: hidden });
+      st.graph!.objects = st.graph!.objects.filter((o) => o.id === 14);
+      st.graph!.nodes = st.graph!.nodes.filter((n) => n.id === 1);
+      return st;
+    };
+    expect(hidSomething(noSolids([]), noSolids([1]))).toBe(true);
+    expect(hidSomething(noSolids([1]), noSolids([]))).toBe(false);
+  });
+
+  it("is not showing things, or a step that changes nothing drawn (a camera-only scene)", () => {
+    expect(hidSomething(shown(), shown())).toBe(false);
+    expect(hidSomething(shown({ objects: [14] }), shown())).toBe(false);
+    expect(hidSomething(shown({ nodes: [1], objects: [10, 11] }), shown({ objects: [10] }))).toBe(false);
+    expect(hidSomething(shown({ sections: [1] }, [1]), shown({}, [1]))).toBe(false);
+    // Already hidden before stays hidden: nothing new is taken away.
+    expect(hidSomething(shown({ objects: [14] }), shown({ objects: [14] }))).toBe(false);
+  });
+
+  it("is nothing without a model before", () => {
+    expect(hidSomething(null, shown({ objects: [14] }))).toBe(false);
+    expect(hidSomething(undefined, shown())).toBe(false);
   });
 });

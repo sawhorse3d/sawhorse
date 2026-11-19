@@ -30,7 +30,7 @@ import type { DocState, Entity, KernelOp, MeshData, SceneData, V3 } from "./kern
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
-import { contextTrail, describeNode, entityShown, graphIndex, graphOf, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
+import { contextTrail, describeNode, entityShown, graphIndex, graphOf, hidSomething, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
 import { isMac, quitLabel } from "./lib/platform";
 import { describe } from "./tools/select";
@@ -327,9 +327,12 @@ export function App() {
   // see (src/lib/names.ts).
   const setMessage = useCallback((m: Message) => setMessageRaw(m && m.error ? { ...m, text: friendlyError(m.text) } : m), []);
   /** After undo / redo, when another model takes this one's place (New, Close, Open, the
-   * unsaved work restored), and after Delete erased the selection (#85): the active tool's
-   * gesture is void, what it worked out from the model is stale (#76), and the measurements
-   * box shows its default again. */
+   * unsaved work restored), after Delete erased the selection (#85), and after an edit from
+   * outside the tool that removed or hid something, or changed what is selected (#111: the
+   * Outliner's Delete, Explode Curve, Make Group, Make Component and Explode, and the
+   * Outliner's eye, Edit > Hide, a tag, a scene or Close Group when they hide something or
+   * take something out of the selection): the active tool's gesture is void, what it worked out from the model is stale (#76), and
+   * the measurements box shows its default again. */
   const afterHistoryRef = useRef<() => void>(() => undefined);
   const [selection, setSelection] = useState<Entity[]>([]);
   const [hover, setHover] = useState<Entity | null>(null);
@@ -1807,6 +1810,34 @@ export function App() {
     return Promise.resolve();
   }, []);
 
+  /** #111: an edit made from outside the active tool that can hide what the tool worked out
+   * from the selection (the Outliner's eye, Edit > Hide, a tag, a scene, Close Group): once it has landed,
+   * and only when it hid something that was drawn or took something out of the selection, the
+   * tool is told, as after Undo and Delete (#85). Showing things, or a scene that only moves
+   * the camera, leaves a step half done alone. Not done in `apply` itself, since a tool's own
+   * steps go through it and telling the tool there would cancel them. */
+  const applyFromOutside = useCallback(
+    (op: KernelOp, describe?: (r: EditResult) => string) => {
+      // Read when the step runs, not when it is queued: an edit queued before it may still
+      // change the model.
+      let before: DocState | undefined;
+      let selected = 0;
+      return run(
+        (k) => {
+          before = live.current.scene?.state;
+          selected = live.current.selection.length;
+          return k.apply(op);
+        },
+        op,
+        describe,
+      ).then((r) => {
+        if (r && (live.current.selection.length < selected || hidSomething(before, r.scene.state))) afterHistoryRef.current();
+        return r;
+      });
+    },
+    [run],
+  );
+
   /** Delete / Backspace: erase the selection as one undo step. */
   const eraseSelection = useCallback(() => {
     const sel = live.current.selection;
@@ -1840,6 +1871,8 @@ export function App() {
         const rest = sel.filter((e) => e.kind !== "curve");
         live.current.selection = rest;
         setSelection(rest);
+        // #111: told with the curves gone from the selection, as Delete does (#85).
+        afterHistoryRef.current();
       }
     });
   }, [apply]);
@@ -1874,7 +1907,11 @@ export function App() {
       if (!items.length) return void setMessage({ text: "Select the solids, groups or components to group first.", error: true });
       if (!(await inContext(parentOfItem(items[0])))) return;
       const r = await apply({ op: "make_group", items }, () => `Grouped ${plural(items.length, "item")}. Double-click the group to edit inside it.`);
-      if (r?.outcome.kind === "group_created") select([{ kind: "node", node: r.outcome.group }]);
+      if (r?.outcome.kind === "group_created") {
+        select([{ kind: "node", node: r.outcome.group }]);
+        // #111: told with the group selected, so Scale's box is the group's, not the solid's.
+        afterHistoryRef.current();
+      }
     },
     [apply, inContext, parentOfItem, select],
   );
@@ -1897,7 +1934,11 @@ export function App() {
           void (async () => {
             if (!(await inContext(parentOfItem(items[0])))) return;
             const r = await apply({ op: "make_component", items, name }, () => `Made component ${quoted(name)}. Copies of it (Move with Ctrl) are instances: edit one, they all change.`);
-            if (r?.outcome.kind === "component_created") select([{ kind: "node", node: r.outcome.instance }]);
+            if (r?.outcome.kind === "component_created") {
+              select([{ kind: "node", node: r.outcome.instance }]);
+              // #111: told with the instance selected, as after Make Group.
+              afterHistoryRef.current();
+            }
           })(),
       });
     },
@@ -1914,6 +1955,8 @@ export function App() {
       if (r) {
         const outs = r.outcome.kind === "batch" ? r.outcome.outcomes : [r.outcome];
         select(outs.flatMap((o) => (o.kind === "exploded" ? [...o.objects.map((object) => ({ kind: "object" as const, object })), ...o.nodes.map((node) => ({ kind: "node" as const, node }))] : [])));
+        // #111: told with what was inside selected; the group the tool worked from is gone.
+        afterHistoryRef.current();
       }
     },
     [apply, inContext, parentOfItem, select],
@@ -2017,7 +2060,7 @@ export function App() {
           return;
         case "hide":
         case "show":
-          void apply({ op: "set_hidden", items, hidden: action === "hide" }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(items.length, "item")}.`);
+          void applyFromOutside({ op: "set_hidden", items, hidden: action === "hide" }, () => `${action === "hide" ? "Hid" : "Showed"} ${plural(items.length, "item")}.`);
           return;
         case "lock":
         case "unlock":
@@ -2030,13 +2073,17 @@ export function App() {
             if (!(await inContext(parentOfItem(items[0])))) return;
             const ops: KernelOp[] = items.map((it) => ("node" in it ? { op: "delete_node", node: it.node } : { op: "delete_object", object: it.object }));
             const r = await apply(ops.length === 1 ? ops[0] : { op: "batch", ops }, () => `Deleted ${plural(items.length, "item")}.`);
-            if (r) select([]);
+            if (r) {
+              select([]);
+              // #111: told with the selection already empty, as Delete does (#85).
+              afterHistoryRef.current();
+            }
           })();
           return;
         }
       }
     },
-    [apply, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
+    [apply, applyFromOutside, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
   );
 
   /** A row clicked in the Outliner: select it, opening what holds it when that is not open. */
@@ -2136,9 +2183,9 @@ export function App() {
       setCamView(null);
       setActiveScene(name);
       const before = live.current.scene?.state.style;
-      void apply({ op: "activate_scene", name }, () => sceneNote(name, sc, before));
+      void applyFromOutside({ op: "activate_scene", name }, () => sceneNote(name, sc, before));
     },
-    [apply],
+    [applyFromOutside],
   );
 
   const addScene = useCallback(() => {
@@ -2925,13 +2972,14 @@ export function App() {
               r.outcome.kind === "paint_cleared" ? `Paint cleared from ${plural(r.outcome.cleared_faces, "face")} and ${plural(r.outcome.cleared_items, "item")}: what holds them shows now.` : "Paint cleared.",
             ),
         },
-        { label: "Hide", disabled: !selItems.length, onSelect: () => void apply({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
+        { label: "Hide", disabled: !selItems.length, onSelect: () => void applyFromOutside({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
         { label: "Lock", disabled: !selItems.length, onSelect: () => void apply({ op: "set_locked", items: selItems, locked: true }, () => `Locked ${plural(selItems.length, "item")}.`) },
         {
           label: "Close Group / Component",
           keys: "Esc",
           disabled: (st?.graph?.context ?? null) === null,
-          onSelect: () => void apply({ op: "leave_context" }, (r) => `Closed it. Editing ${contextTrail(r.scene.state.graph)}.`),
+          // #111: closing takes what was selected inside out of the selection.
+          onSelect: () => void applyFromOutside({ op: "leave_context" }, (r) => `Closed it. Editing ${contextTrail(r.scene.state.graph)}.`),
         },
         {
           label: "Delete Imported Meshes",
@@ -3010,7 +3058,7 @@ export function App() {
       ),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, applyFromOutside, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -3258,7 +3306,7 @@ export function App() {
           state: st ?? null,
           canTag: selItems.length > 0,
           onCreate: () => void createTag(),
-          onVisible: (tag, visible) => void apply({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
+          onVisible: (tag, visible) => void applyFromOutside({ op: "set_tag_visible", tag, visible }, () => `Tag ${quoted(tag)} ${visible ? "shown" : "hidden"}.`),
           onColor: (tag, color) => void apply({ op: "set_tag_color", tag, color: hexToRgb(color) }),
           onRename: (tag, name) => {
             const created = createdTagRef.current === tag;
@@ -3268,7 +3316,8 @@ export function App() {
           onDelete: (tag) => void apply({ op: "delete_tag", tag }, () => `Tag ${quoted(tag)} deleted: what was on it is untagged now.`),
           onAssign: (tag) => {
             const items = itemsOf(live.current.selection);
-            void apply({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ? `tag ${quoted(tag)}` : "Untagged"}.`);
+            // #111: a hidden tag hides what is put on it.
+            void applyFromOutside({ op: "tag_items", items, tag }, () => `${plural(items.length, "item")} on ${tag ? `tag ${quoted(tag)}` : "Untagged"}.`);
           },
           editing: editingTag,
           onEdited: () => {

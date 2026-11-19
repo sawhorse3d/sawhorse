@@ -76,7 +76,10 @@ export class FollowTool extends Tool {
   }
 
   /** #86: Undo, Redo, New, Close, Open, Restore Unsaved Work, an empty SketchUp file
-   * imported in place of the model, or Delete (#85) may have removed the path this tool loaded. Drop it
+   * imported in place of the model, Delete (#85), or the Outliner's Delete, Explode Curve,
+   * Make Group, Make Component, Explode, or the Outliner's eye, Edit > Hide, a tag, a scene or
+   * Close Group hiding something or emptying the selection (#111) may have removed the path
+   * this tool loaded. Drop it
    * quietly: the status they wrote stays, and the next click asks for a path instead of
    * sweeping a stale one. */
   modelChanged(): void {

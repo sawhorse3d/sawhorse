@@ -244,6 +244,20 @@ export function entityShown(e: Entity, state: DocState | null | undefined): bool
   return true;
 }
 
+/** #111: a solid, group, component or section plane drawn in `before` is not drawn in
+ * `after` (hidden by the eye, a tag or a scene, or gone). Showing things, moving the camera
+ * or changing the style takes nothing away. */
+export function hidSomething(before: DocState | null | undefined, after: DocState | null | undefined): boolean {
+  const was = graphOf(before);
+  const now = graphIndex(graphOf(after));
+  const sections = new Map((graphOf(after).sections ?? []).map((s) => [s.id, s.visible]));
+  return (
+    was.objects.some((o) => o.visible && !now.object.get(o.id)?.visible) ||
+    was.nodes.some((n) => n.visible && !now.node.get(n.id)?.visible) ||
+    (was.sections ?? []).some((s) => s.visible && !sections.get(s.id))
+  );
+}
+
 /** "Model › Lower › Shelf": where editing happens. */
 export function contextTrail(g: SceneGraph): string {
   return ["Model", ...g.path.map((id) => nodeById(g, id)?.label ?? "Group")].join(" › ");

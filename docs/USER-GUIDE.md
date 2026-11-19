@@ -214,7 +214,7 @@ Sawhorse refuses a scale that would flatten the solid, turn it inside out or fol
 
 The profile travels along the path and turns on a miter at every corner. A region becomes a new solid. A face adds to its solid, or cuts into it when the path runs into it.
 
-Follow Me reads the path when you press W. Undo, Redo, Delete, New, Close, Open, Restore Unsaved Work, or an Import of an empty SketchUp file (it opens in place of the model) while it is the tool lets the path go: the blue goes, and a click on a profile asks for the path. To go on, select the path and press W again.
+Follow Me reads the path when you press W, and shows it in blue. Some steps you take while Follow Me is the tool clear the path: the blue goes, and the next click on a profile asks you to select a path. To go on, select the path again and press W. These steps clear it: Undo and Redo; New, Close, Open and Restore Unsaved Work; importing an empty SketchUp file, which opens in place of the model; Delete, from the keyboard, the Edit menu or the Outliner; Explode Curve, Make Group, Make Component and Explode. Hiding something clears it too: Edit > Hide, the eye in the Outliner, hiding a tag, putting the selection on a hidden tag, or a scene that hides something. So does Close Group / Component when something inside the group was selected. Showing something keeps the path, and so does a scene that only moves the camera.
 
 **A moulding round the top of a box.**
 1. Look at one end of the box (Right).
