@@ -31,6 +31,21 @@ fn size() -> impl Strategy<Value = f64> {
     (0.001..10.0f64, any::<bool>()).prop_map(|(s, neg)| if neg { -s } else { s })
 }
 
+/// Sizes from 1 mm to 10 m, either sign, on a 1 um grid (#112). Push back redraws the
+/// footprint from the solid's world points, which carries float noise of up to about 2e-14 m,
+/// and the model hash rounds the sketch's plane-local positions to 1 nm: an arbitrary size can
+/// sit within that noise of a half-nanometre and hash differently after the round trip, with
+/// the shape right. The corners' local coordinates are 0, w and h, and a whole number of
+/// micrometres sits at least 0.499998 nm from the nearest rounding boundary, so the exact
+/// hash comparison holds. The origin and the normal stay arbitrary: they are hashed as the
+/// plane, which the round trip does not change.
+fn grid_size() -> impl Strategy<Value = f64> {
+    (1_000i64..=10_000_000, any::<bool>()).prop_map(|(um, neg)| {
+        let s = um as f64 / 1e6;
+        if neg { -s } else { s }
+    })
+}
+
 fn box_ops(origin: [f64; 3], normal: [f64; 3], x: f64, y: f64, w: f64, h: f64, d: f64) -> Vec<Op> {
     vec![
         Op::NewSketch { origin, normal },
@@ -65,7 +80,7 @@ proptest! {
     }
 
     #[test]
-    fn extrude_then_push_back_restores_the_sketch(o in origin(), n in normal(), w in size(), h in size(), d in size()) {
+    fn extrude_then_push_back_restores_the_sketch(o in origin(), n in normal(), w in grid_size(), h in grid_size(), d in grid_size()) {
         let ops = box_ops(o, n, 0.0, 0.0, w, h, d);
         let sketch_only = Model::replay(&ops[..2]).unwrap();
         let mut m = Model::replay(&ops).unwrap();
@@ -120,5 +135,77 @@ proptest! {
         prop_assert_eq!((st.euler, st.genus, st.holes), (0, 1, 2));
         let expect = (w * h - (w - 2.0 * ix) * (h - 2.0 * iy)) * d.abs();
         prop_assert!((st.volume_m3 - expect).abs() <= 1e-9 * expect.max(1.0));
+    }
+}
+
+/// #112: the input CI's property test found, with a size off the 1 um grid. The rectangle's
+/// top corners sit at v = 0.6679310874999995 m (667931087.4999995 nm) and come back from the
+/// solid's world points, 49.86 m from the origin, at 0.6679310875000013 m, either side of a
+/// half-nanometre, so the model hash differs while the shape is right. This holds what the
+/// kernel does guarantee for it, and pins no hash.
+///
+/// The second input keeps the 1 pm bound meaning something the grid sizes above cannot see:
+/// its sizes sit about 0.027 nm from the nearest multiple of 0.1 nm and further from a
+/// half-nanometre (123456789.273 nm and -987654321.327 nm), so returned points snapped to a
+/// 0.5 nm or a 0.1 nm grid fail here, where CI's input and the grid sizes let them through. It
+/// is on a skew plane about 84 m from the origin, where the world coordinates are large.
+#[test]
+fn extrude_then_push_back_gives_the_corners_back() {
+    let inputs = [
+        // CI's input (#112).
+        (
+            [0.0, 49.86081083353802, 0.0],
+            [0.0, 0.0, 1.0],
+            (0.001, 0.6679310874999995, 0.001),
+        ),
+        // Off every 0.1 nm grid, far from the origin, on a skew plane.
+        (
+            [-48.7, 47.3, -49.1],
+            [0.6, -0.7, 0.4],
+            (0.123456789273, -0.987654321327, 0.4),
+        ),
+    ];
+    for (origin, normal, (w, h, d)) in inputs {
+        let ops = box_ops(origin, normal, 0.0, 0.0, w, h, d);
+        let corners = |m: &Model| -> Vec<[f64; 2]> {
+            m.sketch(1)
+                .unwrap()
+                .vertices()
+                .map(|(_, p)| [p.x, p.y])
+                .collect()
+        };
+        let before = corners(&Model::replay(&ops[..2]).unwrap());
+        let mut m = Model::replay(&ops).unwrap();
+        let out = m
+            .apply(&Op::PushPull {
+                object: 1,
+                face: 2,
+                distance: -d,
+            })
+            .unwrap();
+        let OpOutcome::ObjectCollapsed { regions } = out else {
+            panic!("not collapsed: {out:?}");
+        };
+        assert_eq!(regions.len(), 1, "the footprint went back to the sketch");
+        assert_eq!(m.objects().len(), 0);
+        let after = corners(&m);
+        assert_eq!(after.len(), 4);
+        // Measured: 1.8e-15 m on CI's input, and at most 2.2e-14 m over 24,000,000 random
+        // cases in a harness outside the repository. 1 pm is over 40 times that and 1,000
+        // times under the hash quantum. Each corner is matched with the nearest one that came
+        // back, so noise either side of zero cannot pair the wrong corners.
+        for a in &before {
+            let gap = after
+                .iter()
+                .map(|b| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()))
+                .fold(f64::INFINITY, f64::min);
+            assert!(gap <= 1e-12, "corner {a:?} came back {gap:e} m away");
+        }
+        m.apply(&Op::Extrude {
+            sketch: 1,
+            region: regions[0],
+            distance: d,
+        })
+        .expect("region extrudes again");
     }
 }
