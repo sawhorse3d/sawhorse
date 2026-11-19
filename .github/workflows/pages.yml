@@ -30,6 +30,9 @@ jobs:
   build:
     name: Build the site
     runs-on: ubuntu-24.04
+    # As in ci.yml (lane 77): a stalled download stops the job instead of holding the
+    # runner for six hours. The slowest recent green build took about 14 minutes.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -64,6 +67,7 @@ jobs:
         # catches once the release is out).
         run: node scripts/check-site.mjs --dir dist-site --base "${{ steps.pages.outputs.base_path }}/" --online --allow-missing-release
       - name: install Playwright Chromium
+        timeout-minutes: 20
         run: npx playwright install --with-deps chromium
       - name: smoke test (landing page, demo kernel, a box, save and open)
         run: node scripts/site-smoke.mjs --dir dist-site --prefix "${{ steps.pages.outputs.base_path }}/" --shots site-smoke --shot-prefix ci
@@ -81,6 +85,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

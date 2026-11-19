@@ -468,6 +468,8 @@ Downloading an artifact needs a signed-in GitHub account. The jobs use `release.
 
 The e2e step's frame-gap bounds are calibrated to the runner (see "Responsiveness bounds in the end-to-end tests"); the absolute 2,000 ms bound runs nightly on a dedicated runner (`nightly-perf.yml`) when one is registered.
 
+Every job in `ci.yml`, `pages.yml` and `desktop-test-build.yml` has a `timeout-minutes` (lane 77; `tauri-check` 60, since its apt step has passed after 37 minutes), and so do the web job's Playwright install (20 minutes; the slowest green one took about 10, and about 11 in `pages.yml`), wasm-pack install and `npm ci`, so a stalled download stops the job in minutes instead of holding a runner for six hours.
+
 Runners are pinned (never `ubuntu-latest`, which moves to a new Ubuntu on 2026-10-19 without notice in the logs); actions are `actions/checkout@v5` and `actions/setup-node@v5` (Node 24 runtime).
 
 No secrets are needed; no auto-merge is configured.

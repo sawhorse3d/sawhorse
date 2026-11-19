@@ -18,10 +18,16 @@ env:
   # Never forward to WSL on runners (scripts/cargo.sh, scripts/build-wasm.mjs).
   SAWHORSE_NO_WSL: "1"
 
+# Every job in this file has a time limit, and so do three of the web job's download
+# steps, so a stalled download stops the job in minutes instead of holding the runner
+# until GitHub's six-hour cancel (lane 77: a pull request's web job sat in the Playwright
+# install's apt-get for six hours on 2026-11-19). Each job's limit leaves room for a first
+# run after a toolchain or lockfile change, or a slow mirror on a run that still passes.
 jobs:
   rust:
     name: Rust (fmt, clippy, test, wasm32 check)
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: crates
@@ -73,6 +79,7 @@ jobs:
           - name: macOS
             os: macos-15-intel
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: crates
@@ -153,6 +160,7 @@ jobs:
   web:
     name: Web (wasm-pack, build, vitest, golden, boolean diff, corpus, e2e)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -166,8 +174,10 @@ jobs:
         with:
           workspaces: crates
       - name: install wasm-pack
+        timeout-minutes: 5
         run: npm install -g wasm-pack@0.15.0
       - run: npm ci
+        timeout-minutes: 10
       - name: Tauri stays on 2.x
         run: npm run check:tauri
       - name: wasm-pack build
@@ -182,7 +192,12 @@ jobs:
         run: npx vitest run
       - name: generate the .skp corpus (203 files, byte for byte against tests/corpus/manifest.json)
         run: npm run corpus:skp
+      # Usually under a minute, but with the Ubuntu mirror slow it has passed after about 10
+      # minutes here and about 11 in pages.yml, so the limit is 20, under twice the slowest.
+      # No retry: a second try goes to the same mirror, and stopping apt-get partway can
+      # leave its lock to fail the next try.
       - name: install Playwright Chromium
+        timeout-minutes: 20
         run: npx playwright install --with-deps chromium
       # One Playwright run covers every spec, the 203-file corpus import and its golden
       # images included (REQUIRE_CORPUS makes a missing corpus a failure, not a skip).
@@ -209,6 +224,9 @@ jobs:
   tauri-check:
     name: Tauri shell compiles (Linux)
     runs-on: ubuntu-22.04
+    # About a minute warm, but its apt step has passed after 37 minutes with the mirror
+    # failing over, so the job, not the step, is bounded, with room beyond that.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - name: webview deps

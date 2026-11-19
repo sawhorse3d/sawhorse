@@ -26,7 +26,10 @@ env:
 jobs:
   windows:
     name: Windows installer (unsigned test build)
+    # Time limits as in ci.yml (lane 77): three to five times each job's slowest recent
+    # green run.
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -102,6 +105,7 @@ jobs:
     # 2026-10-20, macos-15 three times in a row on 2026-11-10), and macos-14, which did start,
     # was retired by GitHub on 2026-11-02. release.yml's comment on its matrix has the detail.
     runs-on: macos-15-intel
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -160,6 +164,7 @@ jobs:
     name: Linux AppImage, .deb and .rpm (unsigned test build)
     # release.yml's Linux runner, kept on the older glibc the Linux release build targets.
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
