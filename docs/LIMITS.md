@@ -1,6 +1,6 @@
 # Known limits
 
-What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.6, 2026-11-14 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44; the shortest distance and long strokes in lane 53).
+What Sawhorse 0.1 alpha handles, measured, and where it stops. Status: 0.1.0-alpha.7, 2026-11-19 (the limits that protect you, below, are new in lane 16; the model's count limits on guides, dimensions, tags, materials, scenes and section planes in lane 16b; the section cut's timing in lane 19c; the view in lane 21; moving sketch geometry in lane 22; curves in lanes 23 and 23b; SketchUp files and their curves in lane 25; a `.shz` file's ids in lane 28; where the desktop app writes a file in lane 32; the desktop app in lanes 37 and 39; moving sketch geometry again in lanes 41, 43 and 44; the shortest distance and long strokes in lane 53; importing curves in lane 46; moving sketch geometry and curves again in lanes 49 and 60; unsaved work set aside in lane 64).
 
 ## Model size
 
