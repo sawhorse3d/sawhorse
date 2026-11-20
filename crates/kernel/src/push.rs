@@ -29,7 +29,7 @@ use glam::{DVec2, DVec3};
 
 use sawhorse_tessellate::signed_area;
 
-use crate::boolean::{BoolOp, BooleanError, combine, default_engine};
+use crate::boolean::{BoolOp, BooleanError, combine_parts, default_engine};
 use crate::brep::{PolyFace, Polys};
 use crate::error::PushError;
 use crate::faceops::merge_coplanar;
@@ -391,16 +391,19 @@ pub(crate) fn push_pull_with(
             reach = d - 0.5 * POINT_MERGE;
         }
     }
-    match combine(&p, &prism(&p, fi, &plane, reach), op, engine.as_ref())? {
+    // A result the cancelling of sheets did not save is refused as before it (see
+    // `Combined::build`).
+    let res = combine_parts(&p, &prism(&p, fi, &plane, reach), op, engine.as_ref())?;
+    match res
+        .build(|q| accept(obj, &q, None))
+        .map_err(BooleanError::InvalidResult)?
+    {
         None => Ok((
             PushOutcome::Collapsed {
                 footprint: footprint(),
             },
             None,
         )),
-        Some(q) => {
-            let cand = accept(obj, &q, None).map_err(BooleanError::InvalidResult)?;
-            Ok((PushOutcome::Moved, Some(cand)))
-        }
+        Some(cand) => Ok((PushOutcome::Moved, Some(cand))),
     }
 }

@@ -684,19 +684,22 @@ impl Object {
     /// [`crate::boolean::combine`]). `Ok(None)`: the result is empty.
     pub fn combine(&self, other: &Object, op: BoolOp) -> Result<Option<Object>, BooleanError> {
         let engine = crate::boolean::default_engine()?;
-        let res = crate::boolean::combine(
+        let res = crate::boolean::combine_parts(
             &self.brep.to_polys(),
             &other.brep.to_polys(),
             op,
             engine.as_ref(),
         )?;
-        let Some(p) = res else { return Ok(None) };
-        let o = self
-            .rebuilt(p)
-            .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
-        o.validate()
-            .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
-        Ok(Some(o))
+        // A result the cancelling of sheets did not save is refused as before it (see
+        // `Combined::build`).
+        res.build(|p| {
+            let o = self
+                .rebuilt(p)
+                .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
+            o.validate()
+                .map_err(|e| BooleanError::InvalidResult(e.to_string()))?;
+            Ok(o)
+        })
     }
 
     /// Total face area in square metres.

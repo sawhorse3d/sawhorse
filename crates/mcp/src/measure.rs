@@ -247,7 +247,8 @@ pub fn clearance(model: &Model, a: &Item, b: &Item) -> Result<Value, String> {
     let mut unknown: Option<String> = None;
     for ((i, oa), (j, ob)) in meeting {
         // The kernel's intersection can fail one way round and work the other (a shelf
-        // whose end sits on a dado's floor: a.combine(b) refused, b.combine(a) right); the
+        // 1 mm into its dado's floor, turned about a skew axis and moved 40 m: a.combine(b)
+        // refused, b.combine(a) right; see crates/mcp/tests/measure.rs); the
         // volume and the box are the same either way, so the other order is tried before
         // giving up, and the first order's reason is the one kept.
         match oa

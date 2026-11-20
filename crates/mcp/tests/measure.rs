@@ -616,7 +616,8 @@ fn nested_groups_a_group_s_overlap_and_a_turned_copy() {
 /// A side with a dado 19 mm wide and 6 mm deep, and a shelf in it.
 #[test]
 fn a_shelf_in_a_dado() {
-    let mut s = Session::new(&folder("dado"));
+    let dir = folder("dado");
+    let mut s = Session::new(&dir);
     let side_profile = [
         [0.0, 0.0],
         [19.0, 0.0],
@@ -651,8 +652,9 @@ fn a_shelf_in_a_dado() {
         let m = s.ok("measure", json!({"a": side, "b": shelf}));
         assert_eq!(distances(&m), want, "{t} at {x}: {m}");
     }
-    // A shelf drawn 1 mm too thick, its end on the floor: the kernel's intersection refuses
-    // side with shelf and builds shelf with side, so the other order answers.
+    // A shelf drawn 1 mm too thick, its end on the floor: the kernel's intersection refused
+    // side with shelf and built shelf with side before lane 81 (#124); now both orders
+    // answer.
     s.ok("new_model", json!({}));
     let side = prism(
         &mut s,
@@ -677,6 +679,46 @@ fn a_shelf_in_a_dado() {
     assert!(r.get("overlap_unknown").is_none(), "{r}");
     close(&r["overlap_mm3"], 6.0 * 10.0 * 1.0, 1e-3);
     assert_eq!(r["seated"], false);
+    // A shelf 1 mm into the floor of the wide dado, turned 0.83 rad about a skew axis and
+    // moved by (40, -25, 12) m: the kernel refuses side with shelf and builds shelf with
+    // side, so the other order answers. (`turn_all` takes the axis as given, 0.99995 long,
+    // so this turn is not exactly a rotation and the overlap reads 5,699.5 mm3.)
+    s.ok("new_model", json!({}));
+    let side = prism(&mut s, &side_profile, 300.0);
+    let shelf = s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19, "width": 300, "length": 462,
+            "position": [12, 0, 300], "length_axis": "x", "thickness_axis": "z"}),
+    );
+    let shelf = json!({"object": shelf["board"]["object"]});
+    let (i, j) = (
+        side["object"].as_u64().unwrap(),
+        shelf["object"].as_u64().unwrap(),
+    );
+    turn_all(
+        &mut s,
+        &[i, j],
+        [0.3, -0.7, 0.648],
+        0.83,
+        [40.0, -25.0, 12.0],
+    );
+    let r = clearance(&mut s, &side, &shelf);
+    assert!(r.get("overlap_unknown").is_none(), "{r}");
+    close(&r["overlap_mm3"], 1.0 * 19.0 * 300.0, 1.0);
+    assert_eq!(r["seated"], false);
+    s.ok("save_model", json!({"path": "one-way.shz"}));
+    let opened = sawhorse_shz::read(&std::fs::read(dir.join("one-way.shz")).unwrap()).unwrap();
+    let model = opened.document.model();
+    let (oa, ob) = (model.object(i).unwrap(), model.object(j).unwrap());
+    use sawhorse_kernel::boolean::BoolOp;
+    assert!(
+        oa.combine(ob, BoolOp::Intersection).is_err(),
+        "side with shelf"
+    );
+    assert!(
+        ob.combine(oa, BoolOp::Intersection).is_ok(),
+        "shelf with side"
+    );
 }
 
 /// Both limits sit where they say, and refuse before any work.
@@ -910,7 +952,8 @@ fn the_reason_overlap_unknown_gives_and_faces_a_hair_past() {
     reason_is_the_first_pair_s(&mut s, &dir, a["object"].as_u64().unwrap(), &ids, &r);
 
     // A shelf 1 mm too thick for its dado, its end on the floor, turned about a skew axis:
-    // here the two orders give different reasons.
+    // the two orders gave different reasons before lane 81 (#124); now both answer, and
+    // there is no reason.
     s.ok("new_model", json!({}));
     let side = prism(
         &mut s,
@@ -937,6 +980,7 @@ fn the_reason_overlap_unknown_gives_and_faces_a_hair_past() {
     );
     turn_all(&mut s, &[i, j], [0.3, -0.7, 0.648], 0.83, [0.0, 0.0, 0.0]);
     let r = clearance(&mut s, &side, &shelf);
+    assert!(r.get("overlap_unknown").is_none(), "{r}");
     reason_is_the_first_pair_s(&mut s, &dir, i, &[j], &r);
 
     for (z, want) in [(18.99, vec![0.0]), (18.9899, vec![])] {

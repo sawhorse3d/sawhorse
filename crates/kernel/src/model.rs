@@ -2956,13 +2956,19 @@ impl Model {
                 } else {
                     crate::boolean::BoolOp::Difference
                 };
-                let q = crate::boolean::combine(&p, &sw, op, engine.as_ref())?
+                // A result the cancelling of sheets did not save is refused as before it
+                // (see `Combined::build`).
+                let next = crate::boolean::combine_parts(&p, &sw, op, engine.as_ref())?
+                    .build(|q| -> Result<Object, crate::boolean::BooleanError> {
+                        let next = o.rebuilt(q).map_err(|e| {
+                            crate::boolean::BooleanError::InvalidResult(e.to_string())
+                        })?;
+                        next.validate().map_err(|e| {
+                            crate::boolean::BooleanError::InvalidResult(e.to_string())
+                        })?;
+                        Ok(next)
+                    })?
                     .ok_or(crate::error::SweepError::RemovesEverything)?;
-                let next = o
-                    .rebuilt(q)
-                    .map_err(|e| crate::boolean::BooleanError::InvalidResult(e.to_string()))?;
-                next.validate()
-                    .map_err(|e| crate::boolean::BooleanError::InvalidResult(e.to_string()))?;
                 self.objects[k] = next;
                 self.touch(k);
                 let pieces = self.sever(k);
