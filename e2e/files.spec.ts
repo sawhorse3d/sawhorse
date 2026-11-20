@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { FAMILIES, rng } from "../src/io/corpus/models";
-import { IN, near, solids, type Solid, type V3 } from "./helpers";
+import { answerUnsaved, IN, near, solids, unsavedDialog, type Solid, type V3 } from "./helpers";
 
 // Lane 6: the File menu, import, export, save and open, drag-and-drop, on the production
 // browser build. `?io=basic` uses the file input and downloads (the File System Access
@@ -223,20 +223,13 @@ test("a save refused by its read-back check writes nothing and keeps the unsaved
   await expect(vp).toHaveAttribute("data-hash", hash!);
 });
 
-test("over unsaved changes, Open and New wait for the answer, even the desktop's asynchronous one", async ({ page }) => {
-  // The desktop app's dialog plugin replaces window.confirm with one that returns a Promise
-  // (truthy whatever the answer, to code that does not wait). The same stand-in here: it
-  // answers after a moment, No at first.
-  await page.addInitScript(() => {
-    const w = window as unknown as { confirm: (m: string) => unknown; __asked: string[]; __answer: boolean };
-    w.__asked = [];
-    w.__answer = false;
-    w.confirm = (m: string) => {
-      w.__asked.push(m);
-      return new Promise((r) => setTimeout(() => r(w.__answer), 150));
-    };
+test("over unsaved changes, Open and New wait for the answer: Cancel keeps the model, Discard Changes goes ahead", async ({ page }) => {
+  // #120: the question is the app's own dialog (every answer on every path: e2e/unsaved.spec.ts).
+  const natives: string[] = [];
+  page.on("dialog", (d) => {
+    natives.push(d.message());
+    void d.dismiss();
   });
-  const asked = () => page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
   const vp = await ready(page);
   await pick(page, "parts.stl", stlBoxes([{ at: [0, 0, 0], size: [40, 40, 40] }]));
   await expect(vp).toHaveAttribute("data-objects", "1");
@@ -247,25 +240,28 @@ test("over unsaved changes, Open and New wait for the answer, even the desktop's
   await expect(vp).toHaveAttribute("data-objects", "2");
   await expect(page).toHaveTitle("• Untitled - Sawhorse");
 
-  // Open over them: asked, and No keeps the model.
+  // Open over them: asked, and nothing happens until the answer. Cancel keeps the model.
   await pick(page, "parts.shz", saved.bytes);
-  await expect.poll(asked).toEqual(["Discard the unsaved changes to this model?"]);
-  await page.waitForTimeout(500);
+  await expect(unsavedDialog(page).locator(".question")).toHaveText("Save the changes to Untitled.shz?");
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await answerUnsaved(page, "Cancel");
+  await expect(unsavedDialog(page)).toHaveCount(0);
   await expect(vp).toHaveAttribute("data-objects", "2");
   await expect(page).toHaveTitle("• Untitled - Sawhorse");
 
-  // New over them: asked, and No keeps the model.
+  // New over them: asked, and Cancel keeps the model.
   await menu(page, "File", "New");
-  await expect.poll(async () => (await asked()).length).toBe(2);
-  await page.waitForTimeout(500);
+  await answerUnsaved(page, "Cancel");
+  await expect(unsavedDialog(page)).toHaveCount(0);
   await expect(vp).toHaveAttribute("data-objects", "2");
 
-  // Yes opens the file.
-  await page.evaluate(() => ((window as unknown as { __answer: boolean }).__answer = true));
+  // Discard Changes opens the file.
   await pick(page, "parts.shz", saved.bytes);
+  await answerUnsaved(page, "Discard Changes");
   await expect(vp).toHaveAttribute("data-objects", "1");
   await expect(page).toHaveTitle("parts - Sawhorse");
-  expect((await asked()).length).toBe(3);
+  // The browser's own confirm was never used.
+  expect(natives).toEqual([]);
 });
 
 test("drag and drop: an SVG becomes sketch regions on the ground", async ({ page }) => {

@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { goldenPanelWidth, MAX_BAD, MAX_MEAN, perceptual } from "./perceptual";
+import { discardWhenAsked } from "./helpers";
 
 // The .skp corpus through the real browser build: every file in tests/corpus/skp/ (made by
 // `npm run corpus:skp`) is imported through File > Import's input, framed in the Iso view
@@ -40,7 +41,7 @@ interface Row {
 const rows: Row[] = [];
 
 async function ready(page: Page) {
-  page.on("dialog", (d) => void d.accept());
+  await discardWhenAsked(page);
   await page.goto("/?io=basic&theme=light");
   const vp = page.locator("main.vp");
   await expect(vp).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });

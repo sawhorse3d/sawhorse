@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseSkp, type Definition, type SkpModel } from "openskp";
-import { IN, at, box, selectAt, solids, type Solid, setUnits } from "./helpers";
+import { IN, at, box, discardWhenAsked, selectAt, solids, type Solid, setUnits } from "./helpers";
 import { checkCutListFits, dragPanelTo, panelWidth } from "./cutlist-fit";
 
 // Real SketchUp-authored files through Sawhorse's own .skp import (File > Import's input,
@@ -574,8 +574,8 @@ test.describe("private SketchUp fixtures (SAWHORSE_PRIVATE_FIXTURES)", () => {
     test.skip(!have(BLANK), `${BLANK} is not in the fixtures directory`);
     test.setTimeout(60_000);
     const errors = watchErrors(page);
-    // The board is unsaved: the question before the empty model takes its place is answered Yes.
-    page.on("dialog", (d) => void d.accept());
+    // The board is unsaved: the question before the empty model takes its place is answered Discard Changes.
+    await discardWhenAsked(page);
     const vp = await open(page);
     await box(page, "24,4", "2");
     await page.keyboard.press("Space");
