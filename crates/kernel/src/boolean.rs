@@ -589,13 +589,68 @@ fn relabel(out: &TriSolid, planes: &[Plane]) -> Result<Vec<usize>, BooleanError>
 ///
 /// Both operands first go through the plane-snapping pass ([`crate::snap`]: nearly
 /// coplanar faces made exactly coplanar, vertices re-solved onto them), and so does the
-/// re-polygonised result.
+/// re-polygonised result. Since lane 81 (#124), sheets of no thickness the engine leaves
+/// where faces touch are then cancelled (`cancel_fins`); a result that is nothing but
+/// such sheets is empty.
 pub fn combine(
     a: &Polys,
     b: &Polys,
     op: BoolOp,
     engine: &dyn BooleanEngine,
 ) -> Result<Option<Polys>, BooleanError> {
+    Ok(combine_parts(a, b, op, engine)?.result)
+}
+
+/// What [`combine_parts`] gives: the result, and, when sheets were cancelled from it, the
+/// result as it was before that step (lane 81, #124).
+#[derive(Debug, Clone)]
+pub struct Combined {
+    /// `None`: the result is empty.
+    pub result: Option<Polys>,
+    /// The result without the sheets cancelled, when they were.
+    pub before_fins: Option<Polys>,
+}
+
+impl Combined {
+    /// `build` (rebuild and validate) the result; `Ok(None)` when it is empty. When sheets
+    /// were cancelled from it and it does not build, the result as it was before that step
+    /// is built instead and its answer returned. That result is exactly the one the kernel
+    /// built before lane 81, so a boolean the step cannot save is refused with the words it
+    /// had before (the step's own result often fails in a later, structural check, an open
+    /// shell where the old one failed as a vertex on a face), and a boolean the step saves
+    /// is unchanged: only a failure falls back, and the engine runs once.
+    pub fn build<T, E>(self, mut build: impl FnMut(Polys) -> Result<T, E>) -> Result<Option<T>, E> {
+        let Some(p) = self.result else {
+            return Ok(None);
+        };
+        match build(p) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) => match self.before_fins {
+                Some(q) => build(q).map(Some),
+                None => Err(e),
+            },
+        }
+    }
+}
+
+thread_local! {
+    static FINS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Turn the cancelling of sheets (lane 81) on or off for this thread (default on). For tests
+/// only: the code without the step, to compare a refusal with.
+pub fn set_fin_cancelling(on: bool) {
+    FINS.with(|f| f.set(on));
+}
+
+/// [`combine`], with the result as it was before sheets were cancelled from it, if they
+/// were (see [`Combined::build`]).
+pub fn combine_parts(
+    a: &Polys,
+    b: &Polys,
+    op: BoolOp,
+    engine: &dyn BooleanEngine,
+) -> Result<Combined, BooleanError> {
     let (mut a, mut b) = (a.clone(), b.clone());
     crate::snap::snap_planes(&mut [&mut a, &mut b]);
     let (a, b) = (&a, &b);
@@ -630,17 +685,438 @@ pub fn combine(
     let mut welded = raw.clone();
     let was_welded = crate::snap::weld_output(&mut welded) > 0;
     let out = if was_welded { welded } else { raw.clone() };
+    let empty = Combined {
+        result: None,
+        before_fins: None,
+    };
     if out.triangles.is_empty() || out.volume().abs() <= AREA_EPS * POINT_MERGE {
-        return Ok(None);
+        return Ok(empty);
     }
     let mut res = match repolygonise(&out, &planes, &ids, &preserved) {
         Ok(r) => r,
         Err(e) if was_welded => repolygonise(&raw, &planes, &ids, &preserved).map_err(|_| e)?,
         Err(e) => return Err(e),
     };
+    // Fins are cancelled on a result whose every face came out on its own source plane. A
+    // face that needed a fitted plane means the engine or the weld moved corners (an
+    // overlap at the merge distance welded in some places and not others), and there the
+    // sheet is not the only thing wrong: such a result is cancelled only when nothing is
+    // left, a result that is all sheet (an overlap thinner than the merge distance, whose
+    // two faces were welded onto each other).
+    let on_source_planes = res.faces.iter().all(|f| f.plane.is_some());
     crate::snap::snap_planes(&mut [&mut res]);
+    let fins = if FINS.with(|f| f.get()) {
+        fin_clusters(&res)
+    } else {
+        Vec::new()
+    };
+    // The result as it was before the step is kept beside the step's own, so a caller whose
+    // validation refuses the step's result builds that one instead and refuses with its
+    // words (`Combined::build`): only results the step saves change.
+    let mut before_fins = None;
+    if !fins.is_empty() {
+        let mut cancelled = res.clone();
+        if cancel_fins(&mut cancelled, &fins) {
+            if cancelled.faces.is_empty() {
+                return Ok(empty);
+            }
+            if on_source_planes {
+                before_fins = Some(std::mem::replace(&mut res, cancelled));
+            }
+        }
+    }
     resolve_face_ids(&mut res, &sources);
-    Ok(Some(res))
+    if let Some(b) = &mut before_fins {
+        resolve_face_ids(b, &sources);
+    }
+    Ok(Combined {
+        result: Some(res),
+        before_fins,
+    })
+}
+
+/// Two faces of one plane facing opposite ways overlap in area: the same test as the
+/// validator's face-on-face check ([`crate::intersect`], check 4), restricted to faces that
+/// face opposite ways. Contours are taken in `a`'s plane.
+fn fin_pair(p: &Polys, a: usize, b: usize, pa: &Plane, pb: &Plane) -> bool {
+    if pa.normal.dot(pb.normal) > -(1.0 - 1e-9)
+        || p.faces[b]
+            .rings()
+            .flatten()
+            .any(|&v| pa.signed_distance(p.points[v]).abs() > POINT_MERGE)
+    {
+        return false;
+    }
+    let shared = sawhorse_tessellate::overlay::intersection(
+        &face_contours(p, a, pa),
+        &face_contours(p, b, pa),
+    );
+    sawhorse_tessellate::overlay::area(&shared) > AREA_EPS
+}
+
+fn face_contours(p: &Polys, f: usize, pl: &Plane) -> Vec<Vec<[f64; 2]>> {
+    p.faces[f]
+        .rings()
+        .map(|r| {
+            r.iter()
+                .map(|&v| pl.to_local(p.points[v]).to_array())
+                .collect()
+        })
+        .collect()
+}
+
+/// Lane 81 (#124): cancel the zero-thickness fins the engine can leave where two operand
+/// faces touch face to face. Manifold resolves coplanar faces by symbolic perturbation, and
+/// for touching faces that can keep both faces over the contact area, facing opposite ways:
+/// a sheet of no thickness hinged to the true result (a shelf end on a dado's floor, the
+/// two faces of boards that only touch). The validator refuses such a surface as faces
+/// overlapping, or an edge through a face; the solid it bounds is the same without the
+/// sheet. Here the faces of each such plane are summed as signed areas: what one facing
+/// covers minus what the other covers, each way. The pieces must land on the faces' own
+/// vertices (a vertex the overlay cannot match leaves everything as it was, and the
+/// validator refuses it as before). Every changed surface is one the validator's
+/// face-on-face check refuses, so a result that was accepted cannot change. Returns
+/// whether anything changed.
+fn cancel_fins(p: &mut Polys, clusters: &[Vec<usize>]) -> bool {
+    if clusters.is_empty() {
+        return false;
+    }
+    let planes: Vec<Option<Plane>> = (0..p.faces.len()).map(|i| p.plane(i)).collect();
+    let mut replaced: BTreeMap<usize, Vec<PolyFace>> = BTreeMap::new();
+    for members in clusters {
+        match sum_plane(p, members, &planes) {
+            Some(faces) => {
+                replaced.insert(members[0], faces);
+            }
+            None => return false,
+        }
+    }
+    let gone: BTreeSet<usize> = clusters.iter().flatten().copied().collect();
+    let mut touched: BTreeSet<usize> = gone
+        .iter()
+        .flat_map(|&f| p.faces[f].rings().flatten().copied().collect::<Vec<_>>())
+        .collect();
+    let old = std::mem::take(&mut p.faces);
+    for (i, f) in old.into_iter().enumerate() {
+        if let Some(new) = replaced.remove(&i) {
+            p.faces.extend(new);
+        } else if !gone.contains(&i) {
+            p.faces.push(f);
+        }
+    }
+    drop_spikes(p);
+    touched.extend(close_t_junctions(p));
+    let edges: BTreeSet<(usize, usize)> = p
+        .directed_edges()
+        .keys()
+        .map(|&(a, b)| Polys::key(a, b))
+        .collect();
+    p.user_edges.retain(|e| edges.contains(e));
+    heal_vertices(p, &touched);
+    p.compact();
+    true
+}
+
+/// The faces of `p` in fins ([`fin_pair`]), grouped: faces joined by overlapping across
+/// their plane are one group, in face order, each group in face order; none when there is
+/// no fin.
+fn fin_clusters(p: &Polys) -> Vec<Vec<usize>> {
+    let n = p.faces.len();
+    let planes: Vec<Option<Plane>> = (0..n).map(|i| p.plane(i)).collect();
+    // Faces by their normal up to sign, then by offset, so only near pairs are tried.
+    // (Faces facing one way, faces facing the other), each as (offset, face).
+    type Side = Vec<(f64, usize)>;
+    let mut by_normal: BTreeMap<[u64; 3], (Side, Side)> = BTreeMap::new();
+    for (i, pl) in planes.iter().enumerate() {
+        let Some(pl) = pl else { continue };
+        let nn = pl.normal;
+        let first = [nn.x, nn.y, nn.z]
+            .into_iter()
+            .find(|c| *c != 0.0)
+            .unwrap_or(0.0);
+        // (Adding zero turns -0.0 into 0.0, so a normal and its negation share a key.)
+        let c = (if first < 0.0 { -nn } else { nn }) + DVec3::ZERO;
+        let e = by_normal
+            .entry([c.x.to_bits(), c.y.to_bits(), c.z.to_bits()])
+            .or_default();
+        let side = if first < 0.0 { &mut e.1 } else { &mut e.0 };
+        side.push((c.dot(pl.origin), i));
+    }
+    let boxes: Vec<(DVec3, DVec3)> = p
+        .faces
+        .iter()
+        .map(|f| {
+            f.rings().flatten().fold(
+                (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+                |(lo, hi), &v| (lo.min(p.points[v]), hi.max(p.points[v])),
+            )
+        })
+        .collect();
+    let mut parent: Vec<usize> = (0..n).collect();
+    let mut found = false;
+    for (front, back) in by_normal.values_mut() {
+        back.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for &(da, a) in front.iter() {
+            let start = back.partition_point(|&(d, _)| d < da - 2.0 * POINT_MERGE);
+            for &(db, b) in &back[start..] {
+                if db > da + 2.0 * POINT_MERGE {
+                    break;
+                }
+                let (x, y) = (a.min(b), a.max(b));
+                let ((lo1, hi1), (lo2, hi2)) = (boxes[x], boxes[y]);
+                if lo1.cmple(hi2 + POINT_MERGE).all()
+                    && lo2.cmple(hi1 + POINT_MERGE).all()
+                    && let (Some(px), Some(py)) = (&planes[x], &planes[y])
+                    && fin_pair(p, x, y, px, py)
+                {
+                    let (rx, ry) = (find(&mut parent, x), find(&mut parent, y));
+                    if rx != ry {
+                        parent[rx.max(ry)] = rx.min(ry);
+                    }
+                    found = true;
+                }
+            }
+        }
+    }
+    if !found {
+        return Vec::new();
+    }
+    let mut clusters: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..n {
+        let r = find(&mut parent, i);
+        clusters.entry(r).or_default().push(i);
+    }
+    clusters.into_values().filter(|v| v.len() > 1).collect()
+}
+
+/// The points the faces of a [`Polys`] use, sorted by x, to find those on a segment.
+struct UsedPoints<'a> {
+    points: &'a [DVec3],
+    by_x: Vec<usize>,
+}
+
+impl<'a> UsedPoints<'a> {
+    fn new(p: &'a Polys) -> UsedPoints<'a> {
+        let used: BTreeSet<usize> = p
+            .faces
+            .iter()
+            .flat_map(|f| f.rings().flatten().copied())
+            .collect();
+        let mut by_x: Vec<usize> = used.into_iter().collect();
+        by_x.sort_by(|&a, &b| p.points[a].x.total_cmp(&p.points[b].x).then(a.cmp(&b)));
+        UsedPoints {
+            points: &p.points,
+            by_x,
+        }
+    }
+
+    /// `ring` with every used point that lies inside one of its edges (within
+    /// [`PLANARITY`]) put in, in order along the edge.
+    fn with_points_on(&self, ring: &[usize]) -> Vec<usize> {
+        let pts = self.points;
+        let mut full = Vec::with_capacity(ring.len());
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            full.push(a);
+            let (pa, pb) = (pts[a], pts[b]);
+            let (lo, hi) = (pa.x.min(pb.x) - PLANARITY, pa.x.max(pb.x) + PLANARITY);
+            let start = self.by_x.partition_point(|&w| pts[w].x < lo);
+            let ab = pb - pa;
+            let len2 = ab.length_squared();
+            if len2 == 0.0 {
+                continue;
+            }
+            let mut on: Vec<(f64, usize)> = self.by_x[start..]
+                .iter()
+                .take_while(|&&w| pts[w].x <= hi)
+                .copied()
+                .filter(|&w| w != a && w != b)
+                .filter_map(|w| {
+                    let t = (pts[w] - pa).dot(ab) / len2;
+                    (t > 0.0 && t < 1.0 && segment_distance(pts[w], pa, pb) <= PLANARITY)
+                        .then_some((t, w))
+                })
+                .collect();
+            on.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+            full.extend(on.into_iter().map(|(_, w)| w));
+        }
+        full
+    }
+}
+
+/// After fins go, a face whose edge a cancelled face's corner sat on (a T-junction the fin
+/// covered) gets that corner put in, so the edges on both sides match; healing then takes
+/// out the corners that run straight through. Returns the points put in.
+fn close_t_junctions(p: &mut Polys) -> BTreeSet<usize> {
+    let rings: Vec<Vec<Vec<usize>>> = {
+        let used = UsedPoints::new(p);
+        p.faces
+            .iter()
+            .map(|f| f.rings().map(|r| used.with_points_on(r)).collect())
+            .collect()
+    };
+    let mut put_in = BTreeSet::new();
+    for (f, new) in p.faces.iter_mut().zip(rings) {
+        for (r, n) in std::iter::once(&mut f.outer)
+            .chain(f.holes.iter_mut())
+            .zip(new)
+        {
+            if n.len() != r.len() {
+                let had: BTreeSet<usize> = r.iter().copied().collect();
+                put_in.extend(n.iter().copied().filter(|v| !had.contains(v)));
+                *r = n;
+            }
+        }
+    }
+    put_in
+}
+
+/// A fin can be hinged to a face along a line the face's ring runs out along and back (a
+/// spike of no area, whose two sides were the fin's edges). With the fin gone the spike
+/// has nothing on its other side: its tip goes, until no ring turns straight back. A ring
+/// that was nothing but spikes (a face or hole of no area) goes with them.
+fn drop_spikes(p: &mut Polys) {
+    let pts = p.points.clone();
+    let between = |x: usize, a: usize, b: usize| {
+        x != a && x != b && segment_distance(pts[x], pts[a], pts[b]) <= PLANARITY
+    };
+    for f in &mut p.faces {
+        for r in std::iter::once(&mut f.outer).chain(f.holes.iter_mut()) {
+            loop {
+                let n = r.len();
+                if n < 3 {
+                    break;
+                }
+                let tip = (0..n).find(|&k| {
+                    let (u, v, w) = (r[(k + n - 1) % n], r[k], r[(k + 1) % n]);
+                    u == w || between(w, u, v) || between(u, v, w)
+                });
+                let Some(k) = tip else { break };
+                let (u, w) = (r[(k + n - 1) % n], r[(k + 1) % n]);
+                if u == w {
+                    // Out and back to the same vertex: the tip and one copy of it go.
+                    let (a, b) = (k, (k + 1) % n);
+                    let (hi, lo) = (a.max(b), a.min(b));
+                    r.remove(hi);
+                    r.remove(lo);
+                } else {
+                    r.remove(k);
+                }
+            }
+        }
+        f.holes.retain(|h| h.len() >= 3);
+    }
+    p.faces.retain(|f| f.outer.len() >= 3);
+}
+
+/// The faces `members` (one plane, both facings) summed as signed areas: each facing keeps
+/// what it covers and the other does not. `None` when a piece's corner is not one of the
+/// members' vertices.
+fn sum_plane(p: &Polys, members: &[usize], planes: &[Option<Plane>]) -> Option<Vec<PolyFace>> {
+    use sawhorse_tessellate::overlay;
+    let reference = planes[members[0]]?;
+    let facing = |f: usize| planes[f].is_some_and(|pl| pl.normal.dot(reference.normal) > 0.0);
+    let union_of = |side: bool| -> Vec<Vec<[f64; 2]>> {
+        let mut acc: Vec<Vec<[f64; 2]>> = Vec::new();
+        for &f in members.iter().filter(|&&f| facing(f) == side) {
+            let c = face_contours(p, f, &reference);
+            acc = if acc.is_empty() {
+                c
+            } else {
+                overlay::union(&acc, &c).into_iter().flatten().collect()
+            };
+        }
+        acc
+    };
+    let (front, back) = (union_of(true), union_of(false));
+    let verts: Vec<usize> = members
+        .iter()
+        .flat_map(|&f| p.faces[f].rings().flatten().copied().collect::<Vec<_>>())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let used = UsedPoints::new(p);
+    let mut out = Vec::new();
+    for (side, keep, minus) in [(true, &front, &back), (false, &back, &front)] {
+        let shapes = if minus.is_empty() {
+            vec![keep.clone()]
+        } else if keep.is_empty() {
+            Vec::new()
+        } else {
+            overlay::difference(keep, minus)
+        };
+        for shape in shapes {
+            if shape.is_empty() || overlay::area(std::slice::from_ref(&shape)) <= AREA_EPS {
+                continue;
+            }
+            let mut rings: Vec<Vec<usize>> = Vec::new();
+            for c in &shape {
+                let mut ring: Vec<usize> = Vec::new();
+                for q in c {
+                    let q = DVec2::from(*q);
+                    let (d, v) = verts
+                        .iter()
+                        .map(|&v| (reference.to_local(p.points[v]).distance(q), v))
+                        .min_by(|a, b| a.0.total_cmp(&b.0))?;
+                    if d > POINT_MERGE {
+                        return None;
+                    }
+                    if ring.last() != Some(&v) {
+                        ring.push(v);
+                    }
+                }
+                while ring.len() > 1 && ring.first() == ring.last() {
+                    ring.pop();
+                }
+                // Corners the overlay dropped as collinear go back, so the neighbouring
+                // faces' edges still meet this face's.
+                let mut full = used.with_points_on(&ring);
+                if full.len() < 3 {
+                    return None;
+                }
+                let area = signed_area(
+                    &full
+                        .iter()
+                        .map(|&v| reference.to_local(p.points[v]))
+                        .collect::<Vec<_>>(),
+                );
+                // Outer counter-clockwise, holes clockwise, seen from the facing kept.
+                let want_ccw = (rings.is_empty()) == side;
+                if (area > 0.0) != want_ccw {
+                    full.reverse();
+                }
+                rings.push(full);
+            }
+            // The member of that facing it overlaps most gives its plane and id.
+            let owner = members
+                .iter()
+                .copied()
+                .filter(|&f| facing(f) == side)
+                .max_by(|&a, &b| {
+                    let o = |f: usize| {
+                        overlay::area(&overlay::intersection(
+                            &face_contours(p, f, &reference),
+                            &shape,
+                        ))
+                    };
+                    o(a).total_cmp(&o(b)).then(b.cmp(&a))
+                })?;
+            let plane = planes[owner].filter(|pl| {
+                rings
+                    .iter()
+                    .flatten()
+                    .all(|&v| pl.signed_distance(p.points[v]).abs() <= PLANARITY)
+            });
+            let outer = rings.remove(0);
+            out.push(PolyFace {
+                outer,
+                holes: rings,
+                plane,
+                id: p.faces[owner].id,
+            });
+        }
+    }
+    Some(out)
 }
 
 #[cfg(all(test, feature = "manifold"))]
