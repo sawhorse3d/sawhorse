@@ -59,14 +59,16 @@ import { estimatedLabelSize } from "./lib/dimPick";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
-import { ALL_EXTENSIONS, askYesNo, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
-import { closeHandler, desktopShell, discardQuestion } from "./io/closing";
+import { ALL_EXTENSIONS, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
+import { closeHandler, desktopShell } from "./io/closing";
+import { goesAhead, unsavedQuestion, type AskOptions, type SaveResult, type UnsavedOutcome, type UnsavedPrompt } from "./io/unsaved";
 import { notOpenedNote, openLabel, startupOrder, takeStartupFile, waitingNote } from "./io/startup";
 import { showTitle } from "./io/title";
 import { EXPORTS, MTL_TYPE, textureType, type ExportChoice } from "./io/exports";
 import type { ExportOptions, ImportUnit, OpOutcome } from "./kernel/types";
 import { ImportReport, type Report } from "./components/ImportReport";
 import { NameDialog, type NameRequest } from "./components/NameDialog";
+import { UnsavedDialog } from "./components/UnsavedDialog";
 import { SceneTabs } from "./components/SceneTabs";
 import { SheetsWorkspace } from "./sheets/SheetsWorkspace";
 import { ModeSwitch, type WorkMode } from "./sheets/SheetTabs";
@@ -700,6 +702,9 @@ export function App() {
     [setMessage],
   );
 
+  /** The question over unsaved changes (#120; made below, with the files): Save, Discard Changes, Cancel. */
+  const askUnsavedRef = useRef<(a?: AskOptions) => Promise<UnsavedOutcome>>(async () => "cancelled");
+
   const restore = useCallback(
     (a: Offer) => {
       const k = kernelRef.current;
@@ -724,8 +729,10 @@ export function App() {
         let kept: Offer | null = null;
         if (!clean && logIsWorth(ops)) {
           kept = await setAside(k.logJson(), { savedAt: Date.now(), solids: live.current.scene?.state.stats.objects ?? 0, steps: ops.length, worth: true });
-          // Too large to keep, or storage failed: the question File > Open asks.
-          if (!kept && !(await askYesNo(discardQuestion()))) {
+          // Too large to keep, or storage failed: the question File > Open asks (#120: with
+          // Save; asked from inside the edit queue, and whatever the unsaved mark says, since
+          // it is the log that says there is work here).
+          if (!kept && !goesAhead(await askUnsavedRef.current({ queued: true, always: true }))) {
             setOffers([a, ...offersRef.current]);
             return;
           }
@@ -815,14 +822,36 @@ export function App() {
     void showTitle(`${dirty ? "• " : ""}${docName ? stem(docName) : "Untitled"} - Sawhorse`);
   }, [dirty, docName]);
 
-  /** True when the model may be replaced: it has no unsaved changes, or the person says so. Awaited: the desktop's question is asynchronous. */
-  const confirmDiscard = useCallback(async () => (dirtyRef.current ? askYesNo(discardQuestion()) : true), []);
+  const closeShell = useMemo(() => (isTauri() ? desktopShell() : null), []);
+
+  // #120: the question over unsaved changes is the app's own dialog, in both builds, with
+  // three answers (src/io/unsaved.ts): Save saves as File > Save does and then carries on,
+  // Discard Changes carries on, Cancel does not. While a save chosen there runs, the desktop
+  // shell is told so ("saving"), so that a close request does not take a person choosing a
+  // file name for a page that has stopped (src-tauri/close-guard).
+  const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedPrompt | null>(null);
+  const saveRef = useRef<(as: boolean, o?: { signal?: AbortSignal; queued?: boolean }) => Promise<SaveResult>>(async () => "failed");
+  const unsaved = useMemo(
+    () =>
+      unsavedQuestion({
+        unsaved: () => dirtyRef.current,
+        name: () => docNameRef.current,
+        show: setUnsavedPrompt,
+        save: (o) => saveRef.current(false, o),
+        beat: closeShell ? () => void closeShell.say("saving").catch(() => undefined) : undefined,
+      }),
+    [closeShell],
+  );
+  askUnsavedRef.current = unsaved.ask;
+
+  /** True when the model may be replaced: it has no unsaved changes, or the person says so (Discard Changes, or Save and it is saved). `queued`: asked from inside the edit queue. */
+  const confirmDiscard = useCallback(async (queued = false) => goesAhead(await unsaved.ask({ queued })), [unsaved]);
 
   // Lane 35 (#44): in the desktop app the shell asks before the window closes over unsaved
   // changes (src/io/closing.ts): it is told whether there are any, and asks the page when a
-  // close request finds some. The question is the one above, with "and close Sawhorse"; Yes
-  // does to the autosave what File > New does (deletes it) and closes, No keeps everything.
-  const closeShell = useMemo(() => (isTauri() ? desktopShell() : null), []);
+  // close request finds some. The question is the one above, with "before Sawhorse closes";
+  // Discard Changes does to the autosave what File > New does (deletes it) and closes, Save
+  // saves and closes, Cancel keeps everything.
   useEffect(() => {
     void closeShell?.say(dirty ? "unsaved" : "saved").catch(() => undefined);
   }, [closeShell, dirty]);
@@ -831,6 +860,7 @@ export function App() {
     const handle = closeHandler({
       shell: closeShell,
       unsaved: () => dirtyRef.current,
+      ask: () => unsaved.ask({ closing: true }),
       discard: async () => {
         if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
         autosaveTimer.current = null;
@@ -848,7 +878,7 @@ export function App() {
       gone = true;
       off();
     };
-  }, [closeShell, setMessage]);
+  }, [closeShell, setMessage, unsaved]);
 
   /** Bring a file into the model as one undo step (`.skp` through openskp, the rest through the kernel's readers). */
   const importBytes = useCallback(
@@ -866,7 +896,8 @@ export function App() {
           // Lane 15: an empty SketchUp file (a blank template) opens as an empty model in its
           // own units and style, in place of the current one.
           empty = res.empty;
-          if (!(await confirmDiscard())) throw new Error(`${f.name} is an empty model; the current model was kept.`);
+          // Asked from inside the edit queue: a Save chosen here must not wait for it.
+          if (!(await confirmDiscard(true))) throw new Error(`${f.name} is an empty model; the current model was kept.`);
           let n = await k.newDocument();
           const face = res.empty.style?.face;
           if (face) n = await k.apply({ op: "set_style", style: { face } } as KernelOp);
@@ -984,7 +1015,8 @@ export function App() {
    * (asked first over unsaved changes) and an empty untitled one takes its place. */
   const newDocument = useCallback(async (how: "new" | "close" = "new") => {
     if (!(await confirmDiscard())) return;
-    const closed = docName ? stem(docName) : "Untitled";
+    // By the name it has now: Save at the question may just have given it one.
+    const closed = docNameRef.current ? stem(docNameRef.current) : "Untitled";
     const r = await run((k) => k.newDocument(), null, () => (how === "close" ? `Closed ${closed}.` : "New model."));
     if (r) {
       pluginsRef.current?.documentOpened(null);
@@ -997,7 +1029,7 @@ export function App() {
       afterHistoryRef.current();
       setView("iso");
     }
-  }, [run, confirmDiscard, markClean, docName]);
+  }, [run, confirmDiscard, markClean]);
 
   const openDialog = useCallback(async () => {
     try {
@@ -1017,32 +1049,41 @@ export function App() {
     }
   }, [importBytes]);
 
+  /** File > Save and Save As. How it ended, for the question over unsaved changes (#120): `signal` gives up on a save not yet written, and `queued` is a save asked for from inside the edit queue, which waiting for the queue would stop for good. */
   const save = useCallback(
-    async (as: boolean) => {
+    async (as: boolean, o: { signal?: AbortSignal; queued?: boolean } = {}): Promise<SaveResult> => {
       const k = kernelRef.current;
-      if (!k) return;
+      if (!k) return "failed";
       try {
-        await queue.current;
+        if (!o.queued) await queue.current;
         const png = (await engineRef.current?.snapshotThumbnail(512)) ?? new Uint8Array();
         // Plugins' document-scoped stores ride along as plugin-data.json (lane 11), written by
         // the kernel's own writer (lane 16).
         const bytes = await k.saveShz(live.current.units, png, pluginsRef.current?.manager.doc.json() ?? "");
         const name = `${docName ? stem(docName) : "Untitled"}.shz`;
         // Save As starts in the folder of the file the model has (#71).
-        const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current, as ? { beside: fileHandle.current } : {});
-        if (!res) return;
+        const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current, as ? { beside: fileHandle.current, signal: o.signal } : { signal: o.signal });
+        if (!res) return "cancelled";
         setDocName(res.name);
+        // At once, not at the next render, for what was waiting on this save (#120): File >
+        // Close after Save says which model it closed, and a close request that waited for
+        // the save finds nothing left unsaved.
+        docNameRef.current = res.name;
+        dirtyRef.current = false;
         fileHandle.current = res.handle;
         setSavedLogLen(live.current.scene?.state.log_len ?? null);
         // Saved: this session's autosave is not needed to get the work back (lane 16).
         markClean(live.current.scene?.state.log_hash ?? null);
         setMessage({ text: `Saved ${res.name} (${(bytes.length / 1024).toFixed(0)} KB).`, error: false });
+        return "saved";
       } catch (e) {
         setMessage({ text: `Could not save: ${e instanceof Error ? e.message : String(e)}`, error: true });
+        return "failed";
       }
     },
     [docName, markClean],
   );
+  saveRef.current = save;
 
   /** What an export takes: the selected solids (and what is in selected groups and components), or everything visible. */
   const exportScope = useCallback((): ExportOptions["scope"] => {
@@ -3201,6 +3242,7 @@ export function App() {
       {isWebDemo() ? <DemoBanner /> : null}
       {report ? <ImportReport report={report} onClose={() => setReport(null)} /> : null}
       {nameRequest ? <NameDialog req={nameRequest} onClose={() => setNameRequest(null)} /> : null}
+      {unsavedPrompt ? <UnsavedDialog prompt={unsavedPrompt} /> : null}
       {settingsOpen ? <SettingsDialog url={gate.url} status={gate.status} onUrl={gate.setUrl} onRecheck={gate.recheck} onClose={() => setSettingsOpen(false)} /> : null}
       {plugins.dialogs}
       <CutListReport list={printing ? cutList : null} title={cutTitle} />

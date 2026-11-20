@@ -54,8 +54,8 @@ describe("asking before discarding", () => {
 
   it("in the browser it is window.confirm, answered at once", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    await expect(askYesNo("Discard the unsaved changes to this model?")).resolves.toBe(false);
-    expect(confirm).toHaveBeenCalledWith("Discard the unsaved changes to this model?");
+    await expect(askYesNo("cabinet.shz already exists. Replace it?")).resolves.toBe(false);
+    expect(confirm).toHaveBeenCalledWith("cabinet.shz already exists. Replace it?");
     confirm.mockReturnValue(true);
     await expect(askYesNo("Again?")).resolves.toBe(true);
     confirm.mockRestore();
@@ -67,11 +67,11 @@ describe("asking before discarding", () => {
     const confirm = vi.spyOn(window, "confirm");
     let answer: ((yes: boolean) => void) | null = null;
     dialog.confirm.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
-    const asked = askYesNo("Discard the unsaved changes to this model?");
+    const asked = askYesNo("cabinet.shz already exists. Replace it?");
     let settled = false;
     void asked.then(() => (settled = true));
     // The plugin is loaded on demand, so the question reaches it a few ticks later.
-    await vi.waitFor(() => expect(dialog.confirm).toHaveBeenCalledWith("Discard the unsaved changes to this model?", expect.objectContaining({ title: "Sawhorse" })));
+    await vi.waitFor(() => expect(dialog.confirm).toHaveBeenCalledWith("cabinet.shz already exists. Replace it?", expect.objectContaining({ title: "Sawhorse" })));
     await new Promise((r) => setTimeout(r, 20));
     expect(settled).toBe(false);
     answer!(false);
