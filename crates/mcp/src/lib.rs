@@ -27,6 +27,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use serde_json::{Value, json};
 
+pub mod measure;
 pub mod paths;
 pub mod tools;
 
