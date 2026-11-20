@@ -171,10 +171,15 @@ impl Default for CloseGuard {
 }
 
 impl CloseGuard {
+    /// Milliseconds on the guard's clock.
+    fn now(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
     /// What to do with a close request. A guard that cannot be read lets the window close:
     /// it is never held open by a fault here.
     fn request(&self) -> Request {
-        let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let now = self.now();
         match self.guard.lock() {
             Ok(mut g) => g.request(now),
             Err(_) => Request::Close,
@@ -184,10 +189,14 @@ impl CloseGuard {
 
 /// The page's side of the close question (lane 35, #44; src/io/closing.ts): "unsaved" and
 /// "saved" as the model changes, then the answer to a `sawhorse://close-requested` event:
-/// "keep" (No), "close" (Yes: the window is destroyed) or "failed" (it could not ask: the
-/// next close request closes at once); "exit" is File > Exit, an ordinary close request.
-/// Whatever the page says or fails to say, a close request two seconds after an unanswered
-/// question closes the window (`sawhorse_close_guard`).
+/// "keep" (Cancel, or a save that was cancelled or failed), "close" (Discard Changes, or Save
+/// once the model is saved: the window is destroyed) or "failed" (it could not ask: the next
+/// close request closes at once); "exit" is File > Exit, an ordinary close request. While a
+/// save chosen at the question is running the page says "saving" several times a second
+/// (#120). Whatever the page says or fails to say, a close request two seconds after an
+/// unanswered question, and after the last "saving", closes the window
+/// (`sawhorse_close_guard`, which holds the whole rule; this command only hands it the word
+/// and the time).
 ///
 /// On Linux "unsaved" and "saved" also take and give back a logout inhibitor (#73,
 /// `logout_hold`): GNOME and Cinnamon end a session without closing the window, so its
@@ -201,18 +210,19 @@ fn close_guard(
 ) -> Result<(), String> {
     let word = say;
     let say = Say::parse(&word).ok_or_else(|| format!("close_guard: no such message {word:?}"))?;
-    // "unsaved" takes the hold; "saved" and "close" (Yes: the window is about to go) give it
-    // back (`sawhorse_logout_hold::word`).
+    // "unsaved" takes the hold; "saved" and "close" (the window is about to go) give it back;
+    // "saving" leaves it as it is (`sawhorse_logout_hold::word`).
     if let Some(unsaved) = sawhorse_logout_hold::word(&word) {
         hold.unsaved(unsaved);
     }
     // The lock is released at the end of this statement: Window::close raises a close
     // request whose handler takes it again.
+    let now = state.now();
     let then = state
         .guard
         .lock()
         .map_err(|_| "close guard lock poisoned".to_string())?
-        .say(say);
+        .say(say, now);
     match then {
         Then::Nothing => Ok(()),
         Then::Destroy => window.destroy().map_err(|e| e.to_string()),
@@ -334,6 +344,12 @@ pub fn run() {
                     Request::Wait => api.prevent_close(),
                     // Kept open only when the question reached the page's event system.
                     Request::Ask => {
+                        // The question is in the page since #120, not a window of its own: a
+                        // minimised Sawhorse comes forward to ask (a logout on KDE Plasma
+                        // would otherwise wait behind a question nobody can see). Neither
+                        // call can keep the window open or stop the question going out.
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
                         if window.emit("sawhorse://close-requested", ()).is_ok() {
                             api.prevent_close();
                         }
