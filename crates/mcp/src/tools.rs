@@ -206,16 +206,7 @@ impl Server {
             },
         )
         .map_err(|e| format!("could not write the model: {e}"))?;
-        // Written beside the file, read back and checked, then moved over it: a save that
-        // fails leaves the old file as it was.
-        // The temporary file is one this save made (never one that was there before), and
-        // only that one is removed when the save fails.
-        let tmp =
-            write_new_beside(&place.full, &bytes).map_err(|e| format!("{}: {e}", place.shown))?;
-        if let Err(e) = check_and_move(&tmp, &place.full, model.hash()) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("{}: {e}", place.shown));
-        }
+        save_to(&self.root, &place, &given, &bytes, model.hash())?;
         self.path = Some(place.shown.clone());
         self.saved = model.hash();
         Ok(
@@ -471,6 +462,36 @@ fn points_in(v: &Value) -> usize {
     }
 }
 
+/// Save `bytes` (the model, `hash`) at `place`, asked for as `given`, under `root`.
+/// Written beside the file, read back and checked, then moved over it: a save that fails
+/// leaves the old file as it was. The temporary file is one this save made (never one that
+/// was there before), and only that one is removed when the save fails.
+fn save_to(
+    root: &Path,
+    place: &paths::Place,
+    given: &str,
+    bytes: &[u8],
+    hash: u64,
+) -> Result<(), String> {
+    let tmp = write_new_beside(&place.full, bytes).map_err(|e| format!("{}: {e}", place.shown))?;
+    // #118: the file written is checked where it really is, and removed when that is
+    // outside the folder, before anything is moved. When it cannot be removed, the refusal
+    // says so: a file left outside the folder is never left unsaid.
+    if let Err(e) = paths::written_inside(root, &tmp, given) {
+        return Err(match std::fs::remove_file(&tmp) {
+            Err(r) if r.kind() != std::io::ErrorKind::NotFound => {
+                format!("{e} (its temporary file there could not be removed: {r})")
+            }
+            _ => e,
+        });
+    }
+    if let Err(e) = check_and_move(&tmp, &place.full, hash) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", place.shown));
+    }
+    Ok(())
+}
+
 /// Read the file written at `tmp` back, check it is the model (`hash`), and move it over
 /// `target`.
 fn check_and_move(tmp: &Path, target: &Path, hash: u64) -> Result<(), String> {
@@ -687,5 +708,95 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
         assert!(!tmp.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link at `link` to the folder `target`: a symbolic link on Unix, a junction on
+    /// Windows (`mklink /J`, which needs no privilege).
+    #[cfg(any(unix, windows))]
+    fn link_folder(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let out = std::process::Command::new("cmd")
+                .raw_arg(format!(
+                    "/C mklink /J \"{}\" \"{}\"",
+                    link.display(),
+                    target.display()
+                ))
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "mklink /J {} {}: {}{}",
+                link.display(),
+                target.display(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    /// #118: a folder that resolves inside while the files written in it resolve outside, as
+    /// a link a Samba server follows shows on Windows. A symbolic link on Unix and a junction
+    /// on Windows resolve as a folder too, so `place` would refuse them first: the place is
+    /// made by hand here, to reach the check on the written file. The save is refused, and
+    /// nothing is left outside, whether a file is there or not.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_save_whose_written_file_resolves_outside_is_refused_and_leaves_nothing() {
+        let base = std::env::temp_dir()
+            .join("sawhorse-mcp-tests")
+            .join(format!("escape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (inside, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        let out = inside.join("out");
+        link_folder(&away, &out);
+        let root = paths::root(&inside).unwrap();
+        let place = paths::Place {
+            full: out.join("Escaped.shz"),
+            shown: "out/Escaped.shz".into(),
+            exists: false,
+        };
+        let doc = Document::with_ground_sketch();
+        let bytes = sawhorse_shz::write(doc.model(), &SaveOptions::default()).unwrap();
+        let e = save_to(&root, &place, "out/Escaped.shz", &bytes, doc.model().hash()).unwrap_err();
+        assert_eq!(e, "out/Escaped.shz: it leads out of the server's folder");
+        assert_eq!(
+            std::fs::read_dir(&away).unwrap().count(),
+            0,
+            "a file was left outside"
+        );
+        // A file already there outside: the save is refused the same way, and that file is
+        // the only one outside, as it was.
+        std::fs::write(away.join("Escaped.shz"), b"the old file").unwrap();
+        let there = paths::Place {
+            exists: true,
+            ..place
+        };
+        let e = save_to(&root, &there, "out/Escaped.shz", &bytes, doc.model().hash()).unwrap_err();
+        assert_eq!(e, "out/Escaped.shz: it leads out of the server's folder");
+        assert_eq!(
+            std::fs::read(away.join("Escaped.shz")).unwrap(),
+            b"the old file"
+        );
+        assert_eq!(
+            std::fs::read_dir(&away).unwrap().count(),
+            1,
+            "a file was left outside"
+        );
+        // The same save to a place really inside goes through.
+        let here = paths::place(&root, "Here.shz").unwrap();
+        save_to(&root, &here, "Here.shz", &bytes, doc.model().hash()).unwrap();
+        assert_eq!(std::fs::read(inside.join("Here.shz")).unwrap(), bytes);
+        // The link is removed as a link before the folder, so nothing is removed through it.
+        #[cfg(unix)]
+        std::fs::remove_file(&out).unwrap();
+        #[cfg(windows)]
+        std::fs::remove_dir(&out).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
