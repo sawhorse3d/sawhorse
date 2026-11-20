@@ -1,0 +1,15 @@
+[package]
+name = "sawhorse-dialog-folder"
+version = "0.1.0-alpha.7"
+description = "Sawhorse desktop: the folder an Open or Save dialog starts in."
+authors = ["Sawhorse contributors"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# A member of the src-tauri workspace (a path dependency under its root), kept apart from the
+# Tauri crate so its tests run without the webview toolchain:
+#   cd src-tauri && cargo test -p sawhorse-dialog-folder
+
+[dependencies]

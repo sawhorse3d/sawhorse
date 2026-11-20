@@ -39,6 +39,8 @@ sawhorse-close-guard = { path = "close-guard" }
 sawhorse-logout-hold = { path = "logout-hold" }
 # Which argument, if any, is the file to open at start (lane 37): a double-click on a .shz.
 sawhorse-start-file = { path = "start-file" }
+# Which folder an Open or Save dialog starts in (#71, #80): never an AppImage's mount.
+sawhorse-dialog-folder = { path = "dialog-folder" }
 # What the window's title bar shows, from the page's title (lane 39): the model's name.
 sawhorse-window-title = { path = "window-title" }
 

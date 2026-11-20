@@ -9,6 +9,10 @@
 //
 // Lane 16: a file is measured before it is read: one over its limit (MAX_READ_BYTES) is
 // refused with FileTooLarge and never read into memory.
+//
+// Desktop (#71, #80): each dialog is given the folder to start in (src/io/folder.ts), and
+// the folder of each file opened, dropped or saved is kept for the next one.
+import { inFolder, rememberFolder, startFolder } from "./folder";
 
 export interface FileType {
   description: string;
@@ -182,12 +186,16 @@ export async function pickFile(types: FileType[], opts: PickOptions = {}): Promi
   if (!isTauri() && opts.requireActivation && !hasUserActivation()) throw new NeedsUserActivation();
   if (isTauri()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
+    const folder = await startFolder();
+    if (signal?.aborted) return null;
     const path = await open({
       multiple: false,
       directory: false,
       filters: [{ name: "Supported files", extensions: types.flatMap((t) => t.extensions.map((e) => e.slice(1))) }],
+      ...(folder ? { defaultPath: folder } : {}),
     });
     if (typeof path !== "string" || signal?.aborted) return null;
+    rememberFolder(path);
     return { name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } };
   }
   const api = fsa();
@@ -257,6 +265,11 @@ export interface SaveOptions {
   confirmDownload?: () => Promise<boolean>;
   /** Aborted before the file is written: nothing is written (null). */
   signal?: AbortSignal;
+  /**
+   * Desktop, Save As (#71): the file the model already has. The dialog starts in its
+   * folder, before the folder of the last file opened or saved.
+   */
+  beside?: FileHandle;
 }
 
 /**
@@ -275,8 +288,12 @@ export async function saveFile(name: string, bytes: Uint8Array, type: FileType, 
       chosen = handle.chosen;
     } else {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      const picked = await save({ defaultPath: name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
+      // The name in the folder to start in; a name that is itself a path goes as it is.
+      const folder = /[\\/]/.test(name) ? null : await startFolder(opts.beside?.kind === "tauri" ? opts.beside.path : undefined);
+      if (signal?.aborted) return null;
+      const picked = await save({ defaultPath: folder ? inFolder(folder, name) : name, filters: [{ name: type.description, extensions: type.extensions.map((e) => e.slice(1)) }] });
       if (!picked || signal?.aborted) return null;
+      rememberFolder(picked);
       // GTK's chooser hands the name back as typed (Windows and macOS add the filter's
       // extension): a name without one of the type's gets the type's first, and the dialog's
       // own path travels with the save so the shell can see the file is the person's
@@ -365,6 +382,7 @@ export async function takeTauriPaths(paths: readonly string[], cb: (files: Picke
     if (!ALL_EXTENSIONS.includes(extensionOf(path))) continue;
     try {
       await cb([{ name: baseName(path), bytes: await readTauriFile(path), handle: { kind: "tauri", path } }]);
+      rememberFolder(path);
     } catch (err) {
       refused?.(err instanceof Error ? err.message : String(err));
     }

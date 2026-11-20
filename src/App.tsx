@@ -1002,7 +1002,8 @@ export function App() {
         // the kernel's own writer (lane 16).
         const bytes = await k.saveShz(live.current.units, png, pluginsRef.current?.manager.doc.json() ?? "");
         const name = `${docName ? stem(docName) : "Untitled"}.shz`;
-        const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current);
+        // Save As starts in the folder of the file the model has (#71).
+        const res = await saveFile(name, bytes, SHZ, as ? undefined : fileHandle.current, as ? { beside: fileHandle.current } : {});
         if (!res) return;
         setDocName(res.name);
         fileHandle.current = res.handle;

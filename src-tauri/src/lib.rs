@@ -15,6 +15,8 @@
 //! argument, so the association is not declared there yet, nor on Linux, where no MIME type
 //! for `.shz` exists for a file manager to match. The window's title bar follows the page's
 //! title, the model's name (lane 39, `window-title/`), so two windows can be told apart.
+//! On Linux the Open and Save dialogs are told which folder to start in (#71, #80,
+//! `dialog-folder/`): GTK's chooser otherwise starts in the working directory or in Recent.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
 //! (the dialog plugin adds them to the scope), dropped on the window (added below), or the
@@ -266,6 +268,42 @@ fn window_title(window: tauri::Window, title: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// The folder an Open or Save dialog starts in (#71, #80; `sawhorse_dialog_folder`). The page
+/// names the folders it would start in, the model's own first and then the last one it
+/// opened or saved in (src/io/folder.ts). The rule is `sawhorse_dialog_folder::choose`: on
+/// Linux those folders, then the system's Documents folder, then the home folder, and the
+/// answer is the first that is a folder this user can list now, or nothing. GTK's Save
+/// chooser otherwise starts in the working directory, an AppImage's mount, and its Open
+/// chooser in Recent. Windows and macOS are answered nothing, and their dialogs start where
+/// the system starts them, as before.
+///
+/// A candidate is opened to see that it can be listed and closed again; no entry is read,
+/// nothing is added to the fs scope, nothing is written or kept, and the page learns only
+/// which of the folders it named can be used. The check runs on a blocking thread of its
+/// own (`spawn_blocking`), never on the main thread or the async runtime's workers: a folder
+/// on a drive that no longer answers must not stop the window or the other commands, and
+/// the page gives up waiting after a second and a half. Only one check runs at a time
+/// (`CHECKS`): while one has not come back, the next is answered nothing at once, so such a
+/// folder holds one thread and no more. An answer that comes after the page gave up is
+/// dropped by the page and leaves nothing behind here.
+#[tauri::command]
+async fn dialog_folder(app: AppHandle, folders: Vec<String>) -> Option<String> {
+    static CHECKS: sawhorse_dialog_folder::OneAtATime = sawhorse_dialog_folder::OneAtATime::new();
+    let turn = CHECKS.begin()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _turn = turn;
+        sawhorse_dialog_folder::choose(
+            sawhorse_dialog_folder::ON_LINUX,
+            folders,
+            || [app.path().document_dir().ok(), app.path().home_dir().ok()],
+            sawhorse_dialog_folder::usable,
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -313,7 +351,8 @@ pub fn run() {
             save_file_atomic,
             close_guard,
             start_file,
-            window_title
+            window_title,
+            dialog_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sawhorse");
