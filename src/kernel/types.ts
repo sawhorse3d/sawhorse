@@ -35,9 +35,9 @@ export type KernelOp =
   | { op: "delete_guides" }
   | { op: "add_dimension"; a: [number, number, number]; b: [number, number, number]; offset: [number, number, number] }
   | { op: "erase_dimension"; dimension: number }
-  | { op: "transform"; objects: number[]; xform: Xform; nodes?: number[] }
-  | { op: "copy"; objects: number[]; xform: Xform; nodes?: number[] }
-  | { op: "array"; objects: number[]; xform: Xform; count: number; nodes?: number[] }
+  | { op: "transform"; objects?: number[]; xform: Xform; nodes?: number[] }
+  | { op: "copy"; objects?: number[]; xform: Xform; nodes?: number[] }
+  | { op: "array"; objects?: number[]; xform: Xform; count: number; nodes?: number[] }
   | { op: "transform_geometry"; object: number; points: V3[]; xform: Xform; autofold: boolean }
   /** Lane 22: move, turn or scale sketch points, edges (world ends) and whole regions of one sketch; `copy` (with `count`) copies the edges and regions' rings instead. */
   | { op: "transform_sketch"; sketch: number; points?: V3[]; edges?: [V3, V3][]; regions?: number[]; /** Lane 23: whole curves. */ curves?: number[]; xform: Xform; copy?: boolean; count?: number }
