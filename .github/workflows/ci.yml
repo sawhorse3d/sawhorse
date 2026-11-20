@@ -260,6 +260,9 @@ jobs:
       - name: start-up file tests (lane 37; which argument, if any, is the file to open)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-start-file
+      - name: dialog folder tests (#71, #80; the first folder that is still there, never a part path)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-dialog-folder
       - name: window title tests (lane 39; what the title bar shows, from the page's title)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-window-title

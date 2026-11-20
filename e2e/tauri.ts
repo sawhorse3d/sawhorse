@@ -26,6 +26,15 @@ import type { Page } from "@playwright/test";
 // sawhorse_device_key::external_url_allowed refuses is refused with the shell's words. The
 // stand-in knows only the help pages' list (HELP below, the same three as HELP_URLS); a
 // checkout address is refused here, which no desktop spec asks for.
+//
+// #71, #80: the folder a dialog starts in. The shell's dialog_folder command is played as
+// lib.rs plays it with sawhorse_dialog_folder: on Linux, the first of the folders the page
+// named, then Documents (DOCUMENTS below), then home (HOME), that is on the stand-in's disk
+// (`folders`); on Windows and macOS, nothing. The dialog plugin's open and save are recorded
+// with the options the page gave (`opens`, `saves`) and answered with `pick` and `saveAs`; a
+// picked path goes into the fs scope, as the plugin puts it. The shell's save_file_atomic is
+// recorded with the path it was asked to write (`written`) and the last file's bytes (`bytes`). `folderFails` makes dialog_folder
+// throw, as a shell from before it would.
 
 /** How the stand-in's message dialog behaves. */
 export type DialogMode = "answer" | "throw" | "throw-sync" | "never";
@@ -37,7 +46,13 @@ export type DesktopFiles = Record<string, string | null>;
 export interface DesktopStart {
   start?: string | null;
   files?: DesktopFiles;
+  /** The folders on the stand-in's disk, for dialog_folder. */
+  folders?: string[];
 }
+
+/** The stand-in's Documents and home folders (dialog_folder, on Linux). */
+export const DOCUMENTS = "/home/maker/Documents";
+export const HOME = "/home/maker";
 
 export interface TauriMock {
   /** Every command the page invoked, in order. */
@@ -75,6 +90,22 @@ export interface TauriMock {
   openFails: boolean;
   /** Files dropped on the window: allowed in the scope, then sawhorse://dropped, as lib.rs does. */
   drop(paths: string[]): void;
+  /** The folders on the stand-in's disk. */
+  folders: string[];
+  /** The folders the page named to dialog_folder, one list per call (this page load). */
+  named: string[][];
+  /** dialog_folder throws instead of answering, as a shell without it would. */
+  folderFails: boolean;
+  /** The options of every Open dialog, and what the next one answers (null: cancelled). */
+  opens: Record<string, unknown>[];
+  pick: string | null;
+  /** The options of every Save dialog, and what the next one answers (null: cancelled). */
+  saves: Record<string, unknown>[];
+  saveAs: string | null;
+  /** Every path save_file_atomic was asked to write, in order (this page load). */
+  written: string[];
+  /** The bytes of the last file save_file_atomic was asked to write. */
+  bytes: number[];
 }
 
 /** Install the stand-in before the page's scripts run. */
@@ -128,6 +159,15 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
       titleFails: false,
       opened: [],
       openFails: false,
+      folders: start.folders ?? [],
+      named: [],
+      folderFails: false,
+      opens: [],
+      pick: null,
+      saves: [],
+      saveAs: null,
+      written: [],
+      bytes: [],
       request() {
         if (mock.unsaved) mock.emit("sawhorse://close-requested", null);
         else mock.ended = "closed";
@@ -167,7 +207,7 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
         callbacks.delete(id);
       },
       convertFileSrc: (p: string) => p,
-      invoke(cmd: string, args: Record<string, unknown> = {}) {
+      invoke(cmd: string, args: Record<string, unknown> = {}, options: { headers?: Record<string, string> } = {}) {
         mock.log.push(cmd);
         if (cmd === "plugin:dialog|message" && mock.dialog === "throw-sync") throw new TypeError("the dialog plugin is not there");
         return (async () => {
@@ -218,6 +258,33 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
               if (mock.openFails || !HELP.includes(url)) throw `refusing to open ${url}: only checkout and help pages open from the app`;
               return null;
             }
+            case "dialog_folder": {
+              // lib.rs: on Linux the first folder named (at most four), then Documents, then
+              // home, that is a whole path and a folder now; elsewhere nothing.
+              const folders = (args.folders as string[]).map(String);
+              mock.named.push(folders);
+              if (mock.folderFails) throw new Error("dialog_folder is not in this shell");
+              if (!platform.startsWith("Linux")) return null;
+              const whole = (f: string) => f.startsWith("/") && !f.split("/").includes("..");
+              return [...folders.slice(0, 4), "/home/maker/Documents", "/home/maker"].find((f) => whole(f) && mock.folders.includes(f)) ?? null;
+            }
+            case "plugin:dialog|open": {
+              mock.opens.push(args.options as Record<string, unknown>);
+              // The plugin puts the picked path in the fs scope.
+              if (mock.pick !== null) {
+                scope.add(mock.pick);
+                mock.allowed.push(mock.pick);
+              }
+              return mock.pick;
+            }
+            case "plugin:dialog|save":
+              mock.saves.push(args.options as Record<string, unknown>);
+              return mock.saveAs;
+            case "save_file_atomic":
+              // lib.rs writes the bytes to the path in the x-path header; here it is recorded.
+              mock.written.push(decodeURIComponent(options.headers?.["x-path"] ?? ""));
+              mock.bytes = Array.from(args as unknown as Uint8Array);
+              return null;
             case "plugin:fs|stat": {
               const bytes = read(String(args.path));
               const none = { mtime: null, atime: null, birthtime: null, fileAttributes: null, dev: null, ino: null, mode: null, nlink: null, uid: null, gid: null, rdev: null, blksize: null, blocks: null };
@@ -235,15 +302,20 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
 }
 
 /** The stand-in's record, read from the page. */
-export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended" | "allowed" | "reads" | "titles" | "opened">> {
+export async function bridge(page: Page): Promise<Pick<TauriMock, "log" | "said" | "asked" | "unsaved" | "ended" | "allowed" | "reads" | "titles" | "opened" | "named" | "opens" | "saves" | "written">> {
   return page.evaluate(() => {
     const m = (window as unknown as { __tauriMock: TauriMock }).__tauriMock;
-    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended, allowed: [...m.allowed], reads: [...m.reads], titles: [...m.titles], opened: [...m.opened] };
+    return { log: [...m.log], said: [...m.said], asked: [...m.asked], unsaved: m.unsaved, ended: m.ended, allowed: [...m.allowed], reads: [...m.reads], titles: [...m.titles], opened: [...m.opened], named: m.named.map((n) => [...n]), opens: [...m.opens], saves: [...m.saves], written: [...m.written] };
   });
 }
 
+/** The bytes of the last file the page saved through the stand-in. */
+export async function savedBytes(page: Page): Promise<Uint8Array> {
+  return Uint8Array.from(await page.evaluate(() => (window as unknown as { __tauriMock: TauriMock }).__tauriMock.bytes));
+}
+
 /** Change how the stand-in behaves. */
-export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords" | "titleFails" | "openFails">>): Promise<void> {
+export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords" | "titleFails" | "openFails" | "folders" | "folderFails" | "pick" | "saveAs">>): Promise<void> {
   await page.evaluate((o) => Object.assign((window as unknown as { __tauriMock: TauriMock }).__tauriMock, o), over);
 }
 

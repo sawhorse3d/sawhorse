@@ -3203,6 +3203,7 @@ dependencies = [
  "glib",
  "sawhorse-close-guard",
  "sawhorse-device-key",
+ "sawhorse-dialog-folder",
  "sawhorse-logout-hold",
  "sawhorse-safe-save",
  "sawhorse-start-file",
@@ -3227,6 +3228,10 @@ dependencies = [
  "sha2",
  "zeroize",
 ]
+
+[[package]]
+name = "sawhorse-dialog-folder"
+version = "0.1.0-alpha.7"
 
 [[package]]
 name = "sawhorse-logout-hold"
