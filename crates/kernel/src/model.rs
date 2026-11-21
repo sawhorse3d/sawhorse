@@ -315,6 +315,15 @@ pub enum Op {
     Explode {
         node: u64,
     },
+    /// Move solids, groups and instances directly in the open context into a group, or out
+    /// to the model (`into` absent or `null`) (#117). Only where each sits in the tree
+    /// changes: positions, names, tags, flags, grain, stock, material and an instance's
+    /// definition stay.
+    MoveInto {
+        items: Vec<Item>,
+        #[serde(default)]
+        into: Option<u64>,
+    },
     /// Delete a group or instance and everything in it.
     DeleteNode {
         node: u64,
@@ -974,6 +983,12 @@ pub enum OpOutcome {
     },
     /// A node was exploded: the solids and nodes that were directly in it.
     Exploded {
+        objects: Vec<u64>,
+        nodes: Vec<u64>,
+    },
+    /// `move_into` (#117): where the items went (`None`: the model), and which they were.
+    MovedInto {
+        into: Option<u64>,
         objects: Vec<u64>,
         nodes: Vec<u64>,
     },
@@ -2434,6 +2449,7 @@ impl Model {
             Op::MakeComponent { items, name } => self.make_component(items, name),
             Op::MakeUnique { node } => self.make_unique(*node),
             Op::Explode { node } => self.explode(*node),
+            Op::MoveInto { items, into } => self.move_into(items, *into),
             Op::DeleteNode { node } => self.delete_node(*node),
             Op::Rename { item, name } => self.rename(*item, name.as_deref()),
             Op::RenameDefinition { definition, name } => self.rename_definition(*definition, name),

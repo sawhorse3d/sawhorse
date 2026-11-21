@@ -200,6 +200,36 @@ export interface OutlinerProps {
   /** A context-menu, eye or lock action on these rows. */
   onAction: (action: OutlinerAction, rows: OutlineRow[]) => void;
   onRename: (row: OutlineRow, name: string | null) => void;
+  /** #117: rows dragged onto a group row (into it), onto another row (beside it, into what
+   * holds it) or onto the empty space below the rows (`null`: out to the model). */
+  onMove?: (rows: OutlineRow[], into: number | null) => void;
+}
+
+/** #117: a row that can be dragged: a solid, group or component, not locked. Imported meshes
+ * and section planes are not items. */
+export function draggableRow(r: OutlineRow): boolean {
+  return !!r.entity && (r.kind === "solid" || r.kind === "group" || r.kind === "instance") && !r.locked;
+}
+
+/** #117: where a drop on `target` puts things: a group row takes them in, any other row puts
+ * them beside it, in what holds it. `undefined`: not a place to drop, as on a locked row. */
+export function dropInto(target: OutlineRow): number | null | undefined {
+  if (target.locked) return undefined;
+  if (target.kind === "group" && target.entity?.kind === "node") return target.entity.node;
+  return target.parent;
+}
+
+/** How far the pointer moves, in pixels, before a press on a row becomes a drag. */
+const DRAG_PX = 4;
+
+interface Drag {
+  rows: OutlineRow[];
+  x: number;
+  y: number;
+  /** Past the threshold: a drag, not a click. */
+  on: boolean;
+  /** The row under the pointer while dragging. */
+  over: string | null;
 }
 
 interface Menu {
@@ -208,7 +238,7 @@ interface Menu {
   rows: OutlineRow[];
 }
 
-export function Outliner({ state, selection, onSelect, onAction, onRename }: OutlinerProps) {
+export function Outliner({ state, selection, onSelect, onAction, onRename, onMove }: OutlinerProps) {
   const g = graphOf(state);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   // The open context's path is always unfolded.
@@ -277,6 +307,70 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
     };
   }, [menu]);
 
+  // #117: drag rows onto a group. A press on a row starts it; it becomes a drag once the
+  // pointer has moved a few pixels, so a click still selects. Escape cancels; a release
+  // anywhere but a row or the space below the rows drops nothing.
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const dragged = useRef(false);
+  const setDragBoth = (d: Drag | null) => {
+    dragRef.current = d;
+    setDrag(d);
+  };
+  // The click the browser fires after the release that ends a drag selects nothing. It goes
+  // to the row only when the press and the release were on the same one (to a shared parent
+  // otherwise), so the mark is cleared once the release's events are done: it must never
+  // swallow a later click on another row.
+  const endDrag = () => {
+    dragged.current = true;
+    setTimeout(() => {
+      dragged.current = false;
+    }, 0);
+  };
+  useEffect(() => {
+    if (!drag) return;
+    const move = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d || d.on || Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_PX) return;
+      setDragBoth({ ...d, on: true });
+    };
+    const up = () => {
+      // A release on a row or the space below the rows is handled there first.
+      if (dragRef.current?.on) endDrag();
+      setDragBoth(null);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !dragRef.current) return;
+      e.stopPropagation();
+      setDragBoth(null);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("keydown", esc, true);
+    };
+  }, [drag !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startDrag = (e: ReactMouseEvent, row: OutlineRow) => {
+    if (e.button !== 0 || !onMove || !draggableRow(row) || renaming) return;
+    const rowsDragged = isSelected(row) ? rows.filter(isSelected) : [row];
+    if (!rowsDragged.every(draggableRow)) return;
+    dragged.current = false;
+    setDragBoth({ rows: rowsDragged, x: e.clientX, y: e.clientY, on: false, over: null });
+  };
+  const dropOn = (into: number | null | undefined) => {
+    const d = dragRef.current;
+    setDragBoth(null);
+    if (!d?.on) return;
+    endDrag();
+    if (into !== undefined) onMove?.(d.rows, into);
+  };
+  const dragging = !!drag?.on;
+  const isDragged = (r: OutlineRow) => !!drag?.on && drag.rows.some((x) => x.key === r.key);
+
   const toggle = (id: number) =>
     setExpanded((s) => {
       const next = new Set(s);
@@ -334,9 +428,27 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
                 aria-expanded={r.children ? expanded.has(nodeOf(r)) : undefined}
                 data-row={r.key}
                 data-kind={r.kind}
-                className={`${isSel ? "sel" : ""}${r.visible ? "" : " dim"}${r.open ? " open" : ""}${r.active ? " active" : ""}`}
+                className={`${isSel ? "sel" : ""}${r.visible ? "" : " dim"}${r.open ? " open" : ""}${r.active ? " active" : ""}${dragging && drag?.over === r.key && !isDragged(r) && dropInto(r) !== undefined ? " drop" : ""}${isDragged(r) ? " dragged" : ""}`}
                 style={{ paddingLeft: 4 + r.level * 14 }}
-                onClick={(e) => r.entity && onSelect(r, e.ctrlKey || e.metaKey ? "toggle" : e.shiftKey ? "add" : "replace")}
+                data-draggable={onMove && draggableRow(r) ? "true" : undefined}
+                onMouseDown={(e) => startDrag(e, r)}
+                onMouseEnter={() => {
+                  const d = dragRef.current;
+                  if (d?.on && d.over !== r.key) setDragBoth({ ...d, over: r.key });
+                }}
+                onMouseUp={(e) => {
+                  if (!dragRef.current?.on) return;
+                  e.stopPropagation();
+                  dropOn(isDragged(r) ? undefined : dropInto(r));
+                }}
+                onClick={(e) => {
+                  // The click that ends a drag selects nothing.
+                  if (dragged.current) {
+                    dragged.current = false;
+                    return;
+                  }
+                  if (r.entity) onSelect(r, e.ctrlKey || e.metaKey ? "toggle" : e.shiftKey ? "add" : "replace");
+                }}
                 onContextMenu={(e) => openMenu(e, r)}
               >
                 {r.children ? (
@@ -420,6 +532,22 @@ export function Outliner({ state, selection, onSelect, onAction, onRename }: Out
           })}
         </ul>
       )}
+      {dragging ? (
+        <div
+          className={`drop-model${drag?.over === "model" ? " drop" : ""}`}
+          data-testid="outliner-drop-model"
+          onMouseEnter={() => {
+            const d = dragRef.current;
+            if (d?.on) setDragBoth({ ...d, over: "model" });
+          }}
+          onMouseUp={(e) => {
+            e.stopPropagation();
+            dropOn(null);
+          }}
+        >
+          Drop here to move out to the model
+        </div>
+      ) : null}
       {m ? (
         <div className="ctxmenu" ref={menuRef} role="menu" aria-label="Outliner actions" style={{ left: m.x, top: m.y }}>
           {sectionRow ? (
