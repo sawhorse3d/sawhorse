@@ -196,6 +196,9 @@ pub enum Op {
     /// to what they touch. A group moves with everything in it; an instance's placement
     /// changes and its solids are re-derived from its definition.
     Transform {
+        /// Empty when absent on reading (#116); always written, so stored logs stay as
+        /// they were.
+        #[serde(default)]
         objects: Vec<u64>,
         xform: Xform,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -207,6 +210,8 @@ pub enum Op {
     /// new group with copies of everything in it; an instance's copy is a new instance of
     /// the same definition.
     Copy {
+        /// Empty when absent on reading, as for `Transform` (#116).
+        #[serde(default)]
         objects: Vec<u64>,
         xform: Xform,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -216,6 +221,8 @@ pub enum Op {
     /// times (x3 after a 36 in move: copies at 36, 72 and 108 in; /4 is the same with a
     /// quarter of the move). Copies are made in order k = 1..=count, solids then nodes.
     Array {
+        /// Empty when absent on reading, as for `Transform` (#116).
+        #[serde(default)]
         objects: Vec<u64>,
         xform: Xform,
         count: u32,

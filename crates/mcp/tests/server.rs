@@ -263,6 +263,40 @@ fn each_change_is_one_undo_step_and_reports_the_cut_list_rows_it_moved() {
     assert_eq!(sum["parts"][0]["material"], "Walnut");
 }
 
+/// #116: copy and array of a component instance by `nodes` alone, as an agent first wrote
+/// them, and a known op with a field missing says which field.
+#[test]
+fn copy_and_array_take_nodes_alone() {
+    let mut s = Session::new(&folder("nodes-alone"));
+    let r = s.ok(
+        "add_board",
+        json!({"name": "Slat", "thickness": 19.0, "width": 70.0, "length": 900.0}),
+    );
+    let slat = r["board"]["object"].clone();
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Component", "ops": [{"op": "make_component", "items": [{"object": slat}], "name": "Slat"}]}),
+    );
+    let node = r["outcome"]["outcomes"][0]["instance"].clone();
+    let step = json!({"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [0, 0.1, 0]});
+    s.ok(
+        "apply_ops",
+        json!({"name": "Copy", "ops": [{"op": "copy", "nodes": [node], "xform": step}]}),
+    );
+    s.ok(
+        "apply_ops",
+        json!({"name": "Array", "ops": [{"op": "array", "nodes": [node], "xform": step, "count": 3}]}),
+    );
+    let parts = s.ok("summary", json!({}))["parts"].clone();
+    assert_eq!(parts.as_array().unwrap().len(), 1, "{parts}");
+    assert_eq!(parts[0]["qty"], 5, "{parts}");
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Array", "ops": [{"op": "array", "nodes": [node], "xform": step}]}),
+    );
+    assert!(e.contains("op 0 (array): missing field `count`"), "{e}");
+}
+
 /// A failing apply_ops changes nothing: not the model, not the undo history.
 #[test]
 fn a_failing_apply_ops_changes_nothing() {
