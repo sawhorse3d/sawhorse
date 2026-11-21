@@ -90,6 +90,13 @@ import { SectionTool } from "./tools/section";
 import { isNavTool, leftButtonNav, OrbitTool, PanTool } from "./tools/navigate";
 import { activeSectionHere, describeSection, sceneSectionsOf, sectionById, sliceExportRefused } from "./lib/sections";
 
+/** #117: the one group or component (`null`: the model) that holds every item, or
+ * `undefined` when they are in more than one place. */
+export function oneParent<T>(items: T[], parentOf: (it: T) => number | null): number | null | undefined {
+  const parents = new Set(items.map(parentOf));
+  return parents.size === 1 ? [...parents][0] : undefined;
+}
+
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
 export function itemsOf(es: Entity[]): Item[] {
@@ -2096,16 +2103,19 @@ export function App() {
     async (rows: OutlineRow[], into: number | null) => {
       const items = itemsOf(rows.flatMap((r) => (r.entity ? [r.entity] : [])));
       if (!items.length) return;
-      const parents = new Set(items.map(parentOfItem));
-      if (parents.size !== 1) return void setMessage({ text: "Move things from one group or component at a time.", error: true });
-      const from = parentOfItem(items[0]);
+      const from = oneParent(items, parentOfItem);
+      if (from === undefined) return void setMessage({ text: "Move things from one group or component at a time.", error: true });
       // A drop beside rows in their own group moves nothing.
       if (from === into) return;
       const g0 = graphOf(live.current.scene?.state);
       const ctx = g0.context ?? null;
-      const groupsBefore = g0.nodes.filter((n) => n.kind === "group").map((n) => ({ id: n.id, label: n.label }));
       const where = into === null ? "the model" : describeNode(g0, into);
       if (!(await inContext(from))) return;
+      // What there is once the rows' parent is open: opening it may itself tidy away a group
+      // left empty earlier, which this move did not do.
+      const groupsBefore = graphOf(live.current.scene?.state)
+        .nodes.filter((n) => n.kind === "group")
+        .map((n) => ({ id: n.id, label: n.label }));
       const r = await apply({ op: "move_into", items, into }, () => `Moved ${plural(items.length, "item")} into ${where}.`);
       let state = r?.scene.state;
       if (r) {
@@ -2113,9 +2123,12 @@ export function App() {
         // As after Delete (#85, #111): the active tool's gesture and what it worked out go.
         afterHistoryRef.current();
       }
-      if (from !== ctx && (ctx === null || nodeById(graphOf(state ?? live.current.scene?.state), ctx))) {
-        const back = await apply({ op: "set_context", node: ctx });
-        if (back) state = back.scene.state;
+      // Back to what was open, or to the model when that is gone.
+      const here = graphOf(state ?? live.current.scene?.state);
+      const back = ctx !== null && nodeById(here, ctx) ? ctx : null;
+      if ((here.context ?? null) !== back) {
+        const b = await apply({ op: "set_context", node: back });
+        if (b) state = b.scene.state;
       }
       if (!r || !state) return;
       const g1 = graphOf(state);

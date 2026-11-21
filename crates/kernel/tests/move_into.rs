@@ -417,6 +417,14 @@ fn the_cut_list_follows_the_tree() {
     let r = rows(d.model());
     assert!(!r.iter().any(|x| x.2 == vec![Item::Node(g)]), "{r:?}");
     assert!(r.iter().any(|x| x.2 == vec![Item::Node(h)]), "{r:?}");
+    // That group out again: the target holds only solids, so it is one part again.
+    ok(&mut d, Op::SetContext { node: Some(g) });
+    ok(&mut d, move_into(vec![Item::Node(h)], None));
+    ok(&mut d, Op::SetContext { node: None });
+    let r = rows(d.model());
+    assert!(r.iter().any(|x| x.2 == vec![Item::Node(g)]), "{r:?}");
+    assert!(r.iter().any(|x| x.2 == vec![Item::Node(h)]), "{r:?}");
+    ok(&mut d, move_into(vec![Item::Node(h)], Some(g)));
     // The last group out of one: the one it leaves, emptied, goes once it is closed.
     let outer = group(&mut d, vec![Item::Node(g)], "Outer");
     ok(&mut d, Op::SetContext { node: Some(outer) });

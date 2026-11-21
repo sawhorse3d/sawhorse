@@ -211,10 +211,11 @@ export function draggableRow(r: OutlineRow): boolean {
   return !!r.entity && (r.kind === "solid" || r.kind === "group" || r.kind === "instance") && !r.locked;
 }
 
-/** #117: where a drop on `target` puts things: a group row takes them in (an unlocked one),
- * any other row puts them beside it, in what holds it. `undefined`: not a place to drop. */
+/** #117: where a drop on `target` puts things: a group row takes them in, any other row puts
+ * them beside it, in what holds it. `undefined`: not a place to drop, as on a locked row. */
 export function dropInto(target: OutlineRow): number | null | undefined {
-  if (target.kind === "group" && target.entity?.kind === "node") return target.locked ? undefined : target.entity.node;
+  if (target.locked) return undefined;
+  if (target.kind === "group" && target.entity?.kind === "node") return target.entity.node;
   return target.parent;
 }
 
@@ -316,6 +317,16 @@ export function Outliner({ state, selection, onSelect, onAction, onRename, onMov
     dragRef.current = d;
     setDrag(d);
   };
+  // The click the browser fires after the release that ends a drag selects nothing. It goes
+  // to the row only when the press and the release were on the same one (to a shared parent
+  // otherwise), so the mark is cleared once the release's events are done: it must never
+  // swallow a later click on another row.
+  const endDrag = () => {
+    dragged.current = true;
+    setTimeout(() => {
+      dragged.current = false;
+    }, 0);
+  };
   useEffect(() => {
     if (!drag) return;
     const move = (e: MouseEvent) => {
@@ -325,13 +336,12 @@ export function Outliner({ state, selection, onSelect, onAction, onRename, onMov
     };
     const up = () => {
       // A release on a row or the space below the rows is handled there first.
-      if (dragRef.current?.on) dragged.current = true;
+      if (dragRef.current?.on) endDrag();
       setDragBoth(null);
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !dragRef.current) return;
       e.stopPropagation();
-      if (dragRef.current.on) dragged.current = true;
       setDragBoth(null);
     };
     window.addEventListener("mousemove", move);
@@ -355,7 +365,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename, onMov
     const d = dragRef.current;
     setDragBoth(null);
     if (!d?.on) return;
-    dragged.current = true;
+    endDrag();
     if (into !== undefined) onMove?.(d.rows, into);
   };
   const dragging = !!drag?.on;

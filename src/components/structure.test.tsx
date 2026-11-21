@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(cleanup);
 import type { DocState, GraphNode, SceneDef } from "../kernel/types";
-import { itemsOf, nextName } from "../App";
+import { itemsOf, nextName, oneParent } from "../App";
 import { NameDialog } from "./NameDialog";
 import { Outliner, draggableRow, dropInto, outlineRows, type OutlineRow } from "./Outliner";
 import { SceneTabs } from "./SceneTabs";
@@ -151,12 +151,39 @@ describe("Outliner drag (#117)", () => {
     expect(draggableRow(rowOf("o:2", { entity: { kind: "object", object: 2 }, locked: true }))).toBe(false);
   });
 
-  it("drops into an unlocked group, beside anything else, and nowhere on a locked group", () => {
+  it("drops into an unlocked group, beside anything else, and nowhere on a locked row", () => {
     expect(dropInto(rowOf("n:1", { kind: "group", entity: { kind: "node", node: 1 } }))).toBe(1);
     expect(dropInto(rowOf("n:1", { kind: "group", entity: { kind: "node", node: 1 }, locked: true }))).toBeUndefined();
+    // A locked solid or component row in a group takes no drop either (the verifier's find).
+    expect(dropInto(rowOf("o:5", { entity: { kind: "object", object: 5 }, parent: 1, locked: true }))).toBeUndefined();
+    expect(dropInto(rowOf("n:6", { kind: "instance", entity: { kind: "node", node: 6 }, parent: 1, locked: true }))).toBeUndefined();
     // A component row is not a place to put things: the drop goes beside it.
     expect(dropInto(rowOf("n:2", { kind: "instance", entity: { kind: "node", node: 2 }, parent: 1 }))).toBe(1);
     expect(dropInto(rowOf("o:3", { entity: { kind: "object", object: 3 }, parent: null }))).toBeNull();
+  });
+
+  it("rows from two places have no one parent, so App refuses them before it opens anything", () => {
+    const at = new Map<number, number | null>([[1, null], [2, null], [3, 7]]);
+    const parentOf = (n: number) => at.get(n)!;
+    expect(oneParent([1, 2], parentOf)).toBeNull();
+    expect(oneParent([3], parentOf)).toBe(7);
+    expect(oneParent([1, 3], parentOf)).toBeUndefined();
+  });
+
+  it("the click after a drag that ended on another row never swallows a later click", async () => {
+    const onSelect = vi.fn();
+    const onMove = vi.fn();
+    render(<Outliner state={state()} selection={[]} onSelect={onSelect} onAction={vi.fn()} onRename={vi.fn()} onMove={onMove} />);
+    const row = (label: string, k = 0) => screen.getAllByText(label)[k].closest("li")!;
+    // Drag Back onto Carcass: the browser's click goes to their shared parent, not a row.
+    fireEvent.mouseDown(row("Back"), { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 10, clientY: 40 });
+    fireEvent.mouseUp(row("Carcass"));
+    expect(onMove).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 0));
+    // The next click on another row (one that cannot be dragged) selects it.
+    fireEvent.click(row("Shelf", 3));
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "n:7" }), "replace");
   });
 
   it("a press that moves past a few pixels drags; release on a group moves; a click still selects; Escape cancels", () => {
