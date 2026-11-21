@@ -200,6 +200,11 @@ button.chip:hover{border-color:var(--accent)}
 .tree.outline li,.tree.tags li{cursor:default;min-height:24px;user-select:none}
 .tree.outline li:hover,.tree.tags li:hover{background:color-mix(in srgb,var(--rail) 70%,transparent)}
 .tree.outline li.sel{background:color-mix(in srgb,var(--accent) 18%,transparent)}
+/* #117: dragging rows onto a group */
+.tree.outline li.dragged{opacity:.5}
+.tree.outline li.drop{outline:1px solid var(--accent);outline-offset:-1px}
+.outliner .drop-model{margin-top:4px;padding:6px 8px;border:1px dashed var(--line);border-radius:4px;font-size:11px;color:var(--muted)}
+.outliner .drop-model.drop{border-color:var(--accent)}
 .tree li.dim .label{opacity:.55}
 .tree.outline.windowed li{height:24px;min-height:0;box-sizing:border-box;overflow:hidden}
 .tree li .label{flex:0 0 auto;max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -1,0 +1,146 @@
+import { expect, test, type Page } from "@playwright/test";
+
+// #117: drag rows in the Outliner onto a group to move them into it, or onto the strip
+// below the rows to move them out to the model. Read back from window.__sawhorse.graph().
+import { box, clickAt, point, ready, type } from "./helpers";
+
+const hud = (page: Page) => page.locator(".vp .hud");
+const hint = (page: Page) => page.locator("#hint");
+const row = (page: Page, key: string) => page.locator(`.outline li[data-row="${key}"]`);
+
+type Graph = { context: number | null; nodes: { id: number; parent: number | null }[]; objects: { id: number; parent: number | null }[] };
+const graph = (page: Page) => page.evaluate(() => (window as unknown as { __sawhorse: { graph(): Graph } }).__sawhorse.graph());
+const parentOf = async (page: Page, object: number) => (await graph(page)).objects.find((o) => o.id === object)?.parent ?? null;
+
+/** Press on `from`, move a few steps onto `to`, release. */
+async function drag(page: Page, from: ReturnType<Page["locator"]>, to: ReturnType<Page["locator"]>) {
+  const a = (await from.boundingBox())!;
+  const b = (await to.boundingBox())!;
+  await page.mouse.move(a.x + 20, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 20, a.y + a.height / 2 + 8, { steps: 3 });
+  await page.mouse.move(b.x + 20, b.y + b.height / 2, { steps: 6 });
+  await page.mouse.up();
+}
+
+/** Four 12 x 12 x 6 in boxes 30 in apart along red (solids 1 to 4; Ctrl+A then a Ctrl copy,
+ * twice), and solid 1 in a group (node 1). */
+async function threeBoxesOneGrouped(page: Page) {
+  const vp = await ready(page);
+  await box(page);
+  for (const [by, n] of [["30", "2"], ["60", "4"]]) {
+    await page.keyboard.press("Space");
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("m");
+    await page.keyboard.press("Control");
+    await clickAt(page, [0, 0, 0], "endpoint", 1, 1);
+    await page.keyboard.press("ArrowRight");
+    await point(page, [10, 0, 0]);
+    await type(page, by);
+    await expect(vp).toHaveAttribute("data-objects", n);
+  }
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Escape");
+  await page.getByRole("tab", { name: "Outliner" }).click();
+  await row(page, "o:1").click({ button: "right" });
+  await page.getByRole("menuitem", { name: /Make Group/ }).click();
+  await expect(hint(page)).toContainText("Grouped 1 item");
+  await expect(row(page, "n:1")).toBeVisible();
+  return vp;
+}
+
+test("a solid dragged onto a group goes into it; dragged to the strip below, it comes out (#117)", async ({ page }) => {
+  await threeBoxesOneGrouped(page);
+  const before = await page.evaluate(() => (window as unknown as { __sawhorse: { solids(): { min: number[] }[] } }).__sawhorse.solids().map((s) => s.min));
+  await drag(page, row(page, "o:2"), row(page, "n:1"));
+  await expect(hint(page)).toContainText("Moved 1 item into");
+  await expect.poll(() => parentOf(page, 2)).toBe(1);
+  // Nothing moved in the model, and the open context is the model again.
+  const after = await page.evaluate(() => (window as unknown as { __sawhorse: { solids(): { min: number[] }[] } }).__sawhorse.solids().map((s) => s.min));
+  expect(after).toEqual(before);
+  await expect(hud(page)).toContainText("Edit: Model ·");
+  // Undo takes it back out.
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => parentOf(page, 2)).toBe(null);
+  await page.keyboard.press("Control+y");
+  await expect.poll(() => parentOf(page, 2)).toBe(1);
+  // Out again to the model: unfold the group and drag the row to the strip below.
+  await page.getByRole("button", { name: /Unfold/ }).first().click();
+  await expect(row(page, "o:2")).toBeVisible();
+  const a = (await row(page, "o:2").boundingBox())!;
+  await page.mouse.move(a.x + 20, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 20, a.y + a.height / 2 + 8, { steps: 3 });
+  const strip = page.getByTestId("outliner-drop-model");
+  await expect(strip).toBeVisible();
+  const s = (await strip.boundingBox())!;
+  await page.mouse.move(s.x + 20, s.y + s.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(hint(page)).toContainText("Moved 1 item into the model");
+  await expect.poll(() => parentOf(page, 2)).toBe(null);
+  await expect(hud(page)).toContainText("Edit: Model ·");
+});
+
+test("the last solid out of a group: the group goes, and the status line names it (#117)", async ({ page }) => {
+  await threeBoxesOneGrouped(page);
+  await page.getByRole("button", { name: /Unfold/ }).first().click();
+  const a = (await row(page, "o:1").boundingBox())!;
+  await page.mouse.move(a.x + 20, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 20, a.y + a.height / 2 + 8, { steps: 3 });
+  const s = (await page.getByTestId("outliner-drop-model").boundingBox())!;
+  await page.mouse.move(s.x + 20, s.y + s.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(hint(page)).toContainText("'Group' was left empty and went");
+  await expect(row(page, "n:1")).toHaveCount(0);
+  await expect.poll(() => parentOf(page, 1)).toBe(null);
+});
+
+test("the selected rows move together; a drop beside rows in their own group moves nothing (#117)", async ({ page }) => {
+  const vp = await threeBoxesOneGrouped(page);
+  await row(page, "o:2").click();
+  await row(page, "o:3").click({ modifiers: ["Control"] });
+  await expect(row(page, "o:3")).toHaveAttribute("aria-selected", "true");
+  // Dropped on one of their own: beside it, where they are already. Nothing happens.
+  const hash = await vp.getAttribute("data-hash");
+  await drag(page, row(page, "o:2"), row(page, "o:3"));
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  // Onto the group: both go in, as one step.
+  await row(page, "o:2").click();
+  await row(page, "o:3").click({ modifiers: ["Control"] });
+  await drag(page, row(page, "o:3"), row(page, "n:1"));
+  await expect(hint(page)).toContainText("Moved 2 items into");
+  await expect.poll(() => parentOf(page, 2)).toBe(1);
+  expect(await parentOf(page, 3)).toBe(1);
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => parentOf(page, 2)).toBe(null);
+  expect(await parentOf(page, 3)).toBe(null);
+});
+
+test("Escape cancels a drag; a locked row cannot be dragged or take a drop (#117)", async ({ page }) => {
+  const vp = await threeBoxesOneGrouped(page);
+  const hash = await vp.getAttribute("data-hash");
+  // Escape in the middle: nothing moves.
+  const a = (await row(page, "o:2").boundingBox())!;
+  const b = (await row(page, "n:1").boundingBox())!;
+  await page.mouse.move(a.x + 20, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 20, b.y + b.height / 2, { steps: 6 });
+  await expect(row(page, "n:1")).toHaveClass(/drop/);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  expect(await parentOf(page, 2)).toBe(null);
+  // A locked solid's row is not draggable.
+  await page.getByRole("button", { name: "Lock Solid 2" }).click();
+  await expect(row(page, "o:2")).not.toHaveAttribute("data-draggable", "true");
+  const locked = await vp.getAttribute("data-hash");
+  await drag(page, row(page, "o:2"), row(page, "n:1"));
+  await expect(vp).toHaveAttribute("data-hash", locked!);
+  // A locked group takes no drop.
+  await page.getByRole("button", { name: "Lock Group" }).click();
+  const lockedGroup = await vp.getAttribute("data-hash");
+  await drag(page, row(page, "o:3"), row(page, "n:1"));
+  await expect(vp).toHaveAttribute("data-hash", lockedGroup!);
+  expect(await parentOf(page, 3)).toBe(null);
+});

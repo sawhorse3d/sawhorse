@@ -263,6 +263,43 @@ fn each_change_is_one_undo_step_and_reports_the_cut_list_rows_it_moved() {
     assert_eq!(sum["parts"][0]["material"], "Walnut");
 }
 
+/// #117: `move_into` through apply_ops moves a top-level board into a group; with no way to
+/// open the group in a batch, taking it out again is refused.
+#[test]
+fn move_into_puts_a_board_in_a_group_and_cannot_take_it_out() {
+    let mut s = Session::new(&folder("move-into"));
+    let a = s.ok(
+        "add_board",
+        json!({"name": "Side", "thickness": 19.0, "width": 300.0, "length": 600.0}),
+    )["board"]["object"]
+        .clone();
+    let b = s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19.0, "width": 300.0, "length": 600.0, "position": [0, 0, 100]}),
+    )["board"]["object"]
+        .clone();
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Group", "ops": [{"op": "make_group", "items": [{"object": a}], "name": "Carcass"}]}),
+    );
+    let g = r["outcome"]["outcomes"][0]["group"].clone();
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Move", "ops": [{"op": "move_into", "items": [{"object": b}], "into": g}]}),
+    );
+    assert_eq!(r["outcome"]["outcomes"][0]["kind"], "moved_into", "{r}");
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Out", "ops": [{"op": "move_into", "items": [{"object": b}], "into": null}]}),
+    );
+    assert!(e.contains("not open"), "{e}");
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Open", "ops": [{"op": "set_context", "node": g}]}),
+    );
+    assert!(e.contains("cannot be part of a batch"), "{e}");
+}
+
 /// A failing apply_ops changes nothing: not the model, not the undo history.
 #[test]
 fn a_failing_apply_ops_changes_nothing() {

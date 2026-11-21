@@ -2086,6 +2086,49 @@ export function App() {
     [apply, applyFromOutside, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
   );
 
+  /** #117: rows dragged in the Outliner onto a group (`into`), or out to the model (`null`).
+   * The kernel moves only what is directly in the open context, so what holds the rows is
+   * opened first, as Make Group and Delete do, and the context the person had open is put
+   * back after. Rows from two places are refused before anything is opened (the switch is no
+   * undo step). A group the move leaves empty goes, as after any step, and the status line
+   * names it, since a section plane in it goes too. */
+  const outlinerMove = useCallback(
+    async (rows: OutlineRow[], into: number | null) => {
+      const items = itemsOf(rows.flatMap((r) => (r.entity ? [r.entity] : [])));
+      if (!items.length) return;
+      const parents = new Set(items.map(parentOfItem));
+      if (parents.size !== 1) return void setMessage({ text: "Move things from one group or component at a time.", error: true });
+      const from = parentOfItem(items[0]);
+      // A drop beside rows in their own group moves nothing.
+      if (from === into) return;
+      const g0 = graphOf(live.current.scene?.state);
+      const ctx = g0.context ?? null;
+      const groupsBefore = g0.nodes.filter((n) => n.kind === "group").map((n) => ({ id: n.id, label: n.label }));
+      const where = into === null ? "the model" : describeNode(g0, into);
+      if (!(await inContext(from))) return;
+      const r = await apply({ op: "move_into", items, into }, () => `Moved ${plural(items.length, "item")} into ${where}.`);
+      let state = r?.scene.state;
+      if (r) {
+        select([]);
+        // As after Delete (#85, #111): the active tool's gesture and what it worked out go.
+        afterHistoryRef.current();
+      }
+      if (from !== ctx && (ctx === null || nodeById(graphOf(state ?? live.current.scene?.state), ctx))) {
+        const back = await apply({ op: "set_context", node: ctx });
+        if (back) state = back.scene.state;
+      }
+      if (!r || !state) return;
+      const g1 = graphOf(state);
+      const gone = groupsBefore.filter((n) => !nodeById(g1, n.id));
+      if (gone.length)
+        setMessage({
+          text: `Moved ${plural(items.length, "item")} into ${where}. ${gone.map((n) => quoted(n.label)).join(", ")} ${gone.length === 1 ? "was" : "were"} left empty and went, with any section plane in ${gone.length === 1 ? "it" : "them"}.`,
+          error: false,
+        });
+    },
+    [apply, inContext, parentOfItem, select, setMessage],
+  );
+
   /** A row clicked in the Outliner: select it, opening what holds it when that is not open. */
   const outlinerSelect = useCallback(
     (row: OutlineRow, mode: "replace" | "add" | "toggle") => {
@@ -3301,7 +3344,7 @@ export function App() {
             });
           },
         }}
-        outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
+        outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename, onMove: outlinerMove }}
         tags={{
           state: st ?? null,
           canTag: selItems.length > 0,

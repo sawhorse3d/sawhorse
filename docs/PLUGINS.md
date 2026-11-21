@@ -261,6 +261,7 @@ Any op of the kernel's op log ([`src/kernel/types.ts`](../src/kernel/types.ts) `
 | `transform`, `copy`, `array` | `objects`, `nodes`, `xform` (and `count`) | `{ objects, nodes }` |
 | `transform_sketch` | `sketch`; `points` (world), `edges` (pairs of world ends), `regions`; `xform`; `copy` and `count` for copies and arrays (sketch geometry, [ADR-0012](adr/0012-moving-sketch-geometry.md)) | `{ sketch, regions }`, or `{ regions }` for copies: (sketch, region) pairs |
 | `make_group`, `make_component`, `make_unique`, `explode` | `items` / `node`, `name` | `{ group }`, `{ instance, definition }` ... |
+| `move_into` | `items` (directly in the open context), `into`: a group's id, or `null` for the model ([#117](https://github.com/sawhorse3d/sawhorse/issues/117), [ADR-0005](adr/0005-groups-components.md)) | `{ into, objects, nodes }`. A batch cannot open a group, so a plugin moves top-level items into a group and cannot take one out |
 | `rename`, `rename_definition` | `item` / `definition`, `name` | |
 | `delete_object`, `delete_node` | `object` / `node` | |
 | `set_hidden`, `set_locked`, `tag_items`, `create_tag` | `items`, ... | |

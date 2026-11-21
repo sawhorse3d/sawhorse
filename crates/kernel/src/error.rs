@@ -321,6 +321,20 @@ pub enum StructureError {
     /// Lane 15: Group loose faces found nothing to group.
     #[error("there are no loose faces here to make into parts")]
     NoLooseFaces,
+    /// #117: `move_into` a group that is the item or inside it.
+    #[error("a group cannot go into itself or into something inside it")]
+    IntoItself,
+    /// #117: `move_into` a component instance, or a group inside one.
+    #[error("that is a component: a part put into it would be in every copy")]
+    IntoComponent,
+    /// #117: `move_into` with the open context inside a component instance.
+    #[error(
+        "things inside a component cannot be moved between groups: open the model or a group outside it"
+    )]
+    InComponent,
+    /// #117: `move_into` an item to where it already is.
+    #[error("that is already there")]
+    AlreadyThere,
 }
 
 /// Errors from the stock library and the nesting settings (lane 9). Nothing changed.
