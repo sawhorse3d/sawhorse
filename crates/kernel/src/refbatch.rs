@@ -24,6 +24,7 @@
 //! fine on a small model and refused on a huge one before it starts: ops times things in
 //! the model must stay under [`WORK_BUDGET`].
 
+use serde::Deserialize as _;
 use serde_json::Value;
 
 use crate::document::Document;
@@ -214,8 +215,7 @@ pub fn resolve(
             .and_then(Value::as_str)
             .unwrap_or("?")
             .to_string();
-        let op: Op = serde_json::from_value(filled.clone())
-            .map_err(|e| unreadable(index, &kind, &filled, &e))?;
+        let op = Op::deserialize(&filled).map_err(|e| unreadable(index, &kind, &filled, &e))?;
         if forbidden(&op) {
             return Err(RefBatchError::BadOp {
                 index,
@@ -267,7 +267,11 @@ pub fn apply(doc: &mut Document, batch: &NamedBatch) -> Result<(OpOutcome, Op), 
 /// the one whose absence makes it read, or be missing, is the one that was wrong.
 fn unreadable(index: usize, kind: &str, op: &Value, e: &serde_json::Error) -> RefBatchError {
     let text = e.to_string();
-    if !op.get("op").is_some_and(Value::is_string) || text.starts_with("unknown variant") {
+    // Only the op's own name being unknown makes it an op the kernel does not know; an
+    // unknown variant inside one of its fields (an item's kind, a draw target's) is a field.
+    if !op.get("op").is_some_and(Value::is_string)
+        || text.starts_with(&format!("unknown variant `{kind}`"))
+    {
         return RefBatchError::BadOp {
             index,
             message: format!("not an op the kernel knows ({e})"),
@@ -499,8 +503,21 @@ mod tests {
             assert!(!e.contains("not an op the kernel knows"), "{e}");
             assert_eq!((d.hash(), d.log().len(), d.depth()), before);
         }
-        // An op the kernel does not know, or none, still says so.
-        for op in [json!({"op": "frobnicate"}), json!({"sketch": 1})] {
+        // A wrong value of an enum inside a known op is the op's field, not an unknown op.
+        let e = apply(
+            &mut d,
+            &batch(json!([{"op": "rename", "item": {"objekt": 1}, "name": "x"}])),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("op 0 (rename): field `item`"), "{e}");
+        assert_eq!((d.hash(), d.log().len(), d.depth()), before);
+        // An op the kernel does not know, none, or an `op` that is not a name, still says so.
+        for op in [
+            json!({"op": "frobnicate"}),
+            json!({"sketch": 1}),
+            json!({"op": 5}),
+        ] {
             let e = apply(&mut d, &batch(json!([op]))).unwrap_err().to_string();
             assert!(e.contains("not an op the kernel knows"), "{e}");
         }
