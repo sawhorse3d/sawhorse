@@ -7,9 +7,11 @@
 // window open and sends `sawhorse://close-requested`; the page asks the question File > New
 // asks (src/io/unsaved.ts, #120), with "before Sawhorse closes", and answers "keep" (Cancel,
 // or a save that was cancelled or failed) or "close" (Discard Changes, or Save once the
-// model is saved). Discard Changes deletes this session's autosave, as File > New does;
-// unsaved work set aside at start and not yet answered (lane 64, #94) is not this session's
-// and stays for the next start.
+// model is saved). Before it says "close" after either, this session's autosave is deleted
+// and the delete is waited for: Discard Changes deletes it as File > New does, and a save
+// only starts the delete, so a window closed at once after one could still hold the autosave,
+// which the next start offered back as unsaved work. Unsaved work set aside at start and not
+// yet answered (lane 64, #94) is not this session's and stays for the next start.
 //
 // The window can never be held open by the page. The page does not register Tauri's own
 // close-requested listener (with one, the shell holds every close until the page destroys
@@ -51,7 +53,7 @@ export function desktopShell(): CloseShell {
 
 /** A Cancel sooner than this after the question went up was not a person's: the dialog did not stay up. */
 export const ANSWER_FLOOR_MS = 150;
-/** After Discard Changes, the longest the window waits for the autosave to be deleted before it closes. */
+/** After Discard Changes or a save, the longest the window waits for the autosave to be deleted before it closes. */
 export const DISCARD_WAIT_MS = 1000;
 
 export interface CloseOptions {
@@ -60,7 +62,7 @@ export interface CloseOptions {
   unsaved(): boolean;
   /** Ask the question File > New asks, with "before Sawhorse closes" (src/io/unsaved.ts), and run the save when Save is the answer. */
   ask(): Promise<UnsavedOutcome>;
-  /** Discard Changes was answered: do to the autosave what File > New does (delete it). */
+  /** Delete this session's autosave and resolve when it is gone: what File > New does to it. Called before the window closes after Discard Changes, and after a save too (the model is in its file; the save's own delete may not be done yet). */
   discard(): Promise<void>;
   /** The question could not be asked: say so (the next close closes without asking). */
   failed(message: string): void;
@@ -97,9 +99,10 @@ export function closeHandler(o: CloseOptions): () => Promise<void> {
         await o.shell.say("keep");
         return;
       }
-      // Saved (the save deleted the autosave, as File > Save does) or nothing left unsaved:
-      // only Discard Changes has an autosave to delete.
-      if (answer === "discarded") await Promise.race([o.discard().catch(() => undefined), new Promise((r) => setTimeout(r, DISCARD_WAIT_MS))]);
+      // Discard Changes, saved, or nothing left unsaved (a save that was running has ended):
+      // the autosave is not needed, and it is gone before the window is. A save starts its
+      // delete and does not wait for it, so closing straight after one raced it.
+      await Promise.race([o.discard().catch(() => undefined), new Promise((r) => setTimeout(r, DISCARD_WAIT_MS))]);
       await o.shell.say("close");
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);

@@ -851,7 +851,8 @@ export function App() {
   // changes (src/io/closing.ts): it is told whether there are any, and asks the page when a
   // close request finds some. The question is the one above, with "before Sawhorse closes";
   // Discard Changes does to the autosave what File > New does (deletes it) and closes, Save
-  // saves and closes, Cancel keeps everything.
+  // saves and closes, Cancel keeps everything. `discard` below runs before the window closes
+  // after a save as well: the save's own delete of the autosave is not waited for.
   useEffect(() => {
     void closeShell?.say(dirty ? "unsaved" : "saved").catch(() => undefined);
   }, [closeShell, dirty]);

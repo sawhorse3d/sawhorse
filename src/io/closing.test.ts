@@ -91,12 +91,37 @@ describe("a close request in the desktop app", () => {
     expect(order).toEqual(["discard", "close"]);
   });
 
-  it("Save, and the model saved: closes, and the autosave is the save's to delete, not the question's", async () => {
-    const t = setup({ answer: "saved" });
-    await t.handle();
-    expect(t.s.said).toEqual(["close"]);
-    expect(t.discard).not.toHaveBeenCalled();
-  });
+  // A save starts the autosave's delete and does not wait for it: a window closed at once
+  // after one kept the autosave, and the next start offered the saved work back as unsaved.
+  for (const answer of ["saved", "clean"] as const) {
+    it(`answer "${answer}": the autosave's delete is waited for before the window closes`, async () => {
+      const order: string[] = [];
+      let gone = () => {};
+      const t = setup({
+        answer,
+        discard: () =>
+          new Promise<void>((r) => {
+            order.push("delete started");
+            gone = () => {
+              order.push("deleted");
+              r();
+            };
+          }),
+      });
+      const say = t.s.say.bind(t.s);
+      t.s.say = async (w) => {
+        order.push(w);
+        await say(w);
+      };
+      const done = t.handle();
+      await vi.waitFor(() => expect(order).toEqual(["delete started"]));
+      await Promise.resolve();
+      expect(order).toEqual(["delete started"]);
+      gone();
+      await done;
+      expect(order).toEqual(["delete started", "deleted", "close"]);
+    });
+  }
 
   it("Save, and the save cancelled or failed: the window, the model and the autosave stay, as with Cancel", async () => {
     const t = setup({ answer: "not-saved" });
@@ -114,7 +139,7 @@ describe("a close request in the desktop app", () => {
     const t = setup({ answer: "clean" });
     await t.handle();
     expect(t.s.said).toEqual(["close"]);
-    expect(t.discard).not.toHaveBeenCalled();
+    expect(t.discard).toHaveBeenCalledOnce();
   });
 
   it("a second request while the question is up asks nothing more, and the next one after the answer asks again", async () => {
@@ -190,20 +215,22 @@ describe("a close request in the desktop app", () => {
     expect(s.said).toEqual(["keep", "failed"]);
   });
 
-  it("after Discard Changes the window closes even when deleting the autosave fails or never finishes", async () => {
-    const t = setup({ answer: "discarded", discard: async () => Promise.reject(new Error("storage blocked")) });
-    await t.handle();
-    expect(t.s.said).toEqual(["close"]);
+  for (const answer of ["discarded", "saved"] as const) {
+    it(`answer "${answer}": the window closes even when deleting the autosave fails or never finishes`, async () => {
+      const t = setup({ answer, discard: async () => Promise.reject(new Error("storage blocked")) });
+      await t.handle();
+      expect(t.s.said).toEqual(["close"]);
 
-    vi.useFakeTimers();
-    const u = setup({ answer: "discarded", discard: () => new Promise<void>(() => {}) });
-    const done = u.handle();
-    await vi.advanceTimersByTimeAsync(DISCARD_WAIT_MS - 1);
-    expect(u.s.said).toEqual([]);
-    await vi.advanceTimersByTimeAsync(1);
-    await done;
-    expect(u.s.said).toEqual(["close"]);
-  });
+      vi.useFakeTimers();
+      const u = setup({ answer, discard: () => new Promise<void>(() => {}) });
+      const done = u.handle();
+      await vi.advanceTimersByTimeAsync(DISCARD_WAIT_MS - 1);
+      expect(u.s.said).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await done;
+      expect(u.s.said).toEqual(["close"]);
+    });
+  }
 
   it("the handler is free again after a failure: the next request asks", async () => {
     let fail = true;
@@ -280,7 +307,7 @@ describe("a close request with the question itself (src/io/unsaved.ts)", () => {
     await done;
     expect(t.beating()).toBe(false);
     expect(t.s.said).toEqual(["saving", "saving", "saving", "close"]);
-    expect(t.discard).not.toHaveBeenCalled();
+    expect(t.discard).toHaveBeenCalledOnce();
     expect(t.prompt()).toBeNull();
   });
 
