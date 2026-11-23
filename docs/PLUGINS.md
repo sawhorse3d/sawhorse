@@ -199,7 +199,7 @@ const cut = await model.cutList({ rounding: "sixteenth", visibleOnly: false }); 
 
 ### Changing the model: batches
 
-Every change is a **batch**: collect ops, then `commit()`. The app applies the whole batch through the kernel as **one undo step named after the batch** ("Undone: Generate cabinet"), validated like any edit. If any op is refused, nothing changes and `commit()` rejects with the reason, naming the op ("op 3 (push_pull): no face #12 on this object"). `commit()` needs `model.write`. The kernel's reason names the model, so a plugin with `model.write` but not `model.read` hears only which op was refused ("op 3 was refused; nothing changed ..."); the person still sees the whole reason in the status line. A batch's outcomes (the ids it made) come back either way: placeholders need them.
+Every change is a **batch**: collect ops, then `commit()`. The app applies the whole batch through the kernel as **one undo step named after the batch** ("Undone: Generate cabinet"), validated like any edit. If any op is refused, nothing changes and `commit()` rejects with the reason, naming the op ("op 3 (push_pull): no face #12 on this object"). An op that does not read says why, in serde's words: an op name the kernel does not know gives "op 3: not an op the kernel knows (...)" (an op with no `op`, or one that is not text, is refused before it is sent); a known op with a field missing names it ("op 3 (array): missing field `count`"), and one with a field of the wrong kind names the field when it is the only one wrong or missing ("op 3 (array): field `count`: invalid type: ..."). Fields an op does not have are ignored, so a misspelt optional field reads as left out: `transform`, `copy` or `array` with neither `objects` nor `nodes` is refused with "nothing is selected to transform (`objects` and `nodes` are both empty or left out)". `commit()` needs `model.write`. The kernel's reason names the model, so a plugin with `model.write` but not `model.read` hears only which op was refused ("op 3 was refused; nothing changed ..."); the person still sees the whole reason in the status line. A batch's outcomes (the ids it made) come back either way: placeholders need them.
 
 ```js
 const b = model.batch("Make a shelf");
@@ -258,7 +258,7 @@ Any op of the kernel's op log ([`src/kernel/types.ts`](../src/kernel/types.ts) `
 | `extrude` | `sketch`, `region`, `distance` | `{ object }` |
 | `push_pull`, `push_pull_new_face` | `object`, `face`, `distance` (negative pushes in, through the far side cuts through) | |
 | `import` | `items` (polygon soups), `definitions`, `nodes` (components and groups), `materials` | `{ objects, meshes, groups, sketches, notes }` |
-| `transform`, `copy`, `array` | `objects`, `nodes`, `xform` (and `count`) | `{ objects, nodes }` |
+| `transform`, `copy`, `array` | `objects` and `nodes` (each empty when left out), `xform` (and `count`) | `{ objects, nodes }` |
 | `transform_sketch` | `sketch`; `points` (world), `edges` (pairs of world ends), `regions`; `xform`; `copy` and `count` for copies and arrays (sketch geometry, [ADR-0012](adr/0012-moving-sketch-geometry.md)) | `{ sketch, regions }`, or `{ regions }` for copies: (sketch, region) pairs |
 | `make_group`, `make_component`, `make_unique`, `explode` | `items` / `node`, `name` | `{ group }`, `{ instance, definition }` ... |
 | `rename`, `rename_definition` | `item` / `definition`, `name` | |

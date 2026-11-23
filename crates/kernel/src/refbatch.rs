@@ -24,10 +24,11 @@
 //! fine on a small model and refused on a huge one before it starts: ops times things in
 //! the model must stay under [`WORK_BUDGET`].
 
+use serde::Deserialize as _;
 use serde_json::Value;
 
 use crate::document::Document;
-use crate::error::KernelError;
+use crate::error::{KernelError, TransformError};
 use crate::model::{Model, Op, OpOutcome};
 
 /// Most ops one batch may hold.
@@ -62,6 +63,14 @@ pub enum RefBatchError {
     TooMuchWork { ops: usize, things: usize },
     #[error("op {index}: {message}")]
     BadOp { index: usize, message: String },
+    /// An op the kernel knows, with a field missing or of the wrong kind, or a `transform`,
+    /// `copy` or `array` with neither `objects` nor `nodes` (#116).
+    #[error("op {index} ({kind}): {message}")]
+    BadField {
+        index: usize,
+        kind: String,
+        message: String,
+    },
     #[error("op {index}: placeholder {message}")]
     BadRef { index: usize, message: String },
     #[error("op {index} ({kind}): {error}")]
@@ -207,10 +216,7 @@ pub fn resolve(
             .and_then(Value::as_str)
             .unwrap_or("?")
             .to_string();
-        let op: Op = serde_json::from_value(filled).map_err(|e| RefBatchError::BadOp {
-            index,
-            message: format!("not an op the kernel knows ({e})"),
-        })?;
+        let op = Op::deserialize(&filled).map_err(|e| unreadable(index, &kind, &filled, &e))?;
         if forbidden(&op) {
             return Err(RefBatchError::BadOp {
                 index,
@@ -219,10 +225,25 @@ pub fn resolve(
                 ),
             });
         }
-        let out = scratch.apply(&op).map_err(|error| RefBatchError::Refused {
-            index,
-            kind: kind.clone(),
-            error: Box::new(error),
+        let out = scratch.apply(&op).map_err(|error| {
+            // `objects` and `nodes` may each be left out (#116), so a misspelt one reads as
+            // left out: the refusal names both.
+            if matches!(
+                op,
+                Op::Transform { .. } | Op::Copy { .. } | Op::Array { .. }
+            ) && error == KernelError::Transform(TransformError::NothingSelected)
+            {
+                return RefBatchError::BadField {
+                    index,
+                    kind: kind.clone(),
+                    message: format!("{error} (`objects` and `nodes` are both empty or left out)"),
+                };
+            }
+            RefBatchError::Refused {
+                index,
+                kind: kind.clone(),
+                error: Box::new(error),
+            }
         })?;
         outcome_json.push(serde_json::to_value(&out).unwrap_or(Value::Null));
         ops.push(op);
@@ -253,6 +274,63 @@ pub fn apply(doc: &mut Document, batch: &NamedBatch) -> Result<(OpOutcome, Op), 
     // would (it is the same validated result).
     doc.commit_applied(op.clone(), next);
     Ok((out, op))
+}
+
+/// Why `op` (filled in, and named `kind`) does not read as an op. An op the kernel does not
+/// know says so. A known one with a field missing or of the wrong kind names the field
+/// (#116). Serde names a missing field itself; for a wrong one it says only what it
+/// expected, so the field is found by reading the op again without each field in turn:
+/// the one whose absence makes it read, or be missing, is the one that was wrong.
+fn unreadable(index: usize, kind: &str, op: &Value, e: &serde_json::Error) -> RefBatchError {
+    let text = e.to_string();
+    // Only the op's own name being unknown makes it an op the kernel does not know; an
+    // unknown variant inside one of its fields (an item's kind, a draw target's, even one
+    // spelt like the op) is a field. The name alone tells which.
+    let known = |kind: &str| match Op::deserialize(&serde_json::json!({ "op": kind })) {
+        Ok(_) => true,
+        Err(e) => !e.to_string().starts_with("unknown variant"),
+    };
+    if !op.get("op").is_some_and(Value::is_string) || !known(kind) {
+        return RefBatchError::BadOp {
+            index,
+            message: format!("not an op the kernel knows ({e})"),
+        };
+    }
+    let field = |message: String| RefBatchError::BadField {
+        index,
+        kind: kind.to_string(),
+        message,
+    };
+    if text.starts_with("missing field") {
+        return field(text);
+    }
+    if let Some(fields) = op.as_object() {
+        for (name, value) in fields.iter().filter(|(k, _)| *k != "op") {
+            // Only a field that does not read on its own can be the one. Fields the op does
+            // not have are ignored on reading, so this cheap test passes over them and an op
+            // holding many costs one pass over its fields, not a copy of it per field.
+            let alone = serde_json::Map::from_iter([
+                ("op".to_string(), Value::from(kind)),
+                (name.clone(), value.clone()),
+            ]);
+            match Op::deserialize(&Value::Object(alone)) {
+                Err(e) if !e.to_string().starts_with("missing field") => {}
+                _ => continue,
+            }
+            let mut without = fields.clone();
+            without.remove(name);
+            let culprit = match serde_json::from_value::<Op>(Value::Object(without)) {
+                Ok(_) => true,
+                Err(e) => e
+                    .to_string()
+                    .starts_with(&format!("missing field `{name}`")),
+            };
+            if culprit {
+                return field(format!("field `{name}`: {text}"));
+            }
+        }
+    }
+    field(text)
 }
 
 #[cfg(test)]
@@ -355,5 +433,248 @@ mod tests {
         let again = Document::replay(d.log()).unwrap();
         assert_eq!(again.hash(), d.hash());
         assert_eq!(again.log_hash(), d.log_hash());
+    }
+
+    /// A board, made a component: the instance's node id.
+    fn instance(d: &mut Document) -> u64 {
+        let out = apply(
+            d,
+            &batch(json!([
+                {"op": "add_rectangle", "sketch": 1, "x": 0.0, "y": 0.0, "w": 0.6, "h": 0.3},
+                {"op": "extrude", "sketch": 1, "region": {"$ref": 0, "path": "regions.0"}, "distance": 0.019},
+                {"op": "make_component", "items": [{"object": {"$ref": 1, "path": "object"}}], "name": "Slat"}
+            ])),
+        )
+        .unwrap();
+        let OpOutcome::Batch { outcomes } = out.0 else {
+            panic!("not a batch")
+        };
+        let OpOutcome::ComponentCreated { instance, .. } = outcomes[2] else {
+            panic!("no component: {:?}", outcomes[2])
+        };
+        instance
+    }
+
+    /// #116: copy, array and transform of nodes alone, with no `objects`.
+    #[test]
+    fn copy_array_and_transform_take_nodes_alone() {
+        let mut d = ground();
+        let node = instance(&mut d);
+        let shift = json!({"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.4, 0.0]});
+        apply(
+            &mut d,
+            &batch(json!([{"op": "copy", "nodes": [node], "xform": shift}])),
+        )
+        .unwrap();
+        apply(
+            &mut d,
+            &batch(json!([{"op": "array", "nodes": [node], "xform": shift, "count": 2}])),
+        )
+        .unwrap();
+        apply(
+            &mut d,
+            &batch(json!([{"op": "transform", "nodes": [node], "xform": shift}])),
+        )
+        .unwrap();
+        // Four instances of one definition: one row of four in the cut list.
+        let list = d.model().cut_list(&crate::cutlist::CutOptions::default());
+        assert_eq!(list.rows.len(), 1);
+        assert_eq!(list.rows[0].qty, 4);
+    }
+
+    /// #116: `objects` is still written as before, so no stored log or golden changes.
+    #[test]
+    fn objects_is_written_as_before() {
+        for op in [
+            json!({"op": "copy", "nodes": [3], "xform": {"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.0, 0.0]}}),
+            json!({"op": "array", "nodes": [3], "count": 2, "xform": {"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.0, 0.0]}}),
+            json!({"op": "transform", "nodes": [3], "xform": {"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.0, 0.0]}}),
+        ] {
+            let read: Op = serde_json::from_value(op).unwrap();
+            let written = serde_json::to_value(&read).unwrap();
+            assert_eq!(written["objects"], json!([]), "{written}");
+            assert_eq!(serde_json::from_value::<Op>(written).unwrap(), read);
+        }
+    }
+
+    /// #116: a known op with a missing or wrong field says which, not that the op is unknown.
+    #[test]
+    fn a_known_op_with_a_bad_field_names_the_field() {
+        let mut d = ground();
+        let before = (d.hash(), d.log().len(), d.depth());
+        let shift = json!({"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.0, 0.0]});
+        let cases = [
+            // Missing.
+            (
+                json!({"op": "copy", "nodes": [1]}),
+                "op 0 (copy): missing field `xform`",
+            ),
+            (
+                json!({"op": "array", "nodes": [1], "xform": shift}),
+                "op 0 (array): missing field `count`",
+            ),
+            // Wrong: required and optional fields.
+            (
+                json!({"op": "array", "nodes": [1], "xform": shift, "count": "three"}),
+                "op 0 (array): field `count`",
+            ),
+            (
+                json!({"op": "copy", "nodes": "all", "xform": shift}),
+                "op 0 (copy): field `nodes`",
+            ),
+            (
+                json!({"op": "add_rectangle", "sketch": 1, "x": "0", "y": 0.0, "w": 1.0, "h": 1.0}),
+                "op 0 (add_rectangle): field `x`",
+            ),
+        ];
+        for (op, want) in cases {
+            let e = apply(&mut d, &batch(json!([op]))).unwrap_err().to_string();
+            assert!(e.contains(want), "{e} should say {want}");
+            assert!(!e.contains("not an op the kernel knows"), "{e}");
+            assert_eq!((d.hash(), d.log().len(), d.depth()), before);
+        }
+        // A wrong value of an enum inside a known op is the op's field, not an unknown op.
+        let e = apply(
+            &mut d,
+            &batch(json!([{"op": "rename", "item": {"objekt": 1}, "name": "x"}])),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("op 0 (rename): field `item`"), "{e}");
+        assert_eq!((d.hash(), d.log().len(), d.depth()), before);
+        // Even when that value is spelt like the op itself.
+        let e = apply(
+            &mut d,
+            &batch(json!([{"op": "rename", "item": {"rename": 1}, "name": "x"}])),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.starts_with("op 0 (rename): field `item`: unknown variant `rename`"),
+            "{e}"
+        );
+        assert_eq!((d.hash(), d.log().len(), d.depth()), before);
+        // Two wrong fields at once name none.
+        let e = apply(
+            &mut d,
+            &batch(json!([{"op": "add_rectangle", "sketch": 1, "x": "0", "y": "0", "w": 1.0, "h": 1.0}])),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            e,
+            "op 0 (add_rectangle): invalid type: string \"0\", expected f64"
+        );
+        // An op the kernel does not know, none, or an `op` that is not a name, still says so.
+        for op in [
+            json!({"op": "frobnicate"}),
+            json!({"sketch": 1}),
+            json!({"op": 5}),
+        ] {
+            let e = apply(&mut d, &batch(json!([op]))).unwrap_err().to_string();
+            assert!(e.contains("not an op the kernel knows"), "{e}");
+        }
+    }
+
+    /// #116: the same op with `nodes` alone and with `"objects": []` makes the same model and
+    /// the same log.
+    #[test]
+    fn nodes_alone_is_the_op_with_objects_empty() {
+        let shift = json!({"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.4, 0.0]});
+        for op in [
+            json!({"op": "copy", "xform": shift}),
+            json!({"op": "array", "xform": shift, "count": 3}),
+            json!({"op": "transform", "xform": shift}),
+        ] {
+            let run = |objects: bool| {
+                let mut d = ground();
+                let mut op = op.clone();
+                op["nodes"] = json!([instance(&mut d)]);
+                if objects {
+                    op["objects"] = json!([]);
+                }
+                apply(&mut d, &batch(json!([op]))).unwrap();
+                (d.hash(), d.log_hash(), d.log().to_vec())
+            };
+            assert_eq!(run(false), run(true), "{op}");
+        }
+    }
+
+    /// #116: with neither list (a misspelt `objects` reads as left out) the refusal names both,
+    /// changes nothing, and comes after the array's own count check as before.
+    #[test]
+    fn neither_list_names_both() {
+        let mut d = ground();
+        let before = (d.hash(), d.log().len(), d.depth());
+        let shift = json!({"linear": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], "translation": [0.0, 0.0, 0.0]});
+        for (op, want) in [
+            (
+                json!({"op": "copy", "object": [4], "xform": shift}),
+                "op 0 (copy): nothing is selected to transform (`objects` and `nodes` are both empty or left out)",
+            ),
+            (
+                json!({"op": "array", "object": [4], "xform": shift, "count": 2}),
+                "op 0 (array): nothing is selected to transform (`objects` and `nodes` are both empty or left out)",
+            ),
+            (
+                json!({"op": "transform", "objects": [], "nodes": [], "xform": shift}),
+                "op 0 (transform): nothing is selected to transform (`objects` and `nodes` are both empty or left out)",
+            ),
+            (
+                json!({"op": "array", "xform": shift, "count": 0}),
+                "op 0 (array): an array needs 1 to 1000 copies",
+            ),
+            (
+                json!({"op": "move_sections", "sections": [], "xform": shift}),
+                "op 0 (move_sections): nothing is selected to transform",
+            ),
+        ] {
+            let e = apply(&mut d, &batch(json!([op]))).unwrap_err();
+            assert_eq!(e.to_string(), want);
+            assert!(!e.is_bug());
+            assert_eq!((d.hash(), d.log().len(), d.depth()), before);
+        }
+    }
+
+    /// #116: a later op that does not read is named by its own index and name.
+    #[test]
+    fn a_later_op_is_named_by_its_own_index_and_name() {
+        let mut d = ground();
+        let e = apply(
+            &mut d,
+            &batch(json!([
+                {"op": "add_rectangle", "sketch": 1, "x": 0.0, "y": 0.0, "w": 0.6, "h": 0.4},
+                {"op": "rename_definition", "definition": 1, "name": 7}
+            ])),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.starts_with("op 1 (rename_definition): field `name`: invalid type"),
+            "{e}"
+        );
+        assert_eq!(d.model().objects().len(), 0);
+    }
+
+    /// #116: an op holding many fields it does not have, with a wrong one after them, is
+    /// refused naming the field without copying the op once per field (that took seconds).
+    #[test]
+    fn the_field_search_passes_over_fields_the_op_does_not_have() {
+        let mut d = ground();
+        let mut op = serde_json::Map::new();
+        op.insert("op".into(), json!("array"));
+        op.insert("count".into(), json!(2));
+        op.insert("xform".into(), json!("bad"));
+        for k in 0..20_000 {
+            op.insert(format!("k{k:05}"), json!(k));
+        }
+        let t = std::time::Instant::now();
+        let e = apply(&mut d, &batch(json!([op]))).unwrap_err().to_string();
+        let took = t.elapsed();
+        assert!(
+            e.starts_with("op 0 (array): field `xform`: invalid type"),
+            "{e}"
+        );
+        assert!(took.as_secs_f64() < 5.0, "{took:?}");
     }
 }
