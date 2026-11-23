@@ -1248,6 +1248,65 @@ impl Model {
         Ok(OpOutcome::Exploded { objects, nodes })
     }
 
+    /// Move Into (#117): the items, directly in the open context and unlocked as for Make
+    /// Group, go into the group `into` (`None`: the model). Only each item's parent
+    /// changes. Every solid stays where it is in the world (solids are stored in world
+    /// coordinates; a group's `xform` is metadata, and an instance's maps its definition to
+    /// the world, not to its parent), and what an item holds (solids, sketches, section
+    /// planes) goes with it.
+    ///
+    /// Refused inside an open component instance, where Make Group and Explode are not: an
+    /// item moved out of a definition would keep a slot with no instance round it. A move
+    /// within one definition is left for later.
+    pub(crate) fn move_into(
+        &mut self,
+        items: &[Item],
+        into: Option<u64>,
+    ) -> Result<OpOutcome, KernelError> {
+        let things = self.editable_things(items)?;
+        if self.context.is_some_and(|c| self.instance_of(c).is_some()) {
+            return Err(StructureError::InComponent.into());
+        }
+        let target = match into {
+            None => None,
+            Some(id) => Some(self.node_key(id)?),
+        };
+        if let Some(t) = target {
+            let path = self.path_of(Some(t));
+            if things
+                .iter()
+                .any(|thing| matches!(thing, Thing::Node(n) if path.contains(n)))
+            {
+                return Err(StructureError::IntoItself.into());
+            }
+            if path.iter().any(|&k| self.nodes[k].member.locked) {
+                return Err(StructureError::Locked.into());
+            }
+            if self.instance_of(t).is_some() {
+                return Err(StructureError::IntoComponent.into());
+            }
+        }
+        if things.iter().any(|&t| self.parent_of(t) == target) {
+            return Err(StructureError::AlreadyThere.into());
+        }
+        let (mut objects, mut nodes) = (Vec::new(), Vec::new());
+        for &t in &things {
+            self.membership_mut(t).expect("resolved").parent = target;
+            match t {
+                Thing::Object(k) => objects.push(to_public(k)),
+                Thing::Node(k) => nodes.push(to_public(k)),
+                Thing::Mesh(_) => {}
+            }
+        }
+        self.mark(self.context);
+        self.mark(target);
+        Ok(OpOutcome::MovedInto {
+            into,
+            objects,
+            nodes,
+        })
+    }
+
     /// Remove a thing and everything inside it (sketches in a removed node go with it).
     pub(crate) fn remove_thing(&mut self, kids: &Kids, t: Thing) {
         match t {

@@ -233,6 +233,9 @@ enum Fuzz {
     },
     /// Lane 5. Items are picked among what the open context holds (solids and nodes).
     MakeGroup(Vec<u8>),
+    /// #117: items picked as for MakeGroup, into a node picked among all of them, or the
+    /// model (`None`).
+    MoveInto(Vec<u8>, Option<u8>),
     MakeComponent(Vec<u8>),
     MakeUnique(u8),
     Explode(u8),
@@ -562,6 +565,7 @@ fn lane5_op() -> impl Strategy<Value = Fuzz> {
     };
     prop_oneof![
         3 => picks().prop_map(Fuzz::MakeGroup),
+        3 => (picks(), prop::option::of(any::<u8>())).prop_map(|(ks, t)| Fuzz::MoveInto(ks, t)),
         4 => picks().prop_map(Fuzz::MakeComponent),
         2 => any::<u8>().prop_map(Fuzz::MakeUnique),
         2 => any::<u8>().prop_map(Fuzz::Explode),
@@ -783,6 +787,8 @@ fn plugin_step() -> impl Strategy<Value = PluginStep> {
             any::<u8>().prop_map(Fuzz::Delete),
             (any::<u8>(), prop::option::of(0u8..3)).prop_map(|(i, n)| Fuzz::Rename(i, n)),
             prop::collection::vec(any::<u8>(), 1..3).prop_map(Fuzz::MakeGroup),
+            (prop::collection::vec(any::<u8>(), 1..3), prop::option::of(any::<u8>()))
+                .prop_map(|(ks, t)| Fuzz::MoveInto(ks, t)),
             (any::<u8>(), any::<bool>()).prop_map(|(k, h)| Fuzz::Hide(k, h)),
         ]
         .prop_map(|f| PluginStep::Plain(Box::new(f))),
@@ -1635,6 +1641,33 @@ fn resolve(f: &Fuzz, d: &Document) -> Op {
             items: ks.iter().map(|&k| item(k)).collect(),
             name: (ks[0] % 2 == 0).then(|| "Fuzz group".into()),
         },
+        Fuzz::MoveInto(ks, t) => {
+            // Mostly a group other than the open one, and the model only when a group is
+            // open, so most moves can happen; one pick in four is any node, so the refusals
+            // (into itself, a component, a locked group, already there) are sent too.
+            let open = m.context();
+            let groups: Vec<u64> = all_nodes
+                .iter()
+                .copied()
+                .filter(|&n| {
+                    Some(n) != open
+                        && m.node(n).is_some_and(|x| {
+                            matches!(x.kind, sawhorse_kernel::nodes::NodeKind::Group)
+                        })
+                })
+                .collect();
+            let first = ks.first().copied().unwrap_or(0);
+            let into = match *t {
+                Some(t) if t.is_multiple_of(4) => Some(pick(&all_nodes, t).unwrap_or(1)),
+                Some(t) => pick(&groups, t),
+                None if open.is_none() => pick(&groups, first),
+                None => None,
+            };
+            Op::MoveInto {
+                items: ks.iter().map(|&k| item(k)).collect(),
+                into,
+            }
+        }
         Fuzz::MakeComponent(ks) => Op::MakeComponent {
             items: ks.iter().map(|&k| item(k)).collect(),
             name: format!("Part {}", ks[0] % 3),

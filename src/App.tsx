@@ -90,6 +90,13 @@ import { SectionTool } from "./tools/section";
 import { isNavTool, leftButtonNav, OrbitTool, PanTool } from "./tools/navigate";
 import { activeSectionHere, describeSection, sceneSectionsOf, sectionById, sliceExportRefused } from "./lib/sections";
 
+/** #117: the one group or component (`null`: the model) that holds every item, or
+ * `undefined` when they are in more than one place. */
+export function oneParent<T>(items: T[], parentOf: (it: T) => number | null): number | null | undefined {
+  const parents = new Set(items.map(parentOf));
+  return parents.size === 1 ? [...parents][0] : undefined;
+}
+
 /** The solids, groups and components a selection stands for (a face or edge stands for its
  * solid), each once, in selection order. */
 export function itemsOf(es: Entity[]): Item[] {
@@ -2087,6 +2094,55 @@ export function App() {
     [apply, applyFromOutside, makeGroup, makeComponent, explode, inContext, parentOfItem, select],
   );
 
+  /** #117: rows dragged in the Outliner onto a group (`into`), or out to the model (`null`).
+   * The kernel moves only what is directly in the open context, so what holds the rows is
+   * opened first, as Make Group and Delete do, and the context the person had open is put
+   * back after. Rows from two places are refused before anything is opened (the switch is no
+   * undo step). A group the move leaves empty goes, as after any step, and the status line
+   * names it, since a section plane in it goes too. */
+  const outlinerMove = useCallback(
+    async (rows: OutlineRow[], into: number | null) => {
+      const items = itemsOf(rows.flatMap((r) => (r.entity ? [r.entity] : [])));
+      if (!items.length) return;
+      const from = oneParent(items, parentOfItem);
+      if (from === undefined) return void setMessage({ text: "Move things from one group or component at a time.", error: true });
+      // A drop beside rows in their own group moves nothing.
+      if (from === into) return;
+      const g0 = graphOf(live.current.scene?.state);
+      const ctx = g0.context ?? null;
+      const where = into === null ? "the model" : describeNode(g0, into);
+      if (!(await inContext(from))) return;
+      // What there is once the rows' parent is open: opening it may itself tidy away a group
+      // left empty earlier, which this move did not do.
+      const groupsBefore = graphOf(live.current.scene?.state)
+        .nodes.filter((n) => n.kind === "group")
+        .map((n) => ({ id: n.id, label: n.label }));
+      const r = await apply({ op: "move_into", items, into }, () => `Moved ${plural(items.length, "item")} into ${where}.`);
+      let state = r?.scene.state;
+      if (r) {
+        select([]);
+        // As after Delete (#85, #111): the active tool's gesture and what it worked out go.
+        afterHistoryRef.current();
+      }
+      // Back to what was open, or to the model when that is gone.
+      const here = graphOf(state ?? live.current.scene?.state);
+      const back = ctx !== null && nodeById(here, ctx) ? ctx : null;
+      if ((here.context ?? null) !== back) {
+        const b = await apply({ op: "set_context", node: back });
+        if (b) state = b.scene.state;
+      }
+      if (!r || !state) return;
+      const g1 = graphOf(state);
+      const gone = groupsBefore.filter((n) => !nodeById(g1, n.id));
+      if (gone.length)
+        setMessage({
+          text: `Moved ${plural(items.length, "item")} into ${where}. ${gone.map((n) => quoted(n.label)).join(", ")} ${gone.length === 1 ? "was" : "were"} left empty and removed, with any section plane in ${gone.length === 1 ? "it" : "them"}.`,
+          error: false,
+        });
+    },
+    [apply, inContext, parentOfItem, select, setMessage],
+  );
+
   /** A row clicked in the Outliner: select it, opening what holds it when that is not open. */
   const outlinerSelect = useCallback(
     (row: OutlineRow, mode: "replace" | "add" | "toggle") => {
@@ -3302,7 +3358,7 @@ export function App() {
             });
           },
         }}
-        outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename }}
+        outliner={{ state: st ?? null, selection, onSelect: outlinerSelect, onAction: outlinerAction, onRename: outlinerRename, onMove: outlinerMove }}
         tags={{
           state: st ?? null,
           canTag: selItems.length > 0,

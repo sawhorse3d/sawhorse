@@ -55,6 +55,8 @@ export type KernelOp =
   | { op: "make_component"; items: Item[]; name: string }
   | { op: "make_unique"; node: number }
   | { op: "explode"; node: number }
+  /** #117: items directly in the open context into a group, or out to the model (`null`). */
+  | { op: "move_into"; items: Item[]; into: number | null }
   | { op: "delete_node"; node: number }
   | { op: "rename"; item: Item; name: string | null }
   | { op: "rename_definition"; definition: number; name: string }
@@ -353,6 +355,7 @@ export type OpOutcome =
   | { kind: "component_created"; instance: number; definition: number }
   | { kind: "made_unique"; definition: number }
   | { kind: "exploded"; objects: number[]; nodes: number[] }
+  | { kind: "moved_into"; into: number | null; objects: number[]; nodes: number[] }
   | { kind: "node_deleted" }
   | { kind: "visibility_set" }
   | { kind: "lock_set" }

@@ -297,6 +297,108 @@ fn copy_and_array_take_nodes_alone() {
     assert!(e.contains("op 0 (array): missing field `count`"), "{e}");
 }
 
+/// #117: `move_into` through apply_ops moves a top-level board into a group; with no way to
+/// open the group in a batch, taking it out again is refused.
+#[test]
+fn move_into_puts_a_board_in_a_group_and_cannot_take_it_out() {
+    let mut s = Session::new(&folder("move-into"));
+    let a = s.ok(
+        "add_board",
+        json!({"name": "Side", "thickness": 19.0, "width": 300.0, "length": 600.0}),
+    )["board"]["object"]
+        .clone();
+    let b = s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19.0, "width": 300.0, "length": 600.0, "position": [0, 0, 100]}),
+    )["board"]["object"]
+        .clone();
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Group", "ops": [{"op": "make_group", "items": [{"object": a}], "name": "Carcass"}]}),
+    );
+    let g = r["outcome"]["outcomes"][0]["group"].clone();
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Move", "ops": [{"op": "move_into", "items": [{"object": b}], "into": g}]}),
+    );
+    assert_eq!(r["outcome"]["outcomes"][0]["kind"], "moved_into", "{r}");
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Out", "ops": [{"op": "move_into", "items": [{"object": b}], "into": null}]}),
+    );
+    assert!(e.contains("not open"), "{e}");
+    let e = s.refused(
+        "apply_ops",
+        json!({"name": "Open", "ops": [{"op": "set_context", "node": g}]}),
+    );
+    assert!(e.contains("cannot be part of a batch"), "{e}");
+}
+
+/// #117: a batch works in the context the model has open, and a `.shz` keeps the group that
+/// was open when it was saved. Opened from such a file, `move_into` with `into: null` takes a
+/// board out of that group: "cannot take one out" holds only while the model is open.
+#[test]
+fn move_into_in_a_file_saved_with_a_group_open_takes_a_board_out() {
+    use sawhorse_kernel::Document;
+    use sawhorse_kernel::model::{DrawTarget, Op, OpOutcome};
+    use sawhorse_kernel::nodes::Item;
+    let root = folder("move-into-open");
+    let mut d = Document::with_ground_sketch();
+    let OpOutcome::Drawn {
+        sketch: Some(sketch),
+        inside: Some(region),
+        ..
+    } = d
+        .apply(&Op::Draw {
+            target: DrawTarget::Plane {
+                origin: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            },
+            points: vec![
+                [0.0, 0.0, 0.0],
+                [0.3, 0.0, 0.0],
+                [0.3, 0.6, 0.0],
+                [0.0, 0.6, 0.0],
+            ],
+            closed: true,
+            curve: None,
+        })
+        .unwrap()
+    else {
+        panic!("not drawn")
+    };
+    let OpOutcome::ObjectCreated { object } = d
+        .apply(&Op::Extrude {
+            sketch,
+            region,
+            distance: 0.019,
+        })
+        .unwrap()
+    else {
+        panic!("not extruded")
+    };
+    let OpOutcome::GroupCreated { group } = d
+        .apply(&Op::MakeGroup {
+            items: vec![Item::Object(object)],
+            name: Some("Carcass".into()),
+        })
+        .unwrap()
+    else {
+        panic!("not grouped")
+    };
+    d.apply(&Op::SetContext { node: Some(group) }).unwrap();
+    let bytes = sawhorse_shz::write(d.model(), &Default::default()).unwrap();
+    std::fs::write(root.join("open.shz"), bytes).unwrap();
+    let mut s = Session::new(&root);
+    s.ok("open_model", json!({"path": "open.shz"}));
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Out", "ops": [{"op": "move_into", "items": [{"object": object}], "into": null}]}),
+    );
+    assert_eq!(r["outcome"]["outcomes"][0]["kind"], "moved_into", "{r}");
+    assert_eq!(r["outcome"]["outcomes"][0]["into"], Value::Null, "{r}");
+}
+
 /// A failing apply_ops changes nothing: not the model, not the undo history.
 #[test]
 fn a_failing_apply_ops_changes_nothing() {
