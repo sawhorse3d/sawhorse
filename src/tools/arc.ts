@@ -64,7 +64,14 @@ export class ArcTool extends StrokeTool {
       this.host.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type === "click" && e.snap) void this.click(e.snap);
+  }
+
+  protected stepHint(): string | null {
+    if (this.pts.length === 1) return this.variant === "arc2" ? "Click the end." : "Click a point the arc passes through.";
+    if (this.pts.length === 2) return this.variant === "arc2" ? "Now the bulge: click, or type a length (12r for a radius)." : "Now the end of the arc.";
+    return null;
   }
 
   private async click(snap: Snap): Promise<void> {
@@ -74,7 +81,7 @@ export class ArcTool extends StrokeTool {
       this.pts = [p];
       this.snaps = [snap];
       this.plane = snap.kind === "on-face" || this.prefer !== "auto" ? this.planeFor(snap) : null;
-      h.status(this.variant === "arc2" ? "Arc start set. Click the end." : "Arc start set. Click a point the arc passes through.");
+      h.status(`Arc start set. ${this.stepHint()}`);
       h.changed();
       return;
     }
@@ -84,7 +91,7 @@ export class ArcTool extends StrokeTool {
       if (!onPlane(this.plane.frame, p, 1e-6)) return void h.status("That point is off the arc's plane.", true);
       this.pts.push(p);
       this.snaps.push(snap);
-      h.status(this.variant === "arc2" ? "Now the bulge: click, or type a length (12r for a radius)." : "Now the end of the arc.");
+      h.status(this.stepHint() ?? "");
       h.changed();
       return;
     }

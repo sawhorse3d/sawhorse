@@ -59,7 +59,12 @@ export class LineTool extends StrokeTool {
       this.host.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type === "click" && e.snap) void this.click(e.snap);
+  }
+
+  protected stepHint(): string | null {
+    return this.chain.length ? "Click the next point or type a length." : null;
   }
 
   onValue(text: string): void {
@@ -84,7 +89,7 @@ export class LineTool extends StrokeTool {
       this.first = p;
       // Inside a face: the line stays on its plane. Elsewhere the first segment decides.
       this.plane = snap.kind === "on-face" ? planeFromSnap(snap, this.prefer) : this.prefer !== "auto" ? planeFromSnap(snap, this.prefer) : null;
-      h.status(`Line started${this.plane ? ` ${this.plane.where(h.fmt)}` : ""}. Click the next point or type a length.`);
+      h.status(`Line started${this.plane ? ` ${this.plane.where(h.fmt)}` : ""}. ${this.stepHint()}`);
       h.changed();
       return;
     }

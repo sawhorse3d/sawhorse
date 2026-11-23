@@ -34,7 +34,7 @@ export interface ToolDef {
 export const TOOL_GROUPS: ToolDef[][] = [
   [
     { id: "select", label: "Select", key: " ", keyCap: "␣", hint: "Click an entity. Drag for a window. Double-click a group to edit it. Alt+drag orbits.", vcb: null },
-    { id: "erase", label: "Erase", key: "e", keyCap: "E", hint: "Click or drag over edges to erase. Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens.", vcb: null },
+    { id: "erase", label: "Erase", key: "e", keyCap: "E", hint: "Click or drag over edges, guides, dimensions. Ctrl softens and smooths, Shift hides, Ctrl+Shift unsoftens.", vcb: null },
   ],
   [
     { id: "line", label: "Line", key: "l", keyCap: "L", hint: "Click to start. Type a length and press Enter. Closed loops form faces.", vcb: "Length" },

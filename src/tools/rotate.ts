@@ -20,8 +20,9 @@ import type { Entity, KernelOp, V3 } from "../kernel/types";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
+import { dragWords, noPointWords } from "./dropped";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { curveOf } from "../lib/curves";
 
@@ -232,14 +233,28 @@ export class RotateTool extends Tool {
       case "click":
         void this.click(e);
         return;
+      case "dragend":
+        // #130: Rotate takes clicks; a drag turns nothing, and the gesture stays as it was.
+        // With nothing selected the first click must land on a solid or a sketch shape.
+        h.status(dragWords("turn", !this.g && !h.selection().length ? PICK_A_SUBJECT : "Click the centre, then where the angle starts and ends.", this.stepHint()), true);
+        return;
       default:
         return;
     }
   }
 
+  /** What the next click does, halfway through a turn (null before the first click). */
+  private stepHint(): string | null {
+    const g = this.g;
+    if (!g) return null;
+    return g.ref ? "Now click where the angle ends, or type it (degrees)." : "Click where the angle starts.";
+  }
+
   private async click(e: ToolEvent): Promise<void> {
     const h = this.host;
-    if (!e.snap) return;
+    // #130: no point under the cursor (no ground, no face): nothing happens, and it says so.
+    // With nothing selected, a click on the ground would be refused too: say the first step.
+    if (!e.snap) return void h.status(!this.g && !h.selection().length ? PICK_A_SUBJECT : noPointWords("turn about", this.stepHint()), true);
     const g = this.g;
     if (!g) {
       const sel = h.selection();
@@ -264,7 +279,7 @@ export class RotateTool extends Tool {
       if (!p || dist(p, g.centre) < 1e-6) return;
       g.ref = unit(sub(p, g.centre));
       g.cursor = p;
-      h.status("Now click where the angle ends, or type it (degrees).");
+      h.status(this.stepHint() ?? "");
       h.changed();
       return;
     }

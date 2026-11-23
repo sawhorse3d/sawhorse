@@ -18,6 +18,9 @@ import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
 import { faceOf, solidName } from "../lib/names";
 import type { OverlayItem } from "../viewport/engine";
 import { EMPTY_VIEW, Tool, type ToolEvent, type ToolHost, type ToolView } from "./tool";
+import { dragWords } from "./dropped";
+
+const NO_MATERIAL = "Choose a material in the Materials pane first (or Alt+click a face to pick one up).";
 
 /** What the Paint tool needs from the app beyond the tool host. */
 export interface PaintContext {
@@ -255,7 +258,7 @@ export class PaintTool extends Tool {
         }
         const m = this.ctx.active();
         if (!m) {
-          h.status("Choose a material in the Materials pane first (or Alt+click a face to pick one up).", true);
+          h.status(NO_MATERIAL, true);
           return;
         }
         // Lane 15: what already shows this material is not painted again (no undo step).
@@ -281,6 +284,11 @@ export class PaintTool extends Tool {
         void this.startPositioning(hit.object, hit.face);
         return;
       }
+      case "dragend":
+        // #130: Paint takes a click on a face; a drag paints nothing, and says so.
+        // With no material chosen, a click on a face would be refused: say that step first.
+        h.status(dragWords("paint", this.ctx.active() ? "Click a face to paint it." : NO_MATERIAL, null), true);
+        return;
       default:
         return;
     }

@@ -83,6 +83,9 @@ export interface InferContext {
   grid?: boolean;
   /** Lane 15: with Ctrl+Shift held, soft and hidden edges can be picked (the Eraser). */
   pickSoftWithCtrlShift?: boolean;
+  /** #129: a dimension's number and extension lines are picked as well as its line (Select
+   * and the Eraser, the tools that take a dimension). */
+  pickDimensions?: boolean;
 }
 
 /** What tools may use from the app. */

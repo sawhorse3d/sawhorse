@@ -423,6 +423,10 @@ export function sketchParts(es: Entity[], outlines: Map<string, V3[][]>, state?:
   return [...by.values()];
 }
 
+/** What Move and Rotate say when nothing is selected and nothing they can take is under the
+ * press: the step that comes first. */
+export const PICK_A_SUBJECT = "Click a solid or a sketch shape, or select what to move first.";
+
 /**
  * What to transform: the selected solids, groups and components; or the selected faces,
  * edges and points of ONE solid (part of it); and any sketch points, edges and regions
@@ -485,7 +489,7 @@ export function subjectOf(selection: Entity[], picked: Entity | null, outlines: 
   }
   if (picked && isSketchEntity(picked)) return { kind: "objects", objects: [], sketches: sketchParts([picked], outlines, state) };
   const o = picked ? objectOf(picked) : null;
-  if (o === null) return "Click a solid or a sketch shape, or select what to move first.";
+  if (o === null) return PICK_A_SUBJECT;
   return { kind: "objects", objects: [o] };
 }
 

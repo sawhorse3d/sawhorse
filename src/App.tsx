@@ -55,6 +55,7 @@ import { ArcTool } from "./tools/arc";
 import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
+import { estimatedLabelSize } from "./lib/dimPick";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
@@ -318,6 +319,24 @@ interface RememberedStep {
   beforeTarget: Target | null;
   after: Entity[];
   afterTarget: Target | null;
+}
+
+/** The box a dimension's number is drawn in, in pixels (#129): measured from a number the
+ * view shows with the same text (`.vlabel.dim`, src/styles/app.css), else estimated from the
+ * label style. Cached by text, since a label's size depends on nothing else. */
+const dimLabelSizes = new Map<string, [number, number]>();
+function dimLabelSize(text: string): [number, number] {
+  const known = dimLabelSizes.get(text);
+  if (known) return known;
+  for (const el of document.querySelectorAll<HTMLElement>(".vp .vlabel.dim")) {
+    if (el.textContent === text && el.offsetWidth > 0) {
+      const size: [number, number] = [el.offsetWidth, el.offsetHeight];
+      if (dimLabelSizes.size > 500) dimLabelSizes.clear();
+      dimLabelSizes.set(text, size);
+      return size;
+    }
+  }
+  return estimatedLabelSize(text);
 }
 
 export function App() {
@@ -1524,6 +1543,11 @@ export function App() {
             ...((window as unknown as { __sawhorse?: Record<string, unknown> }).__sawhorse ?? {}),
             lastInference: inf,
           };
+        },
+        // #129: the dimensions' numbers and extension lines, picked by Select and Erase.
+        () => {
+          const dims = live.current.scene?.state.dimensions;
+          return dims?.length ? { dims, text: (d) => fmtRef.current(d.length), size: dimLabelSize } : null;
         },
       ),
       () => activeRef.current ?? (toolsRef.current!.get("select") as Tool),

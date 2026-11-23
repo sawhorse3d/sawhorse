@@ -55,6 +55,7 @@ export class TapeTool extends StrokeTool {
       h.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type !== "click" || !e.snap) return;
     const s = e.snap;
     if (!this.a) {
@@ -80,6 +81,15 @@ export class TapeTool extends StrokeTool {
     h.showValue(h.fmt(d));
     this.reset();
     h.changed();
+  }
+
+  protected dropWords() {
+    return { what: "measure", verb: "measure" };
+  }
+
+  protected stepHint(): string | null {
+    if (!this.a) return null;
+    return this.edge ? "Move away from the edge and click, or type the offset." : "Click the second point. Type a length to drop a guide point.";
   }
 
   private measure(): number {
@@ -153,6 +163,15 @@ export class DimensionTool extends StrokeTool {
     this.b = null;
   }
 
+  protected dropWords() {
+    return { what: "dimension", verb: "place a dimension" };
+  }
+
+  protected stepHint(): string | null {
+    if (!this.a) return null;
+    return this.b ? "Click where the dimension line goes." : "Click the second point.";
+  }
+
   onEvent(e: ToolEvent): void {
     const h = this.host;
     if (e.type === "move" || e.type === "drag") {
@@ -160,6 +179,7 @@ export class DimensionTool extends StrokeTool {
       h.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type !== "click" || !e.snap) return;
     const s = e.snap;
     if (!this.a) {

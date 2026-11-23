@@ -151,6 +151,11 @@ export class PushTool extends Tool {
       case "dragend": {
         const g = this.g;
         if (g?.dragging) this.commit(g.d, e.ctrl);
+        else if (!g) {
+          // #130: a drag that started on nothing says what a click there says.
+          if (this.refused) this.refused = false;
+          else h.status("Click a face or a region of a sketch to push or pull it.", false);
+        }
         return;
       }
       case "click": {

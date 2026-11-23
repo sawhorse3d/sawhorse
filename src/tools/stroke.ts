@@ -3,6 +3,7 @@
 import type { EditResult } from "../kernel/client";
 import type { CurveSpec, V3 } from "../kernel/types";
 import { drawOp, planeFromSnap, type DrawPlane, type DrawTarget } from "./draw";
+import { CLICK_MOVE_CLICK, dragWords, noPointWords } from "./dropped";
 import { LockState } from "./lock";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import type { Label } from "../components/Viewport";
@@ -67,6 +68,32 @@ export abstract class StrokeTool extends Tool {
     this.cursor = e.snap?.point ?? null;
     const s = e.picked?.surface;
     this.host.hover(s && s.at.kind === "region" ? { kind: "region", sketch: s.at.sketch, region: s.at.region } : null);
+  }
+
+  /** What a click would have done with a point ("draw on"), and what a drag does not do
+   * ("draw"), for the words in `dropped` (#130). */
+  protected dropWords(): { what: string; verb: string } {
+    return { what: "draw on", verb: "draw" };
+  }
+
+  /** What the next click does, halfway through a gesture (null before the first click). */
+  protected stepHint(): string | null {
+    return null;
+  }
+
+  /**
+   * #130: a click with no point under it (no ground, no face: the Front view of an empty
+   * model) or a drag (press, move, release) draws nothing. The status line says why, and
+   * halfway through a gesture ends with what the next click does; the gesture stays as it
+   * was. True when the event was one of those. Only the click or the drag says it, never a
+   * hover.
+   */
+  protected dropped(e: ToolEvent): boolean {
+    if (e.type !== "dragend" && !(e.type === "click" && !e.snap)) return false;
+    const w = this.dropWords();
+    const step = this.busy() ? this.stepHint() : null;
+    this.host.status(e.type === "dragend" ? dragWords(w.verb, CLICK_MOVE_CLICK, step) : noPointWords(w.what, step), true);
+    return true;
   }
 
   /** The plane a shape starting at this snap goes on. */

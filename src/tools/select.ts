@@ -22,7 +22,7 @@ import { applySelection, boxSelect, edgeFlagWords, entityKey, modeFor, objectOf 
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, reachableContext, scopeEntity } from "../lib/scope";
 import { describeSection } from "../lib/sections";
-import { EMPTY_VIEW, Tool, type ToolEvent, type ToolView } from "./tool";
+import { EMPTY_VIEW, Tool, type InferContext, type ToolEvent, type ToolView } from "./tool";
 
 /** Pixels the pointer must travel with the button down before a click becomes a box. */
 export const DRAG_PX = 4;
@@ -37,6 +37,11 @@ export class SelectTool extends Tool {
 
   busy(): boolean {
     return this.box !== null;
+  }
+
+  /** #129: a dimension's number and extension lines select it, as its line does. */
+  inferContext(): InferContext {
+    return { pickDimensions: true };
   }
 
   /** The section plane under the cursor, when it is nearer than what the kernel picked. */

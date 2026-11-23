@@ -1,5 +1,7 @@
-// Erase (E). Click an edge, a line drawn on a face, an imprinted face or a sketch region to
-// erase it; drag across several edges to erase them all at once (one undo step). The
+// Erase (E). Click an edge, a line drawn on a face, an imprinted face, a sketch region, a
+// guide or a dimension to erase it (#129: a dimension's number and extension lines take the
+// click as its line does); drag across several to erase them all at once, guides and
+// dimensions included (one undo step). The
 // kernel validates every erase: a solid stays closed, so its structural edges and faces are
 // refused with the reason in the status line.
 //
@@ -16,6 +18,8 @@ import type { Entity, KernelOp, MeshData, V3 } from "../kernel/types";
 import { curveOf, curveSegments } from "../lib/curves";
 import { edgeFlagWords, entityKey, eraseOp, eraseOps } from "../lib/entities";
 import { scopeEntity } from "../lib/scope";
+import { GUIDE_REACH } from "../lib/annotations";
+import { dimensionLines } from "../lib/dimPick";
 import { EMPTY_VIEW, Tool, type InferContext, type ToolEvent, type ToolView } from "./tool";
 
 /** Soft (1), smooth (2) and hidden (4), as crates/kernel/src/edges.rs counts them. */
@@ -63,9 +67,10 @@ export class EraseTool extends Tool {
     return this.dragging;
   }
 
-  /** With Ctrl+Shift held, soft and hidden edges can be picked (to unsoften them). */
+  /** With Ctrl+Shift held, soft and hidden edges can be picked (to unsoften them); a
+   * dimension's number and extension lines are picked as its line is (#129). */
   inferContext(): InferContext {
-    return { pickSoftWithCtrlShift: true };
+    return { pickSoftWithCtrlShift: true, pickDimensions: true };
   }
 
   onEvent(e: ToolEvent): void {
@@ -91,6 +96,15 @@ export class EraseTool extends Tool {
       case "leave":
         h.hover(null);
         return;
+      case "down":
+        // A new press starts a new sweep. A sweep whose release never reached the view (let go
+        // outside it) is dropped here and erases nothing.
+        if (this.swept.size || this.dragging) {
+          this.swept.clear();
+          this.dragging = false;
+          h.changed();
+        }
+        return;
       case "click": {
         if (!ent) {
           if (raw) h.status("That is outside the group or component you are editing: press Esc to close it first.", true);
@@ -111,7 +125,9 @@ export class EraseTool extends Tool {
       }
       case "drag":
         this.dragging = true;
-        if (ent && (ent.kind === "edge" || ent.kind === "curve" || (!mode && ent.kind === "region"))) this.swept.set(entityKey(ent), ent);
+        // Edges and curves with a modifier too (their flags); regions, guides and dimensions
+        // only when erasing (#129: a drag across a dimension or a guide takes it).
+        if (ent && (ent.kind === "edge" || ent.kind === "curve" || (!mode && (ent.kind === "region" || ent.kind === "guide" || ent.kind === "dimension")))) this.swept.set(entityKey(ent), ent);
         h.hover(ent);
         h.changed();
         return;
@@ -157,7 +173,27 @@ export class EraseTool extends Tool {
   view(): ToolView {
     if (!this.swept.size) return EMPTY_VIEW;
     const mesh = this.host.mesh();
-    const pts = [...this.swept.values()].flatMap((e) => (e.kind === "edge" ? [e.a, e.b] : e.kind === "curve" ? curveSegments(mesh, e.owner, e.curve).flat() : []));
+    const st = this.host.state();
+    const pts = [...this.swept.values()].flatMap((e): V3[] => {
+      if (e.kind === "edge") return [e.a, e.b];
+      if (e.kind === "curve") return curveSegments(mesh, e.owner, e.curve).flat();
+      if (e.kind === "dimension") {
+        const d = st?.dimensions?.find((x) => x.id === e.dimension);
+        if (!d) return [];
+        const g = dimensionLines(d);
+        return [...g.line, ...g.extensions[0], ...g.extensions[1]];
+      }
+      if (e.kind === "guide") {
+        const g = st?.guides?.find((x) => x.id === e.guide);
+        if (!g?.dir) return [];
+        const r = GUIDE_REACH;
+        return [
+          [g.point[0] - g.dir[0] * r, g.point[1] - g.dir[1] * r, g.point[2] - g.dir[2] * r],
+          [g.point[0] + g.dir[0] * r, g.point[1] + g.dir[1] * r, g.point[2] + g.dir[2] * r],
+        ];
+      }
+      return [];
+    });
     return { ...EMPTY_VIEW, overlay: pts.length ? [{ kind: "segments", points: pts, color: "--warn", width: 3 }] : [] };
   }
 }

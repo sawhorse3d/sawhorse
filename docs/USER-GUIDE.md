@@ -31,7 +31,7 @@ You will make a board, cut a dado across it, and set a shelf in the dado. Everyt
 - Press `E` (Erase) and click the guide to remove it. You can also use Edit > Delete Guides to clear them all.
 - Press Space (Select) and drag a box across the shelf, then press Delete. A box dragged left to right selects only what is wholly inside it. A box dragged right to left also selects anything it touches.
 
-If an operation can't be done (for example, erasing an edge would open a solid), nothing changes and the status line says why.
+If an operation can't be done (for example, erasing an edge would open a solid, or a click finds nothing under the cursor to draw on, as in the Front view of an empty model, or a draw tool is dragged where it takes a click, a move and a click), nothing changes and the status line says why.
 
 ## Navigating
 
@@ -58,7 +58,7 @@ The view keeps a look-at point on the line of sight at the depth of whatever you
 | Key | Tool | Gesture | VCB takes |
 |---|---|---|---|
 | Space | Select | Click; a circle, arc or polygon selects whole (see [Curves](#circles-arcs-and-polygons-are-curves)); double-click selects the whole solid, or opens a group or component; drag left to right for a window, right to left for a crossing box; Shift adds, Ctrl toggles, Esc clears | - |
-| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension; a circle, arc or polygon erases whole; drag across several (one undo step). Ctrl softens and smooths the edges instead, Shift hides them, Ctrl+Shift unsoftens them | - |
+| E | Erase | Click an edge, a line drawn on a face, an imprinted face, a sketch region, a guide or a dimension (its line, its number or either short line at its ends); a circle, arc or polygon erases whole; drag across several, guides and dimensions too (one undo step). Ctrl softens and smooths the edges instead, Shift hides them, Ctrl+Shift unsoftens them | - |
 | L | Line | Click, click, click; stops when it closes, when a face forms, or on Esc | a length along the direction shown |
 | R | Rectangle | Click two corners, or click one and type `w, d`; with nothing clicked, it starts at the origin | `w, d` (a negative value goes the other way) |
 | R again | Rotated Rectangle | Click both ends of one edge, then the width | the edge's length, then the width |

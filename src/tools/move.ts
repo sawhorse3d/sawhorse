@@ -27,10 +27,11 @@ import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { parseVcb } from "../lib/vcb";
 import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
+import { noPointWords } from "./dropped";
 import { scopeEntity } from "../lib/scope";
 import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
+import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
@@ -204,8 +205,15 @@ export class MoveTool extends Tool {
   /** Pick up the subject at the press. */
   private async start(e: ToolEvent): Promise<void> {
     const h = this.host;
-    if (!e.snap) return;
     const sel = h.selection();
+    if (!e.snap) {
+      // #130: no point under the cursor (no ground, no face) to move from. With nothing
+      // selected the first step is to pick something, which a click on the ground would not
+      // do either, so that is what it says. Nothing happens.
+      this.fresh = false;
+      h.status(sel.length ? noPointWords("move from", null) : PICK_A_SUBJECT, true);
+      return;
+    }
     // Lane 23: a curve's segment under the cursor is the whole curve.
     const picked = curveOf(e.picked?.entity ?? null, h.mesh());
     const outlines = await loadOutlines((t) => h.outline(t), sel, sel.length ? null : curveOf(scopeEntity(picked, h.state()), h.mesh()));

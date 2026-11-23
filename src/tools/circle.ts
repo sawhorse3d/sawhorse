@@ -62,7 +62,12 @@ export class CircleTool extends StrokeTool {
       this.host.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type === "click" && e.snap) void this.click(e.snap);
+  }
+
+  protected stepHint(): string | null {
+    return this.centre ? "Click the radius or type it." : null;
   }
 
   private async click(snap: Snap): Promise<void> {
@@ -71,7 +76,7 @@ export class CircleTool extends StrokeTool {
       this.plane = this.planeFor(snap);
       this.centre = snap.point;
       this.snaps = [snap];
-      h.status(`Centre set ${this.plane.where(h.fmt)}. Click the radius or type it.`);
+      h.status(`Centre set ${this.plane.where(h.fmt)}. ${this.stepHint()}`);
       h.changed();
       return;
     }

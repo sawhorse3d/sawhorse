@@ -4,10 +4,11 @@
 // was made. "Resolved" means: the eye ray, what is under the cursor (a pick) and where the
 // cursor snaps (an inference), both answered by the kernel worker.
 import type { KernelClient } from "../kernel/client";
-import type { CapHit, Inference, InferQuery, Picked, SurfaceHit, V3 } from "../kernel/types";
+import type { CapHit, DocState, Inference, InferQuery, Picked, SurfaceHit, V3 } from "../kernel/types";
 import type { ViewportPointer } from "../components/Viewport";
 import type { ViewportEngine } from "../viewport/engine";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
+import { dimensionAt, withDimension } from "../lib/dimPick";
 import type { InferContext, Snap, Tool, ToolEvent, ToolEventType } from "./tool";
 import { DRAG_PX } from "./select";
 
@@ -76,6 +77,14 @@ export class InferenceMemory {
   }
 }
 
+/** The model's dimensions as the view draws them, for picking their numbers and extension
+ * lines (#129): the dimensions, each one's text, and the box a text is drawn in (pixels). */
+export interface DimensionLabels {
+  dims: DocState["dimensions"];
+  text: (d: DocState["dimensions"][number]) => string;
+  size: (text: string) => [number, number];
+}
+
 /** The resolver backed by the kernel worker's inference engine (crates/inference). */
 export function kernelResolver(
   kernel: () => KernelClient | null,
@@ -83,6 +92,7 @@ export function kernelResolver(
   gridStep: () => [number, number],
   memory = new InferenceMemory(),
   onInference?: (inf: Inference | null, q: InferQuery) => void,
+  dimensions?: () => DimensionLabels | null,
 ): Resolver {
   return async (x, y, ctx, mods) => {
     const eng = engine();
@@ -114,7 +124,14 @@ export function kernelResolver(
     memory.observe(inf);
     onInference?.(inf, q);
     const raw: Picked | null = inf?.picked ?? null;
-    const picked: Picked | null = raw ? { ...raw, surface: splitCap(raw.surface).surface } : null;
+    let picked: Picked | null = raw ? { ...raw, surface: splitCap(raw.surface).surface } : null;
+    // #129: for the tools that take a dimension (Select, Erase), its number and its
+    // extension lines take the click as its line does (src/lib/dimPick.ts).
+    const labels = ctx.pickDimensions ? dimensions?.() : null;
+    if (labels?.dims.length) {
+      const hit = dimensionAt({ dims: labels.dims, ray, px, cursor: [x, y], toScreen: (p) => eng.worldToScreen(p), text: labels.text, size: labels.size });
+      picked = withDimension(picked, hit);
+    }
     return { ray, picked, snap: inf ? snapOf(inf) : snapFromPick(null, ray) };
   };
 }

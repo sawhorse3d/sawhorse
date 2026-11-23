@@ -127,3 +127,17 @@ describe("Erase tool", () => {
     expect((h.ops[0] as { ops: unknown[] }).ops).toHaveLength(2);
   });
 });
+
+// #129: Select asks for a dimension's whole hit area (number and extension lines), and a
+// dimension picked there selects it.
+describe("Select and dimensions", () => {
+  it("asks for dimensions' numbers and extension lines; a click on one selects it and says Delete erases it", () => {
+    const h = fakeHost();
+    const t = new SelectTool(h);
+    expect(t.inferContext()).toEqual({ pickDimensions: true });
+    const dim: Entity = { kind: "dimension", dimension: 4 };
+    t.onEvent(ev("click", [0, 0, 0], { picked: pickOf(dim) }));
+    expect(h.sel).toEqual([dim]);
+    expect(h.statuses.at(-1)?.text).toBe("Selected a dimension. Delete erases it.");
+  });
+});

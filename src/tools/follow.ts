@@ -10,6 +10,7 @@ import type { Entity, KernelOp, Profile, V3 } from "../kernel/types";
 import { faceOf, regionName, solidName } from "../lib/names";
 import { cross, dot, len, sub } from "./draw";
 import { chainOf } from "./offset";
+import { dragWords } from "./dropped";
 import { EMPTY_VIEW, Tool, markerOf, type Snap, type ToolEvent, type ToolView } from "./tool";
 
 export interface Path {
@@ -117,6 +118,10 @@ export class FollowTool extends Tool {
         void this.click(e);
         return;
       }
+      case "dragend":
+        // #130: Follow Me takes a click on the profile; a drag sweeps nothing, and says so.
+        h.status(this.path ? dragWords("sweep", "Click the profile: a face, or a region of a sketch.", null) : (this.pathError ?? "Select the path first."), true);
+        return;
       case "leave":
         h.hover(null);
         return;

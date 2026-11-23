@@ -9,6 +9,7 @@
 import type { KernelOp, V3 } from "../kernel/types";
 import { awayFromEye, reversed as turned } from "../lib/sections";
 import { add, cross, mul, unit } from "./draw";
+import { dragWords } from "./dropped";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type Snap, type ToolEvent, type ToolView } from "./tool";
 
 const LOCKS: Record<string, { n: V3; name: string }> = {
@@ -105,6 +106,8 @@ export class SectionTool extends Tool {
     }
     // Alt held at the click reverses it (the preview already shows that).
     if (e.type === "click") void this.place();
+    // #130: a drag places nothing, and says so.
+    if (e.type === "dragend") h.status(dragWords("place one", "Click to place a section plane.", null), true);
     if (e.type === "leave") {
       this.preview = null;
       h.changed();

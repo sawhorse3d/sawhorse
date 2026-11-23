@@ -112,6 +112,7 @@ export class RectTool extends StrokeTool {
       this.host.changed();
       return;
     }
+    if (this.dropped(e)) return;
     if (e.type === "click" && e.snap) {
       if (this.anchor && this.undecided && !this.edgeEnd) {
         const r = this.resolvePlane(e.snap, e.ray);
@@ -124,6 +125,12 @@ export class RectTool extends StrokeTool {
       }
       void this.click(e.snap);
     }
+  }
+
+  protected stepHint(): string | null {
+    if (!this.anchor) return null;
+    if (this.variant === "rect") return "Click the opposite corner, or type width, depth.";
+    return this.edgeEnd ? "Now the width: click, or type it." : "Click the other end of the edge, or type its length.";
   }
 
   private liveValue(): void {
@@ -148,9 +155,7 @@ export class RectTool extends StrokeTool {
       // Inside a face (or with an arrow-key plane) the plane is set; otherwise the cursor
       // chooses it.
       this.undecided = snap.kind !== "on-face" && this.prefer === "auto";
-      h.status(
-        `First corner set ${this.plane.where(h.fmt)}. ${this.variant === "rect" ? "Click the opposite corner, or type width, depth." : "Click the other end of the edge, or type its length."}`,
-      );
+      h.status(`First corner set ${this.plane.where(h.fmt)}. ${this.stepHint()}`);
       h.changed();
       return;
     }
@@ -158,7 +163,7 @@ export class RectTool extends StrokeTool {
       if (dist(snap.point, this.anchor) < 1e-9) return;
       this.edgeEnd = snap.point;
       this.snaps.push(snap);
-      h.status("Now the width: click, or type it.");
+      h.status(this.stepHint() ?? "");
       h.changed();
       return;
     }
