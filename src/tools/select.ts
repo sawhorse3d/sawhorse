@@ -22,10 +22,45 @@ import { applySelection, boxSelect, edgeFlagWords, entityKey, modeFor, objectOf 
 import { faceOf, regionName, solidName } from "../lib/names";
 import { describeNode, graphOf, reachableContext, scopeEntity } from "../lib/scope";
 import { describeSection } from "../lib/sections";
-import { EMPTY_VIEW, Tool, type InferContext, type ToolEvent, type ToolView } from "./tool";
+import { EMPTY_VIEW, Tool, type InferContext, type ToolEvent, type ToolHost, type ToolView } from "./tool";
 
 /** Pixels the pointer must travel with the button down before a click becomes a box. */
-export const DRAG_PX = 4;
+export { DRAG_PX } from "../lib/gesture";
+
+/** The section plane under the cursor, when it is nearer than what the kernel picked. */
+function sectionAt(e: ToolEvent, host: ToolHost): { section: number; control: boolean } | null {
+  const r = host.pickSection?.(e.x, e.y);
+  if (!r) return null;
+  if (r.control) return r;
+  const p = e.picked?.point;
+  if (!p) return r;
+  const t = (p[0] - e.ray.origin[0]) * e.ray.dir[0] + (p[1] - e.ray.origin[1]) * e.ray.dir[1] + (p[2] - e.ray.origin[2]) * e.ray.dir[2];
+  // A cut face lies on its plane: the solid wins there (so cut parts stay selectable).
+  const cap = e.picked?.entity.kind === "object";
+  const slack = 1e-6 * Math.max(1, Math.abs(t));
+  return r.t < t - slack || (!cap && r.t <= t + slack) ? r : null;
+}
+
+/** What a pick means here: the entity in the open context, a curve's segment as the whole
+ * curve. */
+function unitOf(raw: Entity | null, host: ToolHost): Entity | null {
+  return curveOf(scopeEntity(raw, host.state()), host.mesh());
+}
+
+/** #107: what a right-click at `e` is on, read as Select's click reads it: a section plane
+ * nearer than anything else (its reverse arrow counts as the plane), else the entity in the
+ * open context. `outside`: what was hit lies outside the open group or component, and
+ * closing back to where it is would select it, as Select's click does. */
+export function contextPick(e: ToolEvent, host: ToolHost): { entity: Entity | null; outside: Entity | null } {
+  const sec = sectionAt(e, host);
+  if (sec) {
+    const ent = scopeEntity({ kind: "section", section: sec.section }, host.state());
+    if (ent) return { entity: ent, outside: null };
+  }
+  const raw = e.picked?.entity ?? null;
+  const ent = unitOf(raw, host);
+  return { entity: ent, outside: !ent && raw ? raw : null };
+}
 
 export class SelectTool extends Tool {
   readonly id = "select" as const;
@@ -44,24 +79,12 @@ export class SelectTool extends Tool {
     return { pickDimensions: true };
   }
 
-  /** The section plane under the cursor, when it is nearer than what the kernel picked. */
   private sectionAt(e: ToolEvent): { section: number; control: boolean } | null {
-    const r = this.host.pickSection?.(e.x, e.y);
-    if (!r) return null;
-    if (r.control) return r;
-    const p = e.picked?.point;
-    if (!p) return r;
-    const t = (p[0] - e.ray.origin[0]) * e.ray.dir[0] + (p[1] - e.ray.origin[1]) * e.ray.dir[1] + (p[2] - e.ray.origin[2]) * e.ray.dir[2];
-    // A cut face lies on its plane: the solid wins there (so cut parts stay selectable).
-    const cap = e.picked?.entity.kind === "object";
-    const slack = 1e-6 * Math.max(1, Math.abs(t));
-    return r.t < t - slack || (!cap && r.t <= t + slack) ? r : null;
+    return sectionAt(e, this.host);
   }
 
-  /** What a pick means here: the entity in the open context, a curve's segment as the
-   * whole curve. */
   private unit(raw: Entity | null): Entity | null {
-    return curveOf(scopeEntity(raw, this.host.state()), this.host.mesh());
+    return unitOf(raw, this.host);
   }
 
   /** The status line for a selected entity. */

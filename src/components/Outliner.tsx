@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DocState, Entity } from "../kernel/types";
 import { selectionLookup } from "../lib/entities";
+import { DRAG_PX } from "../lib/gesture";
 import { chain, graphOf } from "../lib/scope";
 import { PanelGlyph } from "./glyphs";
 
@@ -224,8 +225,6 @@ export function dropInto(target: OutlineRow): number | null | undefined {
   return target.parent;
 }
 
-/** How far the pointer moves, in pixels, before a press on a row becomes a drag. */
-const DRAG_PX = 4;
 
 interface Drag {
   rows: OutlineRow[];

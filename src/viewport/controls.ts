@@ -28,6 +28,7 @@
 // the document, so it follows the pointer off the canvas, and ends when the button is
 // found released (a release outside the window) or the window loses focus.
 import * as THREE from "three";
+import { DRAG_PX } from "../lib/gesture";
 import { isMacControlClick } from "../lib/platform";
 import type { Vec3 } from "./camera";
 import { dragAngles, lookTarget, orbit, panOffset, rayAt, wheelZoomFactor, zoomAt, type Lens, type Pose } from "./navmath";
@@ -49,6 +50,10 @@ export interface NavHost {
    * again when Shift goes down or up mid-drag, with Alt as it was at the press. `macControl`:
    * the press is a Control+click on macOS, the Mac's right click. */
   leftButton?(mods: { alt: boolean; shift: boolean; macControl?: boolean }): "orbit" | "pan" | null;
+  /** #107: a right press (or on macOS a Control+click, the Mac's right click) let go within
+   * the click distance of where it went down, at canvas CSS pixel (x, y) of the press. It
+   * started as a pan, and moved nothing. */
+  contextClick?(x: number, y: number, e: PointerEvent): void;
 }
 
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
@@ -70,6 +75,9 @@ interface Drag {
   anchor: Vec3;
   /** Pinch: the fingers' spacing at the last move. */
   spacing?: number;
+  /** #107: a right press (or a Mac Control+click) that has not yet moved past the click
+   * distance from (x0, y0): let go now, it is a click and the view has not moved. */
+  click?: { x0: number; y0: number };
 }
 
 const Z = new THREE.Vector3(0, 0, 1);
@@ -288,15 +296,23 @@ export class CameraController {
       this.start(e.shiftKey ? "pan" : "orbit", e, x, y, 4);
     } else if (e.button === 2) {
       this.start("pan", e, x, y, 2);
+      this.markClick(x, y);
     } else if (e.button === 0) {
       // Lane 30: the Orbit or Pan tool, or Alt in a tool without an Alt meaning of its own;
       // on macOS, Control+click (the Mac's right click).
-      const mode = this.host.leftButton?.({ alt: e.altKey, shift: e.shiftKey, macControl: isMacControlClick(e) }) ?? null;
+      const mac = isMacControlClick(e);
+      const mode = this.host.leftButton?.({ alt: e.altKey, shift: e.shiftKey, macControl: mac }) ?? null;
       if (!mode) return;
       e.preventDefault();
       this.start(mode, e, x, y, 1);
+      if (mac && mode === "pan") this.markClick(x, y);
     }
   };
+
+  /** #107: the drag just started is a right-click until it moves past the click distance. */
+  private markClick(x: number, y: number): void {
+    if (this.drag) this.drag.click = { x0: x, y0: y };
+  }
 
   /** What the drag should be doing with Shift as it is now, or null to keep on as it is. */
   private wanted(d: Drag, shift: boolean): NavMode | null {
@@ -350,6 +366,12 @@ export class CameraController {
       this.endDrag();
       return;
     }
+    // #107: a right press is a click until it moves past the click distance; until then the
+    // view stays put, so a click that wobbles opens the menu over what was under it.
+    if (d.click) {
+      if (Math.hypot(x - d.click.x0, y - d.click.y0) <= DRAG_PX) return;
+      d.click = undefined;
+    }
     // Shift pressed or let go during a middle drag (or a left one that orbits) switches
     // between orbit and pan.
     const want = this.wanted(d, e.shiftKey);
@@ -373,7 +395,12 @@ export class CameraController {
       }
       return;
     }
-    if (this.drag && e.pointerId === this.drag.pointerId && e.button === this.drag.button) this.endDrag();
+    const d = this.drag;
+    if (d && e.pointerId === d.pointerId && e.button === d.button) {
+      const click = d.click;
+      this.endDrag();
+      if (click && e.type === "pointerup") this.host.contextClick?.(click.x0, click.y0, e);
+    }
   };
 
   private onBlur = (): void => this.endDrag();
