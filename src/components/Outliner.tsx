@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DocState, Entity } from "../kernel/types";
 import { selectionLookup } from "../lib/entities";
+import { DRAG_PX } from "../lib/gesture";
 import { chain, graphOf } from "../lib/scope";
 import { PanelGlyph } from "./glyphs";
 
@@ -224,8 +225,6 @@ export function dropInto(target: OutlineRow): number | null | undefined {
   return target.parent;
 }
 
-/** How far the pointer moves, in pixels, before a press on a row becomes a drag. */
-const DRAG_PX = 4;
 
 interface Drag {
   rows: OutlineRow[];
@@ -345,7 +344,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename, onMov
         setDragBoth(null);
         return;
       }
-      if (!d || d.on || Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_PX) return;
+      if (!d || d.on || Math.hypot(e.clientX - d.x, e.clientY - d.y) <= DRAG_PX) return;
       setDragBoth({ ...d, on: true });
     };
     const up = (e: MouseEvent) => {
@@ -615,7 +614,7 @@ export function Outliner({ state, selection, onSelect, onAction, onRename, onMov
           ) : null}
           {nodesOnly && m.rows.length === 1 ? (
             <button type="button" role="menuitem" disabled={m.rows[0].locked} onClick={() => act("edit")}>
-              Edit inside
+              Edit Group / Component
             </button>
           ) : null}
           <button type="button" role="menuitem" disabled={!sameParent || !solidsOrNodes || anyLocked} onClick={() => act("group")}>

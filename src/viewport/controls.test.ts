@@ -42,6 +42,8 @@ let navigating: ReturnType<typeof vi.fn<() => void>>;
 let changes = 0;
 /** Lane 30: what the app says a left press does (unset: the tool's, as before lane 30). */
 let leftButton: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | undefined;
+/** #107: right-clicks the controller hands to the app. */
+let contextClick: ReturnType<typeof vi.fn<(x: number, y: number, e: PointerEvent) => void>>;
 
 function setup(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new THREE.PerspectiveCamera(35, W / H, 0.01, 100)) {
   canvas = document.createElement("canvas");
@@ -57,7 +59,8 @@ function setup(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = new 
   camera.updateMatrixWorld();
   cam = camera as THREE.PerspectiveCamera;
   navigating = vi.fn<() => void>();
-  ctl = new CameraController(camera, canvas, { pick: (x, y) => hitAt(camera, x, y), size: () => ({ w: W, h: H }), navigating, leftButton: (mods) => leftButton?.(mods) ?? null });
+  contextClick = vi.fn<(x: number, y: number, e: PointerEvent) => void>();
+  ctl = new CameraController(camera, canvas, { pick: (x, y) => hitAt(camera, x, y), size: () => ({ w: W, h: H }), navigating, leftButton: (mods) => leftButton?.(mods) ?? null, contextClick });
   ctl.target.set(0.2, 0.2, 0.1);
   changes = 0;
   ctl.onChange(() => changes++);
@@ -364,6 +367,83 @@ describe("right-drag pan and wheel zoom", () => {
     expect(fwd0.dot(fwd1)).toBeCloseTo(1, 12);
     pointer(canvas, "pointerup", { x: 150, y: 120, button: 2 });
     expect(ctl.state().mode).toBeNull();
+  });
+
+  it("#107: a right press let go within the click distance is a click: the view does not move and the app is told where", () => {
+    const pose = cam.position.clone();
+    // Let go where it went down.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointerup", { x: 400, y: 300, button: 2 });
+    expect(contextClick).toHaveBeenCalledTimes(1);
+    expect(contextClick.mock.calls[0].slice(0, 2)).toEqual([400, 300]);
+    // A wobble of 4 px (the click distance) is still a click, and moves nothing on the way.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointermove", { x: 402, y: 303, buttons: 2 });
+    pointer(canvas, "pointermove", { x: 404, y: 300, buttons: 2 });
+    expect(cam.position.equals(pose)).toBe(true);
+    pointer(canvas, "pointerup", { x: 404, y: 300, button: 2 });
+    expect(contextClick).toHaveBeenCalledTimes(2);
+    expect(contextClick.mock.calls[1].slice(0, 2)).toEqual([400, 300]);
+    expect(ctl.state().mode).toBeNull();
+    expect(cam.position.equals(pose)).toBe(true);
+  });
+
+  it("#107: past the click distance it is a pan, the grabbed point from the press under the cursor, and no click", () => {
+    const at: [number, number] = [520, 300];
+    const grabbed = hitAt(cam, ...at)!;
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 2, buttons: 2 });
+    pointer(canvas, "pointermove", { x: at[0] + 5, y: at[1], buttons: 2 });
+    const s = screenOf(cam, grabbed);
+    expect(Math.hypot(s[0] - (at[0] + 5), s[1] - at[1])).toBeLessThan(1e-6);
+    // Back to where it went down: a pan that came back, not a click.
+    pointer(canvas, "pointermove", { x: at[0], y: at[1], buttons: 2 });
+    pointer(canvas, "pointerup", { x: at[0], y: at[1], button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+    // A press dropped by the window (no release heard) is no click either.
+    pointer(canvas, "pointerdown", { x: at[0], y: at[1], button: 2, buttons: 2 });
+    window.dispatchEvent(new Event("blur"));
+    pointer(canvas, "pointerup", { x: at[0], y: at[1], button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+  });
+
+  it("#107: a right press cancelled, or with another button pressed during it, is no click", () => {
+    const pose = cam.position.clone();
+    // The browser cancels the press (pointercancel) where it went down.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointercancel", { x: 400, y: 300, button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+    expect(ctl.state().mode).toBeNull();
+    // The left button goes down and up during the right press, all at one point: the
+    // browser reports the chorded press as a move with both buttons held.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointermove", { x: 400, y: 300, buttons: 3 });
+    pointer(canvas, "pointermove", { x: 400, y: 300, buttons: 2 });
+    pointer(canvas, "pointerup", { x: 400, y: 300, button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+    // The press goes on as a pan that never moved: the view is where it was.
+    expect(cam.position.distanceTo(pose)).toBeLessThan(1e-6);
+  });
+
+  it("#107: on macOS a Control+click let go where it went down is the right click; a Control+drag still pans", () => {
+    leftButton = (m) => (m.macControl ? "pan" : null);
+    const platform = vi.spyOn(navigator, "platform", "get");
+    try {
+      platform.mockReturnValue("MacIntel");
+      pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, ctrl: true });
+      pointer(canvas, "pointerup", { x: 401, y: 301, button: 0 });
+      expect(contextClick).toHaveBeenCalledTimes(1);
+      pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1, ctrl: true });
+      pointer(canvas, "pointermove", { x: 450, y: 300, buttons: 1 });
+      pointer(canvas, "pointerup", { x: 450, y: 300, button: 0 });
+      expect(contextClick).toHaveBeenCalledTimes(1);
+      // A plain left press under the Pan tool is a pan, never a menu.
+      leftButton = () => "pan";
+      pointer(canvas, "pointerdown", { x: 400, y: 300, button: 0, buttons: 1 });
+      pointer(canvas, "pointerup", { x: 400, y: 300, button: 0 });
+      expect(contextClick).toHaveBeenCalledTimes(1);
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it("the wheel zooms toward the cursor in perspective and in parallel", () => {

@@ -28,18 +28,18 @@ import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { DocState, Entity, KernelOp, MeshData, SceneData, V3 } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
-import { entityKey, eraseOps, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
+import { entityKey, eraseOps, objectOf, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
-import { contextTrail, describeNode, entityShown, graphIndex, graphOf, hidSomething, nodeById, objectParent, quoted, scopeEntity, solidsIn } from "./lib/scope";
+import { contextTrail, describeNode, entityShown, graphIndex, graphOf, hidSomething, nodeById, objectParent, quoted, reachableContext, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
 import { isMac, quitLabel } from "./lib/platform";
-import { describe } from "./tools/select";
+import { contextPick, describe } from "./tools/select";
 import type { OverlayItem } from "./viewport/engine";
 import { startsValueEntry, toolById, toolForKey, type ToolId } from "./lib/tools";
 import { formatLength, formatVolume, M_PER_IN, UNIT_CHOICES, unitInfo, UNIT_SYSTEMS, type UnitSystem } from "./lib/units";
 import type { Projection, ViewId, ViewportEngine } from "./viewport/engine";
 import { gridSpec, projectionForView, VIEWS } from "./viewport/camera";
-import { EMPTY_VIEW, type Tool, type ToolHost, type ToolView } from "./tools/tool";
+import { EMPTY_VIEW, type Tool, type ToolEvent, type ToolHost, type ToolView } from "./tools/tool";
 import { SelectTool } from "./tools/select";
 import { EraseTool } from "./tools/erase";
 import { RectTool } from "./tools/rect";
@@ -54,8 +54,9 @@ import { CircleTool } from "./tools/circle";
 import { ArcTool } from "./tools/arc";
 import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
-import { InferenceMemory, kernelResolver, ToolDriver } from "./tools/driver";
+import { InferenceMemory, kernelResolver, ToolDriver, type Resolver } from "./tools/driver";
 import { estimatedLabelSize } from "./lib/dimPick";
+import { ViewMenu, viewMenuItems, type ViewMenuTarget } from "./components/ViewMenu";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
@@ -1528,9 +1529,11 @@ export function App() {
 
   const driverRef = useRef<ToolDriver | null>(null);
   const memoryRef = useRef(new InferenceMemory());
+  /** What is under a canvas point, as the tools see it (#107: the right-click reads it too). */
+  const resolverRef = useRef<Resolver | null>(null);
   if (!driverRef.current) {
     driverRef.current = new ToolDriver(
-      kernelResolver(
+      (resolverRef.current = kernelResolver(
         () => kernelRef.current,
         () => engineRef.current,
         () => {
@@ -1549,7 +1552,7 @@ export function App() {
           const dims = live.current.scene?.state.dimensions;
           return dims?.length ? { dims, text: (d) => fmtRef.current(d.length), size: dimLabelSize } : null;
         },
-      ),
+      )),
       () => activeRef.current ?? (toolsRef.current!.get("select") as Tool),
     );
   }
@@ -1607,6 +1610,73 @@ export function App() {
     }
     driverRef.current?.pointer(p);
   }, []);
+  /** #107: the 3D view's right-click menu: where it opened, and what it was on. */
+  const [viewMenu, setViewMenu] = useState<{ x: number; y: number; target: ViewMenuTarget; on: { scene: SceneData | null; selection: string; tool: ToolId } } | null>(null);
+  const closeViewMenu = useCallback(() => setViewMenu(null), []);
+  /** The 3D view's canvas: a press or the wheel there that closes the menu goes no further. */
+  const viewCanvas = useCallback(() => document.getElementById("cv"), []);
+  /** #107: a right-click in the view (a right press let go without panning; on macOS a
+   * Control+click). While a tool is part way through a step it does nothing, so it cannot
+   * cancel the step. Otherwise what is under it is read as Select's click reads it; a thing
+   * outside the selection is selected first, as Select would, and a thing inside it keeps the
+   * selection. Empty space keeps the selection too. */
+  const onContextClick = useCallback(
+    async (x: number, y: number, e: PointerEvent, presses: number) => {
+      // A key or a pointer press that came after the right-click (Esc, a right-drag) while
+      // its pick was on its way: the right-click is dropped, so no menu opens after them.
+      const overtaken = () => pressesRef.current !== presses;
+      const tool = activeRef.current;
+      if (!tool || tool.busy() || overtaken()) return;
+      const resolve = resolverRef.current;
+      if (!resolve) return;
+      // Select's own pick context, so a model dimension's number and extension lines take
+      // the right-click as they take Select's click (#129).
+      const r = await resolve(x, y, toolsRef.current!.get("select")!.inferContext(), { shift: false, ctrl: false, alt: false });
+      if (!r || overtaken()) return;
+      const ev: ToolEvent = { type: "click", x, y, shift: false, ctrl: false, alt: false, ray: r.ray, picked: r.picked, snap: r.snap };
+      let hit = contextPick(ev, host);
+      if (!hit.entity && hit.outside) {
+        // Outside the open group or component: close back to where it is, as Select does.
+        const back = await apply({ op: "set_context", node: reachableContext(hit.outside, live.current.scene?.state) });
+        if (!back || overtaken()) return;
+        hit = contextPick(ev, host);
+      }
+      const ent = hit.entity;
+      if (ent) {
+        const sel = live.current.selection;
+        const key = entityKey(ent);
+        const obj = objectOf(ent);
+        const inside = sel.some((s) => entityKey(s) === key || (obj !== null && s.kind === "object" && s.object === obj));
+        if (!inside) {
+          host.setSelection([ent]);
+          host.status(describe(ent, live.current.scene?.state, { mesh: live.current.scene?.mesh ?? null, fmt: (m) => fmtRef.current(m), unit: unitInfo(live.current.units).short }));
+        }
+      }
+      const sel = live.current.selection;
+      const target: ViewMenuTarget = !ent ? "empty" : sel.length === 1 && sel[0].kind === "section" ? "section" : "selection";
+      // What it opened on: when the model, the selection or the tool changes under it (a key
+      // that reached the app, Undo, a file opened), it closes, so no item acts on what is gone.
+      setViewMenu({ x: e.clientX, y: e.clientY, target, on: { scene: live.current.scene, selection: live.current.selection.map(entityKey).join(" "), tool: toolIdRef.current } });
+    },
+    [apply, host],
+  );
+  /** Key presses (not a modifier alone) and pointer presses on the window, counted, so a
+   * right-click can tell that one came after it while its pick was on its way. */
+  const pressesRef = useRef(0);
+  useEffect(() => {
+    const press = (e: Event) => {
+      if (e instanceof KeyboardEvent && ["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+      pressesRef.current++;
+    };
+    window.addEventListener("keydown", press, true);
+    window.addEventListener("pointerdown", press, true);
+    return () => {
+      window.removeEventListener("keydown", press, true);
+      window.removeEventListener("pointerdown", press, true);
+    };
+  }, []);
+  const onContextClickRef = useRef(onContextClick);
+  onContextClickRef.current = onContextClick;
   /** A tool switch requested by a key and not applied yet (see the keydown handler). */
   const pendingToolRef = useRef<ToolId | null>(null);
 
@@ -2837,6 +2907,10 @@ export function App() {
   const [unitPickerOpen, setUnitPickerOpen] = useState(0);
 
   const st = scene?.state;
+  // #107: the view's menu closes when what it was opened on changes under it.
+  useEffect(() => {
+    if (viewMenu && (viewMenu.on.scene !== scene || viewMenu.on.selection !== selection.map(entityKey).join(" ") || viewMenu.on.tool !== toolId)) setViewMenu(null);
+  }, [viewMenu, scene, selection, toolId]);
   const hud: { text: string; tone?: "ok" | "err" }[] = [];
   if (kernelState === "ready" && st) {
     const s = st.stats;
@@ -3056,6 +3130,14 @@ export function App() {
         { label: "Hide", disabled: !selItems.length, onSelect: () => void applyFromOutside({ op: "set_hidden", items: selItems, hidden: true }, () => `Hid ${plural(selItems.length, "item")} (the Outliner's eye shows them again).`) },
         { label: "Lock", disabled: !selItems.length, onSelect: () => void apply({ op: "set_locked", items: selItems, locked: true }, () => `Locked ${plural(selItems.length, "item")}.`) },
         {
+          // #107: what a double-click on a group or component does, so the view's right-click
+          // menu holds only menu bar commands. Disabled on a locked one, as the Outliner's Edit
+          // inside is.
+          label: "Edit Group / Component",
+          disabled: !(selection.length === 1 && selection[0].kind === "node" && st?.graph?.nodes.find((n) => n.id === (selection[0] as { node: number }).node)?.locked === false),
+          onSelect: () => selection[0]?.kind === "node" && host.enterGroup(selection[0].node),
+        },
+        {
           label: "Close Group / Component",
           keys: "Esc",
           disabled: (st?.graph?.context ?? null) === null,
@@ -3139,7 +3221,7 @@ export function App() {
       ),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, applyFromOutside, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage],
+    [st?.can_undo, st?.can_redo, st?.guides?.length, st?.meshes, st?.scenes, st?.graph, st?.style, toolId, apply, applyFromOutside, undo, redo, zoomExtents, projection, setView, selectAll, eraseSelection, selection, selItems, offers, restore, newDocument, openDialog, save, importDialog, importUnits, exportAs, exportSection, sectionAction, makeGroup, makeComponent, explode, explodeCurves, addScene, goScene, activeScene, plugins.menu, mode, setMode, scene?.sheets, exportSheets, setGrid, units, chooseUnits, closeShell, setMessage, host],
   );
 
   const valueLabel = active?.valueLabel() ?? null;
@@ -3281,9 +3363,16 @@ export function App() {
           engineRef.current = e;
           // Lane 30: the Orbit and Pan tools, and Alt+drag where the tool gives Alt no meaning.
           e?.setLeftButton((mods) => leftButtonNav(activeRef.current, mods));
+          // #107: a right-click (no pan) opens the view's menu, once the clicks already on
+          // their way to the tool have landed, so a tool they made busy ignores it.
+          e?.setContextClick((x, y, ev) => {
+            const presses = pressesRef.current;
+            void afterPointer(() => void onContextClickRef.current(x, y, ev, presses));
+          });
           setEngineObj(e);
         }}
       />
+      {viewMenu ? <ViewMenu x={viewMenu.x} y={viewMenu.y} items={viewMenuItems(viewMenu.target, menus, (st?.graph?.context ?? null) !== null)} onClose={closeViewMenu} view={viewCanvas} /> : null}
       <SidePanel
         credits={credits}
         renderOn={renderOn}

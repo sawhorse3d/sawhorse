@@ -10,7 +10,7 @@ import type { ViewportEngine } from "../viewport/engine";
 import { INFERENCE_STYLES } from "../lib/inferenceStyle";
 import { dimensionAt, withDimension } from "../lib/dimPick";
 import type { InferContext, Snap, Tool, ToolEvent, ToolEventType } from "./tool";
-import { DRAG_PX } from "./select";
+import { DRAG_PX } from "../lib/gesture";
 
 export interface Resolver {
   /** Resolve a canvas position to a pick and a snap for the active tool's context. */

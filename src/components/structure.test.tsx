@@ -9,6 +9,7 @@ import { Outliner, draggableRow, dropInto, outlineRows, type OutlineRow } from "
 import { SceneTabs } from "./SceneTabs";
 import { TagsPane, hexToRgb, tagCounts } from "./TagsPane";
 import { entityShown } from "../lib/scope";
+import { DRAG_PX } from "../lib/gesture";
 
 const I = { linear: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], translation: [0, 0, 0] } as GraphNode["xform"];
 const node = (id: number, kind: "group" | "instance", parent: number | null, label: string, definition: number | null = null, extra: Partial<GraphNode> = {}): GraphNode => ({
@@ -238,6 +239,25 @@ describe("Outliner drag (#117)", () => {
     expect(screen.getByTestId("outliner-drop-model")).toBeTruthy();
     fireEvent.mouseUp(row("Carcass"), { button: 0 });
     expect(onMove).toHaveBeenLastCalledWith([expect.objectContaining({ key: "o:16" })], 1);
+  });
+
+  it("a press that moves exactly 4 px is a click and one of 5 px a drag, as in the view and the tools (DRAG_PX)", () => {
+    const onSelect = vi.fn();
+    const onMove = vi.fn();
+    render(<Outliner state={state()} selection={[]} onSelect={onSelect} onAction={vi.fn()} onRename={vi.fn()} onMove={onMove} />);
+    const row = (label: string, k = 0) => screen.getAllByText(label)[k].closest("li")!;
+    fireEvent.mouseDown(row("Back"), { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 10 + DRAG_PX, clientY: 10, buttons: 1 });
+    expect(screen.queryByTestId("outliner-drop-model")).toBeNull();
+    fireEvent.mouseUp(row("Back"));
+    fireEvent.click(row("Back"));
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ key: "o:16" }), "replace");
+    expect(onMove).not.toHaveBeenCalled();
+    fireEvent.mouseDown(row("Back"), { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 10, clientY: 10 + DRAG_PX + 1, buttons: 1 });
+    expect(screen.getByTestId("outliner-drop-model")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(DRAG_PX).toBe(4);
   });
 
   it("Esc during a drag goes no further than the Outliner", () => {

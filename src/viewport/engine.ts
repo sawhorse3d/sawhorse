@@ -233,6 +233,8 @@ export class ViewportEngine {
   private controls: CameraController;
   /** Lane 30: what a left press does to the view (set by the app), null: the tool's. */
   private leftButton: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | null = null;
+  /** #107: a right-click (no pan) at canvas pixel (x, y), set by the app. */
+  private contextClick: ((x: number, y: number, e: PointerEvent) => void) | null = null;
   private gridMinor: THREE.LineSegments | null = null;
   private gridMajor: THREE.LineSegments | null = null;
   private axes = new THREE.Group();
@@ -342,6 +344,7 @@ export class ViewportEngine {
       size: () => this.size,
       navigating: () => this.requestRender(),
       leftButton: (mods) => this.leftButton?.(mods) ?? null,
+      contextClick: (x, y, e) => this.contextClick?.(x, y, e),
     });
     this.controls.onChange(() => {
       // Any orbit leaves the standard view; a pure zoom or pan keeps the direction.
@@ -1888,6 +1891,11 @@ varying float vOwnerState;`,
    * (the app: the Orbit and Pan tools, and Alt+drag where the tool gives Alt no meaning). */
   setLeftButton(fn: ((mods: { alt: boolean; shift: boolean; macControl?: boolean }) => "orbit" | "pan" | null) | null): void {
     this.leftButton = fn;
+  }
+
+  /** #107: what a right-click in the view does (the app opens its menu). */
+  setContextClick(fn: ((x: number, y: number, e: PointerEvent) => void) | null): void {
+    this.contextClick = fn;
   }
 
   /** What navigation is doing (lane 21): the gesture, and the pivot while orbiting (the

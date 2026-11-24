@@ -239,7 +239,7 @@ test("a drag with a group open puts that group back; a locked row among the sele
   await expect(hint(page)).toContainText("Grouped 1 item");
   await expect(row(page, "n:2")).toBeVisible();
   await row(page, "n:2").click({ button: "right" });
-  await page.getByRole("menuitem", { name: /Edit inside/ }).click();
+  await page.getByRole("menuitem", { name: "Edit Group / Component" }).click();
   await expect(hud(page)).toContainText("Edit: Model › Group ·");
   // A row of the model dragged onto the other group: the group that was open is open again.
   await drag(page, row(page, "o:3"), row(page, "n:1"));
