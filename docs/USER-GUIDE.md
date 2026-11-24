@@ -333,7 +333,8 @@ The Cut list pane (right panel, **Cut list**) turns the model into the list of b
 - A component is a part, and its quantity is the number of its copies. Copies inside other components multiply: a Drawer used three times, holding two Drawer side copies, gives Drawer side x 6.
 - A plain solid is a part of its own, named as the Outliner names it ("Solid 3", or the name you gave it).
 - A group of solids (a glue-up) is one part.
-- A component that holds other components or groups is an assembly: its pieces are listed, not the assembly.
+- A component that holds other components or groups is an assembly: its pieces are listed, not the assembly. So is a group that holds them.
+- A solid you have not named, directly in an assembly, reads by the assembly's name: "Carcass · solid". In a group with no name it keeps the Outliner's name ("Solid 3").
 
 So make the boards you repeat components (select, Edit > Make Component): six identical sides become one row, "Side, 2".
 
