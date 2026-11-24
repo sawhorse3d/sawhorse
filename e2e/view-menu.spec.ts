@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 // the menu bar's own commands for what is under it; a right-drag still pans and opens none;
 // Escape closes it with nothing changed; a choice is one undo step; a tool part way through a
 // step ignores the right-click. Also Edit > Edit Group / Component, disabled on a locked one.
-import { at, box, hover, ready } from "./helpers";
+import { at, box, clickAt, hover, ready } from "./helpers";
 
 const hint = (page: Page) => page.locator("#hint");
 const menu = (page: Page) => page.getByRole("menu", { name: "View actions" });
@@ -184,6 +184,38 @@ test("a right-click on one of two selected solids keeps both selected, and Hide 
   await item(page, "Hide").click();
   await expect(hint(page)).toContainText("Hid 2 items");
   await expect.poll(async () => (await graph(page)).objects.map((o) => o.hidden)).toEqual([true, true]);
+});
+
+test("a right-click on a dimension's number selects the dimension, as Select's click does (#107, #129)", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "Top", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "top");
+  await page.keyboard.press("r");
+  await page.keyboard.type("24,12");
+  await page.keyboard.press("Enter");
+  await expect(hint(page)).toContainText("Rectangle 24 × 12 in");
+  // A dimension along the front edge, 6 in in front of it, over the bare ground.
+  await page.keyboard.press("d");
+  await clickAt(page, [0, 0, 0], "endpoint");
+  await clickAt(page, [24, 0, 0], "endpoint");
+  await clickAt(page, [12, -6, 0], /grid|free|/);
+  await expect(hint(page)).toContainText("Dimension 24 in");
+  const dims = page.locator(".vp .vlabel.dim");
+  await expect(dims).toHaveCount(1);
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Escape");
+  // Inside the number's box, 6 px or more off the dimension line: only Select's pick
+  // context (#129) takes the dimension there.
+  const b = (await dims.boundingBox())!;
+  const [, ly] = await at(page, [12, -6, 0]);
+  const y = b.y + b.height - 2;
+  expect(y - ly).toBeGreaterThanOrEqual(6);
+  await page.mouse.click(b.x + b.width - 3, y, { button: "right" });
+  await expect(menu(page)).toBeVisible();
+  await expect(hint(page)).toContainText("Selected a dimension");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await item(page, "Delete").click();
+  await expect(dims).toHaveCount(0);
 });
 
 test("a right-click on a solid outside the open group closes back to it and selects it, as Select's click does (#107)", async ({ page }) => {
