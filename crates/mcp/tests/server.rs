@@ -419,10 +419,64 @@ fn copies_of_a_component_board_are_instances_of_its_definition() {
         json!({"name": "Slat", "thickness": 19.0, "width": 70.0, "length": 450.0, "position": [0, 0, 500], "component": true}),
     );
     assert_ne!(out["board"]["definition"], definition, "{out}");
+    // Its ids differ now (13 nodes, 2 definitions): each is the one on its own row.
+    let added = &out["changes"]["added"][0];
+    assert_eq!(out["board"]["instance"], added["items"][0]["node"], "{out}");
+    assert_eq!(out["board"]["definition"], added["definition"], "{out}");
+    assert_ne!(
+        out["board"]["instance"], out["board"]["definition"],
+        "{out}"
+    );
     let others = out["shares_name_with"].as_array().unwrap();
     assert_eq!(others.len(), 1, "{out}");
     assert_eq!(others[0]["qty"], 12, "{out}");
     assert_eq!(others[0]["definition"], definition, "{out}");
+}
+
+/// #116: only a component's own row names a definition. A group's row and the rows of the
+/// parts inside an assembly component (a component holding a group) carry no `definition`,
+/// as before.
+#[test]
+fn only_a_component_s_own_row_names_its_definition() {
+    let mut s = Session::new(&folder("component-rows"));
+    let a = s.ok("add_board", board("Side", 0.0))["board"]["object"].clone();
+    let b = s.ok("add_board", board("Shelf", 100.0))["board"]["object"].clone();
+    let c = s.ok("add_board", board("Back", 200.0))["board"]["object"].clone();
+    let d = s.ok("add_board", board("Top", 300.0))["board"]["object"].clone();
+    // A group of one board: a group's row.
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Group", "ops": [{"op": "make_group", "items": [{"object": a}], "name": "Carcass side"}]}),
+    );
+    assert!(r["changes"]["added"][0].get("definition").is_none(), "{r}");
+    // A component holding a group and a board: an assembly, its parts member rows.
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Assembly", "ops": [
+            {"op": "make_group", "items": [{"object": b}], "name": "Shelf group"},
+            {"op": "make_component", "items": [{"node": {"$ref": 0, "path": "group"}}, {"object": c}], "name": "Unit"},
+        ]}),
+    );
+    let added = r["changes"]["added"].as_array().unwrap();
+    assert_eq!(added.len(), 2, "{r}");
+    for row in added {
+        assert!(row.get("definition").is_none(), "{r}");
+    }
+    let parts = s.ok("summary", json!({}))["parts"].clone();
+    let named: Vec<&Value> = parts
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p.get("definition").is_some())
+        .collect();
+    assert!(named.is_empty(), "{parts}");
+    // A component of one board does: the only row that names one.
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Component", "ops": [{"op": "make_component", "items": [{"object": d}], "name": "Top"}]}),
+    );
+    let def = r["outcome"]["outcomes"][0]["definition"].clone();
+    assert_eq!(r["changes"]["added"][0]["definition"], def, "{r}");
 }
 
 /// #116: the tool list and the instructions point an agent at components: add_board takes
