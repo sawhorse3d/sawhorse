@@ -297,6 +297,164 @@ fn copy_and_array_take_nodes_alone() {
     assert!(e.contains("op 0 (array): missing field `count`"), "{e}");
 }
 
+/// #116: `component: true` wraps the board in a component named after it, in the same one
+/// undo step, and answers with the instance and the definition. The board is where and what
+/// it would be without it, and summary names the definition on its row.
+#[test]
+fn add_board_with_component_wraps_the_board_in_a_component_named_after_it() {
+    let args = json!({"name": "Slat", "thickness": 19.0, "width": 70.0, "length": 900.0,
+        "position": [10.0, 20.0, 100.0], "material": "Pine"});
+    let mut plain = Session::new(&folder("component-plain"));
+    let loose = plain.ok("add_board", args.clone())["board"].clone();
+
+    let mut s = Session::new(&folder("component-true"));
+    let empty = s.hash();
+    let mut with = args.clone();
+    with["component"] = json!(true);
+    let out = s.ok("add_board", with);
+    let board = &out["board"];
+    assert!(board["object"].is_u64(), "{out}");
+    let instance = board["instance"].as_u64().expect("an instance id");
+    let definition = board["definition"].as_u64().expect("a definition id");
+    assert_eq!(board["name"], "Slat");
+    assert_eq!(board["material"], "Pine");
+    assert_eq!(board["min_mm"], loose["min_mm"], "{out}");
+    assert_eq!(board["max_mm"], loose["max_mm"], "{out}");
+    // One row added: the component, named after the board, selected by its instance.
+    let added = out["changes"]["added"].as_array().unwrap();
+    assert_eq!(added.len(), 1, "{out}");
+    assert_eq!(added[0]["name"], "Slat");
+    assert_eq!(added[0]["material"], "Pine");
+    assert_eq!(added[0]["items"], json!([{"node": instance}]), "{out}");
+    assert_eq!(added[0]["definition"], definition, "{out}");
+    assert_eq!(out["shares_name_with"], json!([]), "{out}");
+    let parts = s.ok("summary", json!({}))["parts"].clone();
+    assert_eq!(parts.as_array().unwrap().len(), 1, "{parts}");
+    assert_eq!(parts[0]["qty"], 1);
+    assert_eq!(parts[0]["definition"], definition, "{parts}");
+    assert_eq!(parts[0]["size_mm"], json!([19.0, 70.0, 900.0]), "{parts}");
+    // The board, the component and the library's Pine are one undo step.
+    s.ok("undo", json!({}));
+    assert_eq!(s.hash(), empty);
+    // A name at the limit names the component too; one past it is refused, nothing made.
+    let long = "L".repeat(64);
+    let out = s.ok(
+        "add_board",
+        json!({"name": long, "thickness": 19.0, "width": 70.0, "length": 900.0, "component": true}),
+    );
+    assert_eq!(out["changes"]["added"][0]["name"], long, "{out}");
+    let before = s.hash();
+    let e = s.refused(
+        "add_board",
+        json!({"name": "L".repeat(65), "thickness": 19.0, "width": 70.0, "length": 900.0, "component": true}),
+    );
+    assert!(e.contains("1 to 64 characters"), "{e}");
+    assert_eq!(s.hash(), before);
+}
+
+/// #116: without `component`, or with it false, add_board makes the loose solid it always
+/// made: the same model, and the same answer, with no instance or definition in it. A loose
+/// board's summary row names no definition.
+#[test]
+fn add_board_without_component_makes_what_it_made() {
+    let args = json!({"name": "Rail", "thickness": 19.0, "width": 50.0, "length": 600.0});
+    let mut a = Session::new(&folder("component-absent"));
+    let left_out = a.ok("add_board", args.clone());
+    let mut b = Session::new(&folder("component-false"));
+    let mut off = args.clone();
+    off["component"] = json!(false);
+    let set_false = b.ok("add_board", off);
+    assert_eq!(left_out, set_false);
+    assert_eq!(a.hash(), b.hash());
+    let board = left_out["board"].as_object().unwrap();
+    let mut keys: Vec<&str> = board.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["material", "max_mm", "min_mm", "name", "object"],
+        "{left_out}"
+    );
+    let parts = a.ok("summary", json!({}))["parts"].clone();
+    assert_eq!(parts[0]["items"], json!([{"object": board["object"]}]));
+    assert!(parts[0].get("definition").is_none(), "{parts}");
+    let e = a.refused(
+        "add_board",
+        json!({"name": "Rail", "thickness": 19.0, "width": 50.0, "length": 600.0, "component": "yes"}),
+    );
+    assert!(e.contains("arguments"), "{e}");
+}
+
+/// #116: copies and an array of a component board are instances of its definition, so the
+/// cut list reads one row with a quantity; a second component board of the same name is a
+/// definition of its own, reported under shares_name_with.
+#[test]
+fn copies_of_a_component_board_are_instances_of_its_definition() {
+    let mut s = Session::new(&folder("component-copies"));
+    let out = s.ok(
+        "add_board",
+        json!({"name": "Slat", "thickness": 19.0, "width": 70.0, "length": 900.0, "component": true}),
+    );
+    let instance = out["board"]["instance"].clone();
+    let definition = out["board"]["definition"].clone();
+    let step = json!({"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [0, 0.1, 0]});
+    let r = s.ok(
+        "apply_ops",
+        json!({"name": "Slats", "ops": [{"op": "array", "nodes": [instance], "xform": step, "count": 11}]}),
+    );
+    // The row changed: its quantity, not a new row per copy.
+    assert!(r["changes"]["added"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(r["changes"]["changed"][0]["after"]["qty"], 12, "{r}");
+    let parts = s.ok("summary", json!({}))["parts"].clone();
+    assert_eq!(parts.as_array().unwrap().len(), 1, "{parts}");
+    assert_eq!(parts[0]["qty"], 12);
+    assert_eq!(parts[0]["definition"], definition);
+    let items = parts[0]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 12);
+    let nodes: std::collections::BTreeSet<u64> =
+        items.iter().map(|i| i["node"].as_u64().unwrap()).collect();
+    assert_eq!(nodes.len(), 12, "{parts}");
+    // A second component board named Slat: its own definition, and the first named beside it.
+    let out = s.ok(
+        "add_board",
+        json!({"name": "Slat", "thickness": 19.0, "width": 70.0, "length": 450.0, "position": [0, 0, 500], "component": true}),
+    );
+    assert_ne!(out["board"]["definition"], definition, "{out}");
+    let others = out["shares_name_with"].as_array().unwrap();
+    assert_eq!(others.len(), 1, "{out}");
+    assert_eq!(others[0]["qty"], 12, "{out}");
+    assert_eq!(others[0]["definition"], definition, "{out}");
+}
+
+/// #116: the tool list and the instructions point an agent at components: add_board takes
+/// `component`, and apply_ops names `nodes` beside `objects` for copy and array.
+#[test]
+fn the_tools_say_how_to_make_and_copy_components() {
+    let mut s = Session::new(&folder("component-docs"));
+    let r = s.request("tools/list", json!({}));
+    let tools = r["result"]["tools"].as_array().unwrap();
+    let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap().clone();
+    let add = tool("add_board");
+    assert_eq!(
+        add["inputSchema"]["properties"]["component"]["type"], "boolean",
+        "{add}"
+    );
+    assert!(
+        add["description"].as_str().unwrap().contains("component"),
+        "{add}"
+    );
+    let ops = tool("apply_ops")["description"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(ops.contains("nodes"), "{ops}");
+    let r = s.request(
+        "initialize",
+        json!({"protocolVersion": sawhorse_mcp::PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}),
+    );
+    let text = r["result"]["instructions"].as_str().unwrap();
+    assert!(text.contains("component"), "{text}");
+}
+
 /// #117: `move_into` through apply_ops moves a top-level board into a group; with no way to
 /// open the group in a batch, taking it out again is refused.
 #[test]
