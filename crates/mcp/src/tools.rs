@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use sawhorse_kernel::cutlist::{CutList, CutOptions, CutRow};
+use sawhorse_kernel::cutlist::{CutList, CutOptions, CutRow, PartKey};
 use sawhorse_kernel::document::Document;
 use sawhorse_kernel::model::{Model, Op};
 use sawhorse_kernel::nesting::NestOptions;
@@ -41,7 +41,9 @@ pub const INSTRUCTIONS: &str = "Sawhorse models furniture as solid parts and rep
 of sheets and boards. Build with add_board (sizes in mm unless units says otherwise), check with summary and \
 cut_list, change anything else with apply_ops (the kernel's ops, lengths in metres), and save with save_model. \
 Every change is one undo step and returns the cut list rows it added, removed or changed. Parts are named; \
-when two share a name, summary lists the name under shared_names.";
+when two share a name, summary lists the name under shared_names. For a part made more than once (slats, \
+legs, shelves), add the first with add_board and component: true, then copy or array its instance through \
+apply_ops (nodes): the cut list reads one row with a quantity, and the copies stay alike.";
 
 /// Largest `.shz` opened, bytes (the reader's own limit on what a file may hold).
 const MAX_FILE: u64 = sawhorse_shz::MAX_TOTAL;
@@ -325,6 +327,11 @@ impl Server {
         if let Some(m) = &material {
             ops.push(json!({"op": "set_material", "object": object, "material": m}));
         }
+        // #116: the board wrapped in a component named after it, in the same undo step.
+        let component = b.component.unwrap_or(false).then(|| {
+            ops.push(json!({"op": "make_component", "items": [{"object": object}], "name": name}));
+            ops.len() - 1
+        });
         let mut batch = NamedBatch {
             name: format!("Add board {name}"),
             ops,
@@ -338,9 +345,18 @@ impl Server {
             batch.ops[extrude]["distance"] = json!(-t);
         }
         let mut made = 0;
+        let mut wrapped: Option<(u64, u64)> = None;
         let mut answer = self.change(|doc| {
             let (out, _) = refbatch::apply(doc, &batch).map_err(|e| e.to_string())?;
-            made = outcome_object(&serde_json::to_value(&out).unwrap_or_default(), extrude)?;
+            let out = serde_json::to_value(&out).unwrap_or_default();
+            made = outcome_object(&out, extrude)?;
+            if let Some(i) = component {
+                let c = &out["outcomes"][i];
+                wrapped = c["instance"].as_u64().zip(c["definition"].as_u64());
+                if wrapped.is_none() {
+                    return Err("the board's component was not made".into());
+                }
+            }
             Ok(json!({}))
         })?;
         let model = self.doc.model();
@@ -355,12 +371,21 @@ impl Server {
             "min_mm": lo.to_array().map(mm),
             "max_mm": hi.to_array().map(mm),
         });
+        // What selects the new part: its instance when it is a component, else the solid.
+        let own = match wrapped {
+            Some((instance, definition)) => {
+                answer["board"]["instance"] = json!(instance);
+                answer["board"]["definition"] = json!(definition);
+                Item::Node(instance)
+            }
+            None => Item::Object(made),
+        };
         let list = model.cut_list(&CutOptions::default());
         let others: Vec<Value> = list
             .rows
             .iter()
             .filter(|r| r.name == name)
-            .filter(|r| !r.occurrences.iter().any(|o| o.item == Item::Object(made)))
+            .filter(|r| !r.occurrences.iter().any(|o| o.item == own))
             .map(row)
             .collect();
         answer["shares_name_with"] = Value::Array(others);
@@ -396,7 +421,7 @@ fn outcome_object(out: &Value, index: usize) -> Result<u64, String> {
 
 /// What an agent sees of a cut list row.
 fn row(r: &CutRow) -> Value {
-    json!({
+    let mut v = json!({
         "name": r.name,
         "qty": r.qty,
         "size_mm": r.size.map(mm),
@@ -404,7 +429,12 @@ fn row(r: &CutRow) -> Value {
         "grain": r.grain,
         "target": r.target,
         "items": r.occurrences.iter().map(|o| &o.item).collect::<Vec<_>>(),
-    })
+    });
+    // #116: a component's row names its definition; other rows are as they were.
+    if let PartKey::Definition(d) = r.key {
+        v["definition"] = json!(d);
+    }
+    v
 }
 
 /// The rows of a cut list by part, each as [`row`] gives it.
@@ -630,6 +660,10 @@ struct BoardArgs {
     units: Option<String>,
     #[serde(default)]
     material: Option<String>,
+    /// #116: wrap the board in a component named after it (default false: a loose solid).
+    /// `null` reads as left out, as for the other optional arguments.
+    #[serde(default)]
+    component: Option<bool>,
 }
 
 /// `tools/list`: each tool with its description and the JSON Schema of its arguments.
@@ -658,10 +692,10 @@ pub fn list() -> Value {
          "description": "Save the model as a .shz under the server's folder, the file the app writes. The file is read back and checked before the save is reported. Without a path it saves where the model was opened from or last saved.",
          "inputSchema": path("Relative to the server's folder, ending .shz; its folder must exist")},
         {"name": "summary", "title": "Summary",
-         "description": "Every part: name, quantity, size in mm (thickness, width, length), material, grain, and the items (ids) apply_ops can name. Also the file path, whether there are unsaved changes, the model hash, the materials, and shared_names: names more than one part has.",
+         "description": "Every part: name, quantity, size in mm (thickness, width, length), material, grain, and the items (ids) apply_ops can name; a component's row also names its definition (id). Also the file path, whether there are unsaved changes, the model hash, the materials, and shared_names: names more than one part has.",
          "inputSchema": none},
         {"name": "add_board", "title": "Add board",
-         "description": "Add one solid board: a name, thickness x width x length, the corner nearest the origin (position), which axis its length runs along (default x) and which its thickness (default z, lying flat). Sizes and position in mm unless units says otherwise. material is one in the model or the library (Pine, Red oak, Walnut, Baltic birch ply, MDF, ...). One undo step. Answers the board's object id and box, the cut list changes, and any other parts with the same name.",
+         "description": "Add one solid board: a name, thickness x width x length, the corner nearest the origin (position), which axis its length runs along (default x) and which its thickness (default z, lying flat). Sizes and position in mm unless units says otherwise. material is one in the model or the library (Pine, Red oak, Walnut, Baltic birch ply, MDF, ...). component: true wraps the board in a component named after it (default false: a loose solid); copy or array that instance for the other pieces, and the cut list counts them as one part. A second component board of the same name is a part of its own. One undo step. Answers the board's object id and box (with component, its instance and definition ids too: copy, array and move the instance, in nodes; a batch cannot move, copy, reshape or delete the solid inside it, and its grain and stock are set on the definition), the cut list changes, and any other parts with the same name.",
          "inputSchema": {"type": "object", "additionalProperties": false,
              "required": ["name", "thickness", "width", "length"], "properties": {
              "name": {"type": "string"},
@@ -672,9 +706,10 @@ pub fn list() -> Value {
              "length_axis": axis.clone(),
              "thickness_axis": axis,
              "units": {"type": "string", "enum": ["mm", "cm", "m", "in"]},
-             "material": {"type": "string"}}}},
+             "material": {"type": "string"},
+             "component": {"type": "boolean"}}}},
         {"name": "apply_ops", "title": "Apply ops",
-         "description": "Apply kernel ops as one undo step, all or nothing: the same named batch a plugin sends (docs/PLUGINS.md), lengths in metres, with {\"$ref\": i, \"path\": ...} placeholders for what an earlier op of the batch made. To repeat parts, copy them (op copy: objects, xform) or array them (op array: objects, xform, count) by the ids summary gives, rather than adding each again. Undo, redo, batches and restores are not allowed. Answers each op's outcome and the cut list changes; a refusal says which op and why, and changes nothing.",
+         "description": "Apply kernel ops as one undo step, all or nothing: the same named batch a plugin sends (docs/PLUGINS.md), lengths in metres, with {\"$ref\": i, \"path\": ...} placeholders for what an earlier op of the batch made. To repeat parts, copy them (op copy: objects, nodes, xform) or array them (op array: objects, nodes, xform, count) by the ids summary gives, rather than adding each again: solids in objects, groups and component instances in nodes. Copies of a component instance are instances of its definition. Undo, redo, batches and restores are not allowed. Answers each op's outcome and the cut list changes; a refusal says which op and why, and changes nothing.",
          "inputSchema": {"type": "object", "additionalProperties": false, "required": ["name", "ops"], "properties": {
              "name": {"type": "string", "description": "Names the undo step"},
              "ops": {"type": "array", "items": {"type": "object"}}}}},
