@@ -156,6 +156,10 @@ A shape drawn on a solid's face becomes part of that face:
 
 A shape that reaches past the solid (for example, a top board drawn from one side's corner to the other's) becomes a new sketch on that plane.
 
+A rectangle started on a corner or an edge of a solid goes on the face the cursor is over, when that face holds the first corner. A guide line that leaves the face (an axis line through the corner, or the line of a point the cursor rested on earlier) does not take the second corner off it: the marker shows On Face, and the status line names the face. To follow that line anyway, press the Down arrow (or hold Shift) to lock to it, or an axis arrow. A corner, an edge or a midpoint of the face, or of other geometry, still takes the second corner. Over nothing, or over a face that does not hold the corner, the plane follows the cursor as before. Two corners on one line (a second click on an edge through the first corner) draw nothing; the status line says so, and the first corner stays.
+
+To cut a rabbet along an edge: press `R`, hover the corner of the face until it shows Endpoint and click, move the cursor onto the face, type the length and width (`24, 3/8`) and press Enter. Then press `P`, type `-3/8` and press Enter. With the cursor still on the corner the sizes have no face and no direction yet, so the way they run is a guess; if the guess does not fit, the status line gives the reason and says the cursor did not show the way, and the first corner stays.
+
 Push/Pull on a face moves it along its normal and keeps the solid closed. Pushing past the far side cuts through.
 
 ## Moving, turning and scaling

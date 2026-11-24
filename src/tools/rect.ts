@@ -6,17 +6,43 @@
 // first click choose level / upright facing red / upright facing green). On a solid's face
 // the rectangle cuts the face where it crosses its edges (a dado strip across a board) or
 // imprints inside it; a rectangle reaching off that solid (a top board from one side's
-// corner to the other's) becomes a new sketch on the plane instead.
+// corner to the other's) becomes a new sketch on the plane instead. Started on a corner or
+// an edge, the plane follows the cursor until the second click: over a face that holds the
+// first corner, the rectangle goes on that face, and a guide line that leaves the face does
+// not pull the second corner off it (#130).
 import type { EditResult } from "../kernel/client";
 import type { V3 } from "../kernel/types";
 import { notHere, parseVcb } from "../lib/vcb";
-import { GROUND } from "../lib/edit";
+import { GROUND, type Frame } from "../lib/edit";
+import { INFERENCE_STYLES, isLineInference } from "../lib/inferenceStyle";
 import { add, dirName, dist, dot, fmtPoint, horizontalAt, local, mul, onPlane, planeAt, planeFromSnap, rectangle, rectSides, rotatedRectangle, rotatedWidth, sub, unit, world, type DrawPlane } from "./draw";
 import { StrokeTool, faceNote } from "./stroke";
 import { finalTarget } from "./target";
 import type { Snap, ToolEvent, ToolView } from "./tool";
 
 type Variant = "rect" | "rotated";
+
+/** The kernel's smallest side: it refuses a shape "under 0.01 mm" (crates/kernel error.rs). */
+const KERNEL_MIN = 1e-5;
+
+/** #130: added after the kernel's own reason when typed sizes were refused with the cursor on
+ * the first corner, on a line through it or not there at all, so the way they ran was a guess. */
+export const GUESSED_WAY = "The cursor did not show which way the rectangle runs, so that was a guess: move the cursor onto the face to choose it.";
+
+/**
+ * #130: why a rectangle from `a` to `p` on frame `f` has no area, or null when it has one.
+ * The kernel refuses such a shape as "too small"; these words say what happened and the
+ * way on. Both corners on one line along a side is what a click on an edge through the
+ * first corner gives.
+ */
+export function flatWords(f: Frame, a: V3, p: V3): string | null {
+  const [la, lb] = [local(f, a), local(f, p)];
+  const wide = Math.abs(lb[0] - la[0]) > 1e-9;
+  const deep = Math.abs(lb[1] - la[1]) > 1e-9;
+  if (wide && deep) return null;
+  if (!wide && !deep) return "On the drawing plane the second corner is on the first. Click the opposite corner, or type width, depth.";
+  return "On the drawing plane both corners are on one line, so the rectangle has no width. Click off the line, or type width, depth.";
+}
 
 export class RectTool extends StrokeTool {
   readonly id = "rect" as const;
@@ -31,6 +57,13 @@ export class RectTool extends StrokeTool {
    * upright plane through the corner that the cursor's point lies on; else level).
    */
   private undecided = false;
+  /** The snap before `faceFirst` replaced it: the Down arrow and Shift lock to its line. */
+  private raw: Snap | null = null;
+  /** Bumped by every reset (Esc, a tool switch, a finished shape): a refusal that comes back
+   * after one does not bring the first corner back. */
+  private epoch = 0;
+  /** Typed sizes are on their way to the kernel and the first corner may come back. */
+  private inFlight = false;
 
   start(): V3 | null {
     return this.edgeEnd ?? this.anchor;
@@ -42,6 +75,37 @@ export class RectTool extends StrokeTool {
     this.edgeEnd = null;
     this.snaps = [];
     this.undecided = false;
+    this.raw = null;
+    this.inFlight = false;
+    this.epoch++;
+  }
+
+  /** Esc while typed sizes are on their way: the first corner does not come back. */
+  cancel(): boolean {
+    if (!this.inFlight) return super.cancel();
+    this.reset();
+    this.host.changed();
+    return true;
+  }
+
+  /** The Down arrow and Shift lock to the guide line the engine found, as before #130's face
+   * rule hid it: the lock then shows the line, and the click follows it. */
+  onKey(e: KeyboardEvent): boolean {
+    return this.withRaw(() => super.onKey(e));
+  }
+
+  onShift(down: boolean): void {
+    this.withRaw(() => super.onShift(down));
+  }
+
+  private withRaw<T>(f: () => T): T {
+    const shown = this.snap;
+    if (this.raw) this.snap = this.raw;
+    try {
+      return f();
+    } finally {
+      this.snap = shown;
+    }
   }
 
   inferContext() {
@@ -54,6 +118,30 @@ export class RectTool extends StrokeTool {
     // and on a set plane the line that would leave it is already dropped.
     if (this.variant === "rect" && this.anchor && this.undecided && !this.edgeEnd) ctx.skipStartLines = [[0, 0, 1]];
     return ctx;
+  }
+
+  /**
+   * #130: while the plane is open and the cursor is over a solid's face that holds the first
+   * corner, the rectangle goes on that face. A guide line (an axis line through the first
+   * corner, a From Point line of a remembered point, parallel or perpendicular) whose point
+   * leaves the face's plane gives way to the point on the face under the cursor: such a line
+   * can run through the air or behind the solid, and took the corner off the face onto a new
+   * sketch beside it. Every snap that lies on the face's plane is kept (the face's corners,
+   * edges and midpoints, guide lines in the plane), and so is a real point or edge of other
+   * geometry off the plane, which the person sees and may mean. A lock already set (arrow
+   * keys, Shift) is the person's own choice and is kept too; the Down arrow and Shift lock to
+   * the line this hides (`onKey`, `onShift` read the snap from before it).
+   */
+  private faceFirst(snap: Snap | null): Snap | null {
+    const a = this.anchor;
+    if (!snap || !a || !this.undecided || this.edgeEnd || this.lock.lock) return snap;
+    const s = snap.surface;
+    if (!s || s.at.kind !== "face" || !onPlane(s.frame, a) || onPlane(s.frame, snap.point)) return snap;
+    if (!isLineInference(snap.kind)) return snap;
+    const n = s.frame.normal;
+    const point = sub(s.point, mul(n, dot(sub(s.point, s.frame.origin), n)));
+    const { object, face } = s.at;
+    return { point, kind: "on-face", tip: INFERENCE_STYLES["on-face"].label, surface: s, adjacent: null, entity: { kind: "face", object, face }, lines: [] };
   }
 
   /** The plane a rectangle started at the anchor takes for the cursor at `snap`. */
@@ -100,9 +188,12 @@ export class RectTool extends StrokeTool {
       : "Rotated Rectangle: click both ends of one edge, then the width. R again: Rectangle.";
   }
 
-  onEvent(e: ToolEvent): void {
+  onEvent(ev: ToolEvent): void {
+    // The preview (marker, guide lines, rubber band) and the click see the same snap.
+    const e = ev.snap ? { ...ev, snap: this.faceFirst(ev.snap) } : ev;
     if (e.type === "move" || e.type === "drag") {
       this.track(e);
+      this.raw = e.snap !== ev.snap ? ev.snap : null;
       if (this.anchor && this.undecided && !this.edgeEnd) {
         const r = this.resolvePlane(e.snap, e.ray);
         this.plane = r.plane;
@@ -114,16 +205,25 @@ export class RectTool extends StrokeTool {
     }
     if (this.dropped(e)) return;
     if (e.type === "click" && e.snap) {
-      if (this.anchor && this.undecided && !this.edgeEnd) {
+      let snap = e.snap;
+      let plane = this.plane;
+      const open = !!this.anchor && this.undecided && !this.edgeEnd;
+      if (open) {
         const r = this.resolvePlane(e.snap, e.ray);
-        this.plane = r.plane;
-        this.undecided = false;
-        if (r.point && !onPlane(r.plane.frame, e.snap.point)) {
-          void this.click({ ...e.snap, point: r.point, kind: "free", entity: null, surface: null, adjacent: null });
-          return;
-        }
+        plane = r.plane;
+        if (r.point && !onPlane(r.plane.frame, e.snap.point)) snap = { ...e.snap, point: r.point, kind: "free", entity: null, surface: null, adjacent: null };
       }
-      void this.click(e.snap);
+      // #130: both corners on one line along the rectangle's sides draw nothing; say so
+      // before the kernel does, and keep the first corner (and an open plane open).
+      if (this.variant === "rect" && this.anchor && plane) {
+        const why = flatWords(plane.frame, this.anchor, snap.point);
+        if (why) return void this.host.status(why, true);
+      }
+      if (open && plane) {
+        this.plane = plane;
+        this.undecided = false;
+      }
+      void this.click(snap);
     }
   }
 
@@ -149,6 +249,9 @@ export class RectTool extends StrokeTool {
   private async click(snap: Snap): Promise<void> {
     const h = this.host;
     if (!this.anchor) {
+      // A new start: typed sizes still on their way do not bring their corner back over it.
+      this.epoch++;
+      this.inFlight = false;
       this.plane = this.planeFor(snap);
       this.anchor = snap.point;
       this.snaps = [snap];
@@ -172,7 +275,7 @@ export class RectTool extends StrokeTool {
   }
 
   /** Draw with the cursor (or typed) far corner / width point. */
-  private async finish(p: V3, size?: [number, number], width?: number): Promise<void> {
+  private async finish(p: V3, size?: [number, number], width?: number, aimless = false): Promise<void> {
     const h = this.host;
     const plane = this.plane;
     const a = this.anchor;
@@ -197,9 +300,25 @@ export class RectTool extends StrokeTool {
       extents = `: ${h.fmt(s.u.len)} ${h.unitLabel()} along ${dirName(s.u.dir)} and ${h.fmt(s.v.len)} ${h.unitLabel()} along ${dirName(s.v.dir)} from ${fmtPoint(a, h.fmt)}`;
     }
     const target = finalTarget(plane, this.snaps);
+    const kept = aimless ? { anchor: a, snaps: this.snaps, plane } : null;
     this.reset();
+    this.inFlight = !!kept;
+    const epoch = this.epoch;
     h.changed();
-    await this.stroke(target.target, pts, true, (r: EditResult) => `${what} ${target.where(h.fmt)}${faceNote(r)}${extents}. Push/Pull (P) and type a distance to raise it.`);
+    const done = await this.stroke(target.target, pts, true, (r: EditResult) => `${what} ${target.where(h.fmt)}${faceNote(r)}${extents}. Push/Pull (P) and type a distance to raise it.`);
+    if (this.epoch !== epoch || this.anchor) return; // Esc, a tool switch or a new start came first.
+    this.inFlight = false;
+    if (done || !kept) return;
+    // Refused with the way a guess: the first corner stays and the plane stays open. The
+    // kernel's own reason stays on the status line; when every typed size is one the kernel
+    // takes (not too small), a sentence after it says the way was guessed.
+    this.anchor = kept.anchor;
+    this.snaps = kept.snaps;
+    this.plane = kept.plane;
+    this.undecided = true;
+    const why = h.lastError();
+    if (why && size && Math.abs(size[0]) > KERNEL_MIN && Math.abs(size[1]) > KERNEL_MIN) h.status(`${why.replace(/\.?\s*$/, ".")} ${GUESSED_WAY}`, true);
+    h.changed();
   }
 
   onValue(text: string): void {
@@ -235,7 +354,12 @@ export class RectTool extends StrokeTool {
     const sx = Math.sign(lc[0] - la[0]) || 1;
     const sy = Math.sign(lc[1] - la[1]) || 1;
     const [w, d] = v.m;
-    void this.finish(this.anchor, [w * sx, d * sy]);
+    // #130: with the plane still open and the cursor on the first corner (or on a line
+    // through it), the cursor chose no face and no direction. The sizes are tried as before
+    // (toward + where the cursor gave no sign); if the kernel refuses them, the first corner
+    // stays and the words say what to do.
+    const aimless = this.undecided && !this.edgeEnd && (!this.cursor || Math.abs(lc[0] - la[0]) <= 1e-9 || Math.abs(lc[1] - la[1]) <= 1e-9);
+    void this.finish(this.anchor, [w * sx, d * sy], undefined, aimless);
   }
 
   view(): ToolView {

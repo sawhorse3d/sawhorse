@@ -182,6 +182,7 @@ Since lane 22 a sketch shape moves, turns, scales and copies before it is pulled
 | What | Limit |
 |---|---|
 | Orbit | the view tips at most 89.5 degrees from level, up or down (lane 21): orbiting never looks exactly straight down or up, so it cannot flip over; the Top view does look straight down, and orbiting from it comes back without a jump |
+| A narrow strip by clicks | a click within 7 px of an edge (10 px of a corner or a midpoint) lands on it, so a rectangle along an edge narrower than about 10 px on screen cannot be clicked: its second corner lands on the edge and the status line says both corners are on one line ([#130](https://github.com/sawhorse3d/sawhorse/issues/130)). Zoom in, or click the first corner, move onto the face and type the sizes |
 
 ## SketchUp files that do not open
 
