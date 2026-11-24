@@ -368,8 +368,10 @@ export class CameraController {
     }
     // #107: a right press is a click until it moves past the click distance; until then the
     // view stays put, so a click that wobbles opens the menu over what was under it.
+    // Another button pressed during it ends the click, as moving does (the press goes on
+    // as a pan).
     if (d.click) {
-      if (Math.hypot(x - d.click.x0, y - d.click.y0) <= DRAG_PX) return;
+      if ((e.buttons & ~d.mask) === 0 && Math.hypot(x - d.click.x0, y - d.click.y0) <= DRAG_PX) return;
       d.click = undefined;
     }
     // Shift pressed or let go during a middle drag (or a left one that orbits) switches

@@ -406,6 +406,24 @@ describe("right-drag pan and wheel zoom", () => {
     expect(contextClick).not.toHaveBeenCalled();
   });
 
+  it("#107: a right press cancelled, or with another button pressed during it, is no click", () => {
+    const pose = cam.position.clone();
+    // The browser cancels the press (pointercancel) where it went down.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointercancel", { x: 400, y: 300, button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+    expect(ctl.state().mode).toBeNull();
+    // The left button goes down and up during the right press, all at one point: the
+    // browser reports the chorded press as a move with both buttons held.
+    pointer(canvas, "pointerdown", { x: 400, y: 300, button: 2, buttons: 2 });
+    pointer(canvas, "pointermove", { x: 400, y: 300, buttons: 3 });
+    pointer(canvas, "pointermove", { x: 400, y: 300, buttons: 2 });
+    pointer(canvas, "pointerup", { x: 400, y: 300, button: 2 });
+    expect(contextClick).not.toHaveBeenCalled();
+    // The press goes on as a pan that never moved: the view is where it was.
+    expect(cam.position.distanceTo(pose)).toBeLessThan(1e-6);
+  });
+
   it("#107: on macOS a Control+click let go where it went down is the right click; a Control+drag still pans", () => {
     leftButton = (m) => (m.macControl ? "pan" : null);
     const platform = vi.spyOn(navigator, "platform", "get");

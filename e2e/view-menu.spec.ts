@@ -10,6 +10,7 @@ const hint = (page: Page) => page.locator("#hint");
 const menu = (page: Page) => page.getByRole("menu", { name: "View actions" });
 const item = (page: Page, name: string | RegExp) => menu(page).getByRole("menuitem", { name });
 const hud = (page: Page) => page.locator(".vp .hud");
+const undoDepth = async (page: Page) => Number(/undo (\d+)/.exec(await hud(page).innerText())?.[1]);
 
 type Graph = { context: number | null; nodes: { id: number; locked: boolean }[]; objects: { id: number; hidden: boolean }[]; sections?: { id: number; active: boolean }[] };
 const graph = (page: Page) => page.evaluate(() => (window as unknown as { __sawhorse: { graph(): Graph } }).__sawhorse.graph());
@@ -44,15 +45,16 @@ test("a right-click on a solid selects it and offers its commands; Hide is one u
   await expect(item(page, "Explode Curve")).toBeDisabled();
   await expect(item(page, "Edit Group / Component")).toBeDisabled();
   await expect(item(page, /Make Group/)).toContainText("Ctrl+G");
-  const depth = await vp.getAttribute("data-can-undo");
+  const before = await undoDepth(page);
   await item(page, "Hide").click();
   await expect(menu(page)).toHaveCount(0);
   await expect(hint(page)).toContainText("Hid 1 item");
   await expect.poll(async () => (await graph(page)).objects[0].hidden).toBe(true);
-  // One step: Ctrl+Z brings it back.
-  expect(depth).toBe("true");
+  // One step: the undo depth goes up by one, and Ctrl+Z brings it back.
+  await expect.poll(() => undoDepth(page)).toBe(before + 1);
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await graph(page)).objects[0].hidden).toBe(false);
+  await expect.poll(() => undoDepth(page)).toBe(before);
 });
 
 test("on empty space: Select All, Select None, Zoom Extents, Undo, Redo; Escape closes it with nothing changed (#107)", async ({ page }) => {
@@ -62,6 +64,7 @@ test("on empty space: Select All, Select None, Zoom Extents, Undo, Redo; Escape 
   await page.keyboard.press("Escape");
   const hash = await vp.getAttribute("data-hash");
   const camera = await vp.getAttribute("data-camera");
+  const depth = await undoDepth(page);
   const [x, y] = await emptySpot(page);
   await page.mouse.click(x, y, { button: "right" });
   await expect(menu(page)).toBeVisible();
@@ -72,6 +75,7 @@ test("on empty space: Select All, Select None, Zoom Extents, Undo, Redo; Escape 
   await expect(vp).toHaveAttribute("data-hash", hash!);
   await expect(vp).toHaveAttribute("data-camera", camera!);
   await expect(vp).toHaveAttribute("data-selection", "0");
+  expect(await undoDepth(page)).toBe(depth);
   // Select All from it selects the box.
   await page.mouse.click(x, y, { button: "right" });
   await item(page, /Select All/).click();
@@ -119,7 +123,7 @@ test("a tool part way through a step ignores the right-click; between steps the 
 });
 
 test("on a section plane: its three commands; inside an open group, Close Group / Component (#107)", async ({ page }) => {
-  const vp = await ready(page);
+  await ready(page);
   await box(page);
   // A plane through the box's middle, square to red.
   await page.getByRole("button", { name: "Tools" }).click();
@@ -153,7 +157,33 @@ test("on a section plane: its three commands; inside an open group, Close Group 
   await expect(item(page, /Close Group \/ Component/)).toBeVisible();
   await item(page, /Close Group \/ Component/).click();
   await expect(hud(page)).toContainText("Edit: Model ·");
-  expect(vp).toBeTruthy();
+  await expect.poll(async () => (await graph(page)).context).toBeNull();
+});
+
+test("a right-click on one of two selected solids keeps both selected, and Hide hides both (#107)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  // A copy 30 in along red, then both selected.
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("m");
+  await page.keyboard.press("Control");
+  const [x0, y0] = await at(page, [0, 0, 0], 1, 1);
+  await page.mouse.move(x0, y0);
+  await page.mouse.click(x0, y0);
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("30");
+  await page.keyboard.press("Enter");
+  await expect(vp).toHaveAttribute("data-objects", "2");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Control+a");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await rightClick(page, [6, 6, 6]);
+  await expect(menu(page)).toBeVisible();
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await item(page, "Hide").click();
+  await expect(hint(page)).toContainText("Hid 2 items");
+  await expect.poll(async () => (await graph(page)).objects.map((o) => o.hidden)).toEqual([true, true]);
 });
 
 test("a right-click on a solid outside the open group closes back to it and selects it, as Select's click does (#107)", async ({ page }) => {
