@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { box } from "./helpers";
+import { answerUnsaved, box, unsavedDialog } from "./helpers";
 import { bridge, desktopBridge, setBridge } from "./tauri";
 
 // Lane 39: in the desktop app the window's title bar follows the page's title, the model's
@@ -10,7 +10,6 @@ import { bridge, desktopBridge, setBridge } from "./tauri";
 // every title the page sent.
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 const SHELF = "C:\\Users\\maker\\Documents\\Sawhorse\\shelf.shz";
-const DISCARD_QUESTION = "Discard the unsaved changes to this model?";
 
 async function ready(page: Page, url = "/") {
   await page.goto(url);
@@ -65,9 +64,9 @@ test("the title bar follows the model: open, an edit's unsaved mark, File > Clos
   await box(page, "24,16", "12");
   await expect(vp).toHaveAttribute("data-objects", "2");
   await titled(page, "• shelf - Sawhorse");
-  await setBridge(page, { answer: "Ok" });
   await (await fileMenu(page)).getByText("Close", { exact: true }).click();
-  await expect.poll(async () => (await bridge(page)).asked).toEqual([DISCARD_QUESTION]);
+  await expect(unsavedDialog(page).locator(".question")).toHaveText("Save the changes to shelf.shz?");
+  await answerUnsaved(page, "Discard Changes");
   await expect(vp).toHaveAttribute("data-objects", "0");
   await titled(page, "Untitled - Sawhorse");
   // Only titles the page itself had, in the order it had them.
@@ -81,14 +80,15 @@ test("an untitled model: the mark comes with the first edit and goes with File >
   await box(page);
   await expect(vp).toHaveAttribute("data-objects", "1");
   await titled(page, "• Untitled - Sawhorse");
-  // No keeps the model and the mark; OK closes it and the mark goes.
+  // Cancel keeps the model and the mark; Discard Changes closes it and the mark goes.
   await (await fileMenu(page)).getByText("Close", { exact: true }).click();
-  await expect.poll(async () => (await bridge(page)).asked).toEqual([DISCARD_QUESTION]);
-  await page.waitForTimeout(800);
+  await expect(unsavedDialog(page).locator(".question")).toHaveText("Save the changes to this model?");
+  await answerUnsaved(page, "Cancel");
+  await expect(unsavedDialog(page)).toHaveCount(0);
   await expect(vp).toHaveAttribute("data-objects", "1");
   await titled(page, "• Untitled - Sawhorse");
-  await setBridge(page, { answer: "Ok" });
   await (await fileMenu(page)).getByText("Close", { exact: true }).click();
+  await answerUnsaved(page, "Discard Changes");
   await expect(vp).toHaveAttribute("data-objects", "0");
   await titled(page, "Untitled - Sawhorse");
   for (const t of (await bridge(page)).titles) expect(["Untitled - Sawhorse", "• Untitled - Sawhorse"]).toContain(t);

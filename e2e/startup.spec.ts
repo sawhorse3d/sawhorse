@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { box } from "./helpers";
-import { bridge, desktopBridge, dropFiles, restart, setBridge } from "./tauri";
+import { answerUnsaved, box, unsavedDialog } from "./helpers";
+import { bridge, desktopBridge, dropFiles, restart } from "./tauri";
 
 // Lane 37 (#45): a double-click on a .shz in Windows Explorer starts Sawhorse with the file's
 // path, and so does a path after the program's name. The shell picks the file from its
@@ -11,7 +11,7 @@ import { bridge, desktopBridge, dropFiles, restart, setBridge } from "./tauri";
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 const SHELF = "C:\\Users\\maker\\Documents\\Sawhorse\\shelf.shz";
 const GONE = "C:\\Users\\maker\\Documents\\Sawhorse\\gone.shz";
-const DISCARD_QUESTION = "Discard the unsaved changes to this model?";
+const UNSAVED_QUESTION = "Save the changes to this model?";
 
 async function ready(page: Page, url = "/") {
   await page.goto(url);
@@ -178,20 +178,22 @@ test("unsaved work from the last run is offered first; Restore brings it back an
   await expect(hint).toContainText("Restored your unsaved work: 1 solid, 3 steps (undo works as before). shelf.shz is not open yet.");
   await expect(page).toHaveTitle("• Untitled - Sawhorse");
   expect((await bridge(page)).reads).toEqual([]);
-  // Opening the file asks about the restored work, as File > Open does: No keeps it.
+  // Opening the file asks about the restored work, as File > Open does: Cancel keeps it.
   const open = hint.getByRole("button", { name: "Open shelf.shz" });
-  await setBridge(page, { answer: "Cancel", delay: 300 });
   await open.click();
-  await expect.poll(async () => (await bridge(page)).asked).toEqual([DISCARD_QUESTION]);
-  await page.waitForTimeout(600);
+  await expect(unsavedDialog(page).locator(".question")).toHaveText(UNSAVED_QUESTION);
+  await answerUnsaved(page, "Cancel");
+  await expect(unsavedDialog(page)).toHaveCount(0);
   await expect(vp).toHaveAttribute("data-hash", work);
   await expect(page).toHaveTitle("• Untitled - Sawhorse");
-  // Yes opens it in place of the work.
-  await setBridge(page, { answer: "Ok" });
+  // Discard Changes opens it in place of the work.
   await open.click();
+  await expect(unsavedDialog(page).locator(".question")).toHaveText(UNSAVED_QUESTION);
+  await answerUnsaved(page, "Discard Changes");
   await expect(page).toHaveTitle("shelf - Sawhorse");
   await expect(vp).toHaveAttribute("data-hash", shelfHash);
-  expect((await bridge(page)).asked).toEqual([DISCARD_QUESTION, DISCARD_QUESTION]);
+  // The question is the page's own (#120): the desktop's message dialog was not used.
+  expect((await bridge(page)).asked).toEqual([]);
 });
 
 test("unsaved work from the last run is offered first; Discard deletes it and opens the file", async ({ page }) => {

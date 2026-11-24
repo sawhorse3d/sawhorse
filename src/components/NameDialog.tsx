@@ -1,6 +1,9 @@
 // A small naming dialog (Make Component): a title, a text field, OK and Cancel. Enter is
-// OK, Esc is Cancel. Shown over the viewport, in the import report's style.
+// OK, Esc is Cancel. Shown over the viewport, in the import report's style. Modal since #120
+// (src/components/Modal.tsx): the page behind takes no clicks or keys while it is up, the
+// focus stays inside it and goes back where it was when it closes.
 import { useState } from "react";
+import { Modal } from "./Modal";
 
 export interface NameRequest {
   title: string;
@@ -19,14 +22,14 @@ export function NameDialog({ req, onClose }: { req: NameRequest; onClose: () => 
     req.onOk(name);
   };
   return (
-    <section className="name-dialog" role="dialog" aria-label={req.title}>
+    <Modal className="name-dialog" label={req.title} onCancel={onClose}>
       <header>
         <b>{req.title}</b>
       </header>
       <label>
         <span>{req.label}</span>
         <input
-          autoFocus
+          data-autofocus=""
           value={v}
           maxLength={64}
           onFocus={(e) => e.currentTarget.select()}
@@ -46,6 +49,6 @@ export function NameDialog({ req, onClose }: { req: NameRequest; onClose: () => 
           Cancel
         </button>
       </div>
-    </section>
+    </Modal>
   );
 }

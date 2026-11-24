@@ -97,3 +97,36 @@ export async function box(page: Page, size = "12,12", h = "6") {
   await expect(page.locator("#hint")).toContainText("Extruded");
 }
 
+
+/** The question over unsaved changes (#120): the app's own dialog, in both builds. */
+export function unsavedDialog(page: Page) {
+  return page.locator("dialog.unsaved-dialog");
+}
+
+export type UnsavedAnswer = "Save" | "Discard Changes" | "Cancel";
+
+/** Wait for the question over unsaved changes, with its three answers, and press one. */
+export async function answerUnsaved(page: Page, answer: UnsavedAnswer) {
+  const d = unsavedDialog(page);
+  await expect(d.getByRole("button")).toHaveText(["Save", "Discard Changes", "Cancel"]);
+  await d.getByRole("button", { name: answer, exact: true }).click();
+}
+
+/**
+ * For a spec that is not about the question: Discard Changes is pressed, in the page itself,
+ * as soon as the question comes up, on this page load and every later one (what the specs
+ * did with `page.on("dialog", (d) => d.accept())` when the question was the browser's own).
+ */
+export async function discardWhenAsked(page: Page) {
+  const install = () => {
+    const press = () => {
+      document.querySelectorAll<HTMLButtonElement>("dialog.unsaved-dialog button").forEach((b) => {
+        if (b.textContent?.trim() === "Discard Changes") b.click();
+      });
+    };
+    new MutationObserver(press).observe(document, { childList: true, subtree: true });
+    press();
+  };
+  await page.addInitScript(install);
+  await page.evaluate(install);
+}

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { answerUnsaved } from "./helpers";
 
 // Lane-3 verifier conditions (lane 4, step 1): the dev autosave survives a reload and is
 // offered back; the status line names solids by display number, never by raw id; the
@@ -99,9 +100,9 @@ test("New clears the autosave: a model as it was started, saved or opened leaves
   const vp = await ready(page);
   await box(page);
   await expect.poll(() => autosaved(page)).toBe(3);
-  page.once("dialog", (d) => void d.accept());
   await page.getByRole("button", { name: "File", exact: true }).click();
   await page.getByRole("menuitem", { name: "New", exact: true }).click();
+  await answerUnsaved(page, "Discard Changes");
   await expect(vp).toHaveAttribute("data-objects", "0");
   await expect.poll(() => autosaved(page)).toBe(0);
   await page.waitForTimeout(600);

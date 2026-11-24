@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 // Scale (lane 4): grips on the selection's bounding box, a face grip with a typed factor,
 // an absolute size with a unit, a mirror (-1), and a tapered leg: the top face of a post
 // scaled about its centre (Ctrl) to half size, checked against the frustum's volume.
-import { at, box, clickAt, near, point, ready, selectAt, solids, type, type V3 } from "./helpers";
+import { at, box, clickAt, discardWhenAsked, near, point, ready, selectAt, solids, type, type V3 } from "./helpers";
 
 /** Put the cursor on a grip (inches) and wait until it is the hot one. */
 async function grip(page: Page, p: V3) {
@@ -105,7 +105,7 @@ async function scaledThenUndone(page: Page) {
 
 test("after Undo the box and its grips are back round the shape; New leaves none over the empty model (#76)", async ({ page }) => {
   const vp = await ready(page);
-  page.on("dialog", (d) => void d.accept());
+  await discardWhenAsked(page);
   await scaledThenUndone(page);
   // The solid is 24 in again, and so is the box with its grips (before, they stayed at
   // 36 in, where nothing was).
@@ -557,7 +557,7 @@ test("after Redo the box and its grips are round the scaled shape again (#76)", 
 
 test("File > Close with Scale active leaves no box over the empty model (#76)", async ({ page }) => {
   const vp = await ready(page);
-  page.on("dialog", (d) => void d.accept());
+  await discardWhenAsked(page);
   await scaleOnBoard(page);
   await page.getByRole("button", { name: "File", exact: true }).click();
   await page.getByRole("menuitem", { name: "Close", exact: true }).click();
@@ -571,7 +571,7 @@ test("Open with Scale active leaves no box, and what was selected scales nothing
   await page.goto("/?io=basic&autosave=0");
   const vp = page.locator("main.vp");
   await expect(vp).toHaveAttribute("data-kernel", "ready", { timeout: 15_000 });
-  page.on("dialog", (d) => void d.accept());
+  await discardWhenAsked(page);
   // A 12 x 12 x 6 in box saved. Its solid has the number the board drawn next will have.
   await box(page);
   const [d] = await Promise.all([page.waitForEvent("download"), page.keyboard.press("Control+s")]);

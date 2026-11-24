@@ -43,9 +43,11 @@ pub const LOGOUT: u32 = 1;
 pub fn word(word: &str) -> Option<bool> {
     match word {
         "unsaved" => Some(true),
-        // "close": the person said Yes to discarding (or nothing was unsaved by then), and
-        // the window is destroyed next.
+        // "close": the person answered Discard Changes, or Save and the model is saved (or
+        // nothing was unsaved by then), and the window is destroyed next.
         "saved" | "close" => Some(false),
+        // "saving" (#120): a save chosen at the question is running. The model is unsaved
+        // until "saved" says otherwise, so the hold stays as it is.
         _ => None,
     }
 }
@@ -237,7 +239,7 @@ mod tests {
         assert_eq!(word("unsaved"), Some(true));
         assert_eq!(word("saved"), Some(false));
         assert_eq!(word("close"), Some(false));
-        for none in ["keep", "failed", "exit", "", "Unsaved"] {
+        for none in ["keep", "saving", "failed", "exit", "", "Unsaved"] {
             assert_eq!(word(none), None, "{none:?}");
         }
     }
@@ -264,7 +266,7 @@ mod tests {
             .collect();
         assert_eq!(
             heard,
-            ["unsaved", "saved", "keep", "close", "failed", "exit"],
+            ["unsaved", "saved", "keep", "close", "saving", "failed", "exit"],
             "close-guard's words changed: give each new one its rule in logout-hold's word()"
         );
     }

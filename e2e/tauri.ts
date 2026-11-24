@@ -3,10 +3,19 @@ import type { Page } from "@playwright/test";
 // Lane 35: the desktop app's bridge, stood in for in the browser build, so a spec can run the
 // page as it runs inside the desktop shell (src/io/files.ts isTauri: `__TAURI_INTERNALS__`).
 // It answers what the close question needs: the event plugin's listen and unlisten, the
-// dialog plugin's message dialog (the question), and the shell's close_guard command, which
+// dialog plugin's message dialog, and the shell's close_guard command, which
 // it plays the way src-tauri/src/lib.rs does with sawhorse_close_guard (a close request over
 // unsaved changes sends sawhorse://close-requested; "close" ends the window; "exit" is a
 // close request). Every other command is refused, as a shell without it would.
+//
+// #120: the question over unsaved changes is the page's own dialog now, which a spec answers
+// by pressing its buttons (e2e/helpers.ts, answerUnsaved); the message dialog is left for
+// "... already exists. Replace it?". For the Save answer the stand-in has the dialog plugin's
+// Save dialog (`saves`, `saveAs`: the path it answers, null for one dismissed; with `saveHold`
+// it stays up until answerSave()) and the shell's save_file_atomic (`written`; `saveFails`
+// makes it refuse with those words; it writes only a path that is in the fs scope, and the
+// file is then on the stand-in's disk). The "saving" the page says while a save runs is in `said`
+// with every other word; the shell's rule for it is tested in src-tauri/close-guard.
 //
 // Lane 37 (#45): the file the app was started with. The shell's start_file command is played
 // as lib.rs plays it: the first call adds the path to the fs scope and returns it, every later
@@ -33,7 +42,7 @@ import type { Page } from "@playwright/test";
 // (`folders`); on Windows and macOS, nothing. The dialog plugin's open and save are recorded
 // with the options the page gave (`opens`, `saves`) and answered with `pick` and `saveAs`; a
 // picked path goes into the fs scope, as the plugin puts it. The shell's save_file_atomic is
-// recorded with the path it was asked to write (`written`) and the last file's bytes
+// recorded with the path it wrote (`written`) and the last file's bytes
 // (`bytes`). `folderFails` makes dialog_folder throw, as a shell from before it would, and
 // `folderDelay` makes it answer that many ms late, as a folder on a drive that is slow to
 // answer would; `answered` counts the answers it has given, and `answeredAtOpen` how many it
@@ -111,9 +120,15 @@ export interface TauriMock {
   /** The options of every Save dialog, and what the next one answers (null: cancelled). */
   saves: Record<string, unknown>[];
   saveAs: string | null;
-  /** Every path save_file_atomic was asked to write, in order (this page load). */
+  /** The Save dialog stays up until answerSave(), as it does while a person chooses a name. */
+  saveHold: boolean;
+  /** Answer the Save dialog that is up (saveHold) with `saveAs`. */
+  answerSave(): void;
+  /** save_file_atomic refuses with these words (a disk that is full). */
+  saveFails: string | null;
+  /** Every path save_file_atomic wrote, in order (this page load). */
   written: string[];
-  /** The bytes of the last file save_file_atomic was asked to write. */
+  /** The bytes of the last file save_file_atomic wrote. */
   bytes: number[];
 }
 
@@ -144,6 +159,8 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
     keep();
     const files = start.files ?? {};
     const scope = new Set<string>();
+    /** The Save dialog that is up (saveHold), waiting for answerSave(). */
+    let saveUp: ((path: string | null) => void) | null = null;
     /** The bytes of a file in the scope, as the fs plugin would read them. */
     const read = (path: string): Uint8Array => {
       mock.reads.push(path);
@@ -178,6 +195,13 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
       pick: null,
       saves: [],
       saveAs: null,
+      saveHold: false,
+      answerSave() {
+        const up = saveUp;
+        saveUp = null;
+        up?.(mock.saveAs);
+      },
+      saveFails: null,
       written: [],
       bytes: [],
       request() {
@@ -292,14 +316,27 @@ export async function desktopBridge(page: Page, platform = "Win32", start: Deskt
               }
               return mock.pick;
             }
-            case "plugin:dialog|save":
+            case "plugin:dialog|save": {
+              // The dialog plugin: the path chosen is added to the fs scope, then returned.
               mock.saves.push(args.options as Record<string, unknown>);
-              return mock.saveAs;
-            case "save_file_atomic":
-              // lib.rs writes the bytes to the path in the x-path header; here it is recorded.
-              mock.written.push(decodeURIComponent(options.headers?.["x-path"] ?? ""));
-              mock.bytes = Array.from(args as unknown as Uint8Array);
+              const path = mock.saveHold ? await new Promise<string | null>((r) => (saveUp = r)) : mock.saveAs;
+              if (path !== null) scope.add(path);
+              return path;
+            }
+            case "save_file_atomic": {
+              // lib.rs: the bytes are the body, the path a percent-encoded header; only a path
+              // in the scope (one picked in a Save dialog, or opened) is written.
+              const path = decodeURIComponent(String(options.headers?.["x-path"] ?? ""));
+              if (!scope.has(path)) throw `${path} was not chosen in a Save dialog`;
+              if (mock.saveFails !== null) throw mock.saveFails;
+              const bytes = args as unknown as Uint8Array;
+              mock.written.push(path);
+              mock.bytes = Array.from(bytes);
+              let bin = "";
+              for (const b of bytes) bin += String.fromCharCode(b);
+              files[path] = btoa(bin);
               return null;
+            }
             case "plugin:fs|stat": {
               const bytes = read(String(args.path));
               const none = { mtime: null, atime: null, birthtime: null, fileAttributes: null, dev: null, ino: null, mode: null, nlink: null, uid: null, gid: null, rdev: null, blksize: null, blocks: null };
@@ -330,13 +367,22 @@ export async function savedBytes(page: Page): Promise<Uint8Array> {
 }
 
 /** Change how the stand-in behaves. */
-export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords" | "titleFails" | "openFails" | "folders" | "folderFails" | "folderDelay" | "pick" | "saveAs">>): Promise<void> {
+export async function setBridge(page: Page, over: Partial<Pick<TauriMock, "answer" | "delay" | "dialog" | "failWords" | "titleFails" | "openFails" | "folders" | "folderFails" | "folderDelay" | "pick" | "saveAs" | "saveHold" | "saveFails">>): Promise<void> {
   await page.evaluate((o) => Object.assign((window as unknown as { __tauriMock: TauriMock }).__tauriMock, o), over);
 }
 
 /** A close request from the system (the window's X, Alt+F4). */
 export async function closeWindow(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as { __tauriMock: TauriMock }).__tauriMock.request());
+}
+
+/** Answer the Save dialog that is up (saveHold): with `path`, or dismissed (null). */
+export async function answerSave(page: Page, path: string | null): Promise<void> {
+  await page.evaluate((p) => {
+    const m = (window as unknown as { __tauriMock: TauriMock }).__tauriMock;
+    m.saveAs = p;
+    m.answerSave();
+  }, path);
 }
 
 /** Files dropped on the window (allowed in the scope, then sawhorse://dropped). */

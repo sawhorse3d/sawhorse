@@ -11,7 +11,7 @@ import { curveModels } from "../src/io/corpus/models";
 // SketchUp circle, arc and welded curve importing as a circle, an arc and a polyline (lane 25,
 // openskp 1.4.0), the circle selecting whole. Positions are inches (the helpers' unit); the
 // model's display units are millimetres.
-import { IN, at, clickAt, point, selectAt, type, type V3, setUnits } from "./helpers";
+import { IN, at, clickAt, discardWhenAsked, point, selectAt, type, type V3, setUnits } from "./helpers";
 
 const requireKernel = !!process.env.REQUIRE_KERNEL;
 const MM = 0.001;
@@ -23,7 +23,7 @@ async function curves(page: Page): Promise<Curve[]> {
 }
 
 async function ready(page: Page) {
-  page.on("dialog", (d) => void d.accept());
+  await discardWhenAsked(page);
   await page.goto("/?autosave=0&io=basic");
   const vp = page.locator("main.vp");
   await expect(vp).not.toHaveAttribute("data-kernel", "loading", { timeout: 15_000 });
