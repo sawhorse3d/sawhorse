@@ -554,7 +554,7 @@ fn unnamed_solids_in_an_assembly_group_share_the_group_s_name() {
         json!({"name": "Shelf", "thickness": 19.0, "width": 280.0, "length": 860.0, "position": [0.0, 0.0, 200.0], "component": true}),
     )["board"]["instance"]
         .clone();
-    s.ok(
+    let made = s.ok(
         "apply_ops",
         json!({"name": "Carcass", "ops": [
             {"op": "rename", "item": {"object": a}, "name": null},
@@ -578,6 +578,23 @@ fn unnamed_solids_in_an_assembly_group_share_the_group_s_name() {
         sum["shared_names"],
         json!([{"name": "Carcass · solid", "parts": 2}]),
         "{sum}"
+    );
+    // Renaming the group renames both solids' rows: `changes` lists them as changed.
+    let group = made["outcome"]["outcomes"][2]["group"].clone();
+    assert!(group.is_u64(), "{made}");
+    let graph = s.ok(
+        "apply_ops",
+        json!({"name": "Rename", "ops": [{"op": "rename", "item": {"node": group}, "name": "Cabinet"}]}),
+    );
+    let changed = graph["changes"]["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 2, "{graph}");
+    for c in changed {
+        assert_eq!(c["before"]["name"], "Carcass · solid", "{graph}");
+        assert_eq!(c["after"]["name"], "Cabinet · solid", "{graph}");
+    }
+    assert!(
+        graph["changes"]["added"].as_array().unwrap().is_empty(),
+        "{graph}"
     );
 }
 
