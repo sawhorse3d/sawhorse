@@ -11,7 +11,9 @@
 //!   rolls that up through the definitions; the world tree, where nested instances are
 //!   materialised, gives the same count, which the fuzzer checks);
 //! - a group with only solids is a part with quantity 1, named from the Outliner;
-//! - a plain solid is a part with quantity 1, named from the Outliner ("Solid 3");
+//! - a plain solid is a part with quantity 1, named from the Outliner ("Solid 3"); an
+//!   unnamed one directly in a named assembly group reads by the group ("Carcass · solid",
+//!   #137);
 //! - a solid or solid-only group inside an assembly *component* is a member part of that
 //!   definition: one piece per copy of the assembly.
 //!
@@ -1419,6 +1421,20 @@ impl Model {
                             "{} · solid",
                             self.defs[from_public::<DefId>(definition)].name
                         ),
+                        // Directly in a group that is walked into (an assembly group, #137):
+                        // by the group's name, as in an assembly component. A group with no
+                        // name leaves the Outliner's number.
+                        (None, PartKey::Object(_)) => match o
+                            .member
+                            .parent
+                            .map(|p| &self.nodes[p])
+                            .filter(|g| matches!(g.kind, NodeKind::Group))
+                            .and_then(|g| g.name.as_deref())
+                            .filter(|s| !s.trim().is_empty())
+                        {
+                            Some(group) => format!("{group} · solid"),
+                            None => format!("Solid {}", o.number()),
+                        },
                         _ => format!("Solid {}", o.number()),
                     };
                     (

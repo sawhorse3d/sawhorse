@@ -542,6 +542,62 @@ fn only_a_component_s_own_row_names_its_definition() {
     assert_eq!(r["changes"]["added"][0]["definition"], def, "{r}");
 }
 
+/// #137: unnamed solids directly in a group that holds a component read by the group's name,
+/// so two of them share it and `summary` lists it under `shared_names`.
+#[test]
+fn unnamed_solids_in_an_assembly_group_share_the_group_s_name() {
+    let mut s = Session::new(&folder("assembly-group-names"));
+    let a = s.ok("add_board", board("Back", 0.0))["board"]["object"].clone();
+    let b = s.ok("add_board", board("Base", 100.0))["board"]["object"].clone();
+    let shelf = s.ok(
+        "add_board",
+        json!({"name": "Shelf", "thickness": 19.0, "width": 280.0, "length": 860.0, "position": [0.0, 0.0, 200.0], "component": true}),
+    )["board"]["instance"]
+        .clone();
+    let made = s.ok(
+        "apply_ops",
+        json!({"name": "Carcass", "ops": [
+            {"op": "rename", "item": {"object": a}, "name": null},
+            {"op": "rename", "item": {"object": b}, "name": null},
+            {"op": "make_group", "items": [{"object": a}, {"object": b}, {"node": shelf}], "name": "Carcass"},
+        ]}),
+    );
+    let sum = s.ok("summary", json!({}));
+    let names: Vec<&str> = sum["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["Shelf", "Carcass · solid", "Carcass · solid"],
+        "{sum}"
+    );
+    assert_eq!(
+        sum["shared_names"],
+        json!([{"name": "Carcass · solid", "parts": 2}]),
+        "{sum}"
+    );
+    // Renaming the group renames both solids' rows: `changes` lists them as changed.
+    let group = made["outcome"]["outcomes"][2]["group"].clone();
+    assert!(group.is_u64(), "{made}");
+    let graph = s.ok(
+        "apply_ops",
+        json!({"name": "Rename", "ops": [{"op": "rename", "item": {"node": group}, "name": "Cabinet"}]}),
+    );
+    let changed = graph["changes"]["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 2, "{graph}");
+    for c in changed {
+        assert_eq!(c["before"]["name"], "Carcass · solid", "{graph}");
+        assert_eq!(c["after"]["name"], "Cabinet · solid", "{graph}");
+    }
+    assert!(
+        graph["changes"]["added"].as_array().unwrap().is_empty(),
+        "{graph}"
+    );
+}
+
 /// #116: the tool list and the instructions point an agent at components: add_board takes
 /// `component`, and apply_ops names `nodes` beside `objects` for copy and array.
 #[test]

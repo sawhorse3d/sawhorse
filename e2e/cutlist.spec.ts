@@ -326,3 +326,25 @@ test("long part names and the reason a part is not counted read in full; the pan
   expect(vp.width).toBeGreaterThan(900);
   await page.screenshot({ path: test.info().outputPath("cutlist-long-names.png") });
 });
+
+// #137: a group holding a component is an assembly and is walked into. A solid in it that
+// was never named reads by the group's name, as one in an assembly component does, not
+// by its Outliner number; a named one keeps its name.
+test("an unnamed solid in a group that holds a component reads by the group's name", async ({ page }) => {
+  const shz = await buildShz((apply) => {
+    const block = (x: number, w: number, d: number, h: number) => {
+      const drawn = apply({ op: "draw", target: { on: "plane", origin: [0, 0, 0], normal: [0, 0, 1] }, points: [[x * IN, 0, 0], [(x + w) * IN, 0, 0], [(x + w) * IN, d * IN, 0], [x * IN, d * IN, 0]], closed: true });
+      return apply({ op: "extrude", sketch: drawn.sketch, region: drawn.inside, distance: h * IN }).object;
+    };
+    const back = block(0, 0.75, 12, 24);
+    const side = block(2, 0.75, 12, 30);
+    apply({ op: "rename", item: { object: side }, name: "Side" });
+    const shelf = apply({ op: "make_component", items: [{ object: block(4, 0.75, 11, 34) }], name: "Shelf" });
+    apply({ op: "make_group", items: [{ object: back }, { object: side }, { node: shelf.instance }], name: "Carcass" });
+  });
+  await openShz(page, shz, 3, "issue137.shz");
+  await page.getByRole("tab", { name: "Cut list" }).click();
+  const names = page.locator(".cutlist tbody tr[data-part] .name");
+  // In Outliner order: the group's component, then its solids as drawn.
+  await expect(names).toHaveText(["Shelf", "Carcass · solid", "Side"], { useInnerText: true });
+});

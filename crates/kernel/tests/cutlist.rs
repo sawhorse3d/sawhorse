@@ -574,6 +574,384 @@ fn plain_solids_and_solid_groups_are_parts_of_their_own() {
     assert_eq!(l.rows[0].grain, Grain::Width);
 }
 
+/// A group holding `items` under `name`. Returns its node id.
+fn group(d: &mut Document, items: Vec<Item>, name: Option<&str>) -> u64 {
+    match ok(
+        d,
+        Op::MakeGroup {
+            items,
+            name: name.map(str::to_string),
+        },
+    ) {
+        OpOutcome::GroupCreated { group } => group,
+        o => panic!("{o:?}"),
+    }
+}
+
+fn names(l: &CutList) -> Vec<&str> {
+    l.rows.iter().map(|r| r.name.as_str()).collect()
+}
+
+#[test]
+fn an_unnamed_solid_in_an_assembly_group_reads_by_the_group_s_name() {
+    // #137: "Carcass" holds a component, so it is walked into; its unnamed solid reads
+    // like one in an assembly component, by the group's name, and a named one keeps its own.
+    let mut d = Document::with_ground_sketch();
+    let back = board(&mut d, 0.0, 0.0, 0.0, 0.75, 12.0, 24.0);
+    let side = board(&mut d, 2.0, 0.0, 0.0, 0.75, 12.0, 30.0);
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Object(side),
+            name: Some("Side".into()),
+        },
+    );
+    let (shelf, _) = part(&mut d, "Shelf", None, [4.0, 0.0, 0.0, 0.75, 11.0, 34.0]);
+    let carcass = group(
+        &mut d,
+        vec![Item::Object(back), Item::Object(side), Item::Node(shelf)],
+        Some("Carcass"),
+    );
+    let l = list(d.model());
+    let mut got = names(&l);
+    got.sort();
+    assert_eq!(got, vec!["Carcass · solid", "Shelf", "Side"]);
+    assert_eq!(row(&l, "Carcass · solid").key, PartKey::Object(back));
+    // Renaming the group renames the row; naming the solid wins over the group.
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Node(carcass),
+            name: Some("Cabinet".into()),
+        },
+    );
+    assert_eq!(
+        row(&list(d.model()), "Cabinet · solid").key,
+        PartKey::Object(back)
+    );
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Object(back),
+            name: Some("Back".into()),
+        },
+    );
+    assert_eq!(row(&list(d.model()), "Back").key, PartKey::Object(back));
+}
+
+#[test]
+fn an_unnamed_solid_reads_by_the_nearest_group_and_an_unnamed_group_leaves_its_number() {
+    let mut d = Document::with_ground_sketch();
+    let inner_solid = board(&mut d, 0.0, 0.0, 0.0, 0.75, 12.0, 24.0);
+    let outer_solid = board(&mut d, 2.0, 0.0, 0.0, 0.75, 10.0, 20.0);
+    let top_solid = board(&mut d, 6.0, 0.0, 0.0, 1.0, 5.0, 20.0);
+    let (shelf, _) = part(&mut d, "Shelf", None, [4.0, 0.0, 0.0, 0.75, 11.0, 34.0]);
+    let carcass = group(
+        &mut d,
+        vec![Item::Object(inner_solid), Item::Node(shelf)],
+        Some("Carcass"),
+    );
+    let outer = group(
+        &mut d,
+        vec![Item::Node(carcass), Item::Object(outer_solid)],
+        Some("Unit"),
+    );
+    let l = list(d.model());
+    assert_eq!(row(&l, "Carcass · solid").key, PartKey::Object(inner_solid));
+    assert_eq!(row(&l, "Unit · solid").key, PartKey::Object(outer_solid));
+    // The nearest group, not the nearest named one: with "Carcass" unnamed, its solid keeps
+    // its number though "Unit" around it has a name.
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Node(carcass),
+            name: None,
+        },
+    );
+    let unnamed = list(d.model());
+    let inner = &unnamed
+        .rows
+        .iter()
+        .find(|r| r.key == PartKey::Object(inner_solid))
+        .unwrap()
+        .name;
+    assert!(inner.starts_with("Solid "), "{inner}");
+    assert_eq!(
+        row(&unnamed, "Unit · solid").key,
+        PartKey::Object(outer_solid)
+    );
+    ok(&mut d, Op::Undo);
+    assert_eq!(list(d.model()), l);
+    // A solid at the top level keeps its Outliner number.
+    let top = &l
+        .rows
+        .iter()
+        .find(|r| r.key == PartKey::Object(top_solid))
+        .unwrap()
+        .name;
+    assert!(top.starts_with("Solid "), "{top}");
+    let number = |l: &CutList| {
+        let name = &l
+            .rows
+            .iter()
+            .find(|r| r.key == PartKey::Object(outer_solid))
+            .unwrap()
+            .name;
+        assert!(name.starts_with("Solid "), "{name}");
+        assert!(
+            !names(l).iter().any(|n| n.contains("Group")),
+            "{:?}",
+            names(l)
+        );
+    };
+    // A group named only spaces, which only a hand-edited file can hold (Rename refuses
+    // it), names nothing: its solid keeps its number.
+    let json = serde_json::to_string(&d.model().snapshot()).unwrap();
+    // Written in `groups` and in `nodes`.
+    assert_eq!(json.matches("\"name\":\"Unit\"").count(), 2, "{json}");
+    let edited = json.replace("\"name\":\"Unit\"", "\"name\":\"   \"");
+    let back = Model::from_snapshot(&serde_json::from_str(&edited).unwrap()).unwrap();
+    number(&list(&back));
+    // An unnamed group names nothing either.
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Node(outer),
+            name: None,
+        },
+    );
+    number(&list(d.model()));
+}
+
+#[test]
+fn a_group_of_solids_alone_and_a_solid_in_an_assembly_component_are_named_as_before() {
+    // The part-container group keeps its own name; a solid in an assembly component keeps
+    // the definition's name (#137 changes only the solid directly in an assembly group).
+    let mut d = Document::with_ground_sketch();
+    let a = board(&mut d, 0.0, 0.0, 0.0, 2.0, 2.0, 30.0);
+    let glue = group(&mut d, vec![Item::Object(a)], Some("Glue-up"));
+    let bottom = board(&mut d, 5.0, 0.0, 0.0, 11.5, 16.0, 0.25);
+    let (side, _) = part(
+        &mut d,
+        "Drawer side",
+        None,
+        [20.0, 0.0, 0.0, 0.5, 16.0, 4.0],
+    );
+    let inner = group(
+        &mut d,
+        vec![Item::Object(bottom), Item::Node(side)],
+        Some("Inner"),
+    );
+    ok(
+        &mut d,
+        Op::MakeComponent {
+            items: vec![Item::Node(inner)],
+            name: "Drawer".into(),
+        },
+    );
+    let l = list(d.model());
+    assert_eq!(row(&l, "Glue-up").key, PartKey::Node(glue));
+    let mut got = names(&l);
+    got.sort();
+    assert_eq!(got, vec!["Drawer side", "Drawer · solid", "Glue-up"]);
+}
+
+#[test]
+fn an_unnamed_solid_in_a_named_group_inside_a_component_reads_by_the_component() {
+    // Make Component of one group takes the group's contents, so the named group here is
+    // made inside an open copy of the component. Its solid is a member of the definition
+    // and reads by the definition, as before #137, not by the group.
+    let mut d = Document::with_ground_sketch();
+    let back = board(&mut d, 0.0, 0.0, 0.0, 0.75, 12.0, 24.0);
+    let (shelf, _) = part(&mut d, "Shelf", None, [4.0, 0.0, 0.0, 0.75, 11.0, 34.0]);
+    let cabinet = match ok(
+        &mut d,
+        Op::MakeComponent {
+            items: vec![Item::Object(back), Item::Node(shelf)],
+            name: "Cabinet".into(),
+        },
+    ) {
+        OpOutcome::ComponentCreated { instance, .. } => instance,
+        o => panic!("{o:?}"),
+    };
+    ok(
+        &mut d,
+        Op::SetContext {
+            node: Some(cabinet),
+        },
+    );
+    let m = d.model();
+    let mut items: Vec<Item> = m
+        .objects()
+        .into_iter()
+        .filter(|(_, o)| o.membership().parent() == Some(cabinet))
+        .map(|(id, _)| Item::Object(id))
+        .collect();
+    items.extend(
+        m.nodes()
+            .into_iter()
+            .filter(|(_, n)| n.member.parent() == Some(cabinet))
+            .map(|(id, _)| Item::Node(id)),
+    );
+    assert_eq!(items.len(), 2, "{items:?}");
+    let carcass = group(&mut d, items, Some("Carcass"));
+    ok(&mut d, Op::LeaveContext);
+    let node = d.model().node(carcass).unwrap();
+    assert_eq!(node.name.as_deref(), Some("Carcass"));
+    assert_eq!(node.member.parent(), Some(cabinet));
+    let l = list(d.model());
+    let mut got = names(&l);
+    got.sort();
+    assert_eq!(got, vec!["Cabinet · solid", "Shelf"]);
+    assert!(
+        matches!(row(&l, "Cabinet · solid").key, PartKey::Member { .. }),
+        "{l:?}"
+    );
+}
+
+/// The name of the row with `key`.
+fn name_of(l: &CutList, key: PartKey) -> &str {
+    &l.rows
+        .iter()
+        .find(|r| r.key == key)
+        .unwrap_or_else(|| panic!("no row {key:?}: {:?}", names(l)))
+        .name
+}
+
+#[test]
+fn an_assembly_group_s_name_reads_whole_whatever_is_hidden_locked_tagged_or_open() {
+    // #137: the group's name, at the 64-character limit, comes through whole, and nothing
+    // but the tree decides it: not a hidden solid (Visible only off), a solid on a tag, a
+    // hidden or locked group, or a context open (the group itself or another one). An
+    // unnamed group of solids inside the assembly group is a part of its own and keeps
+    // "Group": the group's name goes only to the solids directly in it.
+    let long = "A carcass name of sixty-four characters, kept whole in the row 4";
+    assert_eq!(long.chars().count(), 64);
+    let want = format!("{long} · solid");
+    let mut d = Document::with_ground_sketch();
+    let back = board(&mut d, 0.0, 0.0, 0.0, 0.75, 12.0, 24.0);
+    let side = board(&mut d, 2.0, 0.0, 0.0, 0.75, 10.0, 20.0);
+    let strip = board(&mut d, 8.0, 0.0, 0.0, 1.0, 3.0, 20.0);
+    let inner = group(&mut d, vec![Item::Object(strip)], None);
+    let (shelf, _) = part(&mut d, "Shelf", None, [4.0, 0.0, 0.0, 0.75, 11.0, 34.0]);
+    let carcass = group(
+        &mut d,
+        vec![
+            Item::Object(back),
+            Item::Object(side),
+            Item::Node(inner),
+            Item::Node(shelf),
+        ],
+        Some(long),
+    );
+    let lone = board(&mut d, 30.0, 0.0, 0.0, 0.75, 5.0, 10.0);
+    let other = group(&mut d, vec![Item::Object(lone)], Some("Other"));
+    let check = |d: &Document, why: &str| {
+        let l = list(d.model());
+        for o in [back, side] {
+            assert_eq!(name_of(&l, PartKey::Object(o)), want, "{why}");
+        }
+        assert_eq!(name_of(&l, PartKey::Node(inner)), "Group", "{why}");
+        assert_eq!(name_of(&l, PartKey::Node(other)), "Other", "{why}");
+    };
+    check(&d, "as made");
+    ok(
+        &mut d,
+        Op::SetHidden {
+            items: vec![Item::Object(back)],
+            hidden: true,
+        },
+    );
+    ok(
+        &mut d,
+        Op::CreateTag {
+            name: "Carcass parts".into(),
+            color: None,
+        },
+    );
+    ok(
+        &mut d,
+        Op::TagItems {
+            items: vec![Item::Object(side)],
+            tag: Some("Carcass parts".into()),
+        },
+    );
+    check(&d, "a hidden solid and a solid on a tag");
+    ok(
+        &mut d,
+        Op::SetHidden {
+            items: vec![Item::Node(carcass)],
+            hidden: true,
+        },
+    );
+    check(&d, "the group hidden");
+    ok(
+        &mut d,
+        Op::SetHidden {
+            items: vec![Item::Node(carcass)],
+            hidden: false,
+        },
+    );
+    ok(
+        &mut d,
+        Op::SetLocked {
+            items: vec![Item::Node(carcass)],
+            locked: true,
+        },
+    );
+    check(&d, "the group locked");
+    ok(
+        &mut d,
+        Op::SetLocked {
+            items: vec![Item::Node(carcass)],
+            locked: false,
+        },
+    );
+    ok(
+        &mut d,
+        Op::SetContext {
+            node: Some(carcass),
+        },
+    );
+    check(&d, "the group open");
+    ok(&mut d, Op::LeaveContext);
+    ok(&mut d, Op::SetContext { node: Some(other) });
+    check(&d, "another group open");
+}
+
+#[test]
+fn hand_edited_names_with_edge_spaces_read_as_stored() {
+    // Only a hand-edited file can hold these: a group name with spaces at its edges, and a
+    // solid named only spaces. The row shows the
+    // group's name as stored, and the solid keeps its stored name, as before #137.
+    let mut d = Document::with_ground_sketch();
+    let back = board(&mut d, 0.0, 0.0, 0.0, 0.75, 12.0, 24.0);
+    let side = board(&mut d, 2.0, 0.0, 0.0, 0.75, 12.0, 30.0);
+    ok(
+        &mut d,
+        Op::Rename {
+            item: Item::Object(side),
+            name: Some("Side".into()),
+        },
+    );
+    let (shelf, _) = part(&mut d, "Shelf", None, [4.0, 0.0, 0.0, 0.75, 11.0, 34.0]);
+    group(
+        &mut d,
+        vec![Item::Object(back), Item::Object(side), Item::Node(shelf)],
+        Some("Carcass"),
+    );
+    let json = serde_json::to_string(&d.model().snapshot()).unwrap();
+    assert_eq!(json.matches("\"name\":\"Carcass\"").count(), 2, "{json}");
+    assert_eq!(json.matches("\"name\":\"Side\"").count(), 1, "{json}");
+    let edited = json
+        .replace("\"name\":\"Carcass\"", "\"name\":\"  Carcass \"")
+        .replace("\"name\":\"Side\"", "\"name\":\"   \"");
+    let m = Model::from_snapshot(&serde_json::from_str(&edited).unwrap()).unwrap();
+    let l = list(&m);
+    assert_eq!(name_of(&l, PartKey::Object(back)), "  Carcass  · solid");
+    assert_eq!(name_of(&l, PartKey::Object(side)), "   ");
+}
+
 #[test]
 fn a_tapered_leg_is_shaped_and_measured_from_its_blank() {
     let mut d = Document::with_ground_sketch();
