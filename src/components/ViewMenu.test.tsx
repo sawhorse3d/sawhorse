@@ -101,6 +101,9 @@ describe("which list a right-click opens, from the selection it leaves (#139)", 
   const sketchEdge: Entity = { kind: "edge", owner: sketch, a: [0, 0, 0], b: [1, 0, 0], drawn: true };
   const sketchPoint: Entity = { kind: "vertex", owner: sketch, at: [0, 0, 0] };
   const sketchCurve: Entity = { kind: "curve", owner: sketch, curve: 1 };
+  /** One segment of that curve, as an edge (an edge carries its curve's id): an edge, not
+   * the curve, so it gives no Explode Curve. */
+  const curveSegment: Entity = { kind: "edge", owner: sketch, a: [0, 0, 0], b: [1, 0, 0], drawn: true, curve: 1 };
   const guideEdge: Entity = { kind: "edge", owner: guideOwner, a: [0, 0, 0], b: [1, 0, 0], drawn: false };
   const rim: Entity = { kind: "curve", owner: solid, curve: 2 };
   const solidEdge: Entity = { kind: "edge", owner: solid, a: [0, 0, 0], b: [1, 0, 0], drawn: false };
@@ -121,7 +124,7 @@ describe("which list a right-click opens, from the selection it leaves (#139)", 
   });
 
   it("a dimension, a guide, sketch edges or regions, alone or together: Delete alone", () => {
-    for (const sel of [[dimension], [guide], [region], [sketchEdge], [guideEdge], [dimension, guide, region, sketchEdge]]) {
+    for (const sel of [[dimension], [guide], [region], [sketchEdge], [guideEdge], [curveSegment], [dimension, guide, region, sketchEdge, curveSegment]]) {
       expect(menuTarget(true, sel), JSON.stringify(sel)).toBe("drawn");
     }
   });
@@ -155,7 +158,7 @@ describe("which list a right-click opens, from the selection it leaves (#139)", 
   it("against the rule before #139, over 20,000 random selections: only a solid's list changes, and only where its other items were greyed out", () => {
     /** The rule `onContextClick` had before #139. */
     const before = (on: boolean, sel: Entity[]): ViewMenuTarget => (!on ? "empty" : sel.length === 1 && sel[0].kind === "section" ? "section" : "selection");
-    const pool: Entity[] = [dimension, guide, region, sketchEdge, sketchPoint, sketchCurve, guideEdge, rim, solidEdge, solidPoint, face, object, node, section, { kind: "section", section: 2 }];
+    const pool: Entity[] = [dimension, guide, region, sketchEdge, curveSegment, sketchPoint, sketchCurve, guideEdge, rim, solidEdge, solidPoint, face, object, node, section, { kind: "section", section: 2 }];
     let seed = 20261125;
     const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
     const counts = { same: 0, drawn: 0, curve: 0 };

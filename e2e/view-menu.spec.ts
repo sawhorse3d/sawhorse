@@ -476,6 +476,40 @@ test("on a guide only Delete, which erases it in one undo step; with the solid u
   await expect(menu(page)).toHaveCount(0);
 });
 
+test("inside an open group a sketch region offers Delete and Close Group / Component, and Delete erases it there (#139)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+g");
+  await expect(hint(page)).toContainText("Grouped");
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit Group / Component" }).click();
+  await expect(hud(page)).toContainText("Edit: Model › Group");
+  // A 6 x 6 in rectangle on the ground beside the box, drawn inside the open group.
+  await page.getByRole("button", { name: "Top", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "top");
+  await page.keyboard.press("r");
+  await clickAt(page, [20, 20, 0], /grid|axis|free|/);
+  await type(page, "6,6");
+  await expect(hint(page)).toContainText("Rectangle 6 × 6 in");
+  // Select, with no Esc: Esc with nothing selected would close the group.
+  await page.keyboard.press("Space");
+  await expect(hud(page)).toContainText("Edit: Model › Group");
+  await hover(page, [23, 23, 0], "region", 1, -1, "data-hover");
+  await rightClick(page, [23, 23, 0]);
+  await expect(menu(page)).toBeVisible();
+  const names = (await menu(page).getByRole("menuitem").allTextContents()).map((n) => n.replace(/\s+/g, " ").trim());
+  expect(names).toEqual(["Delete Delete", "Close Group / Component Esc"]);
+  const depth = await undoDepth(page);
+  await item(page, /^Delete/).click();
+  await expect(menu(page)).toHaveCount(0);
+  await expect(hint(page)).toContainText("Erased 1 item");
+  await expect.poll(() => undoDepth(page)).toBe(depth + 1);
+  // Still inside the group: Delete did not close it.
+  await expect(hud(page)).toContainText("Edit: Model › Group");
+});
+
 test("a left press, a middle drag or the wheel on the view only closes the menu; a right press there opens it again there (#107)", async ({ page }) => {
   const vp = await ready(page);
   await box(page);
