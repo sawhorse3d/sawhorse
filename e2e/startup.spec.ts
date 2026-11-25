@@ -241,12 +241,28 @@ test("two pieces of unsaved work and a start-up file: a Discard offers the next 
 // model. While a file waits, the same question, buttons and file name are over the model.
 const notice = (page: Page) => page.getByTestId("startup-notice");
 
+/** The notice lies inside the model area's box (the sheet area's, in Sheets mode) and over
+ * none of the viewport's chips along its top. */
+async function expectOverModel(page: Page, area = "main.vp") {
+  await expect(notice(page)).toBeVisible();
+  const n = (await notice(page).boundingBox())!;
+  const a = (await page.locator(area).boundingBox())!;
+  expect(n.x).toBeGreaterThanOrEqual(a.x);
+  expect(n.y).toBeGreaterThanOrEqual(a.y);
+  expect(n.x + n.width).toBeLessThanOrEqual(a.x + a.width);
+  expect(n.y + n.height).toBeLessThanOrEqual(a.y + a.height);
+  for (const chip of await page.locator(".vp .hud span").all()) {
+    const c = await chip.boundingBox();
+    if (c) expect(c.y + c.height <= n.y || c.y >= n.y + n.height || c.x + c.width <= n.x || c.x >= n.x + n.width, "a chip under the notice").toBe(true);
+  }
+}
+
 test("a waiting file: the offer, its buttons and the file's name over the model, kept when the status line moves on; Discard there opens the file (#115)", async ({ page }) => {
   const { vp, hint } = await lastRunThenShelf(page);
   const n = notice(page);
   await expect(n).toBeVisible();
-  // Over the model area, inside the viewport.
-  await expect(vp.getByTestId("startup-notice")).toHaveCount(1);
+  // Over the model area: inside the viewport's box, clear of its chips along the top.
+  await expectOverModel(page);
   await expect(n).toContainText("Restore unsaved work? 1 solid, 3 steps");
   await expect(n).toContainText("shelf.shz opens after you answer.");
   await expect(n.getByRole("button")).toHaveText(["Restore", "Discard"]);
@@ -275,6 +291,48 @@ test("a waiting file: Restore over the model brings the work back and keeps the 
   await n.getByRole("button", { name: "Open shelf.shz" }).click();
   await expect(unsavedDialog(page).locator(".question")).toHaveText(UNSAVED_QUESTION);
   await answerUnsaved(page, "Discard Changes");
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+});
+
+test("a waiting file at a start in Sheets mode: the notice over the sheet area, which hides the 3D view (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  // The mode is kept between runs: this start comes up in Sheets mode.
+  await page.locator('.scenes:not(.sheet-tabs) .mode-switch [data-mode="sheets"]').click();
+  await expect(page.locator(".app")).toHaveClass(/sheets-mode/);
+  await restart(page, SHELF);
+  await loaded(page);
+  await expect(page.locator(".app")).toHaveClass(/sheets-mode/);
+  await expect(page.locator("#hint")).toContainText("shelf.shz opens after you answer.");
+  await expectOverModel(page, ".sheet-area");
+  await expect(notice(page)).toContainText("shelf.shz opens after you answer.");
+  await notice(page).getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(notice(page)).toHaveCount(0);
+});
+
+test("two pieces of unsaved work and a waiting file: Discard twice from the notice, and the file opens after the last (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, SHELF);
+  await loaded(page);
+  const n = notice(page);
+  await expect(n).toContainText("1 older set of unsaved work is set aside too. shelf.shz opens after you answer.");
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(n).toContainText("Unsaved work discarded. Restore unsaved work? 1 solid, 3 steps, saved just now. shelf.shz opens after you answer.");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect((await bridge(page)).reads).toEqual([]);
+  await n.getByRole("button", { name: "Discard" }).click();
   await expect(page).toHaveTitle("shelf - Sawhorse");
   await expect(vp).toHaveAttribute("data-hash", shelfHash);
   await expect(n).toHaveCount(0);

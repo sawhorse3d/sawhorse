@@ -2970,14 +2970,8 @@ export function App() {
   const [unitPickerOpen, setUnitPickerOpen] = useState(0);
 
   const st = scene?.state;
-  // #115: the question a start-up file waits for, over the model area (`offers` is read so a
-  // change to the list draws it again).
-  void offers;
-  const startupNotice = noticeMessage(startupWaiting, message, () => {
-    // Worded as setMessage words it for the status line.
-    const m = offerMessage();
-    return m && m.error ? { ...m, text: friendlyError(m.text) } : m;
-  });
+  // #115: the question a start-up file waits for, over the model area.
+  const startupNotice = noticeMessage(startupWaiting, message, offerMessage);
   // #107: the view's menu closes when what it was opened on changes under it.
   useEffect(() => {
     if (viewMenu && (viewMenu.on.scene !== scene || viewMenu.on.selection !== selection.map(entityKey).join(" ") || viewMenu.on.tool !== toolId)) setViewMenu(null);
@@ -3426,7 +3420,6 @@ export function App() {
         cursor={toolView.cursor}
         selectionCount={selection.length}
         hoverKind={hover?.kind}
-        notice={startupNotice ? <StartupNotice message={startupNotice} /> : null}
         onPointer={onPointer}
         onCamera={(v, p) => {
           setCamView(v);
@@ -3445,6 +3438,12 @@ export function App() {
           setEngineObj(e);
         }}
       />
+      {/* #115: over the model area (or the sheet area, in Sheets mode, which hides the 3D view). */}
+      {startupNotice ? (
+        <div className="startup-layer">
+          <StartupNotice message={startupNotice} />
+        </div>
+      ) : null}
       {viewMenu ? <ViewMenu x={viewMenu.x} y={viewMenu.y} items={viewMenuItems(viewMenu.target, menus, (st?.graph?.context ?? null) !== null)} onClose={closeViewMenu} view={viewCanvas} /> : null}
       <SidePanel
         credits={credits}

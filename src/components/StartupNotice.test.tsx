@@ -37,17 +37,16 @@ describe("what the notice over the model shows", () => {
   });
 });
 
-describe("against the code before #115, over 10,000 random states", () => {
+describe("every combination of a waiting file, the status line's message and an offer left", () => {
   it("a notice only while a file waits or right after Restore with one, and only ever the offer or that message", () => {
-    // Before #115 nothing was shown over the model: the rule then was "never".
+    // Before #115 nothing was shown over the model. Each of the 24 combinations (a file waiting
+    // or not; six kinds of status line message; an offer left to make or not) is checked
+    // against what may differ from that.
     const messages: (StatusMessage | null)[] = [null, offer, other, opened, { ...offer, error: true, actions: [offer.actions![1]] }, { text: "Unsaved work discarded.", error: false }];
-    let seed = 20261125;
-    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
     const counts = { none: 0, mirrored: 0, rebuilt: 0, opened: 0 };
-    for (let n = 0; n < 10_000; n++) {
-      const waiting = rnd() < 0.5 ? "shelf.shz" : null;
-      const message = messages[Math.floor(rnd() * messages.length)];
-      const left = rnd() < 0.8;
+    for (const waiting of ["shelf.shz", null])
+    for (const message of messages)
+    for (const left of [true, false]) {
       const got = noticeMessage(waiting, message, () => (left ? rebuilt : null));
       const why = JSON.stringify({ waiting, message: message?.text ?? null, left });
       if (got === null) {
@@ -64,8 +63,7 @@ describe("against the code before #115, over 10,000 random states", () => {
         counts.opened++;
       }
     }
-    expect(counts.none + counts.mirrored + counts.rebuilt + counts.opened).toBe(10_000);
-    for (const k of ["none", "mirrored", "rebuilt", "opened"] as const) expect(counts[k], k).toBeGreaterThan(300);
+    expect(counts).toEqual({ none: 14, mirrored: 4, rebuilt: 4, opened: 2 });
   });
 });
 
