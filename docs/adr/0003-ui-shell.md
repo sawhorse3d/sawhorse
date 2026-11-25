@@ -53,6 +53,7 @@ People who already model furniture have SketchUp in their hands: the keys, the p
 - Status line:
   - Names solids "solid N" by the kernel's display number and faces "face N" by persistent id; kernel refusals are reworded before they show.
   - Can carry actions: the dev autosave's "Restore unsaved work?" with Restore / Discard (also Edit > Restore Unsaved Work).
+  - Amended 2026-11-25 ([#115](https://github.com/sawhorse3d/sawhorse/issues/115)): while a file the desktop app was started with waits for that answer, the same question, buttons and file name are shown over the model area too (`src/components/StartupNotice.tsx`), and after Restore so is the file's Open button. With no file waiting the offer is on the status line only.
 - Rect: the preview labels each side's length and direction ("12 in −red") with ticks at the first corner, and the message states them.
 - Not yet: Paint says "arrives in a later lane". The Outliner, Tags and Cut list panes still carry the mock's example content (lane 5 and the cut-list lane).
 

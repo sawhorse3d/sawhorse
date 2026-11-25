@@ -57,6 +57,7 @@ import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver, type Resolver } from "./tools/driver";
 import { estimatedLabelSize } from "./lib/dimPick";
 import { ViewMenu, viewMenuItems, type ViewMenuTarget } from "./components/ViewMenu";
+import { noticeMessage, StartupNotice } from "./components/StartupNotice";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
@@ -666,8 +667,11 @@ export function App() {
   // "Restore unsaved work?" (src/io/startup.ts): Restore offers it beside the restored work,
   // Discard opens it. (Lane 64: the offer's text is written when it is shown, so a ref is all.)
   const startupWaitingRef = useRef<string | null>(null);
+  /** #115: the same, for drawing the notice over the model while the file waits. */
+  const [startupWaiting, setStartupWaitingState] = useState<string | null>(null);
   const setStartupWaiting = useCallback((path: string | null) => {
     startupWaitingRef.current = path;
+    setStartupWaitingState(path);
   }, []);
   /** The waiting start-up file, no longer waiting. */
   const takeStartupWaiting = useCallback(() => {
@@ -678,29 +682,34 @@ export function App() {
   /** Opens a start-up file the way a dropped file opens (set below, where that is defined). */
   const openStartupRef = useRef<(path: string) => Promise<void>>(async () => {});
 
+  /** The offer of the front piece of set-aside work (`before` goes first), or null with none. */
+  const offerMessage = useCallback((before = ""): StatusMessage | null => {
+    const list = offersRef.current;
+    const a = list[0];
+    if (!a) return null;
+    const usable = a.state === "ok";
+    const path = startupWaitingRef.current;
+    const notes = [list.length > 1 ? olderNote(list.length - 1) : "", droppedRef.current, path ? waitingNote(path) : ""].filter(Boolean);
+    const after = notes.length ? ` ${notes.join(" ")}` : "";
+    return {
+      text: `${before}${usable ? `Restore unsaved work? ${describeAutosave(a)}.` : `Unsaved work was kept in this browser, but ${describeAutosave(a)}; it is set aside, not loaded.`}${after}`,
+      error: !usable,
+      offer: true,
+      actions: usable
+        ? [
+            { label: "Restore", run: () => restoreRef.current(a) },
+            { label: "Discard", run: () => discardRef.current(a) },
+          ]
+        : [{ label: "Discard", run: () => discardRef.current(a) }],
+    };
+  }, []);
   /** The status line's offer of the front piece of set-aside work (`before` goes first). */
   const showOffer = useCallback(
     (before = "") => {
-      const list = offersRef.current;
-      const a = list[0];
-      if (!a) return;
-      const usable = a.state === "ok";
-      const path = startupWaitingRef.current;
-      const notes = [list.length > 1 ? olderNote(list.length - 1) : "", droppedRef.current, path ? waitingNote(path) : ""].filter(Boolean);
-      const after = notes.length ? ` ${notes.join(" ")}` : "";
-      setMessage({
-        text: `${before}${usable ? `Restore unsaved work? ${describeAutosave(a)}.` : `Unsaved work was kept in this browser, but ${describeAutosave(a)}; it is set aside, not loaded.`}${after}`,
-        error: !usable,
-        offer: true,
-        actions: usable
-          ? [
-              { label: "Restore", run: () => restoreRef.current(a) },
-              { label: "Discard", run: () => discardRef.current(a) },
-            ]
-          : [{ label: "Discard", run: () => discardRef.current(a) }],
-      });
+      const m = offerMessage(before);
+      if (m) setMessage(m);
     },
-    [setMessage],
+    [setMessage, offerMessage],
   );
 
   /** The question over unsaved changes (#120; made below, with the files): Save, Discard Changes, Cancel. */
@@ -769,7 +778,8 @@ export function App() {
           // A start-up file was waiting for this answer: it is offered, not opened, so the
           // restored work stays in front of the person, and opening it asks about the work.
           const waiting = takeStartupWaiting();
-          if (waiting) setMessage({ text: `${restored} ${notOpenedNote(waiting)}`, error: false, actions: [{ label: openLabel(waiting), run: () => void openStartupRef.current(waiting) }] });
+          // #115: shown over the model area too (StartupNotice), as the offer was.
+          if (waiting) setMessage({ text: `${restored} ${notOpenedNote(waiting)}`, error: false, startup: true, actions: [{ label: openLabel(waiting), run: () => void openStartupRef.current(waiting) }] });
           else setMessage({ text: restored, error: false });
           setFitSeq((n) => n + 1);
           scheduleAutosave();
@@ -2960,6 +2970,14 @@ export function App() {
   const [unitPickerOpen, setUnitPickerOpen] = useState(0);
 
   const st = scene?.state;
+  // #115: the question a start-up file waits for, over the model area (`offers` is read so a
+  // change to the list draws it again).
+  void offers;
+  const startupNotice = noticeMessage(startupWaiting, message, () => {
+    // Worded as setMessage words it for the status line.
+    const m = offerMessage();
+    return m && m.error ? { ...m, text: friendlyError(m.text) } : m;
+  });
   // #107: the view's menu closes when what it was opened on changes under it.
   useEffect(() => {
     if (viewMenu && (viewMenu.on.scene !== scene || viewMenu.on.selection !== selection.map(entityKey).join(" ") || viewMenu.on.tool !== toolId)) setViewMenu(null);
@@ -3408,6 +3426,7 @@ export function App() {
         cursor={toolView.cursor}
         selectionCount={selection.length}
         hoverKind={hover?.kind}
+        notice={startupNotice ? <StartupNotice message={startupNotice} /> : null}
         onPointer={onPointer}
         onCamera={(v, p) => {
           setCamView(v);

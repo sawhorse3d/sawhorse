@@ -73,6 +73,8 @@ export interface ViewportProps {
   selectionCount?: number;
   /** Kind of the entity under the cursor (a data attribute for tests). */
   hoverKind?: string;
+  /** #115: drawn over the model area (the question a start-up file waits for). */
+  notice?: React.ReactNode;
   onPointer?: (p: ViewportPointer) => void;
   /** The camera left the standard view (orbit) or changed projection. */
   onCamera?: (view: ViewId | null, projection: Projection) => void;
@@ -110,7 +112,7 @@ export interface SawhorseHooks {
 }
 
 export function Viewport(props: ViewportProps) {
-  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, selectionCount, hoverKind, onPointer, onCamera, onEngine } = props;
+  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, selectionCount, hoverKind, notice, onPointer, onCamera, onEngine } = props;
   const hostRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
@@ -337,6 +339,7 @@ export function Viewport(props: ViewportProps) {
         ))}
       </div>
       <div className="axes">x ─ red · y ─ green · z ─ blue</div>
+      {notice}
     </main>
   );
 }

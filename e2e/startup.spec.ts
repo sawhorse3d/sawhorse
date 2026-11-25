@@ -237,6 +237,60 @@ test("two pieces of unsaved work and a start-up file: a Discard offers the next 
   await expect.poll(() => slot(page, "offered-meta")).toBe(null);
 });
 
+// #115: the offer was only in the status line, so a double-clicked file looked like an empty
+// model. While a file waits, the same question, buttons and file name are over the model.
+const notice = (page: Page) => page.getByTestId("startup-notice");
+
+test("a waiting file: the offer, its buttons and the file's name over the model, kept when the status line moves on; Discard there opens the file (#115)", async ({ page }) => {
+  const { vp, hint } = await lastRunThenShelf(page);
+  const n = notice(page);
+  await expect(n).toBeVisible();
+  // Over the model area, inside the viewport.
+  await expect(vp.getByTestId("startup-notice")).toHaveCount(1);
+  await expect(n).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await expect(n).toContainText("shelf.shz opens after you answer.");
+  await expect(n.getByRole("button")).toHaveText(["Restore", "Discard"]);
+  // Another message takes the status line: the question stays over the model.
+  await page.keyboard.press("Control+z");
+  await expect(hint).not.toContainText("Restore unsaved work?");
+  await expect(n).toContainText("shelf.shz opens after you answer.");
+  await expect(n.getByRole("button")).toHaveText(["Restore", "Discard"]);
+  // Discard from it: the work goes, the file opens, and the question goes with it.
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+  await expect.poll(() => slot(page, "offered-meta")).toBe(null);
+});
+
+test("a waiting file: Restore over the model brings the work back and keeps the file's Open button there (#115)", async ({ page }) => {
+  const { vp, work } = await lastRunThenShelf(page);
+  const n = notice(page);
+  await n.getByRole("button", { name: "Restore" }).click();
+  await expect(vp).toHaveAttribute("data-hash", work);
+  await expect(n).toContainText("shelf.shz is not open yet.");
+  await expect(n.getByRole("button")).toHaveText(["Open shelf.shz"]);
+  expect((await bridge(page)).reads).toEqual([]);
+  // Open from it asks about the restored work, as the status line's button does.
+  await n.getByRole("button", { name: "Open shelf.shz" }).click();
+  await expect(unsavedDialog(page).locator(".question")).toHaveText(UNSAVED_QUESTION);
+  await answerUnsaved(page, "Discard Changes");
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+});
+
+test("no file waiting: the offer stays in the status line only, as before (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(notice(page)).toHaveCount(0);
+});
+
 test("with the autosave off (?autosave=0) a start-up file opens at once", async ({ page }) => {
   const vp = await started(page, SHELF, "/?autosave=0");
   await expect(page).toHaveTitle("shelf - Sawhorse");
