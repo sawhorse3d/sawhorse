@@ -12,8 +12,8 @@ import { isMacControlClick } from "../lib/platform";
 import type { MenuItem } from "./TopBar";
 
 /** What a right-click in the view was on: a solid, group or component (or part of one); one
- * section plane; dimensions, guides and sketch geometry with no sketch curve among them
- * (#139); the same with a sketch circle, arc or polygon; or empty space. */
+ * section plane; dimensions, guides, sketch edges and regions with no sketch curve among
+ * them (#139); the same with a sketch curve; or empty space. */
 export type ViewMenuTarget = "selection" | "section" | "drawn" | "curve" | "empty";
 
 /** The menu bar commands each kind of right-click offers, in order ("-": a separator). A
@@ -28,9 +28,10 @@ const OFFER: Record<ViewMenuTarget, string[]> = {
   empty: ["Select All", "Select None", "-", "Zoom Extents", "-", "Undo", "Redo"],
 };
 
-/** A dimension, a guide, or a sketch's (or guide's) edge, point, curve or region: nothing of
- * a solid, group or component, so none of the selection's list but Delete and Explode Curve
- * acts on it. A solid's own edge, point or rim is part of the solid. */
+/** A dimension, a guide, or a sketch's (or guide's) edge, curve or region: nothing of a
+ * solid, group or component, so none of the selection's list but Delete and Explode Curve
+ * acts on it. A solid's own edge or rim is part of the solid. A point is left out: Delete
+ * refuses a point alone ("A point goes with its edges"), so it keeps the list it had. */
 function drawn(e: Entity): boolean {
   switch (e.kind) {
     case "dimension":
@@ -38,7 +39,6 @@ function drawn(e: Entity): boolean {
     case "region":
       return true;
     case "edge":
-    case "vertex":
     case "curve":
       return e.owner.kind !== "object";
     default:

@@ -428,6 +428,54 @@ test("on a sketch region or edge only Delete; on a sketch circle Delete and Expl
   await expect(vp).toHaveAttribute("data-hash", hash!);
 });
 
+test("on a guide only Delete, which erases it in one undo step; with the solid under it selected too, the solid's list (#139)", async ({ page }) => {
+  const vp = await ready(page);
+  await box(page);
+  // A guide 2 in down from the box's top front edge, across its front face (z = 4).
+  // Off the edge's midpoint, so the Tape takes the edge, not a point.
+  await page.keyboard.press("t");
+  await clickAt(page, [4, 0, 6], "on-edge", 0, 1);
+  await expect(hint(page)).toContainText("Guide from this edge");
+  await point(page, [4, 0, 3]);
+  await type(page, "2");
+  await expect(hint(page)).toContainText("Guide 2 in from the edge");
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Escape");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  const items = menu(page).getByRole("menuitem");
+  await hover(page, [9, 0, 4], "guide", 0, 0, "data-hover");
+  await rightClick(page, [9, 0, 4]);
+  await expect(menu(page)).toBeVisible();
+  await expect(hint(page)).toContainText("Selected a guide");
+  await expect(items).toHaveCount(1);
+  const depth = await undoDepth(page);
+  await item(page, "Delete").click();
+  await expect(menu(page)).toHaveCount(0);
+  await expect(hint(page)).toContainText("Erased 1 item");
+  await expect.poll(() => undoDepth(page)).toBe(depth + 1);
+  // Back, then the solid and the guide selected together (Shift+click adds the solid):
+  // a right-click on the guide, inside the selection, keeps both and opens the solid's list.
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => undoDepth(page)).toBe(depth);
+  await hover(page, [9, 0, 4], "guide", 0, 0, "data-hover");
+  const [gx, gy] = await at(page, [9, 0, 4]);
+  await page.mouse.click(gx, gy);
+  await expect(hint(page)).toContainText("Selected a guide");
+  await hover(page, [3, 0, 2], "face", 1, -1, "data-hover");
+  const [fx, fy] = await at(page, [3, 0, 2], 1, -1);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(fx, fy);
+  await page.keyboard.up("Shift");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await hover(page, [9, 0, 4], "guide", 0, 0, "data-hover");
+  await page.mouse.click(gx, gy, { button: "right" });
+  await expect(menu(page)).toBeVisible();
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  for (const name of ["Delete", "Hide", "Lock", /Make Group/]) await expect(item(page, name)).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+});
+
 test("a left press, a middle drag or the wheel on the view only closes the menu; a right press there opens it again there (#107)", async ({ page }) => {
   const vp = await ready(page);
   await box(page);

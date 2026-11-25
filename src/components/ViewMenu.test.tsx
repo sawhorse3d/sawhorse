@@ -119,10 +119,19 @@ describe("which list a right-click opens, from the selection it leaves (#139)", 
     expect(menuTarget(true, [section])).toBe("section");
   });
 
-  it("a dimension, a guide, sketch edges, points or regions, alone or together: Delete alone", () => {
-    for (const sel of [[dimension], [guide], [region], [sketchEdge], [sketchPoint], [guideEdge], [dimension, guide, region, sketchEdge, sketchPoint]]) {
+  it("a dimension, a guide, sketch edges or regions, alone or together: Delete alone", () => {
+    for (const sel of [[dimension], [guide], [region], [sketchEdge], [guideEdge], [dimension, guide, region, sketchEdge]]) {
       expect(menuTarget(true, sel), JSON.stringify(sel)).toBe("drawn");
     }
+  });
+
+  it("a sketch point keeps the list it had: Delete refuses a point alone", () => {
+    expect(menuTarget(true, [sketchPoint])).toBe("selection");
+    expect(menuTarget(true, [sketchEdge, sketchPoint])).toBe("selection");
+  });
+
+  it("on something with an empty selection (no path gives one): the selection's list, never Delete alone", () => {
+    expect(menuTarget(true, [])).toBe("selection");
   });
 
   it("a sketch circle, arc or polygon among them: Delete and Explode Curve", () => {
