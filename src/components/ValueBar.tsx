@@ -34,6 +34,9 @@ export interface StatusMessage {
   actions?: { label: string; run: () => void }[];
   /** Lane 64: this is the "Restore unsaved work?" offer (no reminder of it is shown beside it). */
   offer?: boolean;
+  /** #115: after Restore, the start-up file that waited, with its Open button: shown over the
+   * model area too (src/components/StartupNotice.tsx). */
+  startup?: boolean;
 }
 
 /** The Value Control Box: type mid-gesture, press Enter. */

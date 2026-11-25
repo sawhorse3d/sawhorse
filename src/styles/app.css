@@ -153,6 +153,16 @@ textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line)
 /* ---- Lane 4 additions: status-line actions ("Restore unsaved work?") ---- */
 .vcb .hint .hint-action{margin-left:8px;padding:1px 8px;border:1px solid var(--accent);border-radius:4px;color:var(--accent);background:var(--bg);font:12px var(--body)}
 .vcb .hint .hint-action:hover{background:var(--accent);color:var(--accent-ink)}
+/* #115: the question a start-up file waits for, in the middle of the model area (the sheet
+   area in Sheets mode: the layer takes the same grid area and lets clicks through round it),
+   clear of the chips along the top and the legend along the bottom. */
+.startup-layer{grid-area:vp;position:relative;z-index:6;display:flex;align-items:center;justify-content:center;pointer-events:none;min-width:0}
+.startup-notice{pointer-events:auto;width:min(520px,calc(100% - 32px));padding:12px 14px;background:var(--panel);border:1px solid var(--accent);border-radius:8px;box-shadow:0 8px 24px #0002;font-size:13px;color:var(--fg)}
+.startup-notice.err{border-color:var(--warn)}
+.startup-notice p{margin:0 0 10px;overflow-wrap:anywhere}
+.startup-notice .startup-actions{display:flex;gap:8px;justify-content:flex-end}
+.startup-notice button{padding:3px 12px;border:1px solid var(--accent);border-radius:4px;color:var(--accent);background:var(--bg);font:13px var(--body)}
+.startup-notice button:hover{background:var(--accent);color:var(--accent-ink)}
 /* Scale grips: small squares on the selection's bounding box; the one under the cursor fills. */
 .vp .vlabel.grip{width:9px;height:9px;padding:0;border-radius:2px;border:1.5px solid var(--sel);background:var(--panel);transform:translate(-50%,-50%)}
 .vp .vlabel.grip.hot{background:var(--sel)}

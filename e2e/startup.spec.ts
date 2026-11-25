@@ -237,6 +237,205 @@ test("two pieces of unsaved work and a start-up file: a Discard offers the next 
   await expect.poll(() => slot(page, "offered-meta")).toBe(null);
 });
 
+// #115: the offer was only in the status line, so a double-clicked file looked like an empty
+// model. While a file waits, the same question, buttons and file name are over the model.
+const notice = (page: Page) => page.getByTestId("startup-notice");
+
+/** The notice lies inside the model area's box (the sheet area's, in Sheets mode) and over
+ * none of the viewport's chips along its top. */
+async function expectOverModel(page: Page, area = "main.vp") {
+  await expect(notice(page)).toBeVisible();
+  const n = (await notice(page).boundingBox())!;
+  const a = (await page.locator(area).boundingBox())!;
+  expect(n.x).toBeGreaterThanOrEqual(a.x);
+  expect(n.y).toBeGreaterThanOrEqual(a.y);
+  expect(n.x + n.width).toBeLessThanOrEqual(a.x + a.width);
+  expect(n.y + n.height).toBeLessThanOrEqual(a.y + a.height);
+  // In the middle of it, where the empty model is.
+  expect(Math.abs(n.x + n.width / 2 - (a.x + a.width / 2)), "centred across").toBeLessThan(2);
+  expect(Math.abs(n.y + n.height / 2 - (a.y + a.height / 2)), "centred down").toBeLessThan(2);
+  for (const chip of await page.locator(".vp .hud span").all()) {
+    const c = await chip.boundingBox();
+    if (c) expect(c.y + c.height <= n.y || c.y >= n.y + n.height || c.x + c.width <= n.x || c.x >= n.x + n.width, "a chip under the notice").toBe(true);
+  }
+}
+
+test("a waiting file: the offer, its buttons and the file's name over the model, kept when the status line moves on; Discard there opens the file (#115)", async ({ page }) => {
+  const { vp, hint } = await lastRunThenShelf(page);
+  const n = notice(page);
+  await expect(n).toBeVisible();
+  // Over the model area: inside the viewport's box, clear of its chips along the top.
+  await expectOverModel(page);
+  await expect(n).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await expect(n).toContainText("shelf.shz opens after you answer.");
+  await expect(n.getByRole("button")).toHaveText(["Restore", "Discard"]);
+  // Another message takes the status line: the question stays over the model.
+  await page.keyboard.press("Control+z");
+  await expect(hint).not.toContainText("Restore unsaved work?");
+  await expect(n).toContainText("shelf.shz opens after you answer.");
+  await expect(n.getByRole("button")).toHaveText(["Restore", "Discard"]);
+  // Discard from it: the work goes, the file opens, and the question goes with it.
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+  await expect.poll(() => slot(page, "offered-meta")).toBe(null);
+});
+
+test("a waiting file: Restore over the model brings the work back and keeps the file's Open button there (#115)", async ({ page }) => {
+  const { vp, work } = await lastRunThenShelf(page);
+  const n = notice(page);
+  await n.getByRole("button", { name: "Restore" }).click();
+  await expect(vp).toHaveAttribute("data-hash", work);
+  await expect(n).toContainText("shelf.shz is not open yet.");
+  await expect(n.getByRole("button")).toHaveText(["Open shelf.shz"]);
+  expect((await bridge(page)).reads).toEqual([]);
+  // Open from it asks about the restored work, as the status line's button does.
+  await n.getByRole("button", { name: "Open shelf.shz" }).click();
+  await expect(unsavedDialog(page).locator(".question")).toHaveText(UNSAVED_QUESTION);
+  await answerUnsaved(page, "Discard Changes");
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+});
+
+test("a waiting file at a start in Sheets mode: the notice over the sheet area, which hides the 3D view (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  // The mode is kept between runs: this start comes up in Sheets mode.
+  await page.locator('.scenes:not(.sheet-tabs) .mode-switch [data-mode="sheets"]').click();
+  await expect(page.locator(".app")).toHaveClass(/sheets-mode/);
+  await restart(page, SHELF);
+  await loaded(page);
+  await expect(page.locator(".app")).toHaveClass(/sheets-mode/);
+  await expect(page.locator("#hint")).toContainText("shelf.shz opens after you answer.");
+  await expectOverModel(page, ".sheet-area");
+  await expect(notice(page)).toContainText("shelf.shz opens after you answer.");
+  await notice(page).getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(notice(page)).toHaveCount(0);
+});
+
+test("two pieces of unsaved work and a waiting file: Discard twice from the notice, and the file opens after the last (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, SHELF);
+  await loaded(page);
+  const n = notice(page);
+  await expect(n).toContainText("1 older set of unsaved work is set aside too. shelf.shz opens after you answer.");
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(n).toContainText("Unsaved work discarded. Restore unsaved work? 1 solid, 3 steps, saved just now. shelf.shz opens after you answer.");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect((await bridge(page)).reads).toEqual([]);
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(vp).toHaveAttribute("data-hash", shelfHash);
+  await expect(n).toHaveCount(0);
+});
+
+test("two pieces of unsaved work and a waiting file: a double-click on the notice's Discard discards only the first (#115)", async ({ page }) => {
+  // The next offer's Discard is drawn where the first one was: the second click of a
+  // double-click must not delete work the person has not read.
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, SHELF);
+  await loaded(page);
+  const n = notice(page);
+  await expect(n).toContainText("1 older set of unsaved work is set aside too.");
+  await n.getByRole("button", { name: "Discard" }).dblclick();
+  await expect(n).toContainText("Unsaved work discarded. Restore unsaved work? 1 solid, 3 steps, saved just now. shelf.shz opens after you answer.");
+  await expect(page.locator("#hint")).toContainText("Unsaved work discarded. Restore unsaved work?");
+  await expect.poll(() => slot(page, "offered-meta")).toBe(3);
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect((await bridge(page)).reads).toEqual([]);
+  // A single click then answers the second offer.
+  await n.getByRole("button", { name: "Discard" }).click();
+  await expect(page).toHaveTitle("shelf - Sawhorse");
+  await expect(n).toHaveCount(0);
+});
+
+test("a waiting file whose name has no place to break: the notice wraps it and stays inside the model area (#115)", async ({ page }) => {
+  const LONG = `C:\\Users\\maker\\Documents\\Sawhorse\\${"x".repeat(196)}.shz`;
+  await desktopBridge(page, "Win32", { start: null, files: { [LONG]: shelf } });
+  const vp = await ready(page);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, LONG);
+  await loaded(page);
+  await expect(notice(page)).toContainText(`${"x".repeat(196)}.shz opens after you answer.`);
+  const n = (await notice(page).boundingBox())!;
+  const a = (await vp.boundingBox())!;
+  expect(n.x).toBeGreaterThanOrEqual(a.x);
+  expect(n.x + n.width).toBeLessThanOrEqual(a.x + a.width);
+  const text = notice(page).locator("p");
+  expect(await text.evaluate((p) => p.scrollWidth <= p.clientWidth)).toBe(true);
+});
+
+test("no file waiting: the offer stays in the status line only, as before (#115)", async ({ page }) => {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps, saved just now. 1 older set of unsaved work is set aside too.");
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  await expect(notice(page)).toHaveCount(0);
+  // Restore and then Discard with no file waiting: the messages after them are the status
+  // line's alone.
+  await page.locator("#hint").getByRole("button", { name: "Restore" }).click();
+  await expect(page.locator("#hint")).toContainText("Restored your unsaved work: 1 solid, 3 steps (undo works as before).");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+  await expect(notice(page)).toHaveCount(0);
+  await page.getByTestId("hint-offers").click();
+  await page.locator("#hint").getByRole("button", { name: "Discard" }).click();
+  await expect(page.locator("#hint")).toContainText("Unsaved work discarded.");
+  await expect(page.locator("#hint")).not.toContainText("Restore unsaved work?");
+  await expect(notice(page)).toHaveCount(0);
+});
+
+test("a waiting file: the view takes the pointer round the notice, the notice over it (#115)", async ({ page }) => {
+  const { vp } = await lastRunThenShelf(page);
+  const n = (await notice(page).boundingBox())!;
+  const at = (x: number, y: number) =>
+    page.evaluate(([x, y]) => {
+      const e = document.elementFromPoint(x, y);
+      return e?.closest('[data-testid="startup-notice"]') ? "notice" : e?.closest("main.vp") ? "view" : (e?.className ?? null);
+    }, [x, y]);
+  const midY = n.y + n.height / 2;
+  expect(await at(n.x + n.width / 2, midY)).toBe("notice");
+  for (const [x, y] of [
+    [n.x - 20, midY],
+    [n.x + n.width + 20, midY],
+    [n.x + n.width / 2, n.y - 20],
+    [n.x + n.width / 2, n.y + n.height + 20],
+  ])
+    expect(await at(x, y), `beside the notice at ${x}, ${y}`).toBe("view");
+  // And a wheel there reaches it.
+  const camera = await vp.getAttribute("data-camera");
+  await page.mouse.move(n.x - 20, midY);
+  await page.mouse.wheel(0, -300);
+  await expect(vp).not.toHaveAttribute("data-camera", camera!);
+});
+
 test("with the autosave off (?autosave=0) a start-up file opens at once", async ({ page }) => {
   const vp = await started(page, SHELF, "/?autosave=0");
   await expect(page).toHaveTitle("shelf - Sawhorse");
