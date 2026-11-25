@@ -1,16 +1,20 @@
 // The 3D view's right-click menu (#107). It holds only commands the menu bar already has,
 // taken from the menu bar's own items, so a command has the same name, keys, disabled rule
 // and action in both places. Which commands show depends on what was right-clicked: the
-// selection, a section plane, or empty space; inside an open group or component, Close
+// selection, a section plane, a dimension, guide or sketch geometry (#139), or empty space;
+// inside an open group or component, Close
 // Group / Component is added. Escape, a press outside it, the wheel, the window losing focus
 // or resized, or a choice closes it (and the app closes it when the model, the selection or
 // the tool changes under it).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Entity } from "../kernel/types";
 import { isMacControlClick } from "../lib/platform";
 import type { MenuItem } from "./TopBar";
 
-/** What a right-click in the view was on. */
-export type ViewMenuTarget = "selection" | "section" | "empty";
+/** What a right-click in the view was on: a solid, group or component (or part of one); one
+ * section plane; dimensions, guides, sketch edges and regions with no sketch curve among
+ * them (#139); the same with a sketch curve; or empty space. */
+export type ViewMenuTarget = "selection" | "section" | "drawn" | "curve" | "empty";
 
 /** The menu bar commands each kind of right-click offers, in order ("-": a separator). A
  * command the menu bar does not show at the moment (the section plane's three, only while
@@ -18,8 +22,39 @@ export type ViewMenuTarget = "selection" | "section" | "empty";
 const OFFER: Record<ViewMenuTarget, string[]> = {
   selection: ["Edit Group / Component", "-", "Delete", "Hide", "Lock", "-", "Make Group", "Make Component…", "Make Unique", "Explode", "Explode Curve", "Clear Paint"],
   section: ["Activate Cut", "Deactivate Cut", "Reverse Section Plane", "Create Group from Slice", "-", "Delete"],
+  // #139: the rest of the selection's list acts on solids, groups and components only.
+  drawn: ["Delete"],
+  curve: ["Delete", "Explode Curve"],
   empty: ["Select All", "Select None", "-", "Zoom Extents", "-", "Undo", "Redo"],
 };
+
+/** A dimension, a guide, or a sketch's (or guide's) edge, curve or region: nothing of a
+ * solid, group or component, so none of the selection's list but Delete and Explode Curve
+ * acts on it. A solid's own edge or rim is part of the solid. A point is left out: Delete
+ * refuses a point alone ("A point goes with its edges"), so it keeps the list it had. */
+function drawn(e: Entity): boolean {
+  switch (e.kind) {
+    case "dimension":
+    case "guide":
+    case "region":
+      return true;
+    case "edge":
+    case "curve":
+      return e.owner.kind !== "object";
+    default:
+      return false;
+  }
+}
+
+/** Which list a right-click opens: `onSomething`, it landed on something (else empty space,
+ * the selection as it is); `selection`, the selection it leaves (what it landed on, selected
+ * first unless already in the selection). */
+export function menuTarget(onSomething: boolean, selection: Entity[]): ViewMenuTarget {
+  if (!onSomething) return "empty";
+  if (selection.length === 1 && selection[0].kind === "section") return "section";
+  if (selection.length && selection.every(drawn)) return selection.some((e) => e.kind === "curve") ? "curve" : "drawn";
+  return "selection";
+}
 
 type Command = Exclude<MenuItem, "-" | { items: MenuItem[] }>;
 
