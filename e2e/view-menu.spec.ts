@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 // the menu bar's own commands for what is under it; a right-drag still pans and opens none;
 // Escape closes it with nothing changed; a choice is one undo step; a tool part way through a
 // step ignores the right-click. Also Edit > Edit Group / Component, disabled on a locked one.
-import { at, box, clickAt, hover, ready } from "./helpers";
+import { at, box, clickAt, hover, point, ready, type } from "./helpers";
 
 const hint = (page: Page) => page.locator("#hint");
 const menu = (page: Page) => page.getByRole("menu", { name: "View actions" });
@@ -351,12 +351,12 @@ test("a right-click on a model dimension's number selects it as Select's click d
     await expect(menu(page)).toBeVisible();
   };
   await onNumber();
-  // Selected, as Select's click on the number selects it, and offered what the menu bar
-  // offers it: Delete. Nothing else on the list acts on a dimension.
+  // Selected, as Select's click on the number selects it, and offered what acts on a
+  // dimension: Delete, and nothing else (#139; the solid's list, greyed but for Delete, before).
   await expect(hint(page)).toContainText("Selected a dimension.");
   await expect(vp).toHaveAttribute("data-selection", "1");
+  await expect(menu(page).getByRole("menuitem")).toHaveCount(1);
   await expect(item(page, "Delete")).toBeEnabled();
-  for (const name of ["Hide", "Lock", /Make Group/, "Make Component…", "Make Unique", /^Explode Ctrl/, "Explode Curve", "Clear Paint", "Edit Group / Component"]) await expect(item(page, name)).toBeDisabled();
   await item(page, "Delete").click();
   await expect(menu(page)).toHaveCount(0);
   await expect(dims).toHaveCount(0);
@@ -371,6 +371,61 @@ test("a right-click on a model dimension's number selects it as Select's click d
   await expect(dims).toHaveCount(0);
   await expect(menu(page)).toHaveCount(0);
   await expect.poll(() => undoDepth(page)).toBe(depth + 1);
+});
+
+test("on a sketch region or edge only Delete; on a sketch circle Delete and Explode Curve, which explodes it (#139)", async ({ page }) => {
+  const vp = await ready(page);
+  await page.getByRole("button", { name: "Top", exact: true }).click();
+  await expect(vp).toHaveAttribute("data-view", "top");
+  // A circle of radius 6 in, its first segment starting along red.
+  await page.keyboard.press("c");
+  await expect(hint(page)).toContainText("Circle (");
+  await clickAt(page, [0, 0, 0], /grid|endpoint|axis|origin/);
+  await point(page, [20, 0, 0]);
+  await type(page, "6");
+  await expect(hint(page)).toContainText(/Circle r 6"?( in)?, 24 segments/);
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Escape");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  const items = menu(page).getByRole("menuitem");
+  /** Right-click world point `p` once Select shows `kind` under the pointer there. */
+  const rightClickOn = async (p: [number, number, number], kind: string) => {
+    await hover(page, p, kind, 1, -1, "data-hover");
+    await rightClick(page, p);
+    await expect(menu(page)).toBeVisible();
+  };
+  // The disc inside the circle: a region of the sketch. Delete alone.
+  await rightClickOn([-3, 1, 0], "region");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await expect(items).toHaveCount(1);
+  await expect(item(page, "Delete")).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+  // The rim, halfway along its first segment: the circle, selected whole. Delete and
+  // Explode Curve, both live; Explode Curve explodes it in one undo step.
+  const s = Math.sin((15 * Math.PI) / 180);
+  const c = Math.cos((15 * Math.PI) / 180);
+  const onRim: [number, number, number] = [(6 + 6 * c) / 2, (6 * s) / 2, 0];
+  await rightClickOn(onRim, "curve");
+  await expect(hint(page)).toContainText("Selected a circle");
+  await expect(items).toHaveCount(2);
+  await expect(item(page, "Delete")).toBeEnabled();
+  await expect(item(page, "Explode Curve")).toBeEnabled();
+  const depth = await undoDepth(page);
+  await item(page, "Explode Curve").click();
+  await expect(menu(page)).toHaveCount(0);
+  await expect(hint(page)).toContainText("Exploded the curve");
+  await expect.poll(() => undoDepth(page)).toBe(depth + 1);
+  // The same spot is now one plain segment of the sketch: Delete alone again.
+  await page.keyboard.press("Escape");
+  await rightClickOn(onRim, "edge");
+  await expect(vp).toHaveAttribute("data-selection", "1");
+  await expect(items).toHaveCount(1);
+  await expect(item(page, "Delete")).toBeEnabled();
+  const hash = await vp.getAttribute("data-hash");
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+  await expect(vp).toHaveAttribute("data-hash", hash!);
 });
 
 test("a left press, a middle drag or the wheel on the view only closes the menu; a right press there opens it again there (#107)", async ({ page }) => {

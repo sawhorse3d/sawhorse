@@ -56,7 +56,7 @@ import { DimensionTool, TapeTool } from "./tools/tape";
 import { annotationView } from "./lib/annotations";
 import { InferenceMemory, kernelResolver, ToolDriver, type Resolver } from "./tools/driver";
 import { estimatedLabelSize } from "./lib/dimPick";
-import { ViewMenu, viewMenuItems, type ViewMenuTarget } from "./components/ViewMenu";
+import { menuTarget, ViewMenu, viewMenuItems, type ViewMenuTarget } from "./components/ViewMenu";
 import { friendlyError, setNameSource } from "./lib/names";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
@@ -1705,8 +1705,7 @@ export function App() {
           host.status(describe(ent, live.current.scene?.state, { mesh: live.current.scene?.mesh ?? null, fmt: (m) => fmtRef.current(m), unit: unitInfo(live.current.units).short }));
         }
       }
-      const sel = live.current.selection;
-      const target: ViewMenuTarget = !ent ? "empty" : sel.length === 1 && sel[0].kind === "section" ? "section" : "selection";
+      const target: ViewMenuTarget = menuTarget(Boolean(ent), live.current.selection);
       // What it opened on: when the model, the selection or the tool changes under it (a key
       // that reached the app, Undo, a file opened), it closes, so no item acts on what is gone.
       setViewMenu({ x: e.clientX, y: e.clientY, target, on: { scene: live.current.scene, selection: live.current.selection.map(entityKey).join(" "), tool: toolIdRef.current } });

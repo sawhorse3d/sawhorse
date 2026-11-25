@@ -2,8 +2,9 @@
 // right-clicked, and closes on Escape, a press outside, the wheel or a choice.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Entity } from "../kernel/types";
 import type { MenuItem } from "./TopBar";
-import { ViewMenu, viewMenuItems } from "./ViewMenu";
+import { menuTarget, ViewMenu, viewMenuItems } from "./ViewMenu";
 
 afterEach(cleanup);
 
@@ -63,8 +64,22 @@ describe("which commands a right-click offers", () => {
     expect(labels(viewMenuItems("empty", bar(false), false))).toEqual(["Select All", "Select None", "-", "Zoom Extents", "-", "Undo Push/Pull", "Redo"]);
   });
 
+  it("on a dimension, a guide, a sketch edge or a region: Delete alone, the menu bar's own (#139)", () => {
+    const menus = bar(false);
+    const items = viewMenuItems("drawn", menus, false);
+    expect(labels(items)).toEqual(["Delete"]);
+    expect(items[0]).toBe(menus.Edit.find((it) => it !== "-" && it.label === "Delete"));
+  });
+
+  it("on a sketch circle, arc or polygon: Delete and Explode Curve (#139)", () => {
+    const menus = bar(false);
+    const items = viewMenuItems("curve", menus, false);
+    expect(labels(items)).toEqual(["Delete", "Explode Curve"]);
+    expect(items[1]).toBe(menus.Edit.find((it) => it !== "-" && it.label === "Explode Curve"));
+  });
+
   it("inside an open group or component, Close Group / Component is added; never a separator at an end or two together", () => {
-    for (const t of ["selection", "section", "empty"] as const) {
+    for (const t of ["selection", "section", "drawn", "curve", "empty"] as const) {
       const items = viewMenuItems(t, bar(true), true);
       expect(labels(items).slice(-2)).toEqual(["-", "Close Group / Component"]);
       expect(items[0]).not.toBe("-");
@@ -72,6 +87,59 @@ describe("which commands a right-click offers", () => {
     }
     // A command the menu bar does not have at the moment is left out, with its separator.
     expect(labels(viewMenuItems("section", bar(false), false))).toEqual(["Delete"]);
+  });
+});
+
+describe("which list a right-click opens, from the selection it leaves (#139)", () => {
+  const sketch = { kind: "sketch" as const, id: 1 };
+  const solid = { kind: "object" as const, id: 2 };
+  const guideOwner = { kind: "guide" as const, id: 3 };
+  const dimension: Entity = { kind: "dimension", dimension: 1 };
+  const guide: Entity = { kind: "guide", guide: 1 };
+  const region: Entity = { kind: "region", sketch: 1, region: 1 };
+  const sketchEdge: Entity = { kind: "edge", owner: sketch, a: [0, 0, 0], b: [1, 0, 0], drawn: true };
+  const sketchPoint: Entity = { kind: "vertex", owner: sketch, at: [0, 0, 0] };
+  const sketchCurve: Entity = { kind: "curve", owner: sketch, curve: 1 };
+  const guideEdge: Entity = { kind: "edge", owner: guideOwner, a: [0, 0, 0], b: [1, 0, 0], drawn: false };
+  const rim: Entity = { kind: "curve", owner: solid, curve: 2 };
+  const solidEdge: Entity = { kind: "edge", owner: solid, a: [0, 0, 0], b: [1, 0, 0], drawn: false };
+  const solidPoint: Entity = { kind: "vertex", owner: solid, at: [0, 0, 0] };
+  const face: Entity = { kind: "face", object: 2, face: 1 };
+  const object: Entity = { kind: "object", object: 2 };
+  const node: Entity = { kind: "node", node: 4 };
+  const section: Entity = { kind: "section", section: 1 };
+
+  it("nothing under the pointer: empty space, whatever is selected", () => {
+    expect(menuTarget(false, [])).toBe("empty");
+    expect(menuTarget(false, [object])).toBe("empty");
+    expect(menuTarget(false, [dimension])).toBe("empty");
+  });
+
+  it("one section plane: its own list", () => {
+    expect(menuTarget(true, [section])).toBe("section");
+  });
+
+  it("a dimension, a guide, sketch edges, points or regions, alone or together: Delete alone", () => {
+    for (const sel of [[dimension], [guide], [region], [sketchEdge], [sketchPoint], [guideEdge], [dimension, guide, region, sketchEdge, sketchPoint]]) {
+      expect(menuTarget(true, sel), JSON.stringify(sel)).toBe("drawn");
+    }
+  });
+
+  it("a sketch circle, arc or polygon among them: Delete and Explode Curve", () => {
+    expect(menuTarget(true, [sketchCurve])).toBe("curve");
+    expect(menuTarget(true, [dimension, sketchCurve])).toBe("curve");
+    expect(menuTarget(true, [sketchEdge, sketchCurve, region])).toBe("curve");
+  });
+
+  it("anything of a solid, group or component in the selection keeps the solid's list, a solid's own rim included", () => {
+    for (const sel of [[object], [node], [face], [solidEdge], [solidPoint], [rim], [dimension, object], [sketchCurve, face], [guide, rim]]) {
+      expect(menuTarget(true, sel), JSON.stringify(sel)).toBe("selection");
+    }
+  });
+
+  it("a section plane with something else, or two planes, keeps the list it had", () => {
+    expect(menuTarget(true, [section, dimension])).toBe("selection");
+    expect(menuTarget(true, [section, { kind: "section", section: 2 }])).toBe("selection");
   });
 });
 
