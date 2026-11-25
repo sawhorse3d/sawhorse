@@ -2,9 +2,10 @@
 // right-clicked, and closes on Escape, a press outside, the wheel or a choice.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { itemsOf } from "../App";
 import type { Entity } from "../kernel/types";
 import type { MenuItem } from "./TopBar";
-import { menuTarget, ViewMenu, viewMenuItems } from "./ViewMenu";
+import { menuTarget, ViewMenu, viewMenuItems, type ViewMenuTarget } from "./ViewMenu";
 
 afterEach(cleanup);
 
@@ -149,6 +150,39 @@ describe("which list a right-click opens, from the selection it leaves (#139)", 
   it("a section plane with something else, or two planes, keeps the list it had", () => {
     expect(menuTarget(true, [section, dimension])).toBe("selection");
     expect(menuTarget(true, [section, { kind: "section", section: 2 }])).toBe("selection");
+  });
+
+  it("against the rule before #139, over 20,000 random selections: only a solid's list changes, and only where its other items were greyed out", () => {
+    /** The rule `onContextClick` had before #139. */
+    const before = (on: boolean, sel: Entity[]): ViewMenuTarget => (!on ? "empty" : sel.length === 1 && sel[0].kind === "section" ? "section" : "selection");
+    const pool: Entity[] = [dimension, guide, region, sketchEdge, sketchPoint, sketchCurve, guideEdge, rim, solidEdge, solidPoint, face, object, node, section, { kind: "section", section: 2 }];
+    let seed = 20261125;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    const counts = { same: 0, drawn: 0, curve: 0 };
+    for (let n = 0; n < 20_000; n++) {
+      const on = rnd() < 0.9;
+      const sel = Array.from({ length: Math.floor(rnd() * 4) }, () => pool[Math.floor(rnd() * pool.length)]);
+      const now = menuTarget(on, sel);
+      const was = before(on, sel);
+      if (now === was) {
+        counts.same++;
+        continue;
+      }
+      const why = JSON.stringify({ on, sel });
+      // Only the solid's list gives way, and only for a selection none of whose other items
+      // acts on: Hide, Lock, Make Group, Make Component… and Clear Paint need `itemsOf`;
+      // Edit Group / Component, Make Unique and Explode need a group or component; Explode
+      // Curve needs a curve, and stays exactly when one is selected. Delete stays.
+      expect(was, why).toBe("selection");
+      expect(itemsOf(sel), why).toEqual([]);
+      expect(sel.some((e) => e.kind === "node"), why).toBe(false);
+      expect(now, why).toBe(sel.some((e) => e.kind === "curve") ? "curve" : "drawn");
+      counts[now as "drawn" | "curve"]++;
+    }
+    expect(counts.same + counts.drawn + counts.curve).toBe(20_000);
+    // Both new lists are reached often, so the comparison means something.
+    expect(counts.drawn).toBeGreaterThan(500);
+    expect(counts.curve).toBeGreaterThan(500);
   });
 });
 
