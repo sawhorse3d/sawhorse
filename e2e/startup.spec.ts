@@ -251,6 +251,9 @@ async function expectOverModel(page: Page, area = "main.vp") {
   expect(n.y).toBeGreaterThanOrEqual(a.y);
   expect(n.x + n.width).toBeLessThanOrEqual(a.x + a.width);
   expect(n.y + n.height).toBeLessThanOrEqual(a.y + a.height);
+  // In the middle of it, where the empty model is.
+  expect(Math.abs(n.x + n.width / 2 - (a.x + a.width / 2)), "centred across").toBeLessThan(2);
+  expect(Math.abs(n.y + n.height / 2 - (a.y + a.height / 2)), "centred down").toBeLessThan(2);
   for (const chip of await page.locator(".vp .hud span").all()) {
     const c = await chip.boundingBox();
     if (c) expect(c.y + c.height <= n.y || c.y >= n.y + n.height || c.x + c.width <= n.x || c.x >= n.x + n.width, "a chip under the notice").toBe(true);
