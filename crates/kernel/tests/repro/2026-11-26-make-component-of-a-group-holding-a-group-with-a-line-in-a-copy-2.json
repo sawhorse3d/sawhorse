@@ -1,0 +1,29 @@
+{
+  "name": "2026-11-26-make-component-of-a-group-holding-a-group-with-a-line-in-a-copy-2",
+  "error": "(fixed, #148) the last op, a make_component inside one copy of a component, panicked in the kernel (\"invalid SlotMap key used\"): another copy had a line in a group inside the group the definition lost, and that inner group came later in the loop over what the definition no longer has, after the outer one had removed it with its strokes. Recorded in the browser kernel from a seeded run over models of nested groups in components (the first op is the ground sketch the app starts with), then shrunk.",
+  "ops": [
+    {"op": "new_sketch", "origin": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]},
+    {"op": "draw", "target": {"on": "plane", "origin": [0, 0, 0.1], "normal": [0, 0, 1]}, "points": [[0.027542606312781572, 0.07142342632636428, 0.1], [0.13679150523617864, 0.07142342632636428, 0.1], [0.08216705577448011, 0.2078019274491817, 0.1]], "closed": true},
+    {"op": "extrude", "sketch": 2, "region": 1, "distance": 0.03963695887243375},
+    {"op": "draw", "target": {"on": "plane", "origin": [0, 0, 0], "normal": [0, 0, 1]}, "points": [[1.003066725935787, 0.025856796633452177, 0], [1.1496734352596105, 0.025856796633452177, 0], [1.1496734352596105, 0.10289327656384559, 0], [1.003066725935787, 0.10289327656384559, 0]], "closed": true},
+    {"op": "extrude", "sketch": 1, "region": 1, "distance": 0.053521157118957496},
+    {"op": "draw", "target": {"on": "plane", "origin": [0, 0, 0.1], "normal": [0, 0, 1]}, "points": [[1.5468767921626567, 0.0744575677998364, 0.1], [1.6361370028741657, 0.0744575677998364, 0.1], [1.6361370028741657, 0.18725551190786063, 0.1], [1.5468767921626567, 0.18725551190786063, 0.1]], "closed": true},
+    {"op": "extrude", "sketch": 2, "region": 4294967297, "distance": 0.054588236175477506},
+    {"op": "draw", "target": {"on": "plane", "origin": [0, 0, 0], "normal": [0, 0, 1]}, "points": [[2.0139366584457457, 0.013071146607398988, 0], [2.147094937171787, 0.013071146607398988, 0], [2.0805157978087663, 0.08941281442530453, 0]], "closed": true},
+    {"op": "extrude", "sketch": 1, "region": 4294967297, "distance": 0.06889093483798206},
+    {"op": "make_group", "items": [{"object": 3}, {"object": 4}], "name": "G0"},
+    {"op": "array", "objects": [], "nodes": [1], "xform": {"linear": [[-1.8369701987210297e-16, 0, -1], [0, 1, 0], [1, 0, -1.8369701987210297e-16]], "translation": [0.38464604406617586, 0, -0.2733283667359501]}, "count": 3},
+    {"op": "batch", "ops": [{"op": "copy", "objects": [1, 2], "nodes": [4], "xform": {"linear": [[1.5, 0, 0], [0, 1.5, 0], [0, 0, 1.5]], "translation": [0.23927966388873756, 0.8376137567684054, 0]}}, {"op": "transform", "objects": [1, 2], "nodes": [4], "xform": {"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [0.5518626834265887, -0.36552451197057967, 0]}}, {"op": "array", "objects": [1, 2], "nodes": [4], "xform": {"linear": [[1, 0, 0], [0, 0.4063494419338364, -0.9137177523940638], [0, 0.9137177523940638, 0.4063494419338364]], "translation": [0, 0.21173099296638415, -0.032565764104459605]}, "count": 2}]},
+    {"op": "make_group", "items": [{"node": 2}, {"node": 3}, {"node": 4}, {"node": 6}, {"object": 11}, {"object": 12}, {"object": 15}, {"object": 19}], "name": null},
+    {"op": "batch", "ops": [{"op": "copy", "objects": [1, 16, 20], "nodes": [1, 7], "xform": {"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [-0.48250859249383216, 0.5255921793170273, 0]}}, {"op": "transform", "objects": [1, 16, 20], "nodes": [1, 7], "xform": {"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [1.1264353015460074, 0.12374237626790996, 0]}}, {"op": "array", "objects": [1, 16, 20], "nodes": [1, 7], "xform": {"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [0.5201432996429503, -0.35655370885506277, 0]}, "count": 2}]},
+    {"op": "make_component", "items": [{"node": 1}, {"node": 7}, {"node": 9}], "name": "C8"},
+    {"op": "make_component", "items": [{"node": 5}, {"node": 8}, {"node": 14}], "name": "C10"},
+    {"op": "batch", "ops": [{"op": "copy", "objects": [], "nodes": [10, 11, 15, 16], "xform": {"linear": [[-1.8369701987210297e-16, 1, 0], [-1, -1.8369701987210297e-16, 0], [0, 0, 1]], "translation": [-0.21499044261872757, 1.5109456176869571, 0]}}, {"op": "transform", "objects": [], "nodes": [10, 11, 15, 16], "xform": {"linear": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "translation": [-0.27531385393813257, 0.3677449122071266, 0]}}, {"op": "array", "objects": [], "nodes": [10, 11, 15, 16], "xform": {"linear": [[1, 0.5, 0], [0, 1, 0], [0, 0, 1]], "translation": [0.1, 0, 0]}, "count": 2}]},
+    {"op": "set_context", "node": 55},
+    {"op": "make_group", "items": [{"object": 115}], "name": "G28"},
+    {"op": "set_context", "node": 59},
+    {"op": "draw", "target": {"on": "plane", "origin": [0, 0, 0], "normal": [0, 0, 1]}, "points": [[2.071464223712683, 0.5073925837315619, 0], [2.1955277464259417, 0.5073925837315619, 0], [2.1334959850693123, 0.5859273691568524, 0]], "closed": true},
+    {"op": "set_context", "node": 23},
+    {"op": "make_component", "items": [{"node": 27}, {"node": 29}], "name": "C37"}
+  ]
+}

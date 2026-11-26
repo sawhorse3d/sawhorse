@@ -2257,11 +2257,17 @@ impl Model {
             let kids = self.kids();
             for t in stale {
                 if let Thing::Node(n) = t {
-                    // Strokes drawn in a vanished nested group stay with the instance.
+                    // A vanished group's strokes are given to the instance here, then
+                    // removed with the group below (`remove_thing` reads the same lists).
+                    // Whether a line drawn there should stay is an open question, #149.
+                    // A group inside a vanished group that came earlier in this loop is
+                    // already gone with its strokes, so they are skipped (#148).
                     for &sk in kids.sketches.get(&Some(n)).into_iter().flatten() {
-                        self.sketches[sk].parent = Some(i);
+                        if let Some(s) = self.sketches.get_mut(sk) {
+                            s.parent = Some(i);
+                        }
                     }
-                    // And its section planes (lane 12).
+                    // Its section planes stay with the instance (lane 12).
                     self.rehome_sections(n, Some(i));
                 }
                 self.remove_thing(&kids, t);
