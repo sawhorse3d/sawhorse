@@ -5,6 +5,7 @@
 // too; after Restore, so is the file's Open button. With no file waiting, the offer is in the
 // status line only, as before. Not a system dialog: the native one has two answers, and no
 // room for the Open button after Restore.
+import { answerOnce } from "./answerOnce";
 import type { StatusMessage } from "./ValueBar";
 
 /**
@@ -27,10 +28,9 @@ export function StartupNotice({ message }: { message: StatusMessage }) {
           {message.actions.map((a) => (
             // The second click of a double-click is not a second answer: the next offer's
             // Discard is drawn under the pointer, so it would delete work the person has not
-            // read. The status line's buttons are not guarded here: the next offer's land where
-            // its text ends, under the pointer or not, as before (#145). A key press has no
-            // clicks.
-            <button key={a.label} type="button" onClick={(e) => e.detail < 2 && a.run()}>
+            // read. Nor is a second Enter: the button gives up the focus (#145, answerOnce, the
+            // status line's buttons the same).
+            <button key={a.label} type="button" onClick={answerOnce(a.run)}>
               {a.label}
             </button>
           ))}

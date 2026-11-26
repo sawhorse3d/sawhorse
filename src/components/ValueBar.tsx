@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useState } from "react";
 import { setAsideNote } from "../lib/autosave";
+import { answerOnce } from "./answerOnce";
 import { valueUnitKind, type ToolDef } from "../lib/tools";
 import { unitInfo, type UnitSystem } from "../lib/units";
 import { UnitPicker } from "./UnitPicker";
@@ -77,7 +78,8 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
       <div className={message?.error ? "hint err" : "hint"} id="hint" role="status" aria-live="polite">
         <b>{message?.error ? "Can't do that." : `${tool.label}.`}</b> {message ? message.text : tool.hint}
         {message?.actions?.map((a) => (
-          <button key={a.label} type="button" className="hint-action" onClick={a.run}>
+          // #145: one answer per click or key press, as on the notice over the model.
+          <button key={a.label} type="button" className="hint-action" onClick={answerOnce(a.run)}>
             {a.label}
           </button>
         ))}
