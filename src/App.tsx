@@ -61,7 +61,7 @@ import { noticeMessage, StartupNotice } from "./components/StartupNotice";
 import { friendlyError, setNameSource } from "./lib/names";
 import { stepKey } from "./lib/steps";
 import { explodeOps } from "./lib/curves";
-import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
+import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, unmarked, type Offer } from "./lib/autosave";
 import { ALL_EXTENSIONS, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
 import { closeHandler, desktopShell } from "./io/closing";
 import { goesAhead, unsavedQuestion, type AskOptions, type SaveResult, type UnsavedOutcome, type UnsavedPrompt } from "./io/unsaved";
@@ -746,7 +746,8 @@ export function App() {
           // The log goes to the kernel as the text it was kept as (lane 16).
           const json = await loadOffered(a.id);
           if (json === null) throw new Error("the unsaved work kept in this browser cannot be read");
-          const s = await k.replay(json);
+          // #149: unsaved work an older build set aside is replayed guarded.
+          const s = await k.replay(json, { guarded: unmarked(a) });
           // The restored work is this session's now: its offer becomes this session's autosave.
           await adoptOffered(a.id);
           // The sets the Edit menu restores before this model: those it can load (it skips

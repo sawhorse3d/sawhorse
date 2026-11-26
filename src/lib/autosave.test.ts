@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AUTOSAVE_RULES,
   adoptOffered,
   autosaveEnabled,
   clearAutosave,
@@ -17,6 +18,7 @@ import {
   setAside,
   setAsideNote,
   takeAutosaves,
+  unmarked,
   worthRestoring,
   type Autosave,
   type Offer,
@@ -207,7 +209,7 @@ describe("unsaved work set aside (lane 64, #94)", () => {
     // This session's own work, autosaved, then set aside as Restore starts.
     await saveAutosave(log(5, 3), { savedAt: 3000, solids: 2, steps: 5, worth: true });
     const kept = await setAside(log(5, 3), { savedAt: 3000, solids: 2, steps: 5, worth: true });
-    expect(kept).toEqual({ id: "offered-2", savedAt: 3000, solids: 2, steps: 5, bytes: log(5, 3).length, worth: true, state: "ok" });
+    expect(kept).toEqual({ id: "offered-2", savedAt: 3000, solids: 2, steps: 5, bytes: log(5, 3).length, worth: true, rules: AUTOSAVE_RULES, state: "ok" });
     expect(await adoptOffered("offered")).toBe(true);
     expect(store().get("current")).toBe(log(3, 1));
     expect(await loadOffered("offered-2")).toBe(log(5, 3));
@@ -359,6 +361,41 @@ describe("unsaved work set aside (lane 64, #94)", () => {
     expect(olderNote(3)).toBe("3 older sets of unsaved work are set aside too.");
     expect(setAsideNote(1)).toBe("Unsaved work set aside. Click to restore or discard.");
     expect(setAsideNote(2)).toBe("Unsaved work set aside (2). Click to restore or discard.");
+  });
+
+  // #149: the mark on the record says this build wrote the log. A record without it is
+  // still read (and its log is replayed guarded on Restore, src/App.tsx).
+  it("saveAutosave and setAside write the mark, adoptOffered keeps it, and records without it or with other fields are read", async () => {
+    expect(AUTOSAVE_RULES).toBe(1);
+    await saveAutosave(log(4, 2), { savedAt: 2000, solids: 1, steps: 4, worth: true });
+    expect(store().get("current-meta")).toEqual({ savedAt: 2000, solids: 1, steps: 4, bytes: log(4, 2).length, worth: true, rules: 1 });
+    const kept = await setAside(log(5, 3), { savedAt: 3000, solids: 2, steps: 5, worth: true });
+    expect(kept?.rules).toBe(1);
+    expect(store().get(`${kept!.id}-meta`)).toMatchObject({ rules: 1 });
+    expect(await adoptOffered(kept!.id)).toBe(true);
+    expect(store().get("current-meta")).toMatchObject({ steps: 5, rules: 1 });
+    // A record an older build wrote (no mark), one with the mark, and one with a field this
+    // build does not know: each is read, the mark carried into the offer as it is.
+    idb = new FakeIDB();
+    vi.stubGlobal("indexedDB", idb);
+    plant({
+      offered: log(3, 1),
+      "offered-meta": rec(1000, 3, log(3, 1)),
+      "offered-2": log(4, 2),
+      "offered-2-meta": { ...rec(2000, 4, log(4, 2)), rules: 1 },
+      "offered-3": log(5, 3),
+      "offered-3-meta": { ...rec(3000, 5, log(5, 3)), somethingNew: "x" },
+    });
+    const found = await takeAutosaves();
+    expect(found.offers.map((o) => [o.id, o.state, o.rules, unmarked(o)])).toEqual([
+      ["offered-3", "ok", undefined, true],
+      ["offered-2", "ok", 1, false],
+      ["offered", "ok", undefined, true],
+    ]);
+    expect(await loadOffered("offered")).toBe(log(3, 1));
+    expect(await loadOffered("offered-3")).toBe(log(5, 3));
+    expect(await adoptOffered("offered")).toBe(true);
+    expect(store().get("current-meta")).toEqual(rec(1000, 3, log(3, 1)));
   });
 
   it("refuses ids that are not an offer's", async () => {

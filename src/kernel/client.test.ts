@@ -73,6 +73,22 @@ describe("the kernel client", () => {
     expect(k.c.logJson()).toBe('[{"op":"restore"}]');
   });
 
+  it("asks for the guarded replay only when told the log is an older build's (#149)", async () => {
+    const k = client();
+    await flush();
+    const plain = k.c.replay('[{"op":"a"}]');
+    await flush();
+    expect(k.w().last()).toEqual(expect.objectContaining({ kind: "replay", json: '[{"op":"a"}]' }));
+    expect((k.w().last() as { guarded?: boolean }).guarded).toBeUndefined();
+    k.w().answer({ ok: true, scene });
+    await plain;
+    const guarded = k.c.replay('[{"op":"b"}]', { guarded: true });
+    await flush();
+    expect(k.w().last()).toMatchObject({ kind: "replay", json: '[{"op":"b"}]', guarded: true });
+    k.w().answer({ ok: true, scene });
+    await guarded;
+  });
+
   it("a trap refuses the request, starts a fresh worker and rebuilds the document from the log", async () => {
     const k = client();
     await applied(k, '{"op":"a"}');
@@ -86,6 +102,8 @@ describe("the kernel client", () => {
     // The fresh worker is given the log to replay; a request made meanwhile waits for it.
     const replay = k.w().last();
     expect(replay).toMatchObject({ kind: "replay", json: '[{"op":"a"}]' });
+    // Its own log, made by this build: never the guarded replay of older unsaved work (#149).
+    expect((replay as { guarded?: boolean }).guarded).toBeUndefined();
     const waiting = k.c.version();
     await flush();
     expect(k.w().posted).toHaveLength(1);

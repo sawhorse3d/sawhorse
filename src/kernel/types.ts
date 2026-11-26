@@ -887,6 +887,8 @@ export interface WasmModule {
   document_new(): WasmDoc;
   /** A document rebuilt by replaying an op log (JSON). Throws on a refused entry. */
   document_replay(opsJson: string): WasmDoc;
+  /** #149: the same for unsaved work an older build set aside, refused where this build differs. */
+  document_replay_guarded(opsJson: string): WasmDoc;
   kernel_version(): string;
   /** The built-in material library, as JSON. */
   material_library(): string;
@@ -903,7 +905,7 @@ export type RequestBody =
   | { kind: "memory" }
   | { kind: "init" }
   /** An op log to rebuild from: the ops, or (lane 16) their JSON as one text. */
-  | { kind: "replay"; ops?: KernelOp[]; json?: string }
+  | { kind: "replay"; ops?: KernelOp[]; json?: string; guarded?: boolean }
   | { kind: "scene" }
   | { kind: "apply"; op: KernelOp }
   | { kind: "undo" }

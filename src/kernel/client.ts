@@ -266,9 +266,12 @@ export class KernelClient {
   }
 
   /** Replace the document with one rebuilt from an op log (autosave restore, undo history
-   * included): the ops, or their JSON as one text (lane 16: the app never parses it). */
-  async replay(ops: KernelOp[] | string): Promise<SceneData> {
-    const r = await this.call(typeof ops === "string" ? { kind: "replay", json: ops } : { kind: "replay", ops });
+   * included): the ops, or their JSON as one text (lane 16: the app never parses it).
+   * `guarded` (#149): the log was written by an older build; it is refused at the first
+   * step whose result differs in this one. */
+  async replay(ops: KernelOp[] | string, opts: { guarded?: boolean } = {}): Promise<SceneData> {
+    const g = opts.guarded ? { guarded: true } : {};
+    const r = await this.call(typeof ops === "string" ? { kind: "replay", json: ops, ...g } : { kind: "replay", ops, ...g });
     if (!r.scene) throw new Error("kernel returned no scene");
     return r.scene;
   }

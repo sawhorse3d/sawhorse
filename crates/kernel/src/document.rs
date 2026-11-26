@@ -269,6 +269,18 @@ impl Document {
         Ok(d)
     }
 
+    /// [`Document::replay`] for a log written by a build before #149 (the app's unsaved
+    /// work without the mark of a newer build). It refuses, with
+    /// [`DocumentError::OlderRule`], at the first step whose result differs from what that
+    /// rule gave: a stroke or a section plane drawn in one copy and kept now where it was
+    /// removed then, or a plane of a vanished item kept in another node than the instance.
+    /// The ids after such a step differ too, so the later steps of the log could name other
+    /// things. A log it accepts gives the model the older build gave. Every other replay,
+    /// and every live edit, is unguarded.
+    pub fn replay_guarded(ops: &[Op]) -> Result<Document, (usize, KernelError)> {
+        crate::nodes::with_older_rule_guard(|| Document::replay(ops))
+    }
+
     /// Hash of the current state (the model hash; see [`crate::hash`]).
     pub fn hash(&self) -> u64 {
         self.model.hash()

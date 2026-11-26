@@ -50,6 +50,20 @@ export interface AutosaveMeta {
   bytes: number;
   /** More than the ground sketch every document starts with. */
   worth: boolean;
+  /**
+   * #149: AUTOSAVE_RULES when the log was written by a build that keeps what was drawn in one
+   * copy of a component when the component loses the group it was in. Absent: an older build
+   * wrote it, and Restore replays it guarded (refused where the two builds differ).
+   */
+  rules?: number;
+}
+
+/** #149: the mark this build writes on every autosave record (AutosaveMeta.rules). */
+export const AUTOSAVE_RULES = 1;
+
+/** Whether a record was written by a build before the mark (its log is replayed guarded). */
+export function unmarked(a: AutosaveMeta): boolean {
+  return typeof a.rules !== "number";
 }
 
 /** An autosave found at start: its record, and whether its log can be restored. */
@@ -366,7 +380,7 @@ export async function adoptOffered(id: string): Promise<boolean> {
  */
 export async function setAside(json: string, meta: Omit<AutosaveMeta, "bytes">): Promise<Offer | null> {
   if (json.length > MAX_AUTOSAVE_BYTES) return null;
-  const record: AutosaveMeta = { ...meta, bytes: json.length };
+  const record: AutosaveMeta = { ...meta, bytes: json.length, rules: AUTOSAVE_RULES };
   return transact<Offer>("readwrite", (s, set) => {
     const keys = s.getAllKeys();
     keys.onsuccess = () => {
@@ -388,7 +402,7 @@ export async function saveAutosave(json: string, meta: Omit<AutosaveMeta, "bytes
   }
   await transact("readwrite", (s) => {
     s.put(json, KEY);
-    s.put({ ...meta, bytes: json.length }, META);
+    s.put({ ...meta, bytes: json.length, rules: AUTOSAVE_RULES }, META);
   });
   return true;
 }

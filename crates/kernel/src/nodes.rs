@@ -196,6 +196,31 @@ pub(crate) fn kids_builds() -> u64 {
     KIDS_BUILDS.with(std::cell::Cell::get)
 }
 
+thread_local! {
+    /// #149: set only while [`crate::document::Document::replay_guarded`] runs, for a log an
+    /// older build wrote. The kernel then refuses the first re-derivation whose result would
+    /// differ from the rule before #149 (see `rederive_at`). Not part of any model, hash,
+    /// snapshot or log; a live edit and a plain replay never see it set.
+    static OLDER_RULE_GUARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with the guard of [`OLDER_RULE_GUARD`] set, putting it back after (also when
+/// `f` panics).
+pub(crate) fn with_older_rule_guard<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OLDER_RULE_GUARD.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(OLDER_RULE_GUARD.with(|c| c.replace(true)));
+    f()
+}
+
+fn older_rule_guard() -> bool {
+    OLDER_RULE_GUARD.with(std::cell::Cell::get)
+}
+
 /// The default name a new definition gets.
 pub const DEFAULT_COMPONENT_NAME: &str = "Component";
 
@@ -2254,21 +2279,77 @@ impl Model {
         // What the definition no longer has (its kept contents were moved out above).
         if !stale.is_empty() {
             changed = true;
-            let kids = self.kids();
+            let mut kids = self.kids();
+            // #149: what was drawn or placed in this copy (strokes and section planes: no
+            // definition holds them) inside a vanished group or nested instance stays in
+            // the copy, in the nearest node around it that the definition still has (or
+            // the instance itself). Both are stored in world coordinates, so only their
+            // parent changes: they stay where they were, ids and all, and nothing merges
+            // them with what is already there. Every node that goes is listed first with
+            // that holder: the vanished items and everything below them (the inside of a
+            // vanished nested instance too). Kept items were given their parents above,
+            // so nothing below a vanished item is kept.
+            let gone_here: BTreeSet<NodeId> = stale
+                .iter()
+                .filter_map(|&t| match t {
+                    Thing::Node(n) => Some(n),
+                    _ => None,
+                })
+                .collect();
+            // Read before anything goes: an instance inside a vanished group is removed with
+            // the group, before its own turn in the loop below.
+            let instances: BTreeSet<NodeId> = gone_here
+                .iter()
+                .copied()
+                .filter(|&n| matches!(self.nodes[n].kind, NodeKind::Instance(_)))
+                .collect();
+            let mut holder: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+            for &n in &gone_here {
+                let mut h = self.nodes[n].member.parent.unwrap_or(i);
+                while gone_here.contains(&h) {
+                    h = self.nodes[h].member.parent.unwrap_or(i);
+                }
+                holder.insert(n, h);
+                for t in self.subtree_things(&kids, n) {
+                    if let Thing::Node(k) = t {
+                        holder.insert(k, h);
+                    }
+                }
+            }
+            // A log an older build wrote, replayed guarded: refuse where the rule before
+            // #149 gave another result. It removed every stroke in a node that goes and
+            // every plane inside a vanished nested instance, and moved each vanished item's
+            // own planes to the instance. Anything else here is the same in both.
+            if older_rule_guard()
+                && holder.iter().any(|(&c, &h)| {
+                    kids.sketches.get(&Some(c)).is_some_and(|v| !v.is_empty())
+                        || (!self.sections_in(c).is_empty() && (!gone_here.contains(&c) || h != i))
+                })
+            {
+                return Err(DocumentError::OlderRule.into());
+            }
+            for (&c, &h) in &holder {
+                // Taken off the lists `remove_thing` reads, so it leaves them.
+                for sk in kids.sketches.remove(&Some(c)).unwrap_or_default() {
+                    self.sketches[sk].parent = Some(h);
+                }
+            }
             for t in stale {
                 if let Thing::Node(n) = t {
-                    // A vanished group's strokes are given to the instance here, then
-                    // removed with the group below (`remove_thing` reads the same lists).
-                    // Whether a line drawn there should stay is an open question, #149.
-                    // A group inside a vanished group that came earlier in this loop is
-                    // already gone with its strokes, so they are skipped (#148).
-                    for &sk in kids.sketches.get(&Some(n)).into_iter().flatten() {
-                        if let Some(s) = self.sketches.get_mut(sk) {
-                            s.parent = Some(i);
+                    // Section planes in the order today's rule meets them: each vanished
+                    // item's own, as this loop takes them, then those inside a vanished
+                    // nested instance. Where a holder has no active plane, the first
+                    // active one moved in stays active and the others are switched off
+                    // ([`Model::rehome_sections`], lane 12).
+                    let h = holder[&n];
+                    self.rehome_sections(n, Some(h));
+                    if instances.contains(&n) {
+                        for k in self.subtree_things(&kids, n) {
+                            if let Thing::Node(k) = k {
+                                self.rehome_sections(k, Some(h));
+                            }
                         }
                     }
-                    // Its section planes stay with the instance (lane 12).
-                    self.rehome_sections(n, Some(i));
                 }
                 self.remove_thing(&kids, t);
             }

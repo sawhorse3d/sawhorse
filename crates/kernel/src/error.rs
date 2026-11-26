@@ -271,6 +271,14 @@ pub enum DocumentError {
     /// Lane 15: soft, smooth and hidden edges.
     #[error("{0}")]
     EdgeFlags(String),
+    /// #149: a guarded replay ([`crate::document::Document::replay_guarded`]) met a step
+    /// whose result differs from what the rule before #149 gave: what was drawn in one copy
+    /// inside a group or nested component the definition lost is kept now, and was removed
+    /// then.
+    #[error(
+        "an older version set it aside, and one of its steps gives a different result in this version"
+    )]
+    OlderRule,
 }
 
 /// Errors from groups, components, the editing context, tags and scenes (lane 5). Nothing

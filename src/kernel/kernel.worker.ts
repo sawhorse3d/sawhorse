@@ -129,8 +129,10 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       }
       case "replay": {
-        // Build first, swap after: a refused log leaves the current document alone.
-        const next = mod.document_replay(req.json ?? JSON.stringify(req.ops ?? []));
+        // Build first, swap after: a refused log leaves the current document alone. #149: a
+        // log an older build wrote is replayed guarded (refused where this build differs).
+        const json = req.json ?? JSON.stringify(req.ops ?? []);
+        const next = req.guarded ? mod.document_replay_guarded(json) : mod.document_replay(json);
         replaced = true;
         doc?.free();
         doc = next;

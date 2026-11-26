@@ -965,6 +965,24 @@ pub fn document_replay(ops_json: &str) -> Result<Doc, JsError> {
     })
 }
 
+/// [`document_replay`] for unsaved work an older build set aside (#149): refused at the
+/// first step whose result differs in this build ([`Document::replay_guarded`]). That
+/// refusal reads as its own sentence, with no step number; any other is "op N: ...".
+#[wasm_bindgen]
+pub fn document_replay_guarded(ops_json: &str) -> Result<Doc, JsError> {
+    too_big("an op log", ops_json, MAX_LOG_JSON).map_err(js)?;
+    let ops: Vec<Op> = serde_json::from_str(ops_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let doc = Document::replay_guarded(&ops).map_err(|(i, e)| match e {
+        sawhorse_kernel::error::KernelError::Document(
+            sawhorse_kernel::error::DocumentError::OlderRule,
+        ) => JsError::new(&e.to_string()),
+        e => JsError::new(&format!("op {i}: {e}")),
+    })?;
+    Ok(Doc {
+        core: DocCore::from_document(doc),
+    })
+}
+
 /// Replay a JSON op log from empty and return its state hash (golden cross-check).
 #[wasm_bindgen]
 pub fn replay_hash(ops_json: &str) -> Result<String, JsError> {

@@ -2150,9 +2150,11 @@ mod tests {
     /// component; the box grouped inside the third copy (so a group in every copy); the
     /// box deleted from inside the first copy's group and a line drawn there; the second
     /// copy opened. The empty groups go, which takes the group out of the definition and
-    /// so out of the first copy too, line and all. Tidying used to stop after one sweep, leaving the first copy, now empty,
-    /// for the next edit to remove; undoing that edit brought it back, and Save refused
-    /// because the file opened without it.
+    /// so out of the first copy too. Tidying used to stop after one sweep, leaving the first
+    /// copy, then empty, for the next edit to remove; undoing that edit brought it back, and
+    /// Save refused because the file opened without it. Since #149 the line drawn in the
+    /// first copy's group stays in the first copy when the group goes, so that copy is not
+    /// empty and stays, holding the line; the third goes as before.
     #[test]
     fn a_component_copy_emptied_by_tidying_is_not_saved_as_a_ghost() {
         let mut d = Document::new();
@@ -2213,15 +2215,25 @@ mod tests {
             &mut d,
             serde_json::json!({ "op": "set_context", "node": 2 }),
         );
-        // The component is empty now: every copy but the open one went in this edit.
-        assert_eq!(copies(&d), [2], "the emptied copies go when they empty");
+        // The component is empty now: every copy but the open one and the one holding the
+        // line (#149) went in this edit.
+        assert_eq!(copies(&d), [1, 2], "the emptied copies go when they empty");
+        let line_in = d
+            .model()
+            .graph()
+            .sketches
+            .iter()
+            .filter(|(_, p)| p.is_some())
+            .map(|(_, p)| *p)
+            .collect::<Vec<_>>();
+        assert_eq!(line_in, [Some(1)], "the line stays in the first copy");
         saves_and_opens_the_same(&d, "the second copy opened");
         apply(
             &mut d,
             serde_json::json!({ "op": "add_section", "origin": [0, 0.25, 0.5], "normal": [0, 0, -1] }),
         );
         d.undo().unwrap();
-        assert_eq!(copies(&d), [2], "undo brings back no empty copy");
+        assert_eq!(copies(&d), [1, 2], "undo brings back no empty copy");
         saves_and_opens_the_same(&d, "a section plane added and undone");
     }
 }
