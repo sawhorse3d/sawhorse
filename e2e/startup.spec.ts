@@ -368,6 +368,175 @@ test("two pieces of unsaved work and a waiting file: a double-click on the notic
   await expect(n).toHaveCount(0);
 });
 
+// #145: answering the offer puts the next set's offer in the same place at once, so a second
+// click or key press meant for the first must not answer the next, which is not read yet.
+
+/** Two sets of unsaved work set aside (24 x 16 x 12 in, then 12 x 12 x 6 in, each 3 steps),
+ * and a start with `start`. */
+async function twoSets(page: Page, start: string | null) {
+  const vp = await started(page, null);
+  await box(page, "24,16", "12");
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, null);
+  await loaded(page);
+  await expect(page.locator("#hint")).toContainText("Restore unsaved work? 1 solid, 3 steps");
+  await box(page);
+  await expect.poll(() => slot(page, "current-meta")).toBe(3);
+  await restart(page, start);
+  await loaded(page);
+  const hint = page.locator("#hint");
+  await expect(hint).toContainText("1 older set of unsaved work is set aside too.");
+  return { vp, hint };
+}
+
+/** After one answer of Discard: the next set is offered, still kept, and nothing else changed. */
+async function oneDiscarded(page: Page, vp: ReturnType<Page["locator"]>, hint: ReturnType<Page["locator"]>) {
+  await expect(hint).toContainText("Unsaved work discarded. Restore unsaved work? 1 solid, 3 steps");
+  await expect.poll(() => slot(page, "offered-meta")).toBe(3);
+  await expect(vp).toHaveAttribute("data-objects", "0");
+  expect((await bridge(page)).reads).toEqual([]);
+}
+
+/** The next offer, answered by a click of its own after the extra click or key presses, still
+ * restores its set: so those presses had been taken, and had answered nothing, by then. */
+async function nextStillOffered(vp: ReturnType<Page["locator"]>, hint: ReturnType<Page["locator"]>) {
+  await hint.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(hint).toContainText("Restored your unsaved work: 1 solid, 3 steps");
+  await expect(vp).toHaveAttribute("data-objects", "1");
+}
+
+// Where the next offer's buttons land depends on the window's width and the two texts, so a
+// real double-click hits them only in some windows (336 px wide in the issue, not 1440). The
+// second click is sent to the next offer's button itself, as it lands when the layout puts it
+// under the pointer: a click whose detail is 2.
+async function secondClickOn(button: ReturnType<Page["locator"]>) {
+  await button.dispatchEvent("click", { detail: 2, bubbles: true });
+}
+
+test("two sets kept: a double-click on the status line's Discard whose second click lands on the next Discard discards only the first (#145)", async ({ page }) => {
+  const { vp, hint } = await twoSets(page, null);
+  await hint.getByRole("button", { name: "Discard" }).click();
+  await expect(hint).toContainText("Unsaved work discarded.");
+  await secondClickOn(hint.getByRole("button", { name: "Discard" }));
+  await oneDiscarded(page, vp, hint);
+  await nextStillOffered(vp, hint);
+});
+
+test("two sets and a waiting file: a double-click on the status line's Discard whose second click lands on the next Restore restores nothing (#145)", async ({ page }) => {
+  const { vp, hint } = await twoSets(page, SHELF);
+  await hint.getByRole("button", { name: "Discard" }).click();
+  await expect(hint).toContainText("Unsaved work discarded.");
+  await secondClickOn(hint.getByRole("button", { name: "Restore" }));
+  await oneDiscarded(page, vp, hint);
+  await expect(hint).toContainText("shelf.shz opens after you answer.");
+  await nextStillOffered(vp, hint);
+});
+
+/** The window widths tried, in order, for a real double-click whose second click lands on the
+ * next offer's button. */
+const DOUBLE_CLICK_WIDTHS = [896, 464, 336, 384, 432, 512, 576, 640, 768, 1024];
+
+test("two sets kept: a real double-click on the status line's Discard, where the next offer's button lands under the pointer, answers only the first (#145)", async ({ page }) => {
+  // Where the next offer's buttons land depends on the window's width, the two texts and the
+  // fonts, so the window is found from the live layout, not assumed. For each width tried, the
+  // page is loaded at that width, the first offer is answered once with Enter (no pointer), and
+  // the next offer's buttons are measured; the width taken is the first where a point 2 px or
+  // more inside the first offer's Discard is as far inside one of the next offer's buttons.
+  // The first set is then made again (the same box), and the double-click goes to that point.
+  test.setTimeout(90_000);
+  type Box = { x: number; y: number; width: number; height: number };
+  const hitIn = (a: Box, b: Box): [number, number] | null => {
+    const x0 = Math.max(a.x, b.x) + 2;
+    const x1 = Math.min(a.x + a.width, b.x + b.width) - 2;
+    const y0 = Math.max(a.y, b.y) + 2;
+    const y1 = Math.min(a.y + a.height, b.y + b.height) - 2;
+    return x1 > x0 && y1 > y0 ? [(x0 + x1) / 2, (y0 + y1) / 2] : null;
+  };
+  await page.setViewportSize({ width: DOUBLE_CLICK_WIDTHS[0], height: 700 });
+  const { vp, hint } = await twoSets(page, null);
+  const discard = hint.getByRole("button", { name: "Discard", exact: true });
+  /** The newest set made again, and the page loaded at `width`: two sets offered. */
+  const again = async (width: number) => {
+    await box(page);
+    await expect.poll(() => slot(page, "current-meta")).toBe(3);
+    await page.setViewportSize({ width, height: 700 });
+    await restart(page, null);
+    await loaded(page);
+    await expect(hint).toContainText("1 older set of unsaved work is set aside too.");
+  };
+  let aim: { at: [number, number]; label: string; first: Box } | null = null;
+  for (let i = 0; i < DOUBLE_CLICK_WIDTHS.length && !aim; i++) {
+    if (i > 0) await again(DOUBLE_CLICK_WIDTHS[i]);
+    const first = (await discard.boundingBox())!;
+    await discard.focus();
+    await page.keyboard.press("Enter");
+    await expect(hint).toContainText("Unsaved work discarded.");
+    for (const label of ["Restore", "Discard"]) {
+      const at = hitIn(first, (await hint.getByRole("button", { name: label, exact: true }).boundingBox())!);
+      if (at && !aim) aim = { at, label, first };
+    }
+    if (aim) {
+      test.info().annotations.push({ type: "window", description: `${DOUBLE_CLICK_WIDTHS[i]} px wide, the second click on the next ${aim.label}` });
+      await again(DOUBLE_CLICK_WIDTHS[i]);
+    }
+  }
+  if (!aim) throw new Error(`no window width of ${DOUBLE_CLICK_WIDTHS.join(", ")} px puts a button of the next offer under the first offer's Discard`);
+  // The same layout as when it was measured.
+  expect(await discard.boundingBox()).toEqual(aim.first);
+  const [x, y] = aim.at;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(hint).toContainText("Unsaved work discarded.");
+  // The second click of the double-click lands on the next offer's button.
+  expect(await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.textContent, [x, y])).toBe(aim.label);
+  await page.mouse.down({ clickCount: 2 });
+  await page.mouse.up({ clickCount: 2 });
+  await oneDiscarded(page, vp, hint);
+  // The second press gave the next offer's button the focus; the click that answered nothing
+  // gave it up again, so Enter now would not answer that offer either.
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await nextStillOffered(vp, hint);
+});
+
+test("two sets kept: Enter pressed twice on a focused Discard discards only the first (#145)", async ({ page }) => {
+  const { vp, hint } = await twoSets(page, null);
+  await hint.getByRole("button", { name: "Discard" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(hint).toContainText("Unsaved work discarded.");
+  await page.keyboard.press("Enter");
+  await oneDiscarded(page, vp, hint);
+  // The focus is given up, to the page itself: not to the next offer's Discard, nor to
+  // anything else Enter would press or commit (the measurements box).
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await nextStillOffered(vp, hint);
+});
+
+test("two sets kept: Enter held down on a focused Discard discards only the first (#145)", async ({ page }) => {
+  const { vp, hint } = await twoSets(page, null);
+  await hint.getByRole("button", { name: "Discard" }).focus();
+  // Held: the first press, then the key's repeats, then the release.
+  await page.keyboard.down("Enter");
+  await expect(hint).toContainText("Unsaved work discarded.");
+  for (let k = 0; k < 6; k++) await page.keyboard.down("Enter");
+  await page.keyboard.up("Enter");
+  await oneDiscarded(page, vp, hint);
+  await nextStillOffered(vp, hint);
+});
+
+test("two sets and a waiting file: Enter twice on the notice's focused Discard discards only the first (#145)", async ({ page }) => {
+  const { vp, hint } = await twoSets(page, SHELF);
+  const n = notice(page);
+  await n.getByRole("button", { name: "Discard" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(n).toContainText("Unsaved work discarded.");
+  await page.keyboard.press("Enter");
+  await oneDiscarded(page, vp, hint);
+  await expect(n).toContainText("shelf.shz opens after you answer.");
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await nextStillOffered(vp, hint);
+});
+
 test("a waiting file whose name has no place to break: the notice wraps it and stays inside the model area (#115)", async ({ page }) => {
   const LONG = `C:\\Users\\maker\\Documents\\Sawhorse\\${"x".repeat(196)}.shz`;
   await desktopBridge(page, "Win32", { start: null, files: { [LONG]: shelf } });

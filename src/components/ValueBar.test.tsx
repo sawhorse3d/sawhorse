@@ -160,6 +160,78 @@ describe("the browser demo's first-run hint", () => {
   });
 });
 
+describe("a message's buttons answer once (#145)", () => {
+  // With more than one set of unsaved work, answering the offer puts the next offer in the
+  // same place at once: a second click or key press meant for the first must not answer it.
+  const offerWith = (run: () => void, text = "Restore unsaved work? 1 solid, 3 steps.") => ({ text, error: false, offer: true, actions: [{ label: "Restore", run: () => {} }, { label: "Discard", run }] });
+
+  it("the second click of a double-click runs nothing; a single click and a key press (no clicks) run the action", () => {
+    const run = vi.fn();
+    bar({ message: offerWith(run) });
+    const discard = screen.getByRole("button", { name: "Discard" });
+    fireEvent.click(discard, { detail: 1 });
+    fireEvent.click(discard, { detail: 2 });
+    fireEvent.click(discard, { detail: 3 });
+    expect(run).toHaveBeenCalledTimes(1);
+    fireEvent.click(discard, { detail: 0 });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("the button that answered gives up the focus, so the next offer's Discard in its place does not have it", () => {
+    const first = vi.fn();
+    const next = vi.fn();
+    const { rerender } = bar({ message: offerWith(first) });
+    const discard = screen.getByRole("button", { name: "Discard" });
+    discard.focus();
+    expect(document.activeElement).toBe(discard);
+    fireEvent.click(discard, { detail: 0 });
+    expect(first).toHaveBeenCalledTimes(1);
+    rerender({ message: offerWith(next, "Unsaved work discarded. Restore unsaved work? 1 solid, 5 steps.") });
+    const again = screen.getByRole("button", { name: "Discard" });
+    expect(document.activeElement).not.toBe(again);
+    // Given up to the page itself, not to another control Enter would press or commit.
+    expect(document.activeElement).toBe(document.body);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("a second click that answers nothing gives up the focus too: its press can give it to the next offer's button", () => {
+    const first = vi.fn();
+    const next = vi.fn();
+    const { rerender } = bar({ message: offerWith(first) });
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }), { detail: 1 });
+    rerender({ message: offerWith(next, "Unsaved work discarded. Restore unsaved work? 1 solid, 5 steps.") });
+    // The second press lands on the next offer's Restore and focuses it, as a mouse press does.
+    const restore = screen.getByRole("button", { name: "Restore" });
+    restore.focus();
+    fireEvent.click(restore, { detail: 2 });
+    expect(document.activeElement).toBe(document.body);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("so does every button of every message, not only the offer's Discard", () => {
+    const messages = [
+      { text: "Restore unsaved work? 1 solid, 3 steps.", error: false, offer: true, labels: ["Restore", "Discard"] },
+      { text: "Could not restore the unsaved work: it cannot be read.", error: true, offer: true, labels: ["Discard"] },
+      { text: "Restored your unsaved work. shelf.shz is not open yet.", error: false, startup: true, labels: ["Open shelf.shz"] },
+      { text: "Importing cabinet.skp…", error: false, labels: ["Cancel"] },
+    ];
+    for (const { labels, ...m } of messages) {
+      const runs = labels.map(() => vi.fn());
+      const { unmount } = bar({ message: { ...m, actions: labels.map((label, i) => ({ label, run: runs[i] })) } });
+      labels.forEach((label, i) => {
+        const b = screen.getByRole("button", { name: label });
+        b.focus();
+        fireEvent.click(b, { detail: 1 });
+        fireEvent.click(b, { detail: 2 });
+        expect(runs[i]).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).toBe(document.body);
+      });
+      unmount();
+    }
+  });
+});
+
 // Lane 64 (#94): while unsaved work is set aside and its offer is no longer the status line's
 // message (an edit replaced it), the line says so, and a click shows the offer again.
 describe("the reminder of unsaved work set aside", () => {

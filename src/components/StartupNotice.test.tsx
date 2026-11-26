@@ -90,6 +90,34 @@ describe("the notice", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it("the button that answered gives up the focus, so a second Enter has no button to press (#145)", () => {
+    const run = vi.fn();
+    const { rerender } = render(<StartupNotice message={{ ...offer, actions: [{ label: "Discard", run }] }} />);
+    const b = screen.getByRole("button");
+    b.focus();
+    fireEvent.click(b, { detail: 0 });
+    expect(run).toHaveBeenCalledTimes(1);
+    rerender(<StartupNotice message={{ ...offer, text: "Unsaved work discarded. Restore unsaved work?", actions: [{ label: "Discard", run: vi.fn() }] }} />);
+    expect(document.activeElement).not.toBe(screen.getByRole("button"));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("every button it shows answers once: Restore, Discard and the Open button after Restore (#145)", () => {
+    for (const m of [offer, opened]) {
+      const runs = m.actions!.map(() => vi.fn());
+      const { unmount } = render(<StartupNotice message={{ ...m, actions: m.actions!.map((a, i) => ({ label: a.label, run: runs[i] })) }} />);
+      screen.getAllByRole("button").forEach((b, i) => {
+        b.focus();
+        fireEvent.click(b, { detail: 1 });
+        fireEvent.click(b, { detail: 2 });
+        fireEvent.click(b, { detail: 3 });
+        expect(runs[i]).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).toBe(document.body);
+      });
+      unmount();
+    }
+  });
+
   it("an offer that cannot be restored reads as an error, as the status line does", () => {
     render(<StartupNotice message={{ ...offer, error: true, actions: [offer.actions![1]] }} />);
     expect(screen.getByTestId("startup-notice").className).toContain("err");
