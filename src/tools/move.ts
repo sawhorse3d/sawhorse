@@ -29,7 +29,7 @@ import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
 import { noPointWords } from "./dropped";
 import { scopeEntity } from "../lib/scope";
-import { stepKey, stillLast } from "../lib/steps";
+import { logKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
@@ -317,7 +317,7 @@ export class MoveTool extends Tool {
       return `Moved ${what} ${how}.`;
     });
     if (r) {
-      this.last = { key: stepKey(h.state()), subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
+      this.last = { key: logKey(h.state()), subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
       h.showValue(h.fmt(len(delta)));
       // Selected sketch geometry stays selected where it went (lane 22).
       if (!copy && subject.sketches?.length && sel.length) {

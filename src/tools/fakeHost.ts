@@ -19,6 +19,9 @@ export interface FakeHost extends ToolHost {
   _state: DocState | null;
   /** Lane 43: each `rememberSelection` call, with the selection and target it saw. */
   remembered: { before: Entity[]; after: Entity[]; target: Target | null }[];
+  /** #84: each applied op moves the document on as the kernel does: the undo depth (down for an
+   * Undo, else up), the model hash and the op log's hash. Off: the state stays as it is set. */
+  stepping: boolean;
 }
 
 export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
@@ -34,6 +37,7 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
     _mesh: null,
     _state: null,
     remembered: [],
+    stepping: false,
     units: () => h._units,
     fmt: (m) => formatLength(m, h._units),
     unitLabel: () => unitInfo(h._units).short,
@@ -45,6 +49,11 @@ export function fakeHost(over: Partial<FakeHost> = {}): FakeHost {
       if (!h.outcome) {
         h.statuses.push({ text: "refused", error: true });
         return null;
+      }
+      if (h.stepping) {
+        const was = h._state ?? ({ undo_depth: 0, stats: {}, sketches: [], groups: [] } as unknown as DocState);
+        const n = h.ops.length;
+        h._state = { ...was, undo_depth: was.undo_depth + (op.op === "undo" ? -1 : 1), log_hash: `log ${n}`, stats: { ...was.stats, hash: `model ${n}` } };
       }
       const state = h._state ?? ({ stats: { objects: 1, faces: 6, edges: 12, vertices: 8, genus: 0, watertight: true, volume_m3: 1 }, sketches: [], groups: [] } as unknown as DocState);
       const r = { outcome: h.outcome, scene: { mesh: h._mesh, state } } as unknown as EditResult;

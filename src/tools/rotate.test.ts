@@ -157,6 +157,29 @@ describe("Rotate tool", () => {
     close(applyX(ops(h).at(-1)!.xform as Xform, [1, 0, 0]), [Math.SQRT1_2, Math.SQRT1_2, 0]);
   });
 
+  it("#84: after a Ctrl copy and another step, x3 does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new RotateTool(h);
+    t.onModifier("ctrl");
+    await turn(t, 90);
+    expect(ops(h).at(-1)).toMatchObject({ op: "copy", objects: [1] });
+    // Another step lands: the model moves on past the copy.
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
+    // With the model at the copy, x3 changes it, as before.
+    const g = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const u = new RotateTool(g);
+    u.onModifier("ctrl");
+    await turn(u, 90);
+    u.onValue("x3");
+    await tick();
+    expect(ops(g).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 3 }]);
+  });
+
   it("refuses arrays without a copy and non-angles", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
     const t = new RotateTool(h);

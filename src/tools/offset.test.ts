@@ -70,11 +70,10 @@ describe("Offset tool", () => {
     expect(h.statuses.at(-1)?.text).toContain("inward, on the solid");
   });
 
-  it("#84: with the model at a known step, a distance typed right after the offset still changes it", async () => {
-    // The step key is read from the model right after the offset: here 3 steps deep. (With
-    // no document state every key is empty, so a key of nothing would pass unseen.)
-    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 } });
-    h._state = { undo_depth: 3, stats: { hash: "after the offset" } } as unknown as typeof h._state;
+  it("#84: with each op moving the model on, a distance typed right after the offset still changes it", async () => {
+    // The key is read from the model right after the offset. With a state that never moves,
+    // a key of nothing, or one read before the offset, would pass unseen.
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 }, stepping: true });
     h.outline = async () => [unitSquare];
     const t = new OffsetTool(h);
     t.onEvent(at("down", 1, 0.5));

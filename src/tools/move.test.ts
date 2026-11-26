@@ -455,6 +455,28 @@ describe("Move tool", () => {
     expect(t.busy()).toBe(false);
   });
 
+  it("#84: after a Ctrl copy and another step, x3 and /4 do not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onModifier("ctrl");
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
+    t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "copy", objects: [1] });
+    // Another step lands: the model moves on past the copy.
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("x3");
+    await tick();
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
+  });
+
   it("Ctrl copies; x3 then replaces the copy with an array; /4 divides it", async () => {
     const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
     const t = new MoveTool(h);

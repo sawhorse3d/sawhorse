@@ -23,7 +23,7 @@ import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
-import { stepKey, stillLast } from "../lib/steps";
+import { logKey, stillLast } from "../lib/steps";
 import { curveOf, curveView, lengthWithUnit } from "../lib/curves";
 
 /** How close (px) the cursor must be to a grip to take it. */
@@ -431,7 +431,7 @@ export class ScaleTool extends Tool {
     const pushed = h.target();
     const r = await h.apply(scaleOp(t.subject, c, f), (res: EditResult) => scaledWords(t.subject, what, f, aboutCentre, before, res, (m) => h.fmt(m), h.unitLabel()));
     if (r) {
-      this.last = { target: t, grip, f, aboutCentre, key: stepKey(h.state()) };
+      this.last = { target: t, grip, f, aboutCentre, key: logKey(h.state()) };
       // The box shows what was applied (the largest change), not the cursor's last reading.
       const shown = f.reduce((a, b) => (Math.abs(b - 1) > Math.abs(a - 1) ? b : a), 1);
       h.showValue(String(Math.round(shown * 10000) / 10000));

@@ -12,7 +12,7 @@ import type { EditResult } from "../kernel/client";
 import type { Entity, OffsetSource, V3 } from "../kernel/types";
 import { curveSegments } from "../lib/curves";
 import { faceOf, regionName, solidName } from "../lib/names";
-import { stepKey, stillLast } from "../lib/steps";
+import { logKey, stillLast } from "../lib/steps";
 import { parseVcb } from "../lib/vcb";
 import { add, cross, dot, len, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
@@ -371,7 +371,7 @@ export class OffsetTool extends Tool {
       return `Offset ${what} ${h.fmt(Math.abs(d))} ${h.unitLabel()} ${way}, ${where}. Push/Pull (P) the new face next.`;
     });
     if (r) {
-      this.last = { source, what, d, key: stepKey(h.state()) };
+      this.last = { source, what, d, key: logKey(h.state()) };
       h.showValue(h.fmt(Math.abs(d)));
     }
   }

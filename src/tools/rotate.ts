@@ -24,7 +24,7 @@ import { dragWords, noPointWords } from "./dropped";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
-import { stepKey, stillLast } from "../lib/steps";
+import { logKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
 
 const DEG = Math.PI / 180;
@@ -357,7 +357,7 @@ export class RotateTool extends Tool {
       return `Turned ${what} ${how}.`;
     });
     if (r) {
-      this.last = { key: stepKey(h.state()), subject, centre, normal, angle, deg, copy, count, sel, sk };
+      this.last = { key: logKey(h.state()), subject, centre, normal, angle, deg, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
       // Selected sketch geometry stays selected where it went (lane 22).
       if (!copy && subject.sketches?.length && sel.length) {

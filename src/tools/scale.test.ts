@@ -150,6 +150,27 @@ describe("Scale tool", () => {
     expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Pick a grip first") });
   });
 
+  it("#84: with the undo history full, a step that leaves the model as it was still ends the scale", async () => {
+    const full = { ...state, undo_depth: 200, log_hash: "log after the scale" } as typeof state;
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: full, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    t.onValue("1.5");
+    await tick();
+    const n = ops(h).length;
+    // A scene that only moves the camera: the depth stays at the cap, the model hash stays.
+    h._state = { ...full, log_hash: "log after the scene" } as typeof state;
+    h.sel = [];
+    t.onValue("3in");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Pick a grip first") });
+  });
+
   it("a zero factor is refused before the kernel; a press away from the grips says why", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
     h.sel = [{ kind: "object", object: 1 }];
