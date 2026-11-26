@@ -70,6 +70,25 @@ describe("Offset tool", () => {
     expect(h.statuses.at(-1)?.text).toContain("inward, on the solid");
   });
 
+  it("#84: with the model at a known step, a distance typed right after the offset still changes it", async () => {
+    // The step key is read from the model right after the offset: here 3 steps deep. (With
+    // no document state every key is empty, so a key of nothing would pass unseen.)
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 } });
+    h._state = { undo_depth: 3, stats: { hash: "after the offset" } } as unknown as typeof h._state;
+    h.outline = async () => [unitSquare];
+    const t = new OffsetTool(h);
+    t.onEvent(at("down", 1, 0.5));
+    await tick();
+    t.onEvent(at("click", 1, 0.5));
+    t.onEvent(at("move", 1.3, 0.5));
+    t.onValue("1");
+    await tick();
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "offset" }]);
+    expect(ops(h).at(-1)!.distance as number).toBeCloseTo(2 * IN, 12);
+  });
+
   it("typed mid-gesture goes the way the cursor went; typed after changes it; too far shows", async () => {
     const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 } });
     h.outline = async () => [unitSquare];
