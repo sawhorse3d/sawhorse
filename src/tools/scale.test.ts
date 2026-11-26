@@ -124,6 +124,32 @@ describe("Scale tool", () => {
     close(applyX(ops(h).at(-1)!.xform as Xform, [2, 1, 1]), [6, 1, 1]);
   });
 
+  it("#84: a factor or size typed after another step does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    t.onValue("1.5");
+    await tick();
+    const n = ops(h).length;
+    // Another step lands (a Move, a Delete, an import): the model is past the scale.
+    h._state = { ...state, undo_depth: 7, stats: { ...state.stats, hash: "after another step" } } as typeof state;
+    // A factor then scales the model as it is (a step of its own), with no Undo before it.
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(n)).toMatchObject([{ op: "transform" }]);
+    // And after one more step, a size has no scale to change, and says to pick a grip.
+    const m = ops(h).length;
+    h._state = { ...state, undo_depth: 9, stats: { ...state.stats, hash: "after one more step" } } as typeof state;
+    t.onValue("3in");
+    await tick();
+    expect(ops(h).slice(m)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Pick a grip first") });
+  });
+
   it("a zero factor is refused before the kernel; a press away from the grips says why", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
     h.sel = [{ kind: "object", object: 1 }];

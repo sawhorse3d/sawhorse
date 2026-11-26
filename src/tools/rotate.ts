@@ -24,6 +24,7 @@ import { dragWords, noPointWords } from "./dropped";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
+import { stepKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
 
 const DEG = Math.PI / 180;
@@ -107,6 +108,9 @@ interface Gesture {
 }
 
 interface LastTurn {
+  /** The step key right after the turn (#84: a typed value redoes it only while the model is
+   * still there). */
+  key: string;
   subject: Subject;
   centre: V3;
   normal: V3;
@@ -289,6 +293,8 @@ export class RotateTool extends Tool {
 
   onValue(text: string): void {
     const h = this.host;
+    // #84: the last turn is ours to change only while no other step came after it.
+    this.last = stillLast(this.last, h.state());
     const deg = parseAngle(text);
     if (deg !== null) {
       const g = this.g;
@@ -351,7 +357,7 @@ export class RotateTool extends Tool {
       return `Turned ${what} ${how}.`;
     });
     if (r) {
-      this.last = { subject, centre, normal, angle, deg, copy, count, sel, sk };
+      this.last = { key: stepKey(h.state()), subject, centre, normal, angle, deg, copy, count, sel, sk };
       h.showValue(fmtDeg(angle));
       // Selected sketch geometry stays selected where it went (lane 22).
       if (!copy && subject.sketches?.length && sel.length) {

@@ -230,6 +230,41 @@ test("Edit > Delete clears the box too, and Undo brings the board back unselecte
   await expect(page.locator(".vlabel.grip")).toHaveCount(26);
 });
 
+test("a factor typed after a Move does not undo the Move: it scales the board where it went (#84)", async ({ page }) => {
+  // The issue's steps: a 24 x 4 x 2 in board, scaled x1.5 along red by its right-end grip,
+  // then moved 10 in along red with Move, then S and 2.
+  const vp = await ready(page);
+  await scaleOnBoard(page);
+  const hint = page.locator("#hint");
+  const g = await grip(page, [24, 2, 1]);
+  await page.mouse.click(g.x, g.y);
+  await page.mouse.move(g.x + 40, g.y, { steps: 3 });
+  await type(page, "1.5");
+  await expect(hint).toContainText("×1.5 along red");
+  near((await solids(page))[0].max, [36, 4, 2]);
+  await page.keyboard.press("m");
+  await clickAt(page, [36, 0, 2], "endpoint");
+  await point(page, [42, 0, 2]);
+  await type(page, "10");
+  await expect(hint).toContainText("Moved");
+  let s = await solids(page);
+  near(s[0].min, [10, 0, 0]);
+  near(s[0].max, [46, 4, 2]);
+  const depth = Number(/undo (\d+)/.exec(await page.locator(".vp .hud").innerText())?.[1]);
+  await page.keyboard.press("s");
+  // Before, Scale took its own scale for the last step: it began with an Undo, which took the
+  // Move, and scaled x2 along red from 0 (0 to 72 in). Now the factor scales the selection as
+  // it is, about its centre, as a step of its own.
+  await type(page, "2");
+  await expect(hint).toContainText("×2 uniform");
+  s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].min, [-8, -2, -1]);
+  near(s[0].max, [64, 6, 3]);
+  await expect.poll(async () => Number(/undo (\d+)/.exec(await page.locator(".vp .hud").innerText())?.[1])).toBe(depth + 1);
+  await expect(vp).toHaveAttribute("data-watertight", "true");
+});
+
 test("a factor typed after Delete does not undo the Delete (#85)", async ({ page }) => {
   const vp = await ready(page);
   await scaleOnBoard(page);

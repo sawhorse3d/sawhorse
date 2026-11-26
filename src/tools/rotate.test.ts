@@ -116,6 +116,13 @@ describe("Rotate tool", () => {
     await tick();
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform" }]);
     close(applyX(ops(h).at(-1)!.xform as Xform, [0, 1, 0]), [0, Math.cos(45 * DEG), -Math.sin(45 * DEG)]);
+    // #84: after another step (a Move), an angle typed does not undo that step.
+    const n = ops(h).length;
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("60");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Turn something first") });
   });
 
   it("an angle typed after Undo undoes nothing more (#76)", async () => {

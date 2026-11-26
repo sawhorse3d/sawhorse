@@ -493,6 +493,27 @@ describe("Move tool", () => {
     expect(h.statuses.at(-1)?.text).toMatch(/^Moving /);
   });
 
+  it("#84: a distance typed after another step does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [0, 0, 0.5], { snapKind: "axis-z" }));
+    t.onEvent(ev("click", [0, 0, 0.5], { snapKind: "axis-z" }));
+    await tick();
+    const n = ops(h).length;
+    // Another step lands (a Rotate, a Delete, a plugin's batch): the model is past the move.
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("6");
+    await tick();
+    expect(ops(h).slice(n)).not.toContainEqual(expect.objectContaining({ op: "undo" }));
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Move something first") });
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+  });
+
   it("a distance typed after the move changes it; arrays need a copy", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
     const t = new MoveTool(h);

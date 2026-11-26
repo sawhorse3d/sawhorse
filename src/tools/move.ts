@@ -29,6 +29,7 @@ import { dirName, dist, len, mul, sub, unit } from "./draw";
 import { LockState } from "./lock";
 import { noPointWords } from "./dropped";
 import { scopeEntity } from "../lib/scope";
+import { stepKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
 import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
@@ -45,6 +46,9 @@ interface Gesture {
 
 /** What the last committed move did, so a typed value or an array can redo it. */
 interface LastMove {
+  /** The step key right after the move (#84: a typed value redoes it only while the model is
+   * still there). */
+  key: string;
   subject: Subject;
   delta: V3;
   copy: boolean;
@@ -244,6 +248,8 @@ export class MoveTool extends Tool {
     if (!r.ok) return void h.status(r.error, true);
     const v = r.value;
     const g = this.g;
+    // #84: the last move is ours to change only while no other step came after it.
+    this.last = stillLast(this.last, h.state());
     if (v.kind === "length") {
       if (g) {
         const dir = this.direction();
@@ -311,7 +317,7 @@ export class MoveTool extends Tool {
       return `Moved ${what} ${how}.`;
     });
     if (r) {
-      this.last = { subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
+      this.last = { key: stepKey(h.state()), subject, delta, copy: copy && subject.kind === "objects", count, sel, sk };
       h.showValue(h.fmt(len(delta)));
       // Selected sketch geometry stays selected where it went (lane 22).
       if (!copy && subject.sketches?.length && sel.length) {

@@ -12,6 +12,7 @@ import type { EditResult } from "../kernel/client";
 import type { Entity, OffsetSource, V3 } from "../kernel/types";
 import { curveSegments } from "../lib/curves";
 import { faceOf, regionName, solidName } from "../lib/names";
+import { stepKey, stillLast } from "../lib/steps";
 import { parseVcb } from "../lib/vcb";
 import { add, cross, dot, len, mul, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
@@ -131,7 +132,9 @@ export class OffsetTool extends Tool {
   private previewError: string | null = null;
   private inFlight = false;
   private wanted: number | null = null;
-  last: { source: OffsetSource; what: string; d: number } | null = null;
+  /** The last offset, and the step key right after it (#84: a typed value redoes it only while
+   * the model is still there). */
+  last: { source: OffsetSource; what: string; d: number; key: string } | null = null;
 
   valueLabel(): string {
     return "Distance";
@@ -342,7 +345,8 @@ export class OffsetTool extends Tool {
       this.commit(sign * typed);
       return;
     }
-    const last = this.last;
+    // #84: the last offset is ours to change only while no other step came after it.
+    const last = (this.last = stillLast(this.last, h.state()));
     if (!last) return void h.status("Offset something first (click a face), then type a distance to change it.", true);
     void (async () => {
       if (!(await h.apply({ op: "undo" }))) return;
@@ -367,7 +371,7 @@ export class OffsetTool extends Tool {
       return `Offset ${what} ${h.fmt(Math.abs(d))} ${h.unitLabel()} ${way}, ${where}. Push/Pull (P) the new face next.`;
     });
     if (r) {
-      this.last = { source, what, d };
+      this.last = { source, what, d, key: stepKey(h.state()) };
       h.showValue(h.fmt(Math.abs(d)));
     }
   }

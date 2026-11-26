@@ -59,6 +59,7 @@ import { estimatedLabelSize } from "./lib/dimPick";
 import { menuTarget, ViewMenu, viewMenuItems, type ViewMenuTarget } from "./components/ViewMenu";
 import { noticeMessage, StartupNotice } from "./components/StartupNotice";
 import { friendlyError, setNameSource } from "./lib/names";
+import { stepKey } from "./lib/steps";
 import { explodeOps } from "./lib/curves";
 import { adoptOffered, autosaveEnabled, clearAutosave, clearOffered, describeAutosave, droppedNote, loadOffered, logIsWorth, MAX_AUTOSAVE_BYTES, olderNote, saveAutosave, setAside, takeAutosaves, type Offer } from "./lib/autosave";
 import { ALL_EXTENSIONS, extensionOf, IMPORT_TYPES, isTauri, onTauriDrop, pickFile, readBrowserFile, saveFile, SHZ, stem, takeTauriPaths, type FileHandle, type PickedFile } from "./io/files";
@@ -301,12 +302,6 @@ function partNames(rows: CutRow[]): string {
 }
 
 type Message = StatusMessage | null;
-
-/** Lane 43 (#7): a document state as undo and redo find it again: its undo depth and model
- * hash (as the named plugin steps are known). */
-function stepKey(st: DocState | null | undefined): string {
-  return st ? `${st.undo_depth}:${st.stats.hash}` : "";
-}
 
 /** Lane 43 (#7): a selection and Push/Pull target to keep through an undo or a redo. */
 interface KeptSelection {

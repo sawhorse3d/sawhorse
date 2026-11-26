@@ -86,6 +86,15 @@ describe("Offset tool", () => {
     await tick();
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "offset" }]);
     expect(ops(h).at(-1)!.distance as number).toBeCloseTo(2 * IN, 12);
+    // #84: after another step (a Push/Pull of the new face), a distance typed does not undo it.
+    const n = ops(h).length;
+    const kept = h._state;
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("1/2");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Offset something first") });
+    h._state = kept;
     // Too far inward: the preview says so before any click.
     t.onEvent(at("down", 0.5, 0));
     await tick();
