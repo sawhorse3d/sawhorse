@@ -179,6 +179,23 @@ impl Kids {
     }
 }
 
+thread_local! {
+    /// #142: a test-only measure, not a feature (nothing in the kernel reads it). How many
+    /// times [`Model::kids`] built the tree's child lists on this thread. Each build reads
+    /// every node, solid, mesh and sketch of the model, so an op that builds them once per
+    /// group it meets costs the number of groups times the model. The same number on every
+    /// run and machine for the same ops, so `tests/group_work.rs` holds it without a clock
+    /// ([`crate::testing::kids_builds`]). Per thread, so tests on other threads never add
+    /// to it; one add per build, which reads the whole model, so it costs nothing that can
+    /// be measured.
+    static KIDS_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// #142: the child-list builds counted on this thread so far ([`KIDS_BUILDS`]).
+pub(crate) fn kids_builds() -> u64 {
+    KIDS_BUILDS.with(std::cell::Cell::get)
+}
+
 /// The default name a new definition gets.
 pub const DEFAULT_COMPONENT_NAME: &str = "Component";
 
@@ -455,6 +472,7 @@ impl Model {
 
     /// Every container's children (one pass over the model).
     pub(crate) fn kids(&self) -> Kids {
+        KIDS_BUILDS.with(|c| c.set(c.get().wrapping_add(1)));
         let mut k = Kids::default();
         for (n, node) in &self.nodes {
             k.things
@@ -1683,7 +1701,19 @@ impl Model {
 
     /// Move / rotate / scale a node as a unit: its `xform` composes the map; a group's
     /// contents move with it (face ids unchanged); an instance is re-derived.
-    pub(crate) fn transform_node(&mut self, n: NodeId, x: &Xform) -> Result<(), KernelError> {
+    ///
+    /// #142: `kids` is the tree's child lists for the whole op, built the first time a node
+    /// needs them and handed down, so an op builds them once however many groups and
+    /// instances it moves (it built them once per group, and twice per instance). Moving
+    /// changes no item's parent, so the lists stay true; an instance's re-derivation keeps
+    /// them only when it changed none (it reports whether it did), and otherwise they are
+    /// dropped and built again when next needed, as each node built its own before.
+    pub(crate) fn transform_node(
+        &mut self,
+        n: NodeId,
+        x: &Xform,
+        kids: &mut Option<Kids>,
+    ) -> Result<(), KernelError> {
         let node = &mut self.nodes[n];
         node.xform = x.after(&node.xform);
         node.xform.check()?;
@@ -1691,11 +1721,19 @@ impl Model {
         self.mark(parent);
         match self.nodes[n].kind {
             NodeKind::Instance(_) => {
-                self.rederive(n)?;
+                if kids.is_none() {
+                    *kids = Some(self.kids());
+                }
+                if self.rederive_at(n, 0, kids.as_ref().expect("built"))? {
+                    *kids = None;
+                }
                 // Strokes drawn inside the instance (not part of its definition) move too.
-                let kids = self.kids();
+                if kids.is_none() {
+                    *kids = Some(self.kids());
+                }
+                let kids = kids.as_ref().expect("built");
                 let mut inside: Vec<NodeId> = vec![n];
-                inside.extend(self.scope_in(&kids, n).into_iter().filter_map(|t| match t {
+                inside.extend(self.scope_in(kids, n).into_iter().filter_map(|t| match t {
                     Thing::Node(k) if self.nodes[k].kind == NodeKind::Group => Some(k),
                     _ => None,
                 }));
@@ -1710,8 +1748,15 @@ impl Model {
                 Ok(())
             }
             NodeKind::Group => {
-                let kids = self.kids();
-                for t in kids.of(Some(n)).to_vec() {
+                if kids.is_none() {
+                    *kids = Some(self.kids());
+                }
+                let k0 = kids.as_ref().expect("built");
+                // Its children and strokes as the lists give them before any child moves
+                // (as when this group built its own lists here).
+                let things = k0.of(Some(n)).to_vec();
+                let sketches = k0.sketches.get(&Some(n)).cloned().unwrap_or_default();
+                for t in things {
                     match t {
                         Thing::Object(k) => {
                             let o = self.objects[k].transformed(x)?;
@@ -1724,10 +1769,10 @@ impl Model {
                             self.dirty.touched_meshes.insert(k);
                             self.mark(Some(n));
                         }
-                        Thing::Node(k) => self.transform_node(k, x)?,
+                        Thing::Node(k) => self.transform_node(k, x, kids)?,
                     }
                 }
-                for &s in kids.sketches.get(&Some(n)).into_iter().flatten() {
+                for s in sketches {
                     // Strokes inside a moved group move with it.
                     self.sketches[s] = self.sketches[s].mapped(x)?;
                 }
@@ -1740,11 +1785,20 @@ impl Model {
     }
 
     /// A copy of node `n` under `x`, placed in `parent`. Returns the new node.
+    ///
+    /// #142: `kids` is the tree's child lists, built once by the op before it copies
+    /// anything (it built them once per group copied, and once per instance). They stay true
+    /// for what is read from them: the nodes copied are in the open context and the copies
+    /// go into it (or into copies), so no group being copied, nor anything inside one, gains
+    /// or loses a child while the op runs, and each group's children come out in the same
+    /// order. A new instance's re-derivation reads only what is inside it, which is nothing
+    /// in the lists, as in lists built after it was placed.
     pub(crate) fn copy_node(
         &mut self,
         n: NodeId,
         x: &Xform,
         parent: Option<NodeId>,
+        kids: &Kids,
     ) -> Result<NodeId, KernelError> {
         let src = self.nodes[n].clone();
         let copy = self.nodes.insert(Node {
@@ -1765,10 +1819,11 @@ impl Model {
             self.sections.insert(c);
         }
         match src.kind {
-            NodeKind::Instance(_) => self.rederive(copy)?,
+            NodeKind::Instance(_) => {
+                self.rederive_at(copy, 0, kids)?;
+            }
             NodeKind::Group => {
-                let kids = self.kids();
-                for t in kids.of(Some(n)).to_vec() {
+                for &t in kids.of(Some(n)) {
                     match t {
                         Thing::Object(k) => {
                             let mut o = self.objects[k].transformed(x)?;
@@ -1793,7 +1848,7 @@ impl Model {
                             self.mesh_order.push(id);
                         }
                         Thing::Node(k) => {
-                            self.copy_node(k, x, Some(copy))?;
+                            self.copy_node(k, x, Some(copy), kids)?;
                         }
                     }
                 }
@@ -2057,13 +2112,18 @@ impl Model {
         Ok(())
     }
 
-    fn rederive_at(&mut self, i: NodeId, depth: usize, kids: &Kids) -> Result<(), KernelError> {
+    /// One instance's re-derivation ([`Model::rederive_all`]), with `kids` true for the tree
+    /// as it stands. Whether it changed what the child lists hold (an item made or removed,
+    /// an item's or a stroke's parent changed, here or in a nested instance): when it did
+    /// not, `kids` is still true after it (#142, [`Model::transform_node`]).
+    fn rederive_at(&mut self, i: NodeId, depth: usize, kids: &Kids) -> Result<bool, KernelError> {
         if depth > 64 {
             return Err(StructureError::Cycle.into());
         }
         let NodeKind::Instance(d) = self.nodes[i].kind else {
-            return Ok(());
+            return Ok(false);
         };
+        let mut changed = false;
         let x = self.nodes[i].xform;
         let def = self
             .defs
@@ -2083,7 +2143,10 @@ impl Model {
         };
         let mut by_slot: BTreeMap<u32, Thing> = BTreeMap::new();
         let mut stale: Vec<Thing> = Vec::new();
+        // Where each item was, to tell whether its parent changes (#142).
+        let mut was: BTreeMap<Thing, Option<NodeId>> = BTreeMap::new();
         for t in scope {
+            was.insert(t, self.parent_of(t));
             match self.membership(t).and_then(|m| m.slot) {
                 Some(s)
                     if !by_slot.contains_key(&s)
@@ -2118,6 +2181,7 @@ impl Model {
                         _ => {
                             let k = self.insert_object(o);
                             by_slot.insert(s, Thing::Object(k));
+                            changed = true;
                         }
                     }
                 }
@@ -2134,6 +2198,7 @@ impl Model {
                             let k = self.meshes.insert(mesh);
                             self.mesh_order.push(k);
                             by_slot.insert(s, Thing::Mesh(k));
+                            changed = true;
                         }
                     }
                 }
@@ -2161,6 +2226,7 @@ impl Model {
                         _ => {
                             let k = self.nodes.insert(node);
                             by_slot.insert(s, Thing::Node(k));
+                            changed = true;
                             k
                         }
                     };
@@ -2181,9 +2247,13 @@ impl Model {
             };
             let t = by_slot[&s];
             self.membership_mut(t).expect("made").parent = Some(p);
+            if was.get(&t) != Some(&Some(p)) {
+                changed = true;
+            }
         }
         // What the definition no longer has (its kept contents were moved out above).
         if !stale.is_empty() {
+            changed = true;
             let kids = self.kids();
             for t in stale {
                 if let Thing::Node(n) = t {
@@ -2198,7 +2268,7 @@ impl Model {
             }
         }
         for k in nested {
-            self.rederive_at(k, depth + 1, kids)?;
+            changed |= self.rederive_at(k, depth + 1, kids)?;
         }
         // Every derived solid must be a valid solid (a copy scaled so the change folds it,
         // for example): refuse the edit with a typed error rather than commit it.
@@ -2209,7 +2279,7 @@ impl Model {
                     .map_err(|e| invalid(crate::transform::typed(&e).to_string()))?;
             }
         }
-        Ok(())
+        Ok(changed)
     }
 
     /// The definition and slot a node inside an instance stands for.

@@ -1833,3 +1833,15 @@ pub fn sketch_visits<R>(f: impl FnOnce() -> R) -> (R, u64) {
     let out = f();
     (out, crate::sketch::visits().wrapping_sub(before))
 }
+
+/// #142: what `f` returns, and how many times the tree's child lists (one pass over every
+/// node, solid, mesh and sketch of the model) were built on this thread while it ran (the
+/// count in `nodes.rs`). A measure for tests of how an op's work grows with the groups it
+/// meets, the same on every run and machine for the same ops, so it needs no clock; not a
+/// feature, and nothing in the kernel reads it. Counted per thread, so tests running
+/// beside each other on other threads never add to it.
+pub fn kids_builds<R>(f: impl FnOnce() -> R) -> (R, u64) {
+    let before = crate::nodes::kids_builds();
+    let out = f();
+    (out, crate::nodes::kids_builds().wrapping_sub(before))
+}

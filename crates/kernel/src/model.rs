@@ -2357,8 +2357,10 @@ impl Model {
                     self.objects[k] = next;
                     self.touch(k);
                 }
+                // The tree's child lists, built once for the whole op (#142).
+                let mut kids = None;
                 for &n in &nkeys {
-                    self.transform_node(n, xform)?;
+                    self.transform_node(n, xform, &mut kids)?;
                 }
                 Ok(OpOutcome::Transformed {
                     objects: keys.into_iter().map(to_public).collect(),
@@ -3299,7 +3301,9 @@ impl Model {
                 made.push(to_public(self.insert_object(copy)));
             }
             for &n in nkeys {
-                made_nodes.push(to_public(self.copy_node(n, &x, self.context)?));
+                // The lists built above serve every copy of every node (#142).
+                let kids = kids.as_ref().expect("built when nodes are copied");
+                made_nodes.push(to_public(self.copy_node(n, &x, self.context, kids)?));
             }
         }
         self.mark(self.context);
