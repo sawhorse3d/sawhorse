@@ -422,10 +422,12 @@ test("two sets and a waiting file: a double-click on the status line's Discard w
   await expect(hint).toContainText("shelf.shz opens after you answer.");
 });
 
-test("two sets kept: a real double-click on the status line's Discard, 336 px wide, discards only the first (#145)", async ({ page }) => {
-  // The issue's window. Whether the second click reaches the next offer's buttons here
-  // depends on the texts, so this holds the outcome, and the two tests above the rule.
-  await page.setViewportSize({ width: 336, height: 700 });
+test("two sets kept: a real double-click on the status line's Discard, 896 px wide, answers only the first (#145)", async ({ page }) => {
+  // In this window the next offer's Restore lands under the pointer with these two texts (a
+  // sweep of 320 to 1440 px in 32 px steps found it only here, in this headless build), so
+  // before #145 the second click restored the next set unread. Where it lands moves with the
+  // texts and the fonts: the two tests above hold the rule; this one holds a real double-click.
+  await page.setViewportSize({ width: 896, height: 700 });
   const { vp, hint } = await twoSets(page, null);
   await hint.getByRole("button", { name: "Discard" }).dblclick();
   await oneDiscarded(page, vp, hint);
