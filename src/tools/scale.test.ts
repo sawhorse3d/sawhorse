@@ -124,6 +124,75 @@ describe("Scale tool", () => {
     close(applyX(ops(h).at(-1)!.xform as Xform, [2, 1, 1]), [6, 1, 1]);
   });
 
+  it("#84: a factor or size typed after another step does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    t.onValue("1.5");
+    await tick();
+    const n = ops(h).length;
+    // Another step lands (a Move, a Delete, an import): the model is past the scale.
+    h._state = { ...state, undo_depth: 7, stats: { ...state.stats, hash: "after another step" } } as typeof state;
+    // A factor then scales the model as it is (a step of its own), with no Undo before it.
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(n)).toMatchObject([{ op: "transform" }]);
+    // And after one more step, a size has no scale to change, and says to pick a grip.
+    const m = ops(h).length;
+    h._state = { ...state, undo_depth: 9, stats: { ...state.stats, hash: "after one more step" } } as typeof state;
+    t.onValue("3in");
+    await tick();
+    expect(ops(h).slice(m)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Pick a grip first") });
+  });
+
+  it("#84: with each op moving the model on, a factor and a size typed right after the scale still change it", async () => {
+    // The key is read from the model right after the scale. With a state that never moves,
+    // a key read before the scale would pass unseen.
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj, stepping: true });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    t.onValue("1.5");
+    await tick();
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform" }]);
+    close(applyX(ops(h).at(-1)!.xform as Xform, [2, 1, 1]), [4, 1, 1]);
+    t.onValue("3m");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform" }]);
+    close(applyX(ops(h).at(-1)!.xform as Xform, [2, 1, 1]), [3, 1, 1]);
+  });
+
+  it("#84: with the undo history full, a step that leaves the model as it was still ends the scale", async () => {
+    const full = { ...state, undo_depth: 200, log_hash: "log after the scale" } as typeof state;
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: full, toScreen: proj });
+    h.sel = [{ kind: "object", object: 1 }];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent(at("click", [2, 0.5, 0.5]));
+    t.onValue("1.5");
+    await tick();
+    const n = ops(h).length;
+    // A scene that only moves the camera: the depth stays at the cap, the model hash stays.
+    h._state = { ...full, log_hash: "log after the scene" } as typeof state;
+    h.sel = [];
+    t.onValue("3in");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Pick a grip first") });
+  });
+
   it("a zero factor is refused before the kernel; a press away from the grips says why", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
     h.sel = [{ kind: "object", object: 1 }];

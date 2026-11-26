@@ -70,6 +70,53 @@ describe("Offset tool", () => {
     expect(h.statuses.at(-1)?.text).toContain("inward, on the solid");
   });
 
+  it("#84: with each op moving the model on, a distance typed right after the offset still changes it", async () => {
+    // The key is read from the model right after the offset. With a state that never moves,
+    // a key of nothing, or one read before the offset, would pass unseen.
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 }, stepping: true });
+    h.outline = async () => [unitSquare];
+    const t = new OffsetTool(h);
+    t.onEvent(at("down", 1, 0.5));
+    await tick();
+    t.onEvent(at("click", 1, 0.5));
+    t.onEvent(at("move", 1.3, 0.5));
+    t.onValue("1");
+    await tick();
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "offset" }]);
+    expect(ops(h).at(-1)!.distance as number).toBeCloseTo(2 * IN, 12);
+  });
+
+  it("#84: after a retype the kernel refuses, the next distance undoes nothing more", async () => {
+    // The retype's Undo took the offset back and the offset again was refused: the model is
+    // at the step before the offset, which is not the offset's to undo.
+    const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 }, stepping: true });
+    h.outline = async () => [unitSquare];
+    const t = new OffsetTool(h);
+    t.onEvent(at("down", 1, 0.5));
+    await tick();
+    t.onEvent(at("click", 1, 0.5));
+    t.onEvent(at("move", 1.3, 0.5));
+    t.onValue("1");
+    await tick();
+    const apply = h.apply;
+    h.apply = async (op, describe) => {
+      if (op.op !== "offset") return apply(op, describe);
+      h.ops.push(op);
+      return null;
+    };
+    t.onValue("30");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "offset" }]);
+    h.apply = apply;
+    const n = ops(h).length;
+    t.onValue("1/2");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Offset something first") });
+  });
+
   it("typed mid-gesture goes the way the cursor went; typed after changes it; too far shows", async () => {
     const h = fakeHost({ outcome: { kind: "drawn", sketch: 3, regions: [1], faces: [], inside: 1 } });
     h.outline = async () => [unitSquare];
@@ -86,6 +133,15 @@ describe("Offset tool", () => {
     await tick();
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "offset" }]);
     expect(ops(h).at(-1)!.distance as number).toBeCloseTo(2 * IN, 12);
+    // #84: after another step (a Push/Pull of the new face), a distance typed does not undo it.
+    const n = ops(h).length;
+    const kept = h._state;
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("1/2");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Offset something first") });
+    h._state = kept;
     // Too far inward: the preview says so before any click.
     t.onEvent(at("down", 0.5, 0));
     await tick();

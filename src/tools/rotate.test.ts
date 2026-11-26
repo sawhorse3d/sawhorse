@@ -116,6 +116,13 @@ describe("Rotate tool", () => {
     await tick();
     expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform" }]);
     close(applyX(ops(h).at(-1)!.xform as Xform, [0, 1, 0]), [0, Math.cos(45 * DEG), -Math.sin(45 * DEG)]);
+    // #84: after another step (a Move), an angle typed does not undo that step.
+    const n = ops(h).length;
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("60");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Turn something first") });
   });
 
   it("an angle typed after Undo undoes nothing more (#76)", async () => {
@@ -148,6 +155,52 @@ describe("Rotate tool", () => {
     // The whole array spanned 270 degrees: six steps of 45.
     expect(ops(h).at(-1)).toMatchObject({ op: "array", count: 6 });
     close(applyX(ops(h).at(-1)!.xform as Xform, [1, 0, 0]), [Math.SQRT1_2, Math.SQRT1_2, 0]);
+  });
+
+  it("#84: after a Ctrl copy and another step, x3 does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new RotateTool(h);
+    t.onModifier("ctrl");
+    await turn(t, 90);
+    expect(ops(h).at(-1)).toMatchObject({ op: "copy", objects: [1] });
+    // Another step lands: the model moves on past the copy.
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
+    // With the model at the copy, x3 changes it, as before.
+    const g = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const u = new RotateTool(g);
+    u.onModifier("ctrl");
+    await turn(u, 90);
+    u.onValue("x3");
+    await tick();
+    expect(ops(g).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 3 }]);
+  });
+
+  it("#84: with each op moving the model on, x3, /4 and an angle typed right after a copy still change it; /4 alone after another step does not", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new RotateTool(h);
+    t.onModifier("ctrl");
+    await turn(t, 90);
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 3 }]);
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 4 }]);
+    t.onValue("30");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 4 }]);
+    // Another step lands: /4 alone has no copy of its own to divide.
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
   });
 
   it("refuses arrays without a copy and non-angles", async () => {

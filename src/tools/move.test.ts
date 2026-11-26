@@ -455,6 +455,68 @@ describe("Move tool", () => {
     expect(t.busy()).toBe(false);
   });
 
+  it("#84: after a Ctrl copy and another step, x3 and /4 do not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onModifier("ctrl");
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
+    t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "copy", objects: [1] });
+    // Another step lands: the model moves on past the copy.
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("x3");
+    await tick();
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
+  });
+
+  it("#84: with each op moving the model on, x3, /4 and a distance typed right after a copy still change it", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onModifier("ctrl");
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
+    t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
+    await tick();
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 3 }]);
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 4 }]);
+    t.onValue("2m");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", count: 4 }]);
+    close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [2, 0, 0]);
+  });
+
+  it("#84: /4 typed alone after a copy and another step does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] }, stepping: true });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onModifier("ctrl");
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
+    t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
+    await tick();
+    await h.apply({ op: "set_hidden", items: [{ object: 2 }], hidden: true } as never);
+    const n = ops(h).length;
+    t.onValue("/4");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Arrays follow a copy") });
+  });
+
   it("Ctrl copies; x3 then replaces the copy with an array; /4 divides it", async () => {
     const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
     const t = new MoveTool(h);
@@ -491,6 +553,27 @@ describe("Move tool", () => {
     expect(h.statuses.at(-1)?.text).toMatch(/^Copying .*Tap Ctrl to move it instead/);
     t.onModifier("ctrl");
     expect(h.statuses.at(-1)?.text).toMatch(/^Moving /);
+  });
+
+  it("#84: a distance typed after another step does not undo that step", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] } });
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [0, 0, 0.5], { snapKind: "axis-z" }));
+    t.onEvent(ev("click", [0, 0, 0.5], { snapKind: "axis-z" }));
+    await tick();
+    const n = ops(h).length;
+    // Another step lands (a Rotate, a Delete, a plugin's batch): the model is past the move.
+    h._state = { undo_depth: 7, stats: { hash: "after another step" } } as unknown as typeof h._state;
+    t.onValue("6");
+    await tick();
+    expect(ops(h).slice(n)).not.toContainEqual(expect.objectContaining({ op: "undo" }));
+    expect(h.statuses.at(-1)).toMatchObject({ error: true, text: expect.stringContaining("Move something first") });
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(n)).toEqual([]);
   });
 
   it("a distance typed after the move changes it; arrays need a copy", async () => {
