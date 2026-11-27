@@ -171,7 +171,7 @@ describe("what the model still holds (#110)", () => {
     expect(heldByModel({ ...sketchEdge, owner: { kind: "object", id: 2 } } as Entity, mesh(), held)).toBe(false);
   });
 
-  it("finds ends as a scan of every segment with `near` would, near the origin and 10 km out", () => {
+  it("finds ends as a scan of every segment with `near` would, from 1 cm to 5 km out", () => {
     // Seeded meshes of one sketch's segments at random sizes, single precision as the view
     // mesh is. Each segment asked for at its exact ends, and at ends moved by up to twice the
     // allowance, across the grid's cell boundaries: the answer must be the plain scan's.
@@ -244,6 +244,31 @@ describe("what the model still holds (#110)", () => {
     expect(heldByModel({ kind: "face", object: 1, face: 3 }, mesh(), held)).toBe(false);
     expect(heldByModel({ kind: "region", sketch: 1, region: 5 }, mesh(), held)).toBe(false);
     expect(heldByModel({ kind: "object", object: 2 }, mesh(), held)).toBe(false);
+  });
+
+  it("asks each owner of one mesh in turn from its own ends, as the app does", () => {
+    // One mesh, one grid per owner: the solid's edge is not found among the sketch's ends.
+    const m = mesh();
+    expect(heldByModel(sketchEdge, m, held)).toBe(true);
+    expect(heldByModel(objEdge, m, held)).toBe(true);
+    expect(heldByModel({ ...objEdge, a: [3, 0, 0], b: [4, 0, 0] } as Entity, m, held)).toBe(false);
+    expect(heldByModel({ ...sketchEdge, a: [0, 0, 1], b: [1, 0, 1] } as Entity, m, held)).toBe(false);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "object", id: 1 }, at: [3, 0, 0] }, m, held)).toBe(false);
+  });
+
+  it("under a section plane keeps an edge or point of a solid or sketch it cuts while that is drawn", () => {
+    // A pick under the plane is cut short at it, or on the cap's outline: no segment has it.
+    const clipped: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0, 1], b: [0.5, 0, 1], drawn: false };
+    const point: Entity = { kind: "vertex", owner: { kind: "sketch", id: 1 }, at: [3.5, 0, 0] };
+    const clips = [{ planes: [[0, 0, -1, 1]] as [number, number, number, number][], objects: [1], meshes: [], sketches: [1] }];
+    expect(heldByModel(clipped, mesh(), held)).toBe(false);
+    expect(heldByModel(clipped, mesh(), held, clips)).toBe(true);
+    expect(heldByModel(point, mesh(), held, clips)).toBe(true);
+    // Only the solids and sketches the plane cuts, and only while they are drawn.
+    expect(heldByModel(clipped, mesh(), held, [{ ...clips[0], objects: [2], sketches: [] }])).toBe(false);
+    expect(heldByModel(point, mesh(), held, [{ ...clips[0], objects: [1], sketches: [] }])).toBe(false);
+    const empty = { ...mesh(), edges: new Float32Array(0), edgeOwner: new Uint32Array(0), edgeOwners: [] };
+    expect(heldByModel(clipped, empty, held, clips)).toBe(false);
   });
 
   it("holds nothing with no mesh", () => {

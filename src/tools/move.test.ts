@@ -118,6 +118,36 @@ describe("transform helpers", () => {
     expect(lifted).toEqual([{ kind: "region", sketch: 5, region: 9 }, { ...edge, owner: { kind: "sketch", id: 5 }, a: [0, 0, 1], b: [1, 0, 1] }]);
   });
 
+  it("#110: a solid's selected edges and points go where the move put them", () => {
+    const top: Entity = { kind: "edge", owner: { kind: "object", id: 7 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    const side: Entity = { kind: "edge", owner: { kind: "object", id: 7 }, a: [1, 0, 0], b: [1, 0, 1], drawn: false };
+    const corner: Entity = { kind: "vertex", owner: { kind: "object", id: 7 }, at: [0, 0, 1] };
+    const low: Entity = { kind: "vertex", owner: { kind: "object", id: 7 }, at: [0, 0, 0] };
+    const other: Entity = { kind: "edge", owner: { kind: "object", id: 8 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    const sketch: Entity = { kind: "edge", owner: { kind: "sketch", id: 1 }, a: [5, 0, 0], b: [6, 0, 0], drawn: true };
+    const up = translation([0, 0, 2]);
+    // A whole solid moved: every end of its edges and points, and nothing of another solid.
+    const whole: Subject = { kind: "objects", objects: [7] };
+    expect(movedSelection([top, corner, other, sketch], whole, [], up, { kind: "transformed", objects: [7] })).toEqual([
+      { ...top, a: [0, 0, 3], b: [1, 0, 3] },
+      { ...corner, at: [0, 0, 3] },
+      other,
+      sketch,
+    ]);
+    // Inside a group that moved (`covered`), the same.
+    expect(movedSelection([top], { kind: "objects", objects: [], nodes: [3], covered: [7] }, [], up, { kind: "transformed", objects: [] })).toEqual([{ ...top, a: [0, 0, 3], b: [1, 0, 3] }]);
+    // The top edge's ends moved (a geometry move): it goes up, the side edge beside it
+    // stretches to its moved end, a point there goes up, one elsewhere stays.
+    const part: Subject = { kind: "geometry", object: 7, points: [[0, 0, 1], [1, 0, 1]], what: "an edge" };
+    expect(movedSelection([top, side, corner, low, other], part, [], up, { kind: "geometry_moved", object: 7, faces: [] } as unknown as OpOutcome)).toEqual([
+      { ...top, a: [0, 0, 3], b: [1, 0, 3] },
+      { ...side, b: [1, 0, 3] },
+      { ...corner, at: [0, 0, 3] },
+      low,
+      other,
+    ]);
+  });
+
   it("#7: a region moved within its plane that splits is selected as the pieces it became, not its old id", () => {
     // Region 1, a unit square, moved 2 to the right across a rectangle. The kernel says the
     // moved edges now bound regions 4 and 5 (inside the moved square) and 2 (the rectangle's

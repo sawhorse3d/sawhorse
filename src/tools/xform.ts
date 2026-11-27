@@ -13,7 +13,7 @@
 // circle a circle under a similarity and makes a copy a new curve); a curve's point selected
 // on its own is refused before the gesture starts, with the kernel's own words.
 import type { DocState, Entity, KernelOp, MeshData, OpOutcome, V3, Xform } from "../kernel/types";
-import { curveSegments, curveView, onCurve } from "../lib/curves";
+import { curveSegments, curveView, near as nearEnd, onCurve } from "../lib/curves";
 import { objectEdges, objectOf, sketchEdges } from "../lib/entities";
 import { faceOf, regionName, regionOf, solidName } from "../lib/names";
 import { describeNode, graphOf, scopeEntity, solidsIn } from "../lib/scope";
@@ -814,6 +814,29 @@ function insideRings(p: V3, rings: FlatRing[], u: V3, v: V3): boolean {
  * not what is left of a shape it cut. A curve the move broke up is every piece of it
  * (`SketchMoved.pieces`).
  */
+/** A solid's edge or point selected. */
+export function isSolidPoint(e: Entity): boolean {
+  return (e.kind === "edge" || e.kind === "vertex") && e.owner.kind === "object";
+}
+
+/**
+ * #110: a solid's edge or point where a move of `subject` by `x` put it: on a solid that
+ * moved whole, every end; on a solid whose points moved (an edge's ends, a face's corners),
+ * the ends among them, so an edge beside them stretches to where its moved end went.
+ * Anything else as it was. The app then keeps it only while the model has it.
+ */
+function movedSolidPoint(e: Entity, subject: Subject, x: Xform): Entity {
+  if (!isSolidPoint(e)) return e;
+  const owner = (e as { owner: { id: number } }).owner.id;
+  const moves = (p: V3): V3 => {
+    if (subject.kind === "objects") return (subject.covered ?? subject.objects).includes(owner) ? applyX(x, p) : p;
+    return subject.object === owner && subject.points.some((q) => nearEnd(p, q)) ? applyX(x, p) : p;
+  };
+  if (e.kind === "vertex") return { ...e, at: moves(e.at) };
+  if (e.kind === "edge") return { ...e, a: moves(e.a), b: moves(e.b) };
+  return e;
+}
+
 export function movedSelection(sel: Entity[], subject: Subject, previews: SketchPreview[], x: Xform, outcome: OpOutcome, mesh?: MeshData | null): Entity[] {
   const moves = sketchMoves(outcome);
   const out: Entity[] = [];
@@ -841,7 +864,7 @@ export function movedSelection(sel: Entity[], subject: Subject, previews: Sketch
   };
   for (const e of sel) {
     if (!isSketchEntity(e)) {
-      out.push(e);
+      out.push(movedSolidPoint(e, subject, x));
       continue;
     }
     const hit = byId.get(sketchOf(e));

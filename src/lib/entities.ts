@@ -1,7 +1,7 @@
 // Entities the user points at (faces, edges, vertices, regions, whole objects): identity,
 // selection sets, highlights, window / crossing selection and the ops that erase them.
 // Pure (no DOM, no three.js), so all of it is unit-tested.
-import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SectionView, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
 import { curveSegments, near } from "./curves";
 import { meshIndex } from "./meshIndex";
@@ -182,8 +182,13 @@ function anySegmentAt(mesh: MeshData, k: number, p: V3, test: (i: number) => boo
  * this of every selected entity after each edit, Undo and Redo, so the selection never
  * names what the model no longer has (an edge that Undo took away was read by Follow Me as
  * a path).
+ *
+ * Under an active section plane a click picks an edge or point of a solid or sketch the
+ * plane cuts as the view shows it: cut short at the plane, or on the cap's outline, which
+ * the view mesh does not hold. An edge or point of a solid or sketch that `clips` names is
+ * therefore kept while that solid or sketch is drawn at all.
  */
-export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined): boolean {
+export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined, clips?: SectionView["clips"]): boolean {
   switch (e.kind) {
     case "face":
     case "region":
@@ -207,6 +212,7 @@ export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | 
       const ix = meshIndex(mesh);
       const k = (owner.kind === "object" ? ix.objectOwner : ix.sketchOwner).get(owner.id);
       if (k === undefined) return false;
+      if (clips?.some((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id))) return true;
       if (e.kind === "vertex") return anySegmentAt(mesh, k, e.at, () => true);
       const s = mesh.edges;
       return anySegmentAt(mesh, k, e.a, (i) => {

@@ -168,9 +168,12 @@ test("an edge the model still has stays selected across Undo and Redo (#110)", a
   await page.keyboard.press("Control+y");
   await expect(hint).toContainText("Redone");
   await expect(vp).toHaveAttribute("data-selection", "2");
-  // The edge is still a path Follow Me reads.
-  await page.keyboard.press("Escape");
-  await selectAt(page, [6, 0, 6], "edge", 0, 0);
+  // The kept edge is still a path Follow Me reads, as it is selected: the corner, no path, is
+  // taken out with Ctrl (a toggle, which leaves the kept edge as it is).
+  await page.keyboard.down("ControlOrMeta");
+  await selectAt(page, [12, 12, 6], "vertex", 0, 0);
+  await page.keyboard.up("ControlOrMeta");
+  await expect(vp).toHaveAttribute("data-selection", "1");
   await page.keyboard.press("w");
   await expect(hint).toContainText("Path: 1 edge");
 });

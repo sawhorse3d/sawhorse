@@ -22,7 +22,7 @@ import { parseVcb } from "../lib/vcb";
 import { add, alignedFrame, dist, dot, mul, sub, unit } from "./draw";
 import { dragWords, noPointWords } from "./dropped";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSolidPoint, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, projectToPlane, rotation, signedAngle, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { logKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
@@ -366,6 +366,10 @@ export class RotateTool extends Tool {
         // #7: Push/Pull's target follows a region the turn made into pieces.
         h.setTarget(targetAfterMove(pushed, sel, next, sketchesAfter(subject, r.outcome)));
         // Lane 43 (#7): Undo and Redo of this step put back the selection before and after it.
+        h.rememberSelection?.(sel);
+      } else if (!copy && sel.some(isSolidPoint)) {
+        // #110: a solid's edges and points selected stay selected where they went.
+        h.setSelection(movedSelection(sel, subject, sk, rotation(centre, normal, angle, deg), r.outcome, r.scene?.mesh));
         h.rememberSelection?.(sel);
       }
     }
