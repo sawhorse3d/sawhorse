@@ -196,8 +196,10 @@ function onSegment(p: V3, seg: ArrayLike<number>, o: number): boolean {
  * Under an active section plane (`sections`, the scene's cuts and what each set of planes
  * clips) a click picks an edge or point as the view draws it: cut short at the plane, or on
  * the cut's outline, neither of which is a segment of the view mesh end to end. So for a
- * solid or sketch the planes clip, an edge whose both ends lie along one of its owner's
- * segments, or along one segment of a cut's outline, is kept, and a point on one of them.
+ * solid or sketch the planes clip, an edge is kept while both its ends lie along one of its
+ * owner's segments, each at one of that segment's ends or on one of the planes; and for a
+ * solid, while both lie along one segment of a cut's outline, on a plane and inside the
+ * solid's bounds. A point the same way.
  */
 export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined, sections?: SectionView | null): boolean {
   switch (e.kind) {
@@ -233,12 +235,26 @@ export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | 
               return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
             });
       if (whole) return true;
-      if (!sections?.clips?.some((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id))) return false;
-      // Cut by a plane: along one of the owner's segments, or along the cut's outline.
+      // Cut by a plane: the planes that clip this owner.
+      const planes = (sections?.clips ?? []).filter((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id)).flatMap((c) => c.planes);
+      if (!planes.length) return false;
+      const onPlane = (p: V3) => planes.some(([nx, ny, nz, c]) => Math.abs(nx * p[0] + ny * p[1] + nz * p[2] + c) <= 2e-6 + 4e-7 * Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])));
       const ends: V3[] = e.kind === "vertex" ? [e.at] : [e.a, e.b];
-      const along = (seg: ArrayLike<number>, o: number) => ends.every((p) => onSegment(p, seg, o));
-      for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) if (along(s, 6 * ix.ownerEdges[j])) return true;
-      for (const c of sections.cuts ?? []) for (let o = 0; o + 6 <= c.outline.length; o += 6) if (along(c.outline, o)) return true;
+      // Along one of the owner's segments, each end at one of its ends or on a plane (cut short
+      // at the plane; a piece of an edge that another edge split, and which is gone, has an
+      // end that is neither).
+      for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
+        const o = 6 * ix.ownerEdges[j];
+        const p: V3 = [s[o], s[o + 1], s[o + 2]];
+        const q: V3 = [s[o + 3], s[o + 4], s[o + 5]];
+        if (ends.every((x) => onSegment(x, s, o) && (near(x, p) || near(x, q) || onPlane(x)))) return true;
+      }
+      // Along the cut's outline (which lies on its plane), inside the solid (a sketch has no cut face).
+      const solid = owner.kind === "object" ? state?.solids?.find((x) => x.id === owner.id) : undefined;
+      if (!solid) return false;
+      const inside = (x: V3) => x.every((v, i) => v >= solid.min[i] - 1e-6 - 4e-7 * Math.abs(v) && v <= solid.max[i] + 1e-6 + 4e-7 * Math.abs(v));
+      if (!ends.every(inside)) return false;
+      for (const c of sections?.cuts ?? []) for (let o = 0; o + 6 <= c.outline.length; o += 6) if (ends.every((x) => onSegment(x, c.outline, o))) return true;
       return false;
     }
   }

@@ -257,41 +257,55 @@ describe("what the model still holds (#110)", () => {
   });
 
   it("under a section plane keeps an edge or point as the view cuts it, and nothing that is gone", () => {
-    // A pick under an active plane is cut short at it (along one of its owner's segments), or
-    // on the cut's outline: neither is a segment of the view mesh, end to end.
-    const sections = (outline: number[] = []): SectionView => ({
+    // A pick under an active plane is cut short at it, or on the cut's outline: neither is a
+    // segment of the view mesh end to end. Solid 1's edge (0, 0, 1)-(1, 0, 1) is cut by the
+    // plane x = 0.5 (kept: x <= 0.5); sketch 1's edge (3, 0, 0)-(4, 0, 0) by x = 3.5.
+    const cutAt = (x: number) => [-1, 0, 0, x] as [number, number, number, number];
+    const sections = (outline: number[] = [], objects = [1]): SectionView => ({
       cuts: [{ section: 3, positions: [], indices: [], outline, area: 0 }],
-      clips: [{ planes: [[0, 0, -1, 1]], objects: [1], meshes: [], sketches: [1] }],
+      clips: [
+        { planes: [cutAt(0.5)], objects, meshes: [], sketches: [] },
+        { planes: [cutAt(3.5)], objects: [], meshes: [], sketches: [1] },
+      ],
     });
+    const solids = { ...held, solids: [{ id: 1, number: 1, min: [0, 0, 0], max: [1, 1, 1], volume: 1 }] } as unknown as DocState;
     const short: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0, 1], b: [0.5, 0, 1], drawn: false };
-    const middle: Entity = { kind: "edge", owner: { kind: "sketch", id: 1 }, a: [3.25, 0, 0], b: [3.75, 0, 0], drawn: true };
+    const sketchShort: Entity = { kind: "edge", owner: { kind: "sketch", id: 1 }, a: [3, 0, 0], b: [3.5, 0, 0], drawn: true };
     const point: Entity = { kind: "vertex", owner: { kind: "sketch", id: 1 }, at: [3.5, 0, 0] };
-    expect(heldByModel(short, mesh(), held)).toBe(false);
-    expect(heldByModel(short, mesh(), held, sections())).toBe(true);
-    expect(heldByModel({ ...short, a: [0.5, 0, 1], b: [0, 0, 1] } as Entity, mesh(), held, sections())).toBe(true);
-    expect(heldByModel(middle, mesh(), held, sections())).toBe(true);
-    expect(heldByModel(point, mesh(), held, sections())).toBe(true);
-    // Gone, though the plane is active and its owner still drawn: off every segment, or
-    // along a segment but past its end, or along another owner's.
-    expect(heldByModel({ ...short, a: [0, 1, 1], b: [0.5, 1, 1] } as Entity, mesh(), held, sections())).toBe(false);
-    expect(heldByModel({ ...short, b: [1.5, 0, 1] } as Entity, mesh(), held, sections())).toBe(false);
-    expect(heldByModel({ ...middle, a: [0, 0, 1], b: [0.5, 0, 1] } as Entity, mesh(), held, sections())).toBe(false);
-    expect(heldByModel({ ...point, at: [3.5, 0.1, 0] } as Entity, mesh(), held, sections())).toBe(false);
-    // On the cut's outline: kept while the plane cuts that solid there.
-    const rim: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0.2, 0.5], b: [0, 0.8, 0.5], drawn: false };
-    const corner: Entity = { kind: "vertex", owner: { kind: "object", id: 1 }, at: [0, 0.5, 0.5] };
-    const outline = [0, 0, 0.5, 0, 1, 0.5];
-    expect(heldByModel(rim, mesh(), held, sections(outline))).toBe(true);
-    expect(heldByModel(corner, mesh(), held, sections(outline))).toBe(true);
-    expect(heldByModel(rim, mesh(), held, sections())).toBe(false);
-    expect(heldByModel(corner, mesh(), held, sections())).toBe(false);
+    expect(heldByModel(short, mesh(), solids)).toBe(false);
+    expect(heldByModel(short, mesh(), solids, sections())).toBe(true);
+    expect(heldByModel({ ...short, a: [0.5, 0, 1], b: [0, 0, 1] } as Entity, mesh(), solids, sections())).toBe(true);
+    expect(heldByModel(sketchShort, mesh(), solids, sections())).toBe(true);
+    expect(heldByModel(point, mesh(), solids, sections())).toBe(true);
+    // Gone, though a plane is active and the owner still drawn: a piece of an edge whose ends
+    // are neither its segment's ends nor on the plane (what a line splitting it left, undone),
+    // off every segment, past a segment's end, along another owner's segment.
+    expect(heldByModel({ ...short, b: [0.3, 0, 1] } as Entity, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel({ ...sketchShort, a: [3.25, 0, 0], b: [3.75, 0, 0] } as Entity, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel({ ...point, at: [3.25, 0, 0] } as Entity, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel({ ...short, a: [0, 1, 1], b: [0.5, 1, 1] } as Entity, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel({ ...short, a: [0.5, 0, 1], b: [1.5, 0, 1] } as Entity, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel({ ...sketchShort, a: [0, 0, 1], b: [0.5, 0, 1] } as Entity, mesh(), solids, sections())).toBe(false);
+    // On the cut's outline (on the plane, inside the solid): kept while the plane cuts it.
+    const rim: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0.5, 0.2, 0.5], b: [0.5, 0.8, 0.5], drawn: false };
+    const corner: Entity = { kind: "vertex", owner: { kind: "object", id: 1 }, at: [0.5, 0.5, 0.5] };
+    const outline = [0.5, 0, 0.5, 0.5, 1, 0.5];
+    expect(heldByModel(rim, mesh(), solids, sections(outline))).toBe(true);
+    expect(heldByModel(corner, mesh(), solids, sections(outline))).toBe(true);
+    expect(heldByModel(rim, mesh(), solids, sections())).toBe(false);
+    expect(heldByModel(corner, mesh(), solids, sections())).toBe(false);
+    // Another solid's cut line, outside this one: not this solid's.
+    const away: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0.5, 5.2, 0.5], b: [0.5, 5.8, 0.5], drawn: false };
+    expect(heldByModel(away, mesh(), solids, sections([...outline, 0.5, 5, 0.5, 0.5, 6, 0.5]))).toBe(false);
+    // A sketch has no cut face: an outline never keeps a sketch's edge.
+    const sketchRim: Entity = { kind: "edge", owner: { kind: "sketch", id: 1 }, a: [3.5, 0.2, 0], b: [3.5, 0.8, 0], drawn: true };
+    expect(heldByModel(sketchRim, mesh(), solids, sections([3.5, 0, 0, 3.5, 1, 0]))).toBe(false);
     // Only what the planes clip: a solid they do not clip keeps the plain rule.
-    const other = { ...sections(outline), clips: [{ planes: [[0, 0, -1, 1]] as [number, number, number, number][], objects: [2], meshes: [], sketches: [] }] };
-    expect(heldByModel(short, mesh(), held, other)).toBe(false);
-    expect(heldByModel(rim, mesh(), held, other)).toBe(false);
+    expect(heldByModel(short, mesh(), solids, sections(outline, [2]))).toBe(false);
+    expect(heldByModel(rim, mesh(), solids, sections(outline, [2]))).toBe(false);
     // And only while the owner is drawn at all.
     const empty = { ...mesh(), edges: new Float32Array(0), edgeOwner: new Uint32Array(0), edgeOwners: [] };
-    expect(heldByModel(short, empty, held, sections(outline))).toBe(false);
+    expect(heldByModel(short, empty, solids, sections(outline))).toBe(false);
   });
 
   it("holds nothing with no mesh", () => {
