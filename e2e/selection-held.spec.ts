@@ -85,36 +85,43 @@ test("with a section plane active, edges that Undo removed still leave the selec
   await expect(hint).not.toContainText("Path:");
 });
 
-test("with a section plane active, half of an edge a line split leaves the selection when the line is undone (#110)", async ({ page }) => {
-  // A line from the middle of the box's top front edge to the middle of its back edge splits
-  // the front edge in two. One half and the middle point are selected, then the line is
-  // undone: the halves are gone, though both lie along the whole edge that is back.
-  const shz = await buildShz((apply) => {
-    rect(apply, 0, 0, 12 * IN, 12 * IN, 6 * IN);
-    apply({ op: "add_section", origin: [0, 0, 50 * IN], normal: [0, 0, -1], active: true, hidden: true });
+// Above the box, cutting nothing; and on its top face, as the Section Plane tool puts one when
+// that face is clicked (lying along the edge, so cutting it nowhere).
+for (const [where, z] of [
+  ["above the box", 50],
+  ["on the box's top face", 6],
+] as const) {
+  test(`with a section plane ${where}, half of an edge a line split leaves the selection when the line is undone (#110)`, async ({ page }) => {
+    // A line from the middle of the box's top front edge to the middle of its back edge splits
+    // the front edge in two. One half and the middle point are selected, then the line is
+    // undone: the halves are gone, though both lie along the whole edge that is back.
+    const shz = await buildShz((apply) => {
+      rect(apply, 0, 0, 12 * IN, 12 * IN, 6 * IN);
+      apply({ op: "add_section", origin: [0, 0, z * IN], normal: [0, 0, -1], active: true, hidden: true });
+    });
+    await openShz(page, shz, 1, "plane.shz");
+    await page.getByRole("button", { name: "Iso", exact: true }).click();
+    await page.keyboard.press("Shift+Z");
+    const vp = page.locator("main.vp");
+    const hint = page.locator("#hint");
+    await page.keyboard.press("l");
+    await clickAt(page, [6, 0, 6], "midpoint", 0, 0);
+    await clickAt(page, [6, 12, 6], "midpoint", 0, 0);
+    await page.keyboard.press("Escape");
+    await expect(vp).toHaveAttribute("data-can-undo", "true");
+    await page.keyboard.press("Space");
+    await selectAt(page, [3, 0, 6], "edge", 0, 0);
+    await page.keyboard.down("Shift");
+    await selectAt(page, [6, 0, 6], "vertex", 0, 0);
+    await page.keyboard.up("Shift");
+    await expect(vp).toHaveAttribute("data-selection", "2");
+    await page.keyboard.press("Control+z");
+    await expect(hint).toContainText("Undone");
+    await expect(vp).toHaveAttribute("data-selection", "0");
+    await page.keyboard.press("w");
+    await expect(hint).not.toContainText("Path:");
   });
-  await openShz(page, shz, 1, "plane.shz");
-  await page.getByRole("button", { name: "Iso", exact: true }).click();
-  await page.keyboard.press("Shift+Z");
-  const vp = page.locator("main.vp");
-  const hint = page.locator("#hint");
-  await page.keyboard.press("l");
-  await clickAt(page, [6, 0, 6], "midpoint", 0, 0);
-  await clickAt(page, [6, 12, 6], "midpoint", 0, 0);
-  await page.keyboard.press("Escape");
-  await expect(vp).toHaveAttribute("data-can-undo", "true");
-  await page.keyboard.press("Space");
-  await selectAt(page, [3, 0, 6], "edge", 0, 0);
-  await page.keyboard.down("Shift");
-  await selectAt(page, [6, 0, 6], "vertex", 0, 0);
-  await page.keyboard.up("Shift");
-  await expect(vp).toHaveAttribute("data-selection", "2");
-  await page.keyboard.press("Control+z");
-  await expect(hint).toContainText("Undone");
-  await expect(vp).toHaveAttribute("data-selection", "0");
-  await page.keyboard.press("w");
-  await expect(hint).not.toContainText("Path:");
-});
+}
 
 test("a solid's edge moved with Move stays selected where it went, and Undo and Redo put it back (#110)", async ({ page }) => {
   const vp = await ready(page);

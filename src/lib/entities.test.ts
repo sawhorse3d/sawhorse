@@ -286,6 +286,14 @@ describe("what the model still holds (#110)", () => {
     expect(heldByModel({ ...short, a: [0, 1, 1], b: [0.5, 1, 1] } as Entity, mesh(), solids, sections())).toBe(false);
     expect(heldByModel({ ...short, a: [0.5, 0, 1], b: [1.5, 0, 1] } as Entity, mesh(), solids, sections())).toBe(false);
     expect(heldByModel({ ...sketchShort, a: [0, 0, 1], b: [0.5, 0, 1] } as Entity, mesh(), solids, sections())).toBe(false);
+    // A plane lying along the edge (one placed on a face) does not cut it short: a piece of
+    // that edge, or a point along it, is gone, not cut.
+    const inFace: SectionView = { cuts: [], clips: [{ planes: [[0, 0, -1, 1]], objects: [1], meshes: [], sketches: [] }] };
+    expect(heldByModel(short, mesh(), solids, inFace)).toBe(false);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "object", id: 1 }, at: [0.5, 0, 1] }, mesh(), solids, inFace)).toBe(false);
+    expect(heldByModel(objEdge, mesh(), solids, inFace)).toBe(true);
+    // Nor does one the edge lies wholly on the kept side of.
+    expect(heldByModel(short, mesh(), solids, { cuts: [], clips: [{ planes: [cutAt(2)], objects: [1], meshes: [], sketches: [] }] })).toBe(false);
     // On the cut's outline (on the plane, inside the solid): kept while the plane cuts it.
     const rim: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0.5, 0.2, 0.5], b: [0.5, 0.8, 0.5], drawn: false };
     const corner: Entity = { kind: "vertex", owner: { kind: "object", id: 1 }, at: [0.5, 0.5, 0.5] };

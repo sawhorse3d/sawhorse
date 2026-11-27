@@ -238,16 +238,19 @@ export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | 
       // Cut by a plane: the planes that clip this owner.
       const planes = (sections?.clips ?? []).filter((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id)).flatMap((c) => c.planes);
       if (!planes.length) return false;
-      const onPlane = (p: V3) => planes.some(([nx, ny, nz, c]) => Math.abs(nx * p[0] + ny * p[1] + nz * p[2] + c) <= 2e-6 + 4e-7 * Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])));
+      const tol = (p: V3) => 2e-6 + 4e-7 * Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2]));
+      const side = ([nx, ny, nz, c]: [number, number, number, number], p: V3) => nx * p[0] + ny * p[1] + nz * p[2] + c;
       const ends: V3[] = e.kind === "vertex" ? [e.at] : [e.a, e.b];
-      // Along one of the owner's segments, each end at one of its ends or on a plane (cut short
-      // at the plane; a piece of an edge that another edge split, and which is gone, has an
-      // end that is neither).
+      // Along one of the owner's segments, each end at one of its ends or on a plane that cuts
+      // that segment, its two ends on either side (cut short there; a piece of an edge that
+      // another edge split, and which is gone, has an end that is neither, and a plane lying
+      // along the segment, or wholly to one side of it, cuts nothing).
       for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
         const o = 6 * ix.ownerEdges[j];
         const p: V3 = [s[o], s[o + 1], s[o + 2]];
         const q: V3 = [s[o + 3], s[o + 4], s[o + 5]];
-        if (ends.every((x) => onSegment(x, s, o) && (near(x, p) || near(x, q) || onPlane(x)))) return true;
+        const cutting = planes.filter((pl) => (side(pl, p) > tol(p) && side(pl, q) < -tol(q)) || (side(pl, p) < -tol(p) && side(pl, q) > tol(q)));
+        if (ends.every((x) => onSegment(x, s, o) && (near(x, p) || near(x, q) || cutting.some((pl) => Math.abs(side(pl, x)) <= tol(x))))) return true;
       }
       // Along the cut's outline (which lies on its plane), inside the solid (a sketch has no cut face).
       const solid = owner.kind === "object" ? state?.solids?.find((x) => x.id === owner.id) : undefined;
