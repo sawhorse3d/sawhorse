@@ -101,6 +101,80 @@ test("a path that Delete removed is not swept (#85, #86)", async ({ page }) => {
   near(s[0].max, [12, 12, 6]);
 });
 
+test("edges that Undo removed leave the selection and are not read as a path (#110)", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  // The issue's steps: a 12 x 12 x 6 in box, a 6 x 6 in rectangle on the ground from (30, 0)
+  // toward (36, -6), its left and bottom edges selected, W, then Ctrl+Z.
+  await box(page, "12,12", "6");
+  await page.keyboard.press("r");
+  await clickAt(page, [30, 0, 0], "grid", 1, 1);
+  await point(page, [36, -6, 0]);
+  await type(page, "6,6");
+  await expect(hint).toContainText(/Rectangle 6 \S 6 in on the ground/);
+  await page.keyboard.press("Space");
+  await selectAt(page, [30, -3, 0], "edge", 0, 0);
+  await page.keyboard.down("Shift");
+  await selectAt(page, [33, -6, 0], "edge", 0, 0);
+  await page.keyboard.up("Shift");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await page.keyboard.press("w");
+  await expect(hint).toContainText("Path: 2 edges");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  // Before, both edges stayed selected though the model no longer had them.
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  const hash = await vp.getAttribute("data-hash");
+  // W again reads the selection: before, "Path: 2 edges (open, 2 segments)", and a click on
+  // the box's front face swept it along them, growing the box to (0, -36, 0)..(36, 12, 6).
+  await page.keyboard.press("Space");
+  await page.keyboard.press("w");
+  await expect(hint).not.toContainText("Path:");
+  await clickAt(page, [6, 0, 3], /on-face|grid|from-point/, 0, 0);
+  await expect(hint).toContainText("Select the path first");
+  await expect(vp).toHaveAttribute("data-hash", hash!);
+  const s = await solids(page);
+  expect(s).toHaveLength(1);
+  near(s[0].min, [0, 0, 0]);
+  near(s[0].max, [12, 12, 6]);
+  // And Follow Me still takes a path chosen now: the box's top face.
+  await page.keyboard.press("Space");
+  await selectAt(page, [6, 6, 6], "face");
+  await page.keyboard.press("w");
+  await expect(hint).toContainText("closed, 4 segments");
+});
+
+test("an edge the model still has stays selected across Undo and Redo (#110)", async ({ page }) => {
+  const vp = await ready(page);
+  const hint = page.locator("#hint");
+  await box(page, "12,12", "6");
+  // An edge and a corner of the box, then an unrelated step: a rectangle on the ground.
+  await page.keyboard.press("Space");
+  await selectAt(page, [6, 0, 6], "edge", 0, 0);
+  await page.keyboard.down("Shift");
+  await selectAt(page, [12, 12, 6], "vertex", 0, 0);
+  await page.keyboard.up("Shift");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await page.keyboard.press("r");
+  await clickAt(page, [30, 0, 0], "grid", 1, 1);
+  await point(page, [36, -6, 0]);
+  await type(page, "6,6");
+  await expect(hint).toContainText(/Rectangle 6 \S 6 in on the ground/);
+  await page.keyboard.press("Space");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await page.keyboard.press("Control+y");
+  await expect(hint).toContainText("Redone");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  // The edge is still a path Follow Me reads.
+  await page.keyboard.press("Escape");
+  await selectAt(page, [6, 0, 6], "edge", 0, 0);
+  await page.keyboard.press("w");
+  await expect(hint).toContainText("Path: 1 edge");
+});
+
 function near2(a: number[], b: number[]) {
   a.forEach((x, k) => expect(Math.abs(x - b[k])).toBeLessThan(1e-4));
 }

@@ -3,7 +3,7 @@
 // Pure (no DOM, no three.js), so all of it is unit-tested.
 import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
-import { curveSegments } from "./curves";
+import { curveSegments, near } from "./curves";
 import { meshIndex } from "./meshIndex";
 import { contentsOf, graphIndex } from "./scope";
 
@@ -120,6 +120,98 @@ export function partsOf(e: Entity, mesh: MeshData | null, graph?: SceneGraph | n
     }
     default:
       return [];
+  }
+}
+
+/** #110: one owner's segment ends on a grid whose cell is the matching allowance at the
+ * owner's farthest point (`near`), so a point within it is in its own cell or a neighbour. */
+interface EndGrid {
+  cell: number;
+  at: Map<string, number[]>;
+}
+const endGrids = new WeakMap<MeshData, Map<number, EndGrid>>();
+
+function endGrid(mesh: MeshData, k: number): EndGrid {
+  let grids = endGrids.get(mesh);
+  if (!grids) endGrids.set(mesh, (grids = new Map()));
+  const had = grids.get(k);
+  if (had) return had;
+  const ix = meshIndex(mesh);
+  const s = mesh.edges;
+  let far = 0;
+  for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) for (let c = 0; c < 6; c++) far = Math.max(far, Math.abs(s[6 * ix.ownerEdges[j] + c]));
+  const g: EndGrid = { cell: 2e-6 + 4e-7 * far, at: new Map() };
+  for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
+    const i = ix.ownerEdges[j];
+    for (const o of [0, 3]) {
+      const key = cellKey(g.cell, s[6 * i + o], s[6 * i + o + 1], s[6 * i + o + 2]);
+      const l = g.at.get(key);
+      if (l) l.push(i);
+      else g.at.set(key, [i]);
+    }
+  }
+  grids.set(k, g);
+  return g;
+}
+
+const cellKey = (cell: number, x: number, y: number, z: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+
+/** The segments of owner `k` with an end near `p`. */
+function segmentsAt(mesh: MeshData, k: number, p: V3): number[] {
+  const g = endGrid(mesh, k);
+  const s = mesh.edges;
+  const [cx, cy, cz] = p.map((v) => Math.floor(v / g.cell));
+  const out: number[] = [];
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dz = -1; dz <= 1; dz++)
+        for (const i of g.at.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? [])
+          if (!out.includes(i) && (near(p, [s[6 * i], s[6 * i + 1], s[6 * i + 2]]) || near(p, [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]]))) out.push(i);
+  return out;
+}
+
+/**
+ * #110: whether the model, as its view mesh and state show it, still holds `e`. A face, a
+ * region or a solid by its parts; an edge by a segment of its own owner with both its ends
+ * (either way round); a point by an end of one of its owner's segments; a curve while the
+ * mesh draws it; a guide (and a point or edge of one), a dimension, a section plane or a
+ * group by its id. Ends match within the view mesh's single precision (`near`). The app asks
+ * this of every selected entity after each edit, Undo and Redo, so the selection never
+ * names what the model no longer has (an edge that Undo took away was read by Follow Me as
+ * a path).
+ */
+export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined): boolean {
+  switch (e.kind) {
+    case "face":
+    case "region":
+    case "object":
+      return partsOf(e, mesh).length > 0;
+    case "node":
+      return !!state?.graph && graphIndex(state.graph).node.has(e.node);
+    case "section":
+      return !!state?.graph?.sections?.some((s) => s.id === e.section);
+    case "guide":
+      return !!state?.guides?.some((g) => g.id === e.guide);
+    case "dimension":
+      return !!state?.dimensions?.some((d) => d.id === e.dimension);
+    case "curve":
+      return curveSegments(mesh, e.owner, e.curve).length > 0;
+    case "edge":
+    case "vertex": {
+      const owner = e.owner;
+      if (owner.kind === "guide") return !!state?.guides?.some((g) => g.id === owner.id);
+      if (!mesh) return false;
+      const ix = meshIndex(mesh);
+      const k = (owner.kind === "object" ? ix.objectOwner : ix.sketchOwner).get(owner.id);
+      if (k === undefined) return false;
+      if (e.kind === "vertex") return segmentsAt(mesh, k, e.at).length > 0;
+      const s = mesh.edges;
+      return segmentsAt(mesh, k, e.a).some((i) => {
+        const p: V3 = [s[6 * i], s[6 * i + 1], s[6 * i + 2]];
+        const q: V3 = [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]];
+        return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
+      });
+    }
   }
 }
 

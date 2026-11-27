@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DocState, Entity, MeshData } from "../kernel/types";
-import { applySelection, boxSelect, entityKey, eraseOp, eraseOps, highlightFor, modeFor, objectEdges, partsOf, selectionLookup, toSketch, fromSketch } from "./entities";
+import { applySelection, boxSelect, entityKey, eraseOp, eraseOps, heldByModel, highlightFor, modeFor, objectEdges, partsOf, selectionLookup, toSketch, fromSketch } from "./entities";
 import { meshIndex, ownerEdgeCount, ownerSegments } from "./meshIndex";
 
 // Two parts: face 2 of solid 1 (a unit square at z = 1, two triangles) and region 4 of the
@@ -134,6 +134,75 @@ describe("erasing", () => {
     const s = { id: 2, origin: [1, 2, 3] as [number, number, number], normal: [1, 0, 0] as [number, number, number], u: [0, 1, 0] as [number, number, number], v: [0, 0, 1] as [number, number, number] };
     expect(toSketch(s, [1, 5, 7])).toEqual([3, 4]);
     expect(fromSketch(s, 3, 4)).toEqual([1, 5, 7]);
+  });
+});
+
+describe("what the model still holds (#110)", () => {
+  const held = { ...state, guides: [{ id: 5, point: [0, 0, 0], dir: [1, 0, 0] }], dimensions: [{ id: 6, a: [0, 0, 0], b: [1, 0, 0], offset: [0, 1, 0], length: 1 }], graph: { nodes: [{ id: 9 }], objects: [], meshes: [], sections: [{ id: 3 }], path: [] } } as unknown as DocState;
+  const f32 = (x: number) => Math.fround(x);
+
+  it("keeps an edge its owner still has, either way round and through single precision", () => {
+    expect(heldByModel(objEdge, mesh(), held)).toBe(true);
+    expect(heldByModel(sketchEdge, mesh(), held)).toBe(true);
+    expect(heldByModel({ ...sketchEdge, a: [4, 0, 0], b: [3, 0, 0] } as Entity, mesh(), held)).toBe(true);
+    const m = { ...mesh(), edges: new Float32Array([0, 0, 1, 1, 0, 1, 0.3048, 0.1, 0, 0.9144, 0.1, 0]) };
+    const exact: Entity = { ...sketchEdge, a: [0.3048, 0.1, 0], b: [0.9144, 0.1, 0] } as Entity;
+    expect([f32(0.3048), f32(0.9144)]).not.toEqual([0.3048, 0.9144]);
+    expect(heldByModel(exact, m, held)).toBe(true);
+  });
+
+  it("drops an edge its owner no longer has: gone, moved, one end moved, or another owner's", () => {
+    const empty = { ...mesh(), edges: new Float32Array(0), edgeOwner: new Uint32Array(0), edgeOwners: [] };
+    expect(heldByModel(sketchEdge, empty, held)).toBe(false);
+    expect(heldByModel(objEdge, empty, held)).toBe(false);
+    expect(heldByModel({ ...sketchEdge, a: [3, 1, 0], b: [4, 1, 0] } as Entity, mesh(), held)).toBe(false);
+    expect(heldByModel({ ...sketchEdge, b: [5, 0, 0] } as Entity, mesh(), held)).toBe(false);
+    expect(heldByModel({ ...sketchEdge, owner: { kind: "sketch", id: 2 } } as Entity, mesh(), held)).toBe(false);
+    expect(heldByModel({ ...sketchEdge, owner: { kind: "object", id: 1 } } as Entity, mesh(), held)).toBe(false);
+    expect(heldByModel({ ...objEdge, owner: { kind: "sketch", id: 1 } } as Entity, mesh(), held)).toBe(false);
+  });
+
+  it("keeps a point at an end of one of its owner's edges, and drops it elsewhere", () => {
+    expect(heldByModel({ kind: "vertex", owner: { kind: "sketch", id: 1 }, at: [4, 0, 0] }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "object", id: 1 }, at: [0, 0, 1] }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "sketch", id: 1 }, at: [3.5, 0, 0] }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "object", id: 1 }, at: [4, 0, 0] }, mesh(), held)).toBe(false);
+  });
+
+  it("keeps a curve while the mesh still draws it", () => {
+    const curve: Entity = { kind: "curve", owner: { kind: "sketch", id: 1 }, curve: 1 };
+    const withCurve = { ...mesh(), edgeCurve: new Uint32Array([0, 1]), curves: [{ owner: { kind: "sketch", id: 1 }, curve: 1, kind: "polyline", closed: false, segments: 1, centre: [0, 0, 0], normal: [0, 0, 1] }] } as unknown as MeshData;
+    expect(heldByModel(curve, withCurve, held)).toBe(true);
+    expect(heldByModel(curve, mesh(), held)).toBe(false);
+    expect(heldByModel({ ...curve, curve: 2 } as Entity, withCurve, held)).toBe(false);
+  });
+
+  it("keeps guides, dimensions, sections and nodes the state names, and points or edges of a guide while it stays", () => {
+    expect(heldByModel({ kind: "guide", guide: 5 }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "guide", guide: 4 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "dimension", dimension: 6 }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "dimension", dimension: 7 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "section", section: 3 }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "section", section: 2 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "node", node: 9 }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "node", node: 8 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "guide", id: 5 }, at: [7, 0, 0] }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "vertex", owner: { kind: "guide", id: 4 }, at: [7, 0, 0] }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "edge", owner: { kind: "guide", id: 5 }, a: [0, 0, 0], b: [1, 0, 0], drawn: true }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "edge", owner: { kind: "guide", id: 4 }, a: [0, 0, 0], b: [1, 0, 0], drawn: true }, mesh(), held)).toBe(false);
+  });
+
+  it("keeps faces, regions and solids by their parts, as before", () => {
+    expect(heldByModel(face, mesh(), held)).toBe(true);
+    expect(heldByModel(region, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "object", object: 1 }, mesh(), held)).toBe(true);
+    expect(heldByModel({ kind: "face", object: 1, face: 3 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "region", sketch: 1, region: 5 }, mesh(), held)).toBe(false);
+    expect(heldByModel({ kind: "object", object: 2 }, mesh(), held)).toBe(false);
+  });
+
+  it("holds nothing with no mesh", () => {
+    expect(heldByModel(objEdge, null, held)).toBe(false);
   });
 });
 

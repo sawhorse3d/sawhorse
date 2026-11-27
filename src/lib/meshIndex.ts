@@ -18,6 +18,8 @@ export interface MeshIndex {
   objects: number[];
   /** The `edgeOwners` index of each solid that has edges in the view. */
   objectOwner: Map<number, number>;
+  /** #110: the same for each sketch. */
+  sketchOwner: Map<number, number>;
   /** Edge segments by owner (CSR): owner k's segments are
    * `ownerEdges[ownerStart[k]] .. ownerEdges[ownerStart[k + 1] - 1]`, in mesh order. */
   ownerStart: Uint32Array;
@@ -54,8 +56,10 @@ export function meshIndex(mesh: MeshData): MeshIndex {
     else if (p.kind === "region") push(regionParts, p.owner, i);
   }
   const objectOwner = new Map<number, number>();
+  const sketchOwner = new Map<number, number>();
   mesh.edgeOwners.forEach((o, k) => {
     if (o && o.kind === "object") objectOwner.set(o.id, k);
+    else if (o && o.kind === "sketch") sketchOwner.set(o.id, k);
   });
   // Counting sort of the segments by owner.
   const owners = mesh.edgeOwners.length;
@@ -81,7 +85,7 @@ export function meshIndex(mesh: MeshData): MeshIndex {
     const cat = curveStart.slice(0, curves);
     for (let i = 0; i < ec.length; i++) if (ec[i] > 0 && ec[i] <= curves) curveEdges[cat[ec[i] - 1]++] = i;
   }
-  const ix: MeshIndex = { objectParts, meshParts, regionParts, objects, objectOwner, ownerStart, ownerEdges, curveStart, curveEdges, curveAt };
+  const ix: MeshIndex = { objectParts, meshParts, regionParts, objects, objectOwner, sketchOwner, ownerStart, ownerEdges, curveStart, curveEdges, curveAt };
   built.set(mesh, ix);
   return ix;
 }
