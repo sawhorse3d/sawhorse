@@ -569,7 +569,7 @@ export function App() {
           // or a scene): Delete must never erase what nobody can see.
           const sel = (keep ? keep.selection : live.current.selection).filter((e) => {
             if (!entityShown(e, r.scene.state)) return false;
-            if (!heldByModel(e, r.scene.mesh, r.scene.state, r.scene.sections?.clips)) return false;
+            if (!heldByModel(e, r.scene.mesh, r.scene.state, r.scene.sections)) return false;
             const s = scopeEntity(e, r.scene.state);
             return !!s && entityKey(s) === entityKey(e);
           });

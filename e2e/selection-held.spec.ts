@@ -54,6 +54,37 @@ for (const [what, p, kind] of [
   });
 }
 
+test("with a section plane active, edges that Undo removed still leave the selection (#110)", async ({ page }) => {
+  // The issue's steps in a model with an active plane at 50 in that cuts nothing: the plane
+  // clips everything under it in the view, but an edge that is gone is still gone.
+  const shz = await buildShz((apply) => {
+    rect(apply, 0, 0, 12 * IN, 12 * IN, 6 * IN);
+    rect(apply, 44 * IN, -12 * IN, 2 * IN, 2 * IN, 2 * IN);
+    apply({ op: "add_section", origin: [0, 0, 50 * IN], normal: [0, 0, -1], active: true, hidden: true });
+  });
+  await openShz(page, shz, 2, "plane.shz");
+  await page.getByRole("button", { name: "Iso", exact: true }).click();
+  await page.keyboard.press("Shift+Z");
+  const vp = page.locator("main.vp");
+  const hint = page.locator("#hint");
+  await page.keyboard.press("r");
+  await clickAt(page, [30, 0, 0], "grid", 1, 1);
+  await point(page, [36, -6, 0]);
+  await type(page, "6,6");
+  await expect(hint).toContainText(/Rectangle 6 \S 6 in on the ground/);
+  await page.keyboard.press("Space");
+  await selectAt(page, [30, -3, 0], "edge", 0, 0);
+  await page.keyboard.down("Shift");
+  await selectAt(page, [33, -6, 0], "edge", 0, 0);
+  await page.keyboard.up("Shift");
+  await expect(vp).toHaveAttribute("data-selection", "2");
+  await page.keyboard.press("Control+z");
+  await expect(hint).toContainText("Undone");
+  await expect(vp).toHaveAttribute("data-selection", "0");
+  await page.keyboard.press("w");
+  await expect(hint).not.toContainText("Path:");
+});
+
 test("a solid's edge moved with Move stays selected where it went, and Undo and Redo put it back (#110)", async ({ page }) => {
   const vp = await ready(page);
   const hint = page.locator("#hint");

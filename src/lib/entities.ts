@@ -173,6 +173,16 @@ function anySegmentAt(mesh: MeshData, k: number, p: V3, test: (i: number) => boo
   return false;
 }
 
+/** #110: `p` lies on the segment at `seg[o..o + 6]`, within the view's allowance (`near`). */
+function onSegment(p: V3, seg: ArrayLike<number>, o: number): boolean {
+  const a: V3 = [seg[o], seg[o + 1], seg[o + 2]];
+  const b: V3 = [seg[o + 3], seg[o + 4], seg[o + 5]];
+  const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  const t = dd > 0 ? Math.min(1, Math.max(0, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / dd)) : 0;
+  return near(p, [a[0] + t * d[0], a[1] + t * d[1], a[2] + t * d[2]]);
+}
+
 /**
  * #110: whether the model, as its view mesh and state show it, still holds `e`. A face, a
  * region or a solid by its parts; an edge by a segment of its own owner with both its ends
@@ -183,12 +193,13 @@ function anySegmentAt(mesh: MeshData, k: number, p: V3, test: (i: number) => boo
  * names what the model no longer has (an edge that Undo took away was read by Follow Me as
  * a path).
  *
- * Under an active section plane a click picks an edge or point of a solid or sketch the
- * plane cuts as the view shows it: cut short at the plane, or on the cap's outline, which
- * the view mesh does not hold. An edge or point of a solid or sketch that `clips` names is
- * therefore kept while that solid or sketch is drawn at all.
+ * Under an active section plane (`sections`, the scene's cuts and what each set of planes
+ * clips) a click picks an edge or point as the view draws it: cut short at the plane, or on
+ * the cut's outline, neither of which is a segment of the view mesh end to end. So for a
+ * solid or sketch the planes clip, an edge whose both ends lie along one of its owner's
+ * segments, or along one segment of a cut's outline, is kept, and a point on one of them.
  */
-export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined, clips?: SectionView["clips"]): boolean {
+export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined, sections?: SectionView | null): boolean {
   switch (e.kind) {
     case "face":
     case "region":
@@ -212,14 +223,23 @@ export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | 
       const ix = meshIndex(mesh);
       const k = (owner.kind === "object" ? ix.objectOwner : ix.sketchOwner).get(owner.id);
       if (k === undefined) return false;
-      if (clips?.some((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id))) return true;
-      if (e.kind === "vertex") return anySegmentAt(mesh, k, e.at, () => true);
       const s = mesh.edges;
-      return anySegmentAt(mesh, k, e.a, (i) => {
-        const p: V3 = [s[6 * i], s[6 * i + 1], s[6 * i + 2]];
-        const q: V3 = [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]];
-        return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
-      });
+      const whole =
+        e.kind === "vertex"
+          ? anySegmentAt(mesh, k, e.at, () => true)
+          : anySegmentAt(mesh, k, e.a, (i) => {
+              const p: V3 = [s[6 * i], s[6 * i + 1], s[6 * i + 2]];
+              const q: V3 = [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]];
+              return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
+            });
+      if (whole) return true;
+      if (!sections?.clips?.some((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id))) return false;
+      // Cut by a plane: along one of the owner's segments, or along the cut's outline.
+      const ends: V3[] = e.kind === "vertex" ? [e.at] : [e.a, e.b];
+      const along = (seg: ArrayLike<number>, o: number) => ends.every((p) => onSegment(p, seg, o));
+      for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) if (along(s, 6 * ix.ownerEdges[j])) return true;
+      for (const c of sections.cuts ?? []) for (let o = 0; o + 6 <= c.outline.length; o += 6) if (along(c.outline, o)) return true;
+      return false;
     }
   }
 }
