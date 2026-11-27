@@ -156,18 +156,21 @@ function endGrid(mesh: MeshData, k: number): EndGrid {
 
 const cellKey = (cell: number, x: number, y: number, z: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
 
-/** The segments of owner `k` with an end near `p`. */
-function segmentsAt(mesh: MeshData, k: number, p: V3): number[] {
+/** The 27 cells round a point's own, its own first (most points are found there). */
+const AROUND: [number, number, number][] = [[0, 0, 0]];
+for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) if (dx || dy || dz) AROUND.push([dx, dy, dz]);
+
+/** Whether owner `k` has a segment with an end near `p` that passes `test`. */
+function anySegmentAt(mesh: MeshData, k: number, p: V3, test: (i: number) => boolean): boolean {
   const g = endGrid(mesh, k);
   const s = mesh.edges;
-  const [cx, cy, cz] = p.map((v) => Math.floor(v / g.cell));
-  const out: number[] = [];
-  for (let dx = -1; dx <= 1; dx++)
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dz = -1; dz <= 1; dz++)
-        for (const i of g.at.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? [])
-          if (!out.includes(i) && (near(p, [s[6 * i], s[6 * i + 1], s[6 * i + 2]]) || near(p, [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]]))) out.push(i);
-  return out;
+  const cx = Math.floor(p[0] / g.cell);
+  const cy = Math.floor(p[1] / g.cell);
+  const cz = Math.floor(p[2] / g.cell);
+  for (const [dx, dy, dz] of AROUND)
+    for (const i of g.at.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? [])
+      if ((near(p, [s[6 * i], s[6 * i + 1], s[6 * i + 2]]) || near(p, [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]])) && test(i)) return true;
+  return false;
 }
 
 /**
@@ -204,9 +207,9 @@ export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | 
       const ix = meshIndex(mesh);
       const k = (owner.kind === "object" ? ix.objectOwner : ix.sketchOwner).get(owner.id);
       if (k === undefined) return false;
-      if (e.kind === "vertex") return segmentsAt(mesh, k, e.at).length > 0;
+      if (e.kind === "vertex") return anySegmentAt(mesh, k, e.at, () => true);
       const s = mesh.edges;
-      return segmentsAt(mesh, k, e.a).some((i) => {
+      return anySegmentAt(mesh, k, e.a, (i) => {
         const p: V3 = [s[6 * i], s[6 * i + 1], s[6 * i + 2]];
         const q: V3 = [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]];
         return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
