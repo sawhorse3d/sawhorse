@@ -1226,7 +1226,7 @@ export function App() {
     try {
       if (new URLSearchParams(window.location.search).get("kerneltest") === "1") {
         const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), failNextSave: () => k.failNextSave(), stallNextEdit: (ms: number) => k.stallNextEditForTest(ms), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
+        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), failNextSave: () => k.failNextSave(), stallNextEdit: (ms: number) => k.stallNextEditForTest(ms), busySince: () => k.busySince(), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
       }
     } catch {
       /* no URL */

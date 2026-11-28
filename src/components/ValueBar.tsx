@@ -82,7 +82,7 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
   const err = !working && !!message?.error;
   return (
     <footer className="vcb">
-      <div className={err ? "hint err" : "hint"} id="hint" role="status" aria-live="polite" aria-busy={working || undefined}>
+      <div className={err ? "hint err" : "hint"} id="hint" role="status" aria-live="polite" data-busy={working ? "true" : undefined}>
         <b>{err ? "Can't do that." : `${tool.label}.`}</b> {working ? `Working… ${busy} s` : message ? message.text : tool.hint}
         {message?.actions?.map((a) => (
           // #145: one answer per click or key press, as on the notice over the model.

@@ -269,12 +269,14 @@ describe("#144: while a long edit runs", () => {
     expect(hint().textContent).toBe("Push. Copied group 1 2 in along red.");
     rerender({ busy: 4 });
     expect(hint().textContent).toBe("Push. Working… 4 s");
-    expect(hint().getAttribute("aria-busy")).toBe("true");
+    expect(hint().getAttribute("data-busy")).toBe("true");
+    // Not aria-busy: on a live region it would hold the words back from a screen reader.
+    expect(hint().getAttribute("aria-busy")).toBeNull();
     rerender({ busy: 5 });
     expect(hint().textContent).toBe("Push. Working… 5 s");
     rerender({ busy: null });
     expect(hint().textContent).toBe("Push. Copied group 1 2 in along red.");
-    expect(hint().getAttribute("aria-busy")).toBeNull();
+    expect(hint().getAttribute("data-busy")).toBeNull();
   });
 
   it("over the tool's own hint, and over a refusal, as plain words", () => {

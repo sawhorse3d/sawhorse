@@ -3,7 +3,7 @@
 // failing is given up on, and later calls are refused at once instead of waiting forever.
 // Driven with a stand-in worker; the real one is driven in e2e/containment.spec.ts.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEADLINES, KernelClient, KernelRestarted, KernelUnavailableError, type RestartInfo } from "./client";
+import { BUSY_AFTER_MS, DEADLINES, KernelClient, KernelRestarted, KernelUnavailableError, type RestartInfo } from "./client";
 import type { SceneData, WorkerRequest, WorkerResponse } from "./types";
 
 const scene = { state: { log_len: 0 } } as unknown as SceneData;
@@ -223,7 +223,7 @@ describe("#144: what the kernel is working on", () => {
   /** Answer one request by its id. */
   const answerId = (w: FakeWorker, id: number) => w.onmessage?.({ data: { id, ok: true, outcome: {}, scene } as unknown as WorkerResponse } as MessageEvent<WorkerResponse>);
 
-  it("names when the oldest request still waiting for an answer was sent, and says when that changes", async () => {
+  it("tells the app only once a request has waited a second, and when that wait ends", async () => {
     vi.useFakeTimers({ now: 1_000 });
     const k = client();
     const seen: (number | null)[] = [];
@@ -232,19 +232,59 @@ describe("#144: what the kernel is working on", () => {
     const a = k.c.apply({ op: "noop" } as never);
     await flush();
     expect(k.c.busySince()).toBe(1_000);
-    vi.setSystemTime(1_400);
+    // Nothing said before a second, so a short request makes the app draw nothing.
+    vi.advanceTimersByTime(BUSY_AFTER_MS - 1);
+    expect(seen).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(seen).toEqual([1_000]);
+    answerId(k.w(), k.w().last().id);
+    await a;
+    expect(k.c.busySince()).toBeNull();
+    expect(seen).toEqual([1_000, null]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a request that answers within the second is never told at all", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    for (let i = 0; i < 5; i++) {
+      const p = k.c.apply({ op: "noop" } as never);
+      await flush();
+      vi.advanceTimersByTime(300);
+      answerId(k.w(), k.w().last().id);
+      await p;
+    }
+    vi.advanceTimersByTime(5_000);
+    expect(seen).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a request sent behind a long one counts from when that one answered, not from when it was sent", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    const a = k.c.apply({ op: "noop" } as never);
+    await flush();
+    vi.advanceTimersByTime(1_000);
+    // A hover's pick, sent while the long edit runs.
     const b = k.c.apply({ op: "noop" } as never);
     await flush();
-    // The oldest still: a request sent behind it does not start the count again.
-    expect(k.c.busySince()).toBe(1_000);
+    expect(k.c.busySince()).toBe(0);
+    vi.advanceTimersByTime(2_000);
     const [first, second] = k.w().posted.map((r) => r.id);
     answerId(k.w(), first);
     await a;
-    expect(k.c.busySince()).toBe(1_400);
+    // The pick starts now: it has not waited a second, so the mark goes.
+    expect(k.c.busySince()).toBe(3_000);
+    expect(seen).toEqual([0, null]);
+    vi.advanceTimersByTime(100);
     answerId(k.w(), second);
     await b;
-    expect(k.c.busySince()).toBeNull();
-    expect(seen).toEqual([1_000, 1_400, null]);
+    vi.advanceTimersByTime(5_000);
+    expect(seen).toEqual([0, null]);
   });
 
   it("counts from the rebuild after a restart, and nothing is left waiting once it answers", async () => {
@@ -254,21 +294,41 @@ describe("#144: what the kernel is working on", () => {
     k.c.onBusy = (since) => seen.push(since);
     const a = k.c.apply({ op: "noop" } as never).catch((e: unknown) => e);
     await flush();
-    vi.setSystemTime(6_000);
+    vi.advanceTimersByTime(1_500);
+    expect(seen).toEqual([5_000]);
     void k.c.cancel("cancelled by you");
     await flush();
     expect(await a).toBeInstanceOf(KernelRestarted);
     // The refused request is gone; the rebuild in the new worker is what runs now.
-    expect(k.c.busySince()).toBe(6_000);
+    expect(k.c.busySince()).toBe(6_500);
+    vi.advanceTimersByTime(1_000);
+    expect(seen).toEqual([5_000, null, 6_500]);
     k.w().answer({ ok: true, scene });
     await flush();
     expect(k.c.busySince()).toBeNull();
-    expect(seen).toEqual([5_000, null, 6_000, null]);
+    expect(seen).toEqual([5_000, null, 6_500, null]);
   });
 
-  it("tests can make the next edit keep the kernel busy, once", async () => {
+  it("leaves no wait timed once it is disposed of", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    void k.c.apply({ op: "noop" } as never).catch(() => undefined);
+    await flush();
+    k.c.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(5_000);
+    expect(seen).toEqual([]);
+  });
+
+  it("tests can make the next edit keep the kernel busy, once, and no other request", async () => {
     const k = client();
     k.c.stallNextEditForTest(2_500);
+    void k.c.undo().catch(() => undefined);
+    await flush();
+    expect(k.w().last()).toMatchObject({ kind: "undo" });
+    expect(k.w().last()).not.toHaveProperty("stallForTest");
     void k.c.apply({ op: "noop" } as never).catch(() => undefined);
     await flush();
     expect(k.w().last()).toMatchObject({ kind: "apply", stallForTest: 2_500 });

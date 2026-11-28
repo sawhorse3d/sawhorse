@@ -36,6 +36,9 @@ export class KernelRestarted extends Error {
 /** A request waiting for its answer; `at`: when it was sent (Date.now(), #144). */
 type Pending = { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null; kind: string; at: number };
 
+/** #144: how long a request waits for its answer before the app says something is running (ms). */
+export const BUSY_AFTER_MS = 1_000;
+
 /** How long a request may run before the worker is taken for hung and replaced (ms). */
 export const DEADLINES: Record<string, number> = { importFile: 180_000, importSkp: 180_000, openShz: 180_000, replay: 300_000, default: 120_000 };
 
@@ -75,11 +78,17 @@ export class KernelClient {
   private failSave = false;
   /** Tests (#144): the next edit keeps the worker busy this long first (ms). */
   private stallNext = 0;
-  /** #144: told when the oldest request still waiting for its answer changes: when it was
-   * sent (Date.now()), or null when nothing is waiting. The app shows that something is
-   * running once it has run for a moment. */
+  /** #144: told when a request has waited BUSY_AFTER_MS for its answer (when its wait began,
+   * Date.now()), and told null when that wait ends. A request answered sooner is never told,
+   * so the app draws nothing for the many short ones (a hover's pick). */
   onBusy: ((since: number | null) => void) | null = null;
-  private lastBusy: number | null = null;
+  /** When the worker last answered: a request sent before that and
+   * still waiting began its own turn then, the worker answering in turn. */
+  private freedAt = 0;
+  /** The wait being timed, and whether the app has been told of it. */
+  private watched: number | null = null;
+  private told = false;
+  private busyTimer: ReturnType<typeof setTimeout> | null = null;
   private makeWorker: () => Worker;
 
   constructor(makeWorker: () => Worker = () => new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module", name: "sawhorse-kernel" })) {
@@ -95,6 +104,7 @@ export class KernelClient {
       if (!p) return;
       this.pending.delete(e.data.id);
       if (p.timer !== null) clearTimeout(p.timer);
+      this.freedAt = Date.now();
       this.busyChanged();
       p.resolve(e.data);
     };
@@ -116,20 +126,31 @@ export class KernelClient {
     return `[${this.mirror.join(",")}]`;
   }
 
-  /** #144: when the oldest request still waiting for its answer was sent (Date.now()), or null
-   * when none is. The worker answers in turn, so that is the one it is working on, and
-   * requests sent behind it (a hover's pick) do not start the count again. */
+  /** #144: since when the request the worker is on has been waiting (Date.now()), or null when
+   * none is. The worker answers in turn, so that is the oldest one still waiting, and its turn
+   * began when it was sent or when the one before it was answered, whichever came later: a
+   * hover's pick sent behind a long edit neither restarts the count nor carries it on. */
   busySince(): number | null {
     let at: number | null = null;
     for (const p of this.pending.values()) if (at === null || p.at < at) at = p.at;
-    return at;
+    return at === null ? null : Math.max(at, this.freedAt);
   }
 
+  /** A wait began or ended: time the new one, and tell the app the old one ended if it was told. */
   private busyChanged(): void {
     const at = this.busySince();
-    if (at === this.lastBusy) return;
-    this.lastBusy = at;
-    this.onBusy?.(at);
+    if (at === this.watched) return;
+    if (this.busyTimer !== null) clearTimeout(this.busyTimer);
+    this.busyTimer = null;
+    if (this.told) this.onBusy?.(null);
+    this.told = false;
+    this.watched = at;
+    if (at === null) return;
+    this.busyTimer = setTimeout(() => {
+      this.busyTimer = null;
+      this.told = true;
+      this.onBusy?.(at);
+    }, Math.max(0, at + BUSY_AFTER_MS - Date.now()));
   }
 
   /** Tests (#144): the next edit (`apply`) keeps the worker busy for `ms` before it runs. */
@@ -499,6 +520,9 @@ export class KernelClient {
     this.worker.terminate();
     for (const p of this.pending.values()) if (p.timer !== null) clearTimeout(p.timer);
     this.pending.clear();
+    // #144: no wait left timed for an app that has gone.
+    if (this.busyTimer !== null) clearTimeout(this.busyTimer);
+    this.busyTimer = null;
   }
 }
 
