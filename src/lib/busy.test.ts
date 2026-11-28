@@ -53,9 +53,11 @@ describe("useBusySeconds", () => {
     }, { initialProps: { since: null as number | null } });
     rerender({ since: 0 });
     const before = renders;
-    act(() => void vi.advanceTimersByTime(5_000));
-    // Twenty readings: shown nothing until 1 s, then 1, 2, 3, 4, 5.
-    expect(renders - before).toBeLessThanOrEqual(6);
+    // Twenty readings, each its own turn of the clock (one act would draw them as one).
+    for (let i = 0; i < 20; i++) act(() => void vi.advanceTimersByTime(250));
+    // Shown nothing until 1 s, then 1, 2, 3, 4, 5. React may draw once more before it sees a
+    // reading changed nothing, so up to twice that; a draw at every reading is twenty.
+    expect(renders - before).toBeLessThanOrEqual(12);
   });
 
   it("a request sent later counts from when it was sent", () => {
