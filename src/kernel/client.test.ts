@@ -309,6 +309,31 @@ describe("#144: what the kernel is working on", () => {
     expect(seen).toEqual([5_000, null, 6_500, null]);
   });
 
+  it("a kernel given up on ends the wait for good: nothing left showing, no timer left", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    void k.c.apply({ op: "noop" } as never).catch(() => undefined);
+    await flush();
+    vi.advanceTimersByTime(1_500);
+    expect(seen).toEqual([0]);
+    // Every worker fails, the rebuilds too, until the client gives up (as in the test above).
+    for (let i = 0; i < 4; i++) {
+      k.w().onerror?.({ message: "will not load", preventDefault() {} } as unknown as ErrorEvent);
+      await flush();
+      if (i < 3) {
+        k.w().onerror?.({ message: "will not load", preventDefault() {} } as unknown as ErrorEvent);
+        await flush();
+      }
+    }
+    expect(k.restarts[k.restarts.length - 1].error).toMatch(/failed \d times in half a minute/);
+    vi.advanceTimersByTime(5_000);
+    expect(seen.at(-1)).toBeNull();
+    expect(k.c.busySince()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("leaves no wait timed once it is disposed of", async () => {
     vi.useFakeTimers({ now: 0 });
     const k = client();
