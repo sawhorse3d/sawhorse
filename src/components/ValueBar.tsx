@@ -26,6 +26,11 @@ export interface ValueBarProps {
   firstRunHint?: boolean;
   /** Lane 24: Edit > Units opens the same picker; a change of this number opens it. */
   openPicker?: number;
+  /** #144: whole seconds the kernel has been working on what it was last asked, once that
+   * passes about a second (null: it is not, or not yet). The status line then says only
+   * that something is running, in place of the last step's words, which come back when it
+   * answers. A message with buttons (an import's Cancel, an offer) is left as it is. */
+  busy?: number | null;
 }
 
 /** A status-line message; `actions` render as buttons after the text ("Restore unsaved work?"). */
@@ -42,7 +47,7 @@ export interface StatusMessage {
 
 /** The Value Control Box: type mid-gesture, press Enter. */
 export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function ValueBar(
-  { tool, value, onChange, onCommit, onCancel, units, onUnits, message, setAside = null, empty = false, firstRunHint = false, openPicker = 0 },
+  { tool, value, onChange, onCommit, onCancel, units, onUnits, message, setAside = null, empty = false, firstRunHint = false, openPicker = 0, busy = null },
   ref,
 ) {
   const info = unitInfo(units);
@@ -73,10 +78,12 @@ export const ValueBar = forwardRef<HTMLInputElement, ValueBarProps>(function Val
   // The status line names the units while the document is empty: a first look at the app
   // finds them where the eye lands (lane 24, issue #13), and the sentence is the click.
   const unitsLine = empty && !message;
+  const working = busy !== null && !message?.actions?.length;
+  const err = !working && !!message?.error;
   return (
     <footer className="vcb">
-      <div className={message?.error ? "hint err" : "hint"} id="hint" role="status" aria-live="polite">
-        <b>{message?.error ? "Can't do that." : `${tool.label}.`}</b> {message ? message.text : tool.hint}
+      <div className={err ? "hint err" : "hint"} id="hint" role="status" aria-live="polite" data-busy={working ? "true" : undefined}>
+        <b>{err ? "Can't do that." : `${tool.label}.`}</b> {working ? `Working… ${busy} s` : message ? message.text : tool.hint}
         {message?.actions?.map((a) => (
           // #145: one answer per click or key press, as on the notice over the model.
           <button key={a.label} type="button" className="hint-action" onClick={answerOnce(a.run)}>

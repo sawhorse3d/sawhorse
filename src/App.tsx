@@ -30,6 +30,7 @@ import type { DocState, Entity, KernelOp, MeshData, SceneData, V3 } from "./kern
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
 import { entityKey, eraseOps, heldByModel, objectOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
+import { useBusySeconds } from "./lib/busy";
 import { contextTrail, describeNode, entityShown, graphOf, hidSomething, nodeById, objectParent, quoted, reachableContext, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
 import { isMac, quitLabel } from "./lib/platform";
@@ -344,6 +345,9 @@ export function App() {
   const [units, setUnits] = useState<UnitSystem>(loadUnits);
   const [scene, setScene] = useState<SceneData | null>(null);
   const [kernelState, setKernelState] = useState<KernelState>("loading");
+  // #144: when the request the kernel is working on was sent, and the seconds to show for it.
+  const [busySince, setBusySince] = useState<number | null>(null);
+  const busy = useBusySeconds(busySince);
   const [kernelNote, setKernelNote] = useState<string | null>(null);
   const [vcb, setVcb] = useState("");
   const [message, setMessageRaw] = useState<Message>(null);
@@ -1215,11 +1219,14 @@ export function App() {
           : { text: `The kernel stopped (${friendlyError(info.reason)}) and was restarted from your last step: nothing was lost, and undo works as before.`, error: true },
       );
     };
-    // Tests (?kerneltest=1): make the next import fail inside the kernel, or (lane 28) the next save refuse.
+    // #144: what the kernel is working on, for the status line and the cursor.
+    k.onBusy = setBusySince;
+    // Tests (?kerneltest=1): make the next import fail inside the kernel, or (lane 28) the next
+    // save refuse, or (#144) the next edit run long.
     try {
       if (new URLSearchParams(window.location.search).get("kerneltest") === "1") {
         const w = window as unknown as { __sawhorse?: Record<string, unknown> };
-        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), failNextSave: () => k.failNextSave(), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
+        w.__sawhorse = { ...(w.__sawhorse ?? {}), kernelTest: { failNextImport: (how?: string) => k.failNextImport(how), failNextSave: () => k.failNextSave(), stallNextEdit: (ms: number) => k.stallNextEditForTest(ms), busySince: () => k.busySince(), restarts: () => k.restarts, wasmBytes: () => k.wasmBytes() } };
       }
     } catch {
       /* no URL */
@@ -3410,6 +3417,7 @@ export function App() {
         labels={labels}
         box={toolView.box}
         cursor={toolView.cursor}
+        busy={busy !== null}
         selectionCount={selection.length}
         hoverKind={hover?.kind}
         onPointer={onPointer}
@@ -3585,6 +3593,7 @@ export function App() {
         empty={kernelState === "ready" && !!st && st.stats.objects === 0 && st.stats.edges === 0 && !st.meshes?.length}
         firstRunHint={isWebDemo()}
         openPicker={unitPickerOpen}
+        busy={busy}
       />
     </div>
   );

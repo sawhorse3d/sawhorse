@@ -33,6 +33,8 @@ You will make a board, cut a dado across it, and set a shelf in the dado. Everyt
 
 If an operation can't be done (for example, erasing an edge would open a solid, or a click finds nothing under the cursor to draw on, as in the Front view of an empty model, or a draw tool is dragged where it takes a click, a move and a click), nothing changes and the status line says why.
 
+While Sawhorse takes longer than about a second over something (a large edit, such as an array of a large group, a save or an export, or the cut list or nesting of a large model), the status line says "Working…" and how many seconds, and the cursor over the model shows busy. Both go when it is done, and the status line says what the step did. You can keep working meanwhile: what you do next waits for it.
+
 ## Navigating
 
 The left button belongs to the tool you are using; the middle button, the right button (Control+click on a Mac) and the wheel move the view, whatever the tool. Without a middle button (a laptop's trackpad), the Orbit tool and Option+drag (Alt+drag on Windows and Linux) orbit with the left button.

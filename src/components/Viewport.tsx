@@ -69,6 +69,9 @@ export interface ViewportProps {
   labels?: Label[];
   box?: SelectionBox | null;
   cursor?: string;
+  /** #144: the kernel has been working on an edit for a moment: the cursor over the model
+   * shows busy (`progress`: the view still answers), whatever the tool's own cursor. */
+  busy?: boolean;
   /** Number of selected entities (a data attribute for tests). */
   selectionCount?: number;
   /** Kind of the entity under the cursor (a data attribute for tests). */
@@ -110,7 +113,7 @@ export interface SawhorseHooks {
 }
 
 export function Viewport(props: ViewportProps) {
-  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, selectionCount, hoverKind, onPointer, onCamera, onEngine } = props;
+  const { mesh, units, view, viewSeq, projection, fitSeq, hud, kernel, info, highlight, overlay, marker, labels, box, cursor, busy = false, selectionCount, hoverKind, onPointer, onCamera, onEngine } = props;
   const hostRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ViewportEngine | null>(null);
@@ -269,12 +272,13 @@ export function Viewport(props: ViewportProps) {
       data-selection={selectionCount ?? 0}
       data-hover={hoverKind ?? ""}
       data-nav={nav?.mode ?? ""}
+      data-busy={busy ? "true" : undefined}
     >
       <canvas
         id="cv"
         ref={canvasRef}
         aria-label="3D viewport"
-        style={cursor ? { cursor } : undefined}
+        style={busy ? { cursor: "progress" } : cursor ? { cursor } : undefined}
         onPointerMove={(e) => send("move", e)}
         onPointerDown={(e) => {
           if (e.button === 1) e.preventDefault(); // no autoscroll on middle press
