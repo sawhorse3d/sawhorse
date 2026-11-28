@@ -21,7 +21,7 @@ import type { Label } from "../components/Viewport";
 import { parseNumber, parseLength } from "../lib/units";
 import { dist, dot, sub, unit } from "./draw";
 import { EMPTY_VIEW, Tool, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
+import { applyX, boundsOf, coveredSolids, curveNoun, curvePointRefusal, describeSubject, geometryOp, isSolidPoint, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, scaling, sketchPreviews, sketchSegments, subjectEdges, subjectOf, type SketchPreview, type Subject } from "./xform";
 import { scopeEntity } from "../lib/scope";
 import { logKey, stillLast } from "../lib/steps";
 import { curveOf, curveView, lengthWithUnit } from "../lib/curves";
@@ -452,9 +452,17 @@ export class ScaleTool extends Tool {
         h.changed();
         return;
       }
+      // #110: a solid's edges and points selected stay selected where they went, and Undo and
+      // Redo put them back as for sketch geometry.
+      let sel = t.sel;
+      if (sel.some(isSolidPoint)) {
+        sel = movedSelection(t.sel, t.subject, t.sk, x, r.outcome, r.scene?.mesh);
+        h.setSelection(sel);
+        h.rememberSelection?.(t.sel);
+      }
       const subject: Subject = t.subject.kind === "geometry" ? { ...t.subject, points: t.subject.points.map((p) => applyX(x, p)) } : t.subject;
       const b = this.bounds(subject);
-      this.target = b ? { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()), sk: [], sel: t.sel } : null;
+      this.target = b ? { subject, lo: b[0], hi: b[1], edges: subjectEdges(subject, h.mesh()), sk: [], sel } : null;
       h.changed();
     }
   }

@@ -1,9 +1,9 @@
 // Entities the user points at (faces, edges, vertices, regions, whole objects): identity,
 // selection sets, highlights, window / crossing selection and the ops that erase them.
 // Pure (no DOM, no three.js), so all of it is unit-tested.
-import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SketchInfo, V3 } from "../kernel/types";
+import type { DocState, Entity, KernelOp, MeshData, SceneGraph, SectionView, SketchInfo, V3 } from "../kernel/types";
 import type { Highlight } from "../viewport/engine";
-import { curveSegments } from "./curves";
+import { curveSegments, near } from "./curves";
 import { meshIndex } from "./meshIndex";
 import { contentsOf, graphIndex } from "./scope";
 
@@ -120,6 +120,147 @@ export function partsOf(e: Entity, mesh: MeshData | null, graph?: SceneGraph | n
     }
     default:
       return [];
+  }
+}
+
+/** #110: one owner's segment ends on a grid whose cell is the matching allowance at the
+ * owner's farthest point (`near`), so a point within it is in its own cell or a neighbour. */
+interface EndGrid {
+  cell: number;
+  at: Map<string, number[]>;
+}
+const endGrids = new WeakMap<MeshData, Map<number, EndGrid>>();
+
+function endGrid(mesh: MeshData, k: number): EndGrid {
+  let grids = endGrids.get(mesh);
+  if (!grids) endGrids.set(mesh, (grids = new Map()));
+  const had = grids.get(k);
+  if (had) return had;
+  const ix = meshIndex(mesh);
+  const s = mesh.edges;
+  let far = 0;
+  for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) for (let c = 0; c < 6; c++) far = Math.max(far, Math.abs(s[6 * ix.ownerEdges[j] + c]));
+  const g: EndGrid = { cell: 2e-6 + 4e-7 * far, at: new Map() };
+  for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
+    const i = ix.ownerEdges[j];
+    for (const o of [0, 3]) {
+      const key = cellKey(g.cell, s[6 * i + o], s[6 * i + o + 1], s[6 * i + o + 2]);
+      const l = g.at.get(key);
+      if (l) l.push(i);
+      else g.at.set(key, [i]);
+    }
+  }
+  grids.set(k, g);
+  return g;
+}
+
+const cellKey = (cell: number, x: number, y: number, z: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)},${Math.floor(z / cell)}`;
+
+/** The 27 cells round a point's own, its own first (most points are found there). */
+const AROUND: [number, number, number][] = [[0, 0, 0]];
+for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) if (dx || dy || dz) AROUND.push([dx, dy, dz]);
+
+/** Whether owner `k` has a segment with an end near `p` that passes `test`. */
+function anySegmentAt(mesh: MeshData, k: number, p: V3, test: (i: number) => boolean): boolean {
+  const g = endGrid(mesh, k);
+  const s = mesh.edges;
+  const cx = Math.floor(p[0] / g.cell);
+  const cy = Math.floor(p[1] / g.cell);
+  const cz = Math.floor(p[2] / g.cell);
+  for (const [dx, dy, dz] of AROUND)
+    for (const i of g.at.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? [])
+      if ((near(p, [s[6 * i], s[6 * i + 1], s[6 * i + 2]]) || near(p, [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]])) && test(i)) return true;
+  return false;
+}
+
+/** #110: `p` lies on the segment at `seg[o..o + 6]`, within the view's allowance (`near`). */
+function onSegment(p: V3, seg: ArrayLike<number>, o: number): boolean {
+  const a: V3 = [seg[o], seg[o + 1], seg[o + 2]];
+  const b: V3 = [seg[o + 3], seg[o + 4], seg[o + 5]];
+  const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  const t = dd > 0 ? Math.min(1, Math.max(0, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / dd)) : 0;
+  return near(p, [a[0] + t * d[0], a[1] + t * d[1], a[2] + t * d[2]]);
+}
+
+/**
+ * #110: whether the model, as its view mesh and state show it, still holds `e`. A face, a
+ * region or a solid by its parts; an edge by a segment of its own owner with both its ends
+ * (either way round); a point by an end of one of its owner's segments; a curve while the
+ * mesh draws it; a guide (and a point or edge of one), a dimension, a section plane or a
+ * group by its id. Ends match within the view mesh's single precision (`near`). The app asks
+ * this of every selected entity after each edit, Undo and Redo, so the selection never
+ * names what the model no longer has (an edge that Undo took away was read by Follow Me as
+ * a path).
+ *
+ * Under an active section plane (`sections`, the scene's cuts and what each set of planes
+ * clips) a click picks an edge or point as the view draws it: cut short at the plane, or on
+ * the cut's outline, neither of which is a segment of the view mesh end to end. So for a
+ * solid or sketch the planes clip, an edge is kept while both its ends lie along one of its
+ * owner's segments, each at one of that segment's ends or on a plane that cuts that segment
+ * (the segment's two ends on either side of it); and for a solid, while both lie inside the
+ * solid's bounds and along one segment of a cut's outline (which lies on its plane). A point
+ * the same way.
+ */
+export function heldByModel(e: Entity, mesh: MeshData | null, state: DocState | null | undefined, sections?: SectionView | null): boolean {
+  switch (e.kind) {
+    case "face":
+    case "region":
+    case "object":
+      return partsOf(e, mesh).length > 0;
+    case "node":
+      return !!state?.graph && graphIndex(state.graph).node.has(e.node);
+    case "section":
+      return !!state?.graph?.sections?.some((s) => s.id === e.section);
+    case "guide":
+      return !!state?.guides?.some((g) => g.id === e.guide);
+    case "dimension":
+      return !!state?.dimensions?.some((d) => d.id === e.dimension);
+    case "curve":
+      return curveSegments(mesh, e.owner, e.curve).length > 0;
+    case "edge":
+    case "vertex": {
+      const owner = e.owner;
+      if (owner.kind === "guide") return !!state?.guides?.some((g) => g.id === owner.id);
+      if (!mesh) return false;
+      const ix = meshIndex(mesh);
+      const k = (owner.kind === "object" ? ix.objectOwner : ix.sketchOwner).get(owner.id);
+      if (k === undefined) return false;
+      const s = mesh.edges;
+      const whole =
+        e.kind === "vertex"
+          ? anySegmentAt(mesh, k, e.at, () => true)
+          : anySegmentAt(mesh, k, e.a, (i) => {
+              const p: V3 = [s[6 * i], s[6 * i + 1], s[6 * i + 2]];
+              const q: V3 = [s[6 * i + 3], s[6 * i + 4], s[6 * i + 5]];
+              return (near(e.a, p) && near(e.b, q)) || (near(e.a, q) && near(e.b, p));
+            });
+      if (whole) return true;
+      // Cut by a plane: the planes that clip this owner.
+      const planes = (sections?.clips ?? []).filter((c) => (owner.kind === "object" ? c.objects : c.sketches).includes(owner.id)).flatMap((c) => c.planes);
+      if (!planes.length) return false;
+      const tol = (p: V3) => 2e-6 + 4e-7 * Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2]));
+      const side = ([nx, ny, nz, c]: [number, number, number, number], p: V3) => nx * p[0] + ny * p[1] + nz * p[2] + c;
+      const ends: V3[] = e.kind === "vertex" ? [e.at] : [e.a, e.b];
+      // Along one of the owner's segments, each end at one of its ends or on a plane that cuts
+      // that segment, its two ends on either side (cut short there; a piece of an edge that
+      // another edge split, and which is gone, has an end that is neither, and a plane lying
+      // along the segment, or wholly to one side of it, cuts nothing).
+      for (let j = ix.ownerStart[k]; j < ix.ownerStart[k + 1]; j++) {
+        const o = 6 * ix.ownerEdges[j];
+        const p: V3 = [s[o], s[o + 1], s[o + 2]];
+        const q: V3 = [s[o + 3], s[o + 4], s[o + 5]];
+        const cutting = planes.filter((pl) => (side(pl, p) > tol(p) && side(pl, q) < -tol(q)) || (side(pl, p) < -tol(p) && side(pl, q) > tol(q)));
+        if (ends.every((x) => onSegment(x, s, o) && (near(x, p) || near(x, q) || cutting.some((pl) => Math.abs(side(pl, x)) <= tol(x))))) return true;
+      }
+      // Along the cut's outline (which lies on its plane), inside the solid (a sketch has no cut face).
+      const solid = owner.kind === "object" ? state?.solids?.find((x) => x.id === owner.id) : undefined;
+      if (!solid) return false;
+      const inside = (x: V3) => x.every((v, i) => v >= solid.min[i] - 1e-6 - 4e-7 * Math.abs(v) && v <= solid.max[i] + 1e-6 + 4e-7 * Math.abs(v));
+      if (!ends.every(inside)) return false;
+      for (const c of sections?.cuts ?? []) for (let o = 0; o + 6 <= c.outline.length; o += 6) if (ends.every((x) => onSegment(x, c.outline, o))) return true;
+      return false;
+    }
   }
 }
 

@@ -57,6 +57,35 @@ describe("rotate helpers", () => {
 });
 
 describe("Rotate tool", () => {
+  it("#110: a solid's edge turned stays selected where it went, and Undo and Redo know it", async () => {
+    const h = fakeHost({ outcome: { kind: "geometry_moved", object: 1, faces: [] } as never });
+    const edge = { kind: "edge" as const, owner: { kind: "object" as const, id: 1 }, a: [1, 0, 0] as V3, b: [2, 0, 0] as V3, drawn: false };
+    h.sel = [edge];
+    await turn(new RotateTool(h), 90);
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform_geometry" });
+    expect(h.sel).toHaveLength(1);
+    const [now] = h.sel as (typeof edge)[];
+    close(now.a, [0, 1, 0]);
+    close(now.b, [0, 2, 0]);
+    expect(h.remembered.at(-1)?.before).toEqual([edge]);
+  });
+
+  it("#110: an angle typed right after turning a solid's edge turns it again from where it was, once", async () => {
+    const h = fakeHost({ outcome: { kind: "geometry_moved", object: 1, faces: [] } as never });
+    const edge = { kind: "edge" as const, owner: { kind: "object" as const, id: 1 }, a: [1, 0, 0] as V3, b: [2, 0, 0] as V3, drawn: false };
+    h.sel = [edge];
+    const t = new RotateTool(h);
+    await turn(t, 90);
+    t.onValue("45");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform_geometry" }]);
+    // 45 degrees from where the edge was, not 135 (45 more from where the 90 had put it).
+    const [now] = h.sel as (typeof edge)[];
+    close(now.a, [Math.SQRT1_2, Math.SQRT1_2, 0]);
+    close(now.b, [2 * Math.SQRT1_2, 2 * Math.SQRT1_2, 0]);
+    expect(h.remembered.at(-1)?.before).toEqual([edge]);
+  });
+
   it("turns sketch geometry on its own plane (lane 22): a typed 45 about an upright sketch's axis", async () => {
     const state = { sketches: [{ id: 2, origin: [0, 0, 0], normal: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] }] } as unknown as DocState;
     const h = fakeHost({ outcome: { kind: "sketch_moved", sketch: 2, regions: [[2, 1]] }, _state: state });

@@ -118,6 +118,36 @@ describe("transform helpers", () => {
     expect(lifted).toEqual([{ kind: "region", sketch: 5, region: 9 }, { ...edge, owner: { kind: "sketch", id: 5 }, a: [0, 0, 1], b: [1, 0, 1] }]);
   });
 
+  it("#110: a solid's selected edges and points go where the move put them", () => {
+    const top: Entity = { kind: "edge", owner: { kind: "object", id: 7 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    const side: Entity = { kind: "edge", owner: { kind: "object", id: 7 }, a: [1, 0, 0], b: [1, 0, 1], drawn: false };
+    const corner: Entity = { kind: "vertex", owner: { kind: "object", id: 7 }, at: [0, 0, 1] };
+    const low: Entity = { kind: "vertex", owner: { kind: "object", id: 7 }, at: [0, 0, 0] };
+    const other: Entity = { kind: "edge", owner: { kind: "object", id: 8 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    const sketch: Entity = { kind: "edge", owner: { kind: "sketch", id: 1 }, a: [5, 0, 0], b: [6, 0, 0], drawn: true };
+    const up = translation([0, 0, 2]);
+    // A whole solid moved: every end of its edges and points, and nothing of another solid.
+    const whole: Subject = { kind: "objects", objects: [7] };
+    expect(movedSelection([top, corner, other, sketch], whole, [], up, { kind: "transformed", objects: [7] })).toEqual([
+      { ...top, a: [0, 0, 3], b: [1, 0, 3] },
+      { ...corner, at: [0, 0, 3] },
+      other,
+      sketch,
+    ]);
+    // Inside a group that moved (`covered`), the same.
+    expect(movedSelection([top], { kind: "objects", objects: [], nodes: [3], covered: [7] }, [], up, { kind: "transformed", objects: [] })).toEqual([{ ...top, a: [0, 0, 3], b: [1, 0, 3] }]);
+    // The top edge's ends moved (a geometry move): it goes up, the side edge beside it
+    // stretches to its moved end, a point there goes up, one elsewhere stays.
+    const part: Subject = { kind: "geometry", object: 7, points: [[0, 0, 1], [1, 0, 1]], what: "an edge" };
+    expect(movedSelection([top, side, corner, low, other], part, [], up, { kind: "geometry_moved", object: 7, faces: [] } as unknown as OpOutcome)).toEqual([
+      { ...top, a: [0, 0, 3], b: [1, 0, 3] },
+      { ...side, b: [1, 0, 3] },
+      { ...corner, at: [0, 0, 3] },
+      low,
+      other,
+    ]);
+  });
+
   it("#7: a region moved within its plane that splits is selected as the pieces it became, not its old id", () => {
     // Region 1, a unit square, moved 2 to the right across a rectangle. The kernel says the
     // moved edges now bound regions 4 and 5 (inside the moved square) and 2 (the rectangle's
@@ -543,6 +573,27 @@ describe("Move tool", () => {
     close((ops(h).at(-1)!.xform as { translation: V3 }).translation, [0.75, 0, 0]);
   });
 
+  it("#110: a Ctrl copy, and an array after it, of a solid with one of its edges selected leave the selection on the original, where it was", async () => {
+    const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
+    const solid: Entity = { kind: "object", object: 1 };
+    const edge: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    h.sel = [solid, edge];
+    const t = new MoveTool(h);
+    t.onModifier("ctrl");
+    t.onEvent(ev("down", [0, 0, 0], { picked: onBox }));
+    await tick();
+    t.onEvent(ev("click", [0, 0, 0], { picked: onBox }));
+    t.onEvent(ev("move", [1, 0, 0], { snapKind: "axis-x" }));
+    t.onEvent(ev("click", [1, 0, 0], { snapKind: "axis-x" }));
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "copy", objects: [1] });
+    expect(h.sel).toEqual([solid, edge]);
+    t.onValue("x3");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "array", objects: [1], count: 3 }]);
+    expect(h.sel).toEqual([solid, edge]);
+  });
+
   it("Ctrl tapped before the click: the gesture starts as a copy and says so", async () => {
     const h = fakeHost({ outcome: { kind: "copied", objects: [2] } });
     const t = new MoveTool(h);
@@ -627,6 +678,32 @@ describe("Move tool", () => {
     expect(op).toMatchObject({ op: "transform_geometry", object: 1, autofold: true });
     expect((op.points as V3[]).length).toBe(4);
     expect(h.statuses.at(-1)?.text).toContain("Moved face 2");
+  });
+
+  it("#110: a solid's edge moved stays selected where it went; a distance typed right after moves it from where it was, once", async () => {
+    const h = fakeHost({ outcome: { kind: "geometry_moved", object: 1, faces: [] } as unknown as OpOutcome });
+    const edge: Entity = { kind: "edge", owner: { kind: "object", id: 1 }, a: [0, 0, 1], b: [1, 0, 1], drawn: false };
+    h.sel = [edge];
+    const t = new MoveTool(h);
+    t.onEvent(ev("down", [0.5, 0, 1], { picked: onBox }));
+    await tick();
+    t.onEvent(ev("click", [0.5, 0, 1], { picked: onBox }));
+    t.onEvent(ev("move", [0.5, 0, 1.25], { snapKind: "axis-z" }));
+    t.onEvent(ev("click", [0.5, 0, 1.25], { snapKind: "axis-z" }));
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform_geometry", object: 1 });
+    let [now] = h.sel as Extract<Entity, { kind: "edge" }>[];
+    close(now.a, [0, 0, 1.25]);
+    close(now.b, [1, 0, 1.25]);
+    expect(h.remembered.at(-1)?.before).toEqual([edge]);
+    // 6 in up from where the edge was, not from where the first move put it.
+    t.onValue("6");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform_geometry", object: 1 }]);
+    [now] = h.sel as Extract<Entity, { kind: "edge" }>[];
+    close(now.a, [0, 0, 1 + 6 * IN]);
+    close(now.b, [1, 0, 1 + 6 * IN]);
+    expect(h.remembered.at(-1)?.before).toEqual([edge]);
   });
 
   it("moves a selected sketch region by a typed distance; the selection stays on it (lane 22)", async () => {

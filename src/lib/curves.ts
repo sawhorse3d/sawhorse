@@ -36,7 +36,9 @@ export function curveSegments(mesh: MeshData | null, owner: Owner | CurveView["o
   return out;
 }
 
-const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 2e-6 + 4e-7 * Math.max(Math.abs(q[0]), Math.abs(q[1]), Math.abs(q[2]));
+/** `p` is within a few micrometres of `q`, a point of the view mesh (single precision, so the
+ * allowance grows with `q`'s distance from the origin). */
+export const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) <= 2e-6 + 4e-7 * Math.max(Math.abs(q[0]), Math.abs(q[1]), Math.abs(q[2]));
 
 /** The points of a set of segments, each once (the view mesh is single precision, so ends
  * match within a few micrometres). */

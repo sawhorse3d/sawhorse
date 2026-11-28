@@ -32,7 +32,7 @@ import { scopeEntity } from "../lib/scope";
 import { logKey, stillLast } from "../lib/steps";
 import { curveOf } from "../lib/curves";
 import { EMPTY_VIEW, Tool, inferenceLine, markerOf, type InferContext, type Snap, type ToolEvent, type ToolView } from "./tool";
-import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
+import { PICK_A_SUBJECT, curvePointRefusal, describeSubject, geometryOp, isCopied, isSketchEntity, isSolidPoint, loadOutlines, movedSelection, targetAfterMove, sketchesAfter, objectsOp, previewSegments, sketchPreviews, sketchSegments, subjectEdges, subjectOf, translation, type SketchPreview, type Subject } from "./xform";
 
 interface Gesture {
   subject: Subject;
@@ -326,6 +326,11 @@ export class MoveTool extends Tool {
         // #7: Push/Pull's target follows a region the move turned into pieces.
         h.setTarget(targetAfterMove(pushed, sel, next, sketchesAfter(subject, r.outcome)));
         // Lane 43 (#7): Undo and Redo of this step put back the selection before and after it.
+        h.rememberSelection?.(sel);
+      } else if (!copy && sel.some(isSolidPoint)) {
+        // #110: a solid's edges and points selected stay selected where they went, and Undo
+        // and Redo put them back as for sketch geometry.
+        h.setSelection(movedSelection(sel, subject, sk, translation(delta), r.outcome, r.scene?.mesh));
         h.rememberSelection?.(sel);
       }
     }

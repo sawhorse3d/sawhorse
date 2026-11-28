@@ -28,9 +28,9 @@ import { useRenderGate } from "./credits/gate";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { DocState, Entity, KernelOp, MeshData, SceneData, V3 } from "./kernel/types";
 import { describeTarget, nextTarget, type Target } from "./lib/edit";
-import { entityKey, eraseOps, objectOf, partsOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
+import { entityKey, eraseOps, heldByModel, objectOf, selectionHighlight, selectionLookup, withHover } from "./lib/entities";
 import { thumbnailUrl } from "./lib/thumbnail";
-import { contextTrail, describeNode, entityShown, graphIndex, graphOf, hidSomething, nodeById, objectParent, quoted, reachableContext, scopeEntity, solidsIn } from "./lib/scope";
+import { contextTrail, describeNode, entityShown, graphOf, hidSomething, nodeById, objectParent, quoted, reachableContext, scopeEntity, solidsIn } from "./lib/scope";
 import { meshIndex } from "./lib/meshIndex";
 import { isMac, quitLabel } from "./lib/platform";
 import { contextPick, describe } from "./tools/select";
@@ -563,16 +563,13 @@ export function App() {
           const t = op ? nextTarget(op, r.outcome, prev) : exists(prev) ? prev : null;
           live.current.target = t;
           setTarget(t);
-          // Drop selected entities that no longer exist (faces and regions by id, groups and
-          // components by node), that the editing context no longer offers, or that are no
-          // longer drawn (hidden, by the eye, a tag or a scene): Delete must never erase what
-          // nobody can see.
-          const g = r.scene.state.graph;
+          // Drop selected entities the model no longer has (#110: edges, points, curves,
+          // guides and dimensions too, not only faces, regions and groups), that the editing
+          // context no longer offers, or that are no longer drawn (hidden, by the eye, a tag
+          // or a scene): Delete must never erase what nobody can see.
           const sel = (keep ? keep.selection : live.current.selection).filter((e) => {
             if (!entityShown(e, r.scene.state)) return false;
-            if (e.kind === "node") {
-              if (!g || !graphIndex(g).node.has(e.node)) return false;
-            } else if ((e.kind === "face" || e.kind === "region" || e.kind === "object") && partsOf(e, r.scene.mesh).length === 0) return false;
+            if (!heldByModel(e, r.scene.mesh, r.scene.state, r.scene.sections)) return false;
             const s = scopeEntity(e, r.scene.state);
             return !!s && entityKey(s) === entityKey(e);
           });

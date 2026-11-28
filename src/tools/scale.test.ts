@@ -82,6 +82,36 @@ describe("Scale tool", () => {
     expect(h.statuses.at(-1)?.text).toContain("×1.5 along red about the opposite grip");
   });
 
+  it("#110: a solid's selected edge goes where the scale put it, and Undo and Redo know it", async () => {
+    const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
+    const edge = { kind: "edge" as const, owner: { kind: "object" as const, id: 1 }, a: [0, 0, 1] as V3, b: [2, 0, 1] as V3, drawn: false };
+    const solid = { kind: "object" as const, object: 1 };
+    h.sel = [solid, edge];
+    const t = new ScaleTool(h);
+    t.activate();
+    await tick();
+    // The +red face's grip dragged out to x1.5 about the opposite face (x = 0).
+    t.onEvent(at("down", [2, 0.5, 0.5]));
+    t.onEvent({ ...at("drag", [3, 0.5, 0.5]), start: [200, -50] });
+    t.onEvent({ ...at("dragend", [3, 0.5, 0.5]), start: [200, -50] });
+    await tick();
+    expect(ops(h).at(-1)).toMatchObject({ op: "transform", objects: [1] });
+    expect(h.sel[0]).toEqual(solid);
+    const now = h.sel[1] as typeof edge;
+    close(now.a, [0, 0, 1]);
+    close(now.b, [3, 0, 1]);
+    expect(h.remembered.at(-1)?.before).toEqual([solid, edge]);
+    // #110: a factor typed right after scales it again from where it was, once: x2 puts the
+    // edge's far end at 4, not at 6 (from where x1.5 had put it).
+    t.onValue("2");
+    await tick();
+    expect(ops(h).slice(-2)).toMatchObject([{ op: "undo" }, { op: "transform", objects: [1] }]);
+    const again = h.sel[1] as typeof edge;
+    close(again.a, [0, 0, 1]);
+    close(again.b, [4, 0, 1]);
+    expect(h.remembered.at(-1)?.before).toEqual([solid, edge]);
+  });
+
   it("a corner grip with a typed factor; Ctrl about the centre; Shift uniform", async () => {
     const h = fakeHost({ outcome: { kind: "transformed", objects: [1] }, _state: state, toScreen: proj });
     h.sel = [{ kind: "object", object: 1 }];
