@@ -260,3 +260,36 @@ describe("the reminder of unsaved work set aside", () => {
     expect(screen.queryByTestId("hint-offers")).toBeNull();
   });
 });
+
+describe("#144: while a long edit runs", () => {
+  const hint = () => document.getElementById("hint")!;
+
+  it("says Working and how long in place of the last step's words, and gives them back after", () => {
+    const { rerender } = bar({ message: { text: "Copied group 1 2 in along red.", error: false } });
+    expect(hint().textContent).toBe("Push. Copied group 1 2 in along red.");
+    rerender({ busy: 4 });
+    expect(hint().textContent).toBe("Push. Working… 4 s");
+    expect(hint().getAttribute("aria-busy")).toBe("true");
+    rerender({ busy: 5 });
+    expect(hint().textContent).toBe("Push. Working… 5 s");
+    rerender({ busy: null });
+    expect(hint().textContent).toBe("Push. Copied group 1 2 in along red.");
+    expect(hint().getAttribute("aria-busy")).toBeNull();
+  });
+
+  it("over the tool's own hint, and over a refusal, as plain words", () => {
+    const { rerender } = bar({ busy: 2 });
+    expect(hint().textContent).toBe("Push. Working… 2 s");
+    rerender({ busy: 3, message: { text: "that shape is too small", error: true } });
+    expect(hint().textContent).toBe("Push. Working… 3 s");
+    expect(hint().className).toBe("hint");
+  });
+
+  it("leaves a message with buttons as it is: an import's Cancel, an offer's answers", () => {
+    const run = vi.fn();
+    bar({ busy: 7, message: { text: "Importing shelf.skp…", error: false, actions: [{ label: "Cancel", run }] } });
+    expect(hint().textContent).toBe("Push. Importing shelf.skp…Cancel");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

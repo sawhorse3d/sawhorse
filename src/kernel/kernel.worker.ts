@@ -144,6 +144,8 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         break;
       case "apply": {
         const d = document(mod);
+        // Tests (#144): a long edit, the worker busy as the kernel would be.
+        if (req.stallForTest) for (const end = Date.now() + req.stallForTest; Date.now() < end; );
         const outcome = JSON.parse(d.apply_op(JSON.stringify(req.op)));
         res = { id: req.id, ok: true, outcome, scene: scene(d) };
         break;

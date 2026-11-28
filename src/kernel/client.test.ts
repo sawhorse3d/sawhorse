@@ -218,3 +218,62 @@ describe("the kernel client", () => {
     expect(posted[0]).toEqual([bytes.buffer]);
   });
 });
+
+describe("#144: what the kernel is working on", () => {
+  /** Answer one request by its id. */
+  const answerId = (w: FakeWorker, id: number) => w.onmessage?.({ data: { id, ok: true, outcome: {}, scene } as unknown as WorkerResponse } as MessageEvent<WorkerResponse>);
+
+  it("names when the oldest request still waiting for an answer was sent, and says when that changes", async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    expect(k.c.busySince()).toBeNull();
+    const a = k.c.apply({ op: "noop" } as never);
+    await flush();
+    expect(k.c.busySince()).toBe(1_000);
+    vi.setSystemTime(1_400);
+    const b = k.c.apply({ op: "noop" } as never);
+    await flush();
+    // The oldest still: a request sent behind it does not start the count again.
+    expect(k.c.busySince()).toBe(1_000);
+    const [first, second] = k.w().posted.map((r) => r.id);
+    answerId(k.w(), first);
+    await a;
+    expect(k.c.busySince()).toBe(1_400);
+    answerId(k.w(), second);
+    await b;
+    expect(k.c.busySince()).toBeNull();
+    expect(seen).toEqual([1_000, 1_400, null]);
+  });
+
+  it("counts from the rebuild after a restart, and nothing is left waiting once it answers", async () => {
+    vi.useFakeTimers({ now: 5_000 });
+    const k = client();
+    const seen: (number | null)[] = [];
+    k.c.onBusy = (since) => seen.push(since);
+    const a = k.c.apply({ op: "noop" } as never).catch((e: unknown) => e);
+    await flush();
+    vi.setSystemTime(6_000);
+    void k.c.cancel("cancelled by you");
+    await flush();
+    expect(await a).toBeInstanceOf(KernelRestarted);
+    // The refused request is gone; the rebuild in the new worker is what runs now.
+    expect(k.c.busySince()).toBe(6_000);
+    k.w().answer({ ok: true, scene });
+    await flush();
+    expect(k.c.busySince()).toBeNull();
+    expect(seen).toEqual([5_000, null, 6_000, null]);
+  });
+
+  it("tests can make the next edit keep the kernel busy, once", async () => {
+    const k = client();
+    k.c.stallNextEditForTest(2_500);
+    void k.c.apply({ op: "noop" } as never).catch(() => undefined);
+    await flush();
+    expect(k.w().last()).toMatchObject({ kind: "apply", stallForTest: 2_500 });
+    void k.c.apply({ op: "noop" } as never).catch(() => undefined);
+    await flush();
+    expect(k.w().last()).not.toHaveProperty("stallForTest");
+  });
+});

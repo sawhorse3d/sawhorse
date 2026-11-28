@@ -33,7 +33,8 @@ export class KernelRestarted extends Error {
   }
 }
 
-type Pending = { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null; kind: string };
+/** A request waiting for its answer; `at`: when it was sent (Date.now(), #144). */
+type Pending = { resolve: (r: WorkerResponse) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null; kind: string; at: number };
 
 /** How long a request may run before the worker is taken for hung and replaced (ms). */
 export const DEADLINES: Record<string, number> = { importFile: 180_000, importSkp: 180_000, openShz: 180_000, replay: 300_000, default: 120_000 };
@@ -72,6 +73,13 @@ export class KernelClient {
   private failNext: string | null = null;
   /** Tests (lane 28): the next save is refused by its read-back check. */
   private failSave = false;
+  /** Tests (#144): the next edit keeps the worker busy this long first (ms). */
+  private stallNext = 0;
+  /** #144: told when the oldest request still waiting for its answer changes: when it was
+   * sent (Date.now()), or null when nothing is waiting. The app shows that something is
+   * running once it has run for a moment. */
+  onBusy: ((since: number | null) => void) | null = null;
+  private lastBusy: number | null = null;
   private makeWorker: () => Worker;
 
   constructor(makeWorker: () => Worker = () => new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module", name: "sawhorse-kernel" })) {
@@ -87,6 +95,7 @@ export class KernelClient {
       if (!p) return;
       this.pending.delete(e.data.id);
       if (p.timer !== null) clearTimeout(p.timer);
+      this.busyChanged();
       p.resolve(e.data);
     };
     // A JavaScript error escaping the worker (or the worker failing to load): it is replaced.
@@ -105,6 +114,27 @@ export class KernelClient {
   /** The op log as one JSON array text. */
   logJson(): string {
     return `[${this.mirror.join(",")}]`;
+  }
+
+  /** #144: when the oldest request still waiting for its answer was sent (Date.now()), or null
+   * when none is. The worker answers in turn, so that is the one it is working on, and
+   * requests sent behind it (a hover's pick) do not start the count again. */
+  busySince(): number | null {
+    let at: number | null = null;
+    for (const p of this.pending.values()) if (at === null || p.at < at) at = p.at;
+    return at;
+  }
+
+  private busyChanged(): void {
+    const at = this.busySince();
+    if (at === this.lastBusy) return;
+    this.lastBusy = at;
+    this.onBusy?.(at);
+  }
+
+  /** Tests (#144): the next edit (`apply`) keeps the worker busy for `ms` before it runs. */
+  stallNextEditForTest(ms: number): void {
+    this.stallNext = ms;
   }
 
   /** Tests: make the next import fail inside the kernel ("panic"). */
@@ -148,6 +178,7 @@ export class KernelClient {
       p.reject(err);
     }
     this.pending.clear();
+    this.busyChanged();
   }
 
   /** Count a restart. A worker that keeps failing (its script will not load, every rebuild
@@ -211,7 +242,8 @@ export class KernelClient {
         if (!this.pending.has(id)) return;
         void this.restart(`${req.kind} ran for more than ${Math.round(ms / 1000)} s`);
       }, ms);
-      this.pending.set(id, { resolve, reject, timer, kind: req.kind });
+      this.pending.set(id, { resolve, reject, timer, kind: req.kind, at: Date.now() });
+      this.busyChanged();
       const msg: WorkerRequest = { ...req, id, known: this.mirror.length };
       // Bytes handed to the kernel are transferred, not copied (lane 16); the caller's
       // array is detached afterwards.
@@ -241,6 +273,10 @@ export class KernelClient {
     if ((req.kind === "importFile" || req.kind === "importSkp") && this.failNext) {
       req = { ...req, failForTest: this.failNext };
       this.failNext = null;
+    }
+    if (req.kind === "apply" && this.stallNext > 0) {
+      req = { ...req, stallForTest: this.stallNext };
+      this.stallNext = 0;
     }
     if (req.kind === "saveShz" && this.failSave) {
       req = { ...req, failForTest: "save-differs" };

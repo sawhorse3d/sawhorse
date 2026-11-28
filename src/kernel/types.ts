@@ -907,7 +907,8 @@ export type RequestBody =
   /** An op log to rebuild from: the ops, or (lane 16) their JSON as one text. */
   | { kind: "replay"; ops?: KernelOp[]; json?: string; guarded?: boolean }
   | { kind: "scene" }
-  | { kind: "apply"; op: KernelOp }
+  /** `stallForTest` (#144, tests only): the worker stays busy this long (ms) before it runs. */
+  | { kind: "apply"; op: KernelOp; stallForTest?: number }
   | { kind: "undo" }
   | { kind: "redo" }
   | { kind: "log" }
