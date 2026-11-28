@@ -43,6 +43,8 @@ sawhorse-start-file = { path = "start-file" }
 sawhorse-dialog-folder = { path = "dialog-folder" }
 # What the window's title bar shows, from the page's title (lane 39): the model's name.
 sawhorse-window-title = { path = "window-title" }
+# Whether the window fits the screens at the size it opens at (#79): maximised when it does not.
+sawhorse-window-fit = { path = "window-fit" }
 
 # The session bus call behind the logout hold (#73). Both are in the tree already, under
 # the webview's GTK: nothing new is downloaded or built.
