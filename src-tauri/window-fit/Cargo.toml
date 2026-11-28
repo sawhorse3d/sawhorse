@@ -1,0 +1,15 @@
+[package]
+name = "sawhorse-window-fit"
+version = "0.1.0-alpha.7"
+description = "Sawhorse desktop: whether the window, at the size it is set to open at, fits the screens, and what to do when it does not."
+authors = ["Sawhorse contributors"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+# A member of the src-tauri workspace (a path dependency under its root), kept apart from the
+# Tauri crate so its tests run without the webview toolchain:
+#   cd src-tauri && cargo test -p sawhorse-window-fit
+
+[dependencies]
