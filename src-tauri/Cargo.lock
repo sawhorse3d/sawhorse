@@ -3207,6 +3207,7 @@ dependencies = [
  "sawhorse-logout-hold",
  "sawhorse-safe-save",
  "sawhorse-start-file",
+ "sawhorse-window-fit",
  "sawhorse-window-title",
  "serde",
  "serde_json",
@@ -3243,6 +3244,10 @@ version = "0.1.0-alpha.7"
 
 [[package]]
 name = "sawhorse-start-file"
+version = "0.1.0-alpha.7"
+
+[[package]]
+name = "sawhorse-window-fit"
 version = "0.1.0-alpha.7"
 
 [[package]]

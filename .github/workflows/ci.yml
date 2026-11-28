@@ -266,6 +266,9 @@ jobs:
       - name: window title tests (lane 39; what the title bar shows, from the page's title)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-window-title
+      - name: window fit tests (#79; a window too large for the screens opens maximised)
+        working-directory: src-tauri
+        run: cargo test --locked -p sawhorse-window-fit
       - name: logout hold tests (#73; one inhibitor while unsaved, none released that is not held)
         working-directory: src-tauri
         run: cargo test --locked -p sawhorse-logout-hold
