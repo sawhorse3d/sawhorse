@@ -17,6 +17,8 @@
 //! title, the model's name (lane 39, `window-title/`), so two windows can be told apart.
 //! On Linux the Open and Save dialogs are told which folder to start in (#71, #80,
 //! `dialog-folder/`): GTK's chooser otherwise starts in the working directory or in Recent.
+//! On Linux a window too large for the screens opens maximised (#79, `window-fit/`): KWin
+//! otherwise leaves it larger than the screen, with its title bar's buttons out of reach.
 //!
 //! File access is scoped: the fs plugin may only touch paths the user picked in a dialog
 //! (the dialog plugin adds them to the scope), dropped on the window (added below), or the
@@ -314,6 +316,69 @@ async fn dialog_folder(app: AppHandle, folders: Vec<String>) -> Option<String> {
     .flatten()
 }
 
+/// The label of the window `tauri.conf.json` creates at start.
+const MAIN_WINDOW: &str = "main";
+
+/// On Linux, from the setup hook: when the window would not fit the screens at the size
+/// `tauri.conf.json` opens it at, it is maximised, with a smaller size to go back to (#79;
+/// the rule is `sawhorse_window_fit::fit`). KWin leaves a window larger than the screen, so
+/// on a 1280 by 800 screen the title bar's buttons were off it. Tauri's `preventOverflow`
+/// measures a window with no position against the monitor GDK calls primary, and under
+/// Wayland GDK named none on the systems measured, so it did nothing there.
+///
+/// Tauri creates the config's windows, shown, just before this hook runs. The size and the
+/// maximise are handed to GTK's main loop and done once the hook has returned, the maximise
+/// from an idle callback (tao), so the window can be on the screen at its first size for
+/// a moment before it is maximised.
+///
+/// The sizes come from the window's own entry in the config, and the screens are every
+/// monitor's work area: which one the window will open on is not known here. Anything that
+/// cannot be read leaves the window as it is. Windows and macOS are left as they were.
+fn fit_window(app: &tauri::App) {
+    use sawhorse_window_fit::{fit, logical, Fit, Size};
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == MAIN_WINDOW)
+    else {
+        return;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
+    let screens: Vec<Size> = monitors
+        .iter()
+        .map(|m| {
+            let area = m.work_area().size;
+            Size::new(
+                logical(area.width, m.scale_factor()),
+                logical(area.height, m.scale_factor()),
+            )
+        })
+        .collect();
+    // `as` saturates and takes a NaN as 0: a size the config does not give is no limit.
+    let wanted = Size::new(config.width as u32, config.height as u32);
+    let least = Size::new(
+        config.min_width.unwrap_or(0.0) as u32,
+        config.min_height.unwrap_or(0.0) as u32,
+    );
+    if let Fit::Maximized { restore } = fit(wanted, least, &screens) {
+        let _ = window.set_size(tauri::LogicalSize::new(
+            f64::from(restore.width),
+            f64::from(restore.height),
+        ));
+        let _ = window.maximize();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -324,6 +389,10 @@ pub fn run() {
         .manage(CloseGuard::default())
         .manage(LogoutHold::default())
         .manage(StartFile::from_args())
+        .setup(|app| {
+            fit_window(app);
+            Ok(())
+        })
         .on_window_event(|window, event| match event {
             // Files dropped on the window: allow exactly those paths, then tell the page,
             // which reads them through the fs plugin (src/io/files.ts, onTauriDrop).
